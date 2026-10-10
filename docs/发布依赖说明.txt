@@ -1,4 +1,4 @@
-StreamLink 0.3.0-preview — Windows x64
+StreamLink 0.3.1-preview — Windows x64
 
 新增 .NET 控制程序、界面、独立映射管理与本项目修改使用 MIT，见 licenses/StreamLink-MIT.txt。
 第三方组件各自适用原许可证。所有组件保持可替换的独立文件/进程；本软件不禁止用户为调试其修改而进行所需的分析或替换。
@@ -6,7 +6,7 @@ StreamLink 0.3.0-preview — Windows x64
 1. udp2raw HTTP fork
    来源: https://github.com/MikeWang000000/udp2raw/tree/c4995eaad3576bd7bca872fe25bc93b519acdfdd
    上游 MIT；内嵌 AES/libev 等保留源码版权与许可。新增 Windows WinDivert 双端支持和实验 UDP 形态封装。
-   修改后完整源码、构建脚本和测试随 StreamLink-0.3.0-source.zip 提供。
+   修改后完整源码、构建脚本和测试随 StreamLink-0.3.1-source.zip 提供。
 
 2. EasyTier core / cli 2.6.4-8428a89d
    来源: https://github.com/EasyTier/EasyTier/tree/8428a89d2dabc94c97d370ec607c6ca142473626

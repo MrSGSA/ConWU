@@ -2,13 +2,13 @@
 
 通过自动映射与 udp2raw 为两台 Windows 提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由两端直传。
 
-**0.3.0 预览版**重构为加入、创建、设置三页；新增 6 位限时配对码、加密邀请与双端校验、操作忙碌/成功/失败反馈、可选后台服务和托盘，以及独立协调服务。保留 0.2 已验证的原生 udp2raw 数据面。GUI 仍需管理员权限。
+**0.3.1 预览版**修复滚动卡顿与旧画面残留，保留 0.3 的加入、创建、设置三页、6 位限时配对码、可选后台服务及托盘。保留 0.2 已验证的原生 udp2raw 数据面。GUI 仍需管理员权限。
 
 ## 下载与使用
 
-- [v0.3.0-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.0-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号。
+- [v0.3.1-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号。
 - [使用说明](docs/初版使用说明.md)：服务器设置、6 位短码、服务/前台模式、升级与回退。
-- [0.3 发布说明](docs/releases/v0.3.0-preview.md)、[验收记录](docs/releases/0.3-development.md)。
+- [0.3.1 滚动修复](docs/releases/v0.3.1-preview.md)、[0.3 发布说明](docs/releases/v0.3.0-preview.md)、[验收记录](docs/releases/0.3-development.md)。
 - [历史公网实测](docs/初版实测报告-20261010.md)、[来源与依赖](docs/来源与依赖.md)、[发布组件](docs/发布依赖说明.txt)。
 
 两端解压完整包，管理员运行 StreamLink.exe，在设置中填写同一个自托管 HTTPS 协调地址。一端创建、另一端输入 6 位配对码点击加入；核对双方校验码后由创建端批准。实际直连成功后显示虚拟 IP 10.129.129.1 / .2。公共协调服务器尚未提供，界面保留选择占位。

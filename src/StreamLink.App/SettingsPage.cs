@@ -40,12 +40,12 @@ public sealed partial class MainWindow
     }
     async Task<string> CheckUpdate()
     {
-        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 262144 }; http.DefaultRequestHeaders.UserAgent.ParseAdd("StreamLink/0.3.0");
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 262144 }; http.DefaultRequestHeaders.UserAgent.ParseAdd("StreamLink/" + DesktopVersion.Number);
         using var response = await http.GetAsync("https://api.github.com/repos/MrSGSA/StreamLink/releases?per_page=10", lifetime.Token);
         if (response.StatusCode == HttpStatusCode.NotFound) return "仓库目前为私有，请点击“访问 GitHub”登录后查看 Release";
         response.EnsureSuccessStatusCode(); using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token)); var latest = json.RootElement.EnumerateArray().FirstOrDefault(r => !r.GetProperty("draft").GetBoolean());
         if (latest.ValueKind == JsonValueKind.Undefined) return "暂未发现发布版本";
         string tag = latest.GetProperty("tag_name").GetString() ?? ""; string ver = tag.TrimStart('v').Split('-')[0];
-        return Version.TryParse(ver, out var version) && version > new Version(0, 3, 0) ? $"发现新版本 {tag}，请前往 GitHub Release 下载" : $"当前版本 0.3.0；GitHub 最近发布 {tag}";
+        return Version.TryParse(ver, out var version) && version > DesktopVersion.Current ? $"发现新版本 {tag}，请前往 GitHub Release 下载" : $"当前版本 {DesktopVersion.Number}；GitHub 最近发布 {tag}";
     }
 }

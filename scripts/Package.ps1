@@ -1,6 +1,5 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe')
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.3.1')
 $ErrorActionPreference='Stop'
-$releaseVersion='0.3.0'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
@@ -12,9 +11,11 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Pairing regression failed'}
         & dotnet run --project tests/StreamLink.WindowsTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
+        & dotnet run --project tests/StreamLink.RenderingTests -c Release -- (Join-Path $root "artifacts/rendering-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Desktop rendering regression failed'}
         & .\scripts\Test-Coordination.ps1
         foreach($project in @('StreamLink.App','StreamLink.Service')) {
-            $dest=switch($project) {'StreamLink.App' {'out/app-0.3'} 'StreamLink.Service' {'out/service-0.3'}}
+            $dest=switch($project) {'StreamLink.App' {"out/app-$releaseVersion"} 'StreamLink.Service' {"out/service-$releaseVersion"}}
             & dotnet publish (Join-Path 'src' $project) -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false "-p:Version=$releaseVersion" -o $dest
             if($LASTEXITCODE -ne 0) {throw "Publish failed: $project"}
         }
@@ -38,7 +39,7 @@ try {
     $stage=Join-Path $root ('out\release-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     $components=Join-Path $stage 'components'; $licenses=Join-Path $stage 'licenses'
     New-Item -ItemType Directory -Path $components,$licenses -Force | Out-Null
-    foreach($published in @('out/app-0.3','out/service-0.3')) {
+    foreach($published in @("out/app-$releaseVersion","out/service-$releaseVersion")) {
         foreach($file in Get-ChildItem -LiteralPath $published -File -Recurse) {
             $relative=[IO.Path]::GetRelativePath((Join-Path $root $published),$file.FullName)
             if($file.Extension -eq '.pdb' -or $relative -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hant)[\\/]') {continue}
@@ -82,6 +83,8 @@ try {
     Copy-Item .\docs\初版使用说明.md $stage\使用说明.md
     Copy-Item .\docs\发布依赖说明.txt $stage\第三方组件.txt
     Copy-Item .\docs\releases\0.3-development.md $stage\本版验证说明.md
+    $releaseNotes = Join-Path $root "docs/releases/v$releaseVersion-preview.md"
+    if(Test-Path $releaseNotes) {Copy-Item -LiteralPath $releaseNotes -Destination $stage\版本更新说明.md}
     Copy-Item .\docs\初版实测报告-20261010.md $stage\历史实测报告-0.2.md
     Copy-Item .\docs\发现服务运维.txt $stage\发现服务运维.txt
     $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")

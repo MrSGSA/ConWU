@@ -1,10 +1,12 @@
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 
 namespace StreamLink;
 
 static class Design
 {
     public static readonly Color Ink = Color.FromArgb(31, 42, 67), Muted = Color.FromArgb(102, 116, 142), Accent = Color.FromArgb(91, 94, 224), Border = Color.FromArgb(228, 232, 242);
+    public static readonly Color Surface = Color.FromArgb(248, 249, 253);
     public static Font Font(float size = 10, FontStyle style = FontStyle.Regular) => new("Microsoft YaHei UI", size, style);
     public static Label Label(string text, float size = 10, bool bold = false) => new() { Text = text, AutoSize = true, Font = Font(size, bold ? FontStyle.Bold : FontStyle.Regular), ForeColor = bold ? Ink : Muted, BackColor = Color.Transparent, Margin = new(0, 0, 0, 8) };
     public static RoundedButton Button(string text, bool primary = false) => new() { Text = text, Primary = primary, Width = 140, Height = 42, Margin = new(0, 0, 10, 0) };
@@ -37,15 +39,60 @@ sealed class RoundedButton : Button
     }
 }
 
+// Composite only the viewport, not the whole window or the tall page. Native
+// textboxes/comboboxes and managed controls then finish painting in one frame.
+sealed class ScrollViewport : Panel
+{
+    public ScrollViewport()
+    {
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+        BackColor = Design.Surface;
+    }
+    protected override CreateParams CreateParams
+    {
+        get { var parameters = base.CreateParams; parameters.ExStyle |= 0x02000000; return parameters; } // WS_EX_COMPOSITED
+    }
+    protected override void OnScroll(ScrollEventArgs e)
+    {
+        base.OnScroll(e);
+        // ScrollWindowEx can retain partially exposed child pixels. Invalidate
+        // asynchronously; do not force Refresh/Update for every wheel message.
+        Invalidate(true);
+    }
+    protected override void OnMouseWheel(MouseEventArgs e)
+    {
+        Point previous = AutoScrollPosition;
+        base.OnMouseWheel(e); // WinForms' wheel path does not raise OnScroll.
+        if (AutoScrollPosition != previous) Invalidate(true);
+    }
+}
+
 sealed class PearlPanel : Panel
 {
     readonly Image? art;
+    Bitmap? cachedBackground;
     public PearlPanel()
     {
-        DoubleBuffered = true; BackColor = Color.FromArgb(249,250,254);
+        DoubleBuffered = true; SetStyle(ControlStyles.ResizeRedraw, true); BackColor = Color.FromArgb(249,250,254);
         using var stream = typeof(PearlPanel).Assembly.GetManifestResourceStream("StreamLink.Assets.pearl-background.png");
         if (stream != null) { using var source = Image.FromStream(stream); art = new Bitmap(source); }
     }
-    protected override void OnPaintBackground(PaintEventArgs e) { base.OnPaintBackground(e); if (art != null) e.Graphics.DrawImage(art,ClientRectangle); }
-    protected override void Dispose(bool disposing) { if (disposing) art?.Dispose(); base.Dispose(disposing); }
+    void ClearCache() { cachedBackground?.Dispose(); cachedBackground = null; }
+    protected override void OnSizeChanged(EventArgs e) { ClearCache(); base.OnSizeChanged(e); }
+    protected override void OnDpiChangedAfterParent(EventArgs e) { ClearCache(); base.OnDpiChangedAfterParent(e); }
+    protected override void OnPaintBackground(PaintEventArgs e)
+    {
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
+        if (cachedBackground == null) {
+            cachedBackground = new Bitmap(ClientSize.Width, ClientSize.Height, PixelFormat.Format32bppPArgb);
+            using var graphics = Graphics.FromImage(cachedBackground);
+            graphics.Clear(BackColor);
+            graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            if (art != null) graphics.DrawImage(art, ClientRectangle);
+        }
+        // Transparent header/nav controls may ask their parent to paint again.
+        // Reuse a pixel-sized bitmap instead of rescaling the PNG on each call.
+        e.Graphics.DrawImageUnscaled(cachedBackground, Point.Empty);
+    }
+    protected override void Dispose(bool disposing) { if (disposing) { ClearCache(); art?.Dispose(); } base.Dispose(disposing); }
 }

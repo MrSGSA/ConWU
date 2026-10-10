@@ -25,7 +25,7 @@ public static class ServiceInstaller
         if (!File.Exists(manifest)) throw new IOException("请从完整发布包运行；缺少安装文件清单");
         string parent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamLink");
         string bundleId = Convert.ToHexString(SHA256.HashData(await File.ReadAllBytesAsync(manifest)))[..10].ToLowerInvariant();
-        string destination = Path.Combine(parent, "0.3.0-" + bundleId);
+        string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
         bool existed = Installed;
         string? previous = null;
@@ -47,7 +47,7 @@ public static class ServiceInstaller
     static void CopyBundle(string source, string destination, string parent, string manifest)
     {
         using var document = JsonDocument.Parse(File.ReadAllText(manifest));
-        if (document.RootElement.GetProperty("version").GetString() != "0.3.0-preview") throw new IOException("发布清单版本不符");
+        if (document.RootElement.GetProperty("version").GetString() != DesktopVersion.Release) throw new IOException("发布清单版本不符");
         var files = document.RootElement.GetProperty("files").EnumerateArray().ToArray();
         foreach (var entry in files) {
             string relative = entry.GetProperty("path").GetString()!;

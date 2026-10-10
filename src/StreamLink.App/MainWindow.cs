@@ -12,7 +12,7 @@ public sealed partial class MainWindow : Form
     readonly SemaphoreSlim uiGate = new(1, 1);
     readonly System.Windows.Forms.Timer timer = new() { Interval = 2500 };
     readonly NotifyIcon tray = new();
-    readonly Panel content = new() { Dock = DockStyle.Fill, AutoScroll = true, BackColor = Color.Transparent, Padding = new(28, 18, 28, 20) };
+    readonly Panel content = new ScrollViewport { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(28, 18, 28, 20) };
     readonly Label notice = Design.Label("准备就绪", 10), modeLabel = Design.Label("", 9);
     readonly ProgressBar progress = new() { Style = ProgressBarStyle.Marquee, Height = 3, Dock = DockStyle.Top, Visible = false, MarqueeAnimationSpeed = 25 };
     readonly Dictionary<string, RoundedButton> nav = new();
@@ -35,8 +35,9 @@ public sealed partial class MainWindow : Form
     {
         SuspendLayout();
         this.preview = preview;
-        Text = "StreamLink · 0.3.0 预览版"; ClientSize = new(1080, 740); MinimumSize = new(940, 680);
+        Text = $"StreamLink · {DesktopVersion.Number} 预览版"; ClientSize = new(1080, 740); MinimumSize = new(940, 680);
         AutoScaleMode = AutoScaleMode.None; Font = Design.Font(); ForeColor = Design.Ink; StartPosition = FormStartPosition.CenterScreen; Icon = MakeIcon();
+        DoubleBuffered = true;
         var background = new PearlPanel { Dock = DockStyle.Fill }; Controls.Add(background);
         var shell = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, BackColor = Color.Transparent, Padding = new(24, 22, 24, 16) };
         shell.ColumnStyles.Add(new(SizeType.Absolute, 180)); shell.ColumnStyles.Add(new(SizeType.Percent, 100)); shell.RowStyles.Add(new(SizeType.Absolute, 78)); shell.RowStyles.Add(new(SizeType.Percent, 100)); shell.RowStyles.Add(new(SizeType.Absolute, 62)); background.Controls.Add(shell);
@@ -46,7 +47,7 @@ public sealed partial class MainWindow : Form
             var button = Design.Button(text); button.Width = 166; button.Height = 48; button.Margin = new(0, 0, 0, 12); nav[id] = button;
             button.Click += (_, _) => { if (!busy) ShowPage(id); }; navigation.Controls.Add(button);
         }
-        navigation.Controls.Add(Design.Label("Windows · P2P\n0.3.0 预览版", 9)); shell.Controls.Add(content, 1, 1);
+        navigation.Controls.Add(Design.Label($"Windows · P2P\n{DesktopVersion.Number} 预览版", 9)); shell.Controls.Add(content, 1, 1);
         var footer = Design.Stack(); footer.Controls.Add(progress); notice.MaximumSize = new(920, 0); footer.Controls.Add(notice); footer.Controls.Add(modeLabel); shell.Controls.Add(footer, 0, 2); shell.SetColumnSpan(footer, 2);
         tray.Icon = Icon; tray.Text = "StreamLink"; tray.DoubleClick += (_, _) => Restore();
         var menu = new ContextMenuStrip(); menu.Items.Add("打开 StreamLink", null, (_, _) => Restore()); menu.Items.Add("停止网络", null, async (_, _) => await Run("正在停止网络…", async () => { Apply(await Call(new("stop"))); return "网络已停止，配对已保留"; })); menu.Items.Add("退出界面", null, (_, _) => { exiting = true; Close(); }); tray.ContextMenuStrip = menu;
@@ -97,7 +98,8 @@ public sealed partial class MainWindow : Form
         page = id; content.SuspendLayout(); foreach (Control c in content.Controls.Cast<Control>().ToArray()) c.Dispose(); content.Controls.Clear(); actions.Clear();
         networkState = addresses = localDevice = peerDevice = quality = pairText = pairHint = null; input = null; approve = reject = null; approvalRow = null;
         foreach (var item in nav) { item.Value.Selected = item.Key == id; item.Value.Invalidate(); }
-        var stack = Design.Stack(); stack.Width = content.ClientSize.Width - content.Padding.Horizontal - 20; content.Controls.Add(stack);
+        content.AutoScrollPosition = Point.Empty;
+        var stack = Design.Stack(); stack.BackColor = Design.Surface; stack.Width = content.ClientSize.Width - content.Padding.Horizontal - 20; content.Controls.Add(stack);
         if (id == "settings") BuildSettings(stack); else BuildNetwork(stack, id == "create");
         if (IsHandleCreated && DeviceDpi != 96) stack.Scale(new SizeF(DeviceDpi / 96f, DeviceDpi / 96f));
         content.ResumeLayout(true); UpdateStatus();
