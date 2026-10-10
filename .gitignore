@@ -1,0 +1,16 @@
+out/
+artifacts/
+*.user
+*.log
+.vs/
+**/bin/
+**/obj/
+
+*.private.json
+*.pfx
+*.pem
+*.key
+*.dpapi
+.env
+.env.*
+**/__pycache__/

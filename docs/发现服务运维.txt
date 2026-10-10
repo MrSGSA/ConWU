@@ -1,0 +1,38 @@
+StreamLink 0.2 发现服务（2026-10-10）
+
+当前入口：https://searxng.space4sgsa.com/streamlink-discovery/
+health 返回 protocol=2、relay=false。客户端校验正常 HTTPS 证书。
+现有 Cloudflare HTTPS / Tunnel -> Nginx 独立 location -> 本机发现服务。
+TLS 终止方可见认证令牌和配对网络标识，但端点公告另用配对秘密派生的 AES-GCM 密钥加密。
+本服务没有业务 peer、TURN、流量转发、TCP 代理或 WebSocket 通道。
+
+服务器 SSH：使用用户已授权的 root@ssh.space4sgsa.com。
+systemd 单元：streamlink-discovery.service
+程序：/opt/streamlink-discovery/StreamLink.Discovery
+身份与槽位：/var/lib/streamlink-discovery/networks.json（0600，专用账户）
+临时端点：内存保存，120 秒过期；服务重启后客户端重新发布。
+源站证书：/etc/streamlink-discovery/（不随产品分发私钥）。当前自签证书有效至约 2027-10-10。
+此证书只用于同机 Nginx 到后台的 TLS；外部客户端使用现有域名的公开可信证书。
+证书到期前重新签发同域名证书与 PFX，保留文件权限，重启发现服务并 reload Nginx；不得跳过校验。
+
+源站绑定 127.0.0.1:42860；不占用原有 443、8880 等监听。
+首次测试的公网 42860 从两台 Windows 均不可达，最终使用已有 HTTPS 域名独立路径。
+Nginx 仅增加 /streamlink-discovery/；原配置备份 /etc/nginx/sites-available/searxng.before-streamlink。
+该 location 关闭访问日志、限制 8 KB 请求、禁止缓存并验证源站证书。
+
+独立部署构建：
+  dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -o out/discovery-linux
+当前服务器初始化脚本：scripts/Deploy-Discovery.sh
+当前域名路径接入脚本：scripts/Route-Discovery.py
+这两个脚本是本服务器部署记录；迁往其他域名时须修改路径、证书和监听设置，不能不检查即套用。
+更新时先 stop 本服务，替换二进制，再 start，保留数据目录；不重启生产代理和组网服务。
+管理：systemctl status/restart/stop streamlink-discovery；journalctl -u streamlink-discovery。
+
+限制：每网络只支持两个固定设备槽位；最多 2048 组配对；每网络每分钟 120 个请求；总每秒 600 个请求；请求体最多 8 KB。
+现阶段没有账户注册、邀请码领取平台、证书自动续签、租户管理、网络删除 API 和公网规模抗滥用机制，不作为开放公共服务直接宣传。
+长邀请包含随机配对秘密，首次导入有效期 24 小时；已保存配对不受邀请过期影响。
+重装后若旧槽位被占用，应重新创建配对；不得直接用删除注册表记录来宣称吊销已泄露的秘密。
+
+回退：Windows 端先点“停止网络”；服务器 systemctl stop/disable streamlink-discovery。
+需要撤销 Nginx 路径时，先对比备份与现有配置，仅移除新增 location，nginx -t 成功后 reload。
+不要直接恢复整个旧配置覆盖此后其他服务变更。保留数据目录即可随后恢复原配对。

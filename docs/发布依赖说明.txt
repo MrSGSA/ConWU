@@ -1,0 +1,38 @@
+StreamLink 0.2.0-preview — Windows x64
+
+新增 .NET 控制程序、界面、独立映射管理与本项目修改使用 MIT，见 licenses/StreamLink-MIT.txt。
+第三方组件各自适用原许可证。所有组件保持可替换的独立文件/进程；本软件不禁止用户为调试其修改而进行所需的分析或替换。
+
+1. udp2raw HTTP fork
+   来源: https://github.com/MikeWang000000/udp2raw/tree/c4995eaad3576bd7bca872fe25bc93b519acdfdd
+   上游 MIT；内嵌 AES/libev 等保留源码版权与许可。新增 Windows WinDivert 双端支持和实验 UDP 形态封装。
+   修改后完整源码、构建脚本和测试随 StreamLink-0.2.0-source.zip 提供。
+
+2. EasyTier core / cli 2.6.4-8428a89d
+   来源: https://github.com/EasyTier/EasyTier/tree/8428a89d2dabc94c97d370ec607c6ca142473626
+   LGPL-3.0，见 licenses/EasyTier-LGPL-3.0.txt；完整 GPLv3 文本也在 WinDivert-LGPL.txt 中。
+   使用本机此前已验证的同版本二进制，没有修改；每个文件的确切 SHA256 在 manifest.json。
+   对应版本源码在 sources/EasyTier-8428a89d.zip，含 Cargo.lock 及 .github/workflows/core.yml / release.yml 的原构建步骤。
+   预览版未在本轮从该源码重新构建 EasyTier，未声称位级可复现。
+
+3. WinDivert 2.2.2-A x64
+   官方原样分发 DLL 和签名驱动，按 LGPLv3 条款使用；许可证同时收录 GPLv3/GPLv2 正文。
+   二进制: https://github.com/basil00/WinDivert/releases/download/v2.2.2/WinDivert-2.2.2-A.zip
+   对应源码: sources/WinDivert-v2.2.2-source.zip，含原构建脚本。
+   文档: https://reqrypt.org/windivert-doc.html
+   本次测试复用已有驱动，不升级或卸载已有系统驱动。
+
+4. Wintun 0.14.1 amd64
+   官方原样 DLL: https://www.wintun.net/builds/wintun-0.14.1.zip
+   采用官方压缩包中的 Prebuilt Binaries License，见 licenses/Wintun.txt。
+   SHA256: E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE
+
+5. .NET 10.0.12 自包含运行时
+   构建 SDK 10.0.401；不要求用户另行安装 .NET。
+   MIT 和第三方声明位于 licenses/dotnet-*.txt。
+   来源: https://github.com/dotnet/runtime 和 https://github.com/dotnet/winforms
+
+没有分发 Lucky、Npcap、Natter 或 Python；映射管理根据 STUN/UPnP 协议独立编写，没有复制 Lucky 闭源代码或 Natter GPL 实现。
+本包是本地预览交付，应用 EXE 未签名。不要将预览测试等同于各种全新系统上的安装认证。
+
+0.2 新增 Microsoft.Extensions.Hosting.WindowsServices、System.Security.Cryptography.ProtectedData 10.0.12 与其 .NET 依赖，NuGet 声明 MIT。保留 .NET MIT 许可证与 WindowsServices 第三方声明。发现服务源码亦随源码包提供。
