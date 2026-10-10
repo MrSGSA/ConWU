@@ -2,13 +2,13 @@
 
 通过自动映射与 udp2raw 为两台 Windows 提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由两端直传。
 
-**0.3.1 预览版**修复滚动卡顿与旧画面残留，保留 0.3 的加入、创建、设置三页、6 位限时配对码、可选后台服务及托盘。保留 0.2 已验证的原生 udp2raw 数据面。GUI 仍需管理员权限。
+**0.3.2 预览版**优化入口公告与组件启动的并行调度、路由器发现和连接状态反馈，补充阶段计时。保留 0.3.1 的滚动修复、6 位配对码、可选后台服务及托盘。原生 udp2raw 数据面不变。GUI 仍需管理员权限。
 
 ## 下载与使用
 
-- [v0.3.1-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号。
+- [v0.3.2-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.2-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号；[0.3.1](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview) 保留用于回退。
 - [使用说明](docs/初版使用说明.md)：服务器设置、6 位短码、服务/前台模式、升级与回退。
-- [0.3.1 滚动修复](docs/releases/v0.3.1-preview.md)、[0.3 发布说明](docs/releases/v0.3.0-preview.md)、[验收记录](docs/releases/0.3-development.md)。
+- [0.3.2 连接优化与实测](docs/releases/v0.3.2-preview.md)、[后续演进与瓶颈分析](docs/演进路线与连接启动分析.md)、[0.3.1 滚动修复](docs/releases/v0.3.1-preview.md)、[0.3 验收记录](docs/releases/0.3-development.md)。
 - [历史公网实测](docs/初版实测报告-20261010.md)、[来源与依赖](docs/来源与依赖.md)、[发布组件](docs/发布依赖说明.txt)。
 
 两端解压完整包，管理员运行 StreamLink.exe，在设置中填写同一个自托管 HTTPS 协调地址。一端创建、另一端输入 6 位配对码点击加入；核对双方校验码后由创建端批准。实际直连成功后显示虚拟 IP 10.129.129.1 / .2。公共协调服务器尚未提供，界面保留选择占位。
@@ -25,7 +25,7 @@
 - 当前每台设备一组双端配对，不是多人 Mesh；固定 10.129.129.0/24，冲突时拒绝启动。
 - HTTP 特征不是 HTTPS。历史网络中纯 UDP 仍受约 6 Mbps 限制；不承诺任意环境永久绕过 QoS。
 
-0.2 最终候选历史实测：50 Mbps、20 秒，104152/104152 包，49.99296 Mbps，零丢包，单次 RTT 采样约 15.4 ms。0.3 没有为测试中断现有连接，不能将历史成绩当成本版完整公网回归。全新系统、长期运行、冷启动及休眠换网仍需验证。
+0.3.2 双端实测：50 Mbps、20 秒，104142/104142 包，49.98816 Mbps，零丢包，单次 RTT 采样 14.95 ms。Thinkbook 单端服务重启旧版 56.259 秒、新版 52.343 秒（各一次）；改善有限，剩余等待主要在本机虚拟网卡初始化阶段。全新系统、长期运行、冷启动及休眠换网仍需验证。已有服务需明确更新后台才会使用新版逻辑，无需重新配对。
 
 ## 开发
 
@@ -36,6 +36,8 @@ Windows x64，.NET SDK 10、MinGW-w64 x64、CMake、Ninja；原生协议测试�
 dotnet run --project tests/StreamLink.Tests -c Release
 dotnet run --project tests/StreamLink.PairingTests -c Release
 dotnet run --project tests/StreamLink.WindowsTests -c Release
+dotnet run --project tests/StreamLink.ConnectionTests -c Release
+dotnet run --project tests/StreamLink.MappingTests -c Release -- 'EasyTier 2.6.4 的 easytier-core.exe 路径'
 .\scripts\Test-Coordination.ps1
 .\scripts\Package.ps1 -EasyTierDirectory '已验证的 EasyTier 2.6.4 二进制目录'
 ```
