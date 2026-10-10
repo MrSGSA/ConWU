@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "");
+public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "", MeshPeerStatus[]? Peers = null);
 
 public interface IStreamSession : IAsyncDisposable
 {

@@ -32,6 +32,8 @@ public static class Recovery
                 if(alive) continue;
                 WindowsHost.RemoveFirewall(owner.Rule);
                 foreach(string name in new[]{"network.toml","transport.conf","owner.json","owned-rule.txt"}) File.Delete(Path.Combine(folder,name));
+                foreach (string path in Directory.EnumerateFiles(folder, "raw-*.conf"))
+                    if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path)[4..], "N", out _)) File.Delete(path);
                 log("已恢复清理上次异常退出留下的本软件规则与临时密钥");
             }
             catch(Exception ex) { log("旧会话清理未确认："+ex.Message); }

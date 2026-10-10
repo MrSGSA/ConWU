@@ -8,10 +8,11 @@ using StreamLink.Discovery;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders(); // Do not log pairing IDs, authorization headers or payloads.
-builder.WebHost.ConfigureKestrel(k => { k.Limits.MaxRequestBodySize = 8192; k.Limits.MaxConcurrentConnections = 128; k.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(10); });
+builder.WebHost.ConfigureKestrel(k => { k.Limits.MaxRequestBodySize = 16384; k.Limits.MaxConcurrentConnections = 128; k.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(10); });
 builder.Services.AddRateLimiter(o => {
     o.RejectionStatusCode = 429;
     o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ => RateLimitPartition.GetFixedWindowLimiter("all", _ => new() { PermitLimit = 600, Window = TimeSpan.FromSeconds(1), QueueLimit = 0 }));
+    o.AddPolicy("mesh", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["network"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 512, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     o.AddPolicy("metadata", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["network"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     o.AddPolicy("pair-create", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     o.AddPolicy("pair-join", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -50,7 +51,11 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
     }
 }
 var pairRooms = new PairRooms();
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, relay = false }));
+var meshRegistry = new MeshRegistry(root);
+app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => meshRegistry.Read(c, network)).RequireRateLimiting("mesh");
+app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
+app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, maxMembers = MeshIdentity.MaxMembers, relay = false }));
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
 app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");

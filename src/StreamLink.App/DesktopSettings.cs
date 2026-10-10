@@ -8,6 +8,7 @@ sealed class DesktopSettings
     public string Pin { get; set; } = "";
     public bool Tray { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
+    public bool Animations { get; set; } = true;
     static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "StreamLink", "desktop.json");
     public static DesktopSettings Load()
     {

@@ -3,6 +3,8 @@ $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 & dotnet build (Join-Path $root 'tests\StreamLink.PairingTests') -c Release --nologo -v quiet
 if($LASTEXITCODE -ne 0){throw 'Coordination test build failed'}
+& dotnet build (Join-Path $root 'tests\StreamLink.MeshTests') -c Release --nologo -v quiet
+if($LASTEXITCODE -ne 0){throw 'Mesh coordination test build failed'}
 $testRoot=Join-Path $root ('out\coordination-test-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $testRoot | Out-Null
 $rsa=[Security.Cryptography.RSA]::Create(2048)
@@ -27,5 +29,7 @@ try {
         if($process.HasExited){throw 'Isolated coordination backend exited'}
         & dotnet run --project (Join-Path $root 'tests\StreamLink.PairingTests') -c Release --no-build -- --server "https://127.0.0.1:$Port/" --pin $pin --exercise-limits
         if($LASTEXITCODE -ne 0){throw 'Isolated HTTPS coordination tests failed'}
+        & dotnet run --project (Join-Path $root 'tests\StreamLink.MeshTests') -c Release --no-build -- --server "https://127.0.0.1:$Port/" --pin $pin
+        if($LASTEXITCODE -ne 0){throw 'Isolated HTTPS mesh tests failed'}
     } finally { if(-not $process.HasExited){$process.Kill($true);$process.WaitForExit()}; $process.Dispose() }
 } finally { $rsa.Dispose(); if($certificate){$certificate.Dispose()} }

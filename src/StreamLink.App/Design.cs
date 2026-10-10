@@ -21,22 +21,47 @@ static class Design
 
 sealed class RoundedButton : Button
 {
-    [System.ComponentModel.DefaultValue(false)] public bool Primary { get; set; }
-    [System.ComponentModel.DefaultValue(false)] public bool Selected { get; set; }
-    bool hover;
-    public RoundedButton() { FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Font = Design.Font(10, FontStyle.Bold); Cursor = Cursors.Hand; DoubleBuffered = true; BackColor = Color.White; }
-    protected override void OnMouseEnter(EventArgs e) { hover = true; Invalidate(); base.OnMouseEnter(e); }
-    protected override void OnMouseLeave(EventArgs e) { hover = false; Invalidate(); base.OnMouseLeave(e); }
+    bool primary, selected, hover, pressed;
+    readonly System.Windows.Forms.Timer animation = new() { Interval = 16 };
+    Color painted = Color.White, from = Color.White, target = Color.White;
+    long started;
+    [System.ComponentModel.DefaultValue(false)] public bool Primary { get => primary; set { primary = value; Transition(); } }
+    [System.ComponentModel.DefaultValue(false)] public bool Selected { get => selected; set { selected = value; Transition(); } }
+    public RoundedButton() {
+        FlatStyle = FlatStyle.Flat; FlatAppearance.BorderSize = 0; Font = Design.Font(10, FontStyle.Bold); Cursor = Cursors.Hand; DoubleBuffered = true; BackColor = Color.White;
+        animation.Tick += (_, _) => {
+            double progress = Math.Clamp(System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalMilliseconds / 160, 0, 1);
+            if (!Visible || FindForm()?.WindowState == FormWindowState.Minimized || !Motion.Allowed) progress = 1;
+            painted = Motion.Blend(from, target, 1 - Math.Pow(1 - progress, 3)); Invalidate();
+            if (progress >= 1) animation.Stop();
+        };
+    }
+    Color Fill() => !Enabled ? Color.FromArgb(236, 239, 246) : pressed ? Primary ? Color.FromArgb(68, 70, 191) : Color.FromArgb(222, 225, 251) : Primary ? hover ? Color.FromArgb(113, 116, 239) : Design.Accent : Selected ? Color.FromArgb(232, 234, 255) : hover ? Color.FromArgb(240, 242, 255) : Color.White;
+    void Transition() {
+        target = Fill(); if (target == painted) { animation.Stop(); return; }
+        if (!Enabled || !IsHandleCreated || !Visible || !Motion.Allowed) { animation.Stop(); painted = target; Invalidate(); return; }
+        from = painted; started = System.Diagnostics.Stopwatch.GetTimestamp(); animation.Start();
+    }
+    protected override void OnMouseEnter(EventArgs e) { hover = true; Transition(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { hover = pressed = false; Transition(); base.OnMouseLeave(e); }
+    protected override void OnMouseDown(MouseEventArgs e) { if (e.Button == MouseButtons.Left) pressed = true; Transition(); base.OnMouseDown(e); }
+    protected override void OnMouseUp(MouseEventArgs e) { pressed = false; Transition(); base.OnMouseUp(e); }
+    protected override void OnKeyDown(KeyEventArgs e) { if (e.KeyCode == Keys.Space) { pressed = true; Transition(); } base.OnKeyDown(e); }
+    protected override void OnKeyUp(KeyEventArgs e) { pressed = false; Transition(); base.OnKeyUp(e); }
+    protected override void OnEnabledChanged(EventArgs e) { pressed = false; Transition(); base.OnEnabledChanged(e); }
+    protected override void OnVisibleChanged(EventArgs e) { if (!Visible) animation.Stop(); painted = target = Fill(); base.OnVisibleChanged(e); }
+    protected override void OnLostFocus(EventArgs e) { pressed = false; Transition(); base.OnLostFocus(e); }
     protected override void OnPaint(PaintEventArgs e)
     {
         e.Graphics.SmoothingMode = SmoothingMode.AntiAlias; Color background = Parent?.BackColor ?? Color.White; e.Graphics.Clear(background.A < 255 ? Color.White : background);
         using var path = Design.Round(new(1,1,Width-3,Height-3),10);
-        Color fill = !Enabled ? Color.FromArgb(236,239,246) : Primary ? Design.Accent : Selected ? Color.FromArgb(232,234,255) : hover ? Color.FromArgb(244,245,255) : Color.White;
+        Color fill = animation.Enabled ? painted : Fill();
         using var brush = new SolidBrush(fill); e.Graphics.FillPath(brush,path);
         if (!Primary) { using var pen = new Pen(Selected ? Color.FromArgb(195,199,247) : Design.Border); e.Graphics.DrawPath(pen,path); }
         TextRenderer.DrawText(e.Graphics,Text,Font,ClientRectangle,!Enabled ? Color.FromArgb(155,164,182) : Primary ? Color.White : Design.Ink,TextFormatFlags.HorizontalCenter|TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
         if (Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics,Rectangle.Inflate(ClientRectangle,-6,-6));
     }
+    protected override void Dispose(bool disposing) { if (disposing) animation.Dispose(); base.Dispose(disposing); }
 }
 
 // Composite only the viewport, not the whole window or the tall page. Native

@@ -1,0 +1,16 @@
+StreamLink 0.4 默认原生包的运行组件
+
+StreamLink App/Service/Core 与 streamlink-tun.dll：本项目 MIT 许可证。
+udp2raw-native.exe：固定 udp2raw HTTP 分支及本项目 Windows 原生移植，MIT。
+WinDivert.dll / WinDivert64.sys：官方 WinDivert 2.2.2-A，LGPL；随附对应源码。
+wintun.dll：官方 Wintun 0.14.1 已签名 x64 二进制，随附原分发许可证。
+.NET 10.0.12 运行时、Windows Desktop 与 Hosting 组件：随附微软许可证及通知。
+彩白背景：先前通过 GPT-IMAGE 生成的项目素材，本轮继续复用。
+
+默认包不含 EasyTier core/cli，不需要 Lucky、EasyTier、WSL、Python 或预装 .NET。
+需要 Windows x64、管理员权限和具备对应能力的 HTTPS 协调服务。
+Wintun 与 WinDivert 驱动仅在启动网络时由软件按需加载，未自行开发内核驱动。
+网络数据处理由 StreamLink 用户态实现。使用 -IncludeLegacy 构建的兼容包另含
+EasyTier 2.6.4、LGPL 许可证和对应源码；manifest.json 的 easytier 字段会列明。
+所有运行包都保留每文件 SHA-256 清单。streamlink-tun.dll 仅依赖 Windows
+系统 DLL，不依赖开发机 MinGW 的 libwinpthread 等运行时。

@@ -1,4 +1,4 @@
-StreamLink 0.3 独立协调服务
+StreamLink 0.4 独立协调服务（兼容 0.3 客户端）
 
 这是配对和地址协调服务，不是业务中继。HTTP API 不接受业务流量转发。
 新入口只需服务器根地址，客户端须使用 HTTPS；正规证书不填写指纹。
@@ -12,12 +12,14 @@ Cloudflare Tunnel 设置（连接器与源站运行在同一主机的情况）�
 复用已有 Tunnel 连接器可以；新域名、进程、监听端口与数据目录均独立，不再经过 searxng 或其 Nginx 路径。若连接器位于 Docker 容器，127.0.0.1 指容器自己，需要调整到容器可访问的源站地址，不要直接照抄。
 
 构建：
-  dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o out/discovery-v03-linux
+  dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=true -p:Version=0.4.0 -o out/discovery-0.4-linux
 上传编译结果后，管理员执行：
   sh scripts/Deploy-Coordination.sh /上传路径/StreamLink.Discovery
+升级已有服务前，先保存原 systemd 单元和数据目录快照；保留原版本目录。
+本轮仅生成本地发布物，没有在公网服务器执行此脚本。
 
 脚本创建专用账号、127.0.0.1:42861 监听、streamlink-coordination.service 和以下目录：
-  /opt/streamlink-coordination/0.3.0-<部署时间>/   版本化程序
+  /opt/streamlink-coordination/0.4.0-<部署时间>/   版本化程序
   /var/lib/streamlink-coordination/               独立数据，账号独占
   /etc/systemd/system/streamlink-coordination.service
 脚本只更新这个新服务。旧 streamlink-discovery.service、Nginx 和 cloudflared 保持不变。
@@ -26,7 +28,7 @@ Cloudflare Tunnel 设置（连接器与源站运行在同一主机的情况）�
 验证：
   curl --fail http://127.0.0.1:42861/health
   curl --fail https://你的域名/health
-预期包含 protocol=3、metadataProtocol=2、shortPairing=true、relay=false。
+预期包含 protocol=3、metadataProtocol=2、shortPairing=true、meshProtocol=4、maxMembers=8、relay=false。
 502 通常需检查 Tunnel 到源站的协议、地址、端口及服务存活状态；不要通过关闭证书校验来掩盖配错端口。
 只读状态：systemctl status streamlink-coordination
 运行日志：journalctl -u streamlink-coordination
@@ -38,13 +40,20 @@ Cloudflare Tunnel 设置（连接器与源站运行在同一主机的情况）�
   /v2/pair       创建 6 位、5 分钟临时配对码
   /v2/pair/join  申请加入，后续以独立 owner/guest 随机令牌授权
   /v1/...       兼容既有加密端点公告协议
+  /v3/mesh/...  签名多机成员目录、加密成员端点公告
   /health       无敏感信息的健康检查
 短码房间仅存内存，每房间一名候选加入者，创建端明确批准。公钥承诺、双方校验码和 AES-GCM 保护长期邀请。协调服务及 TLS 终止方可见短码、设备名、授权令牌和临时公钥，但不是直接获得长期配对秘密；用户必须核对校验码。恶意服务器仍可拒绝服务，短码协议尚未经过独立审计。
 长期数据 networks.json 存认证哈希与两个设备槽位；端点公告为密文，在内存 120 秒过期。已有配对不因短码过期而失效。
+新网络单独保存到 mesh-networks.json，包含认证哈希、管理员公钥和签名成员
+目录。成员各有签名与交换公钥，端点公告需通过成员签名校验。撤销成员后
+停止接受其新公告；其他设备在取得更新目录后断开该成员。旧接口继续可用。
 
-限制：128 个同时存在的短码房间，2048 组持久网络；创建和申请各每来源 IP 每分钟 5 次；每房间/网络每分钟 120 请求；全局每秒 600 请求；请求体上限 8 KB。
+限制：128 个同时存在的短码房间；旧、新协议各最多 2048 组持久网络。创建和申请各每来源 IP 每分钟 5 次；短码房间和旧网络每分钟 120 请求，新多机网络每分钟 512 请求；全局每秒 600 请求；请求体上限 16 KB。
 STREAMLINK_TRUST_CLOUDFLARE=1 仅信任回环 TCP 对端传来的 CF-Connecting-IP。源站必须仅绑定回环并由受控连接器访问；改为其他反向代理时要重新审查这一设置。
 当前不具备公开多租户平台所需的账户/配额/网络删除/全局抗滥用能力，不要直接作为无限制公共服务发布。前台公共服务器选项因此仍为占位。
 
 迁移：旧配对携带原服务器地址。仅在设置填新地址不会迁移现有网络；两端都填新域名后重新配对才切换。验证新网络前保留旧后台，避免中断旧配对。当前旧 searxng 路径及旧 42860 服务继续兼容，不自动退役。
 回退：将这个新服务的 ExecStart 改回保留的上一版本，daemon-reload 后重启该单元。停用新域名时只移除新增 Tunnel 路由，不改其他应用入口。保留数据目录；不要直接用删除注册记录宣称吊销已泄露的配对秘密。
+回退到 0.3 后旧配对继续可用，0.4 多机客户端无法获得新目录与公告；已有
+直连可能暂时保持，不能因此认为回退后仍支持多机协议。请同时保留客户端
+的旧配置备份，不删除 mesh-networks.json。

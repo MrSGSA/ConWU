@@ -52,8 +52,13 @@ public sealed partial class MainWindow : Form
         tray.Icon = Icon; tray.Text = "StreamLink"; tray.DoubleClick += (_, _) => Restore();
         var menu = new ContextMenuStrip(); menu.Items.Add("打开 StreamLink", null, (_, _) => Restore()); menu.Items.Add("停止网络", null, async (_, _) => await Run("正在停止网络…", async () => { Apply(await Call(new("stop"))); return "网络已停止，配对已保留"; })); menu.Items.Add("退出界面", null, (_, _) => { exiting = true; Close(); }); tray.ContextMenuStrip = menu;
         timer.Tick += async (_, _) => await Poll();
-        if (preview) last = new(true, "", new DeviceProfile { Slot = 2, Pair = Pairing.Create("https://example.com/", ""), Enabled = true, DeviceName = "我的电脑" }, new("已直连", "10.129.129.2", "10.129.129.1", "faketcp", true, 16.1, "业务数据由两端直接传输", "远端电脑"), "", [], "", "0.3.0");
-        ShowPage("join"); if (!preview) Shown += async (_, _) => { ApplyTray(); await Poll(); timer.Start(); }; FormClosing += OnClosingWindow;
+        if (preview) {
+            var network = MeshIdentity.Create("https://example.com/", "", "faketcp");
+            var second = MeshIdentity.Issue(network); var third = MeshIdentity.Issue(network);
+            var peers = new[] { new MeshPeerStatus(2, MeshIdentity.Address(network.Pair.Network, 2), "游戏电脑", true, 16.1, "P2P 直连"), new MeshPeerStatus(3, MeshIdentity.Address(network.Pair.Network, 3), "轻薄本", false, null, "等待设备上线") };
+            last = new(true, "", new DeviceProfile { Mesh = network, Enabled = true, DeviceName = "我的电脑" }, new("部分设备已直连", network.LocalIp, peers[0].Ip, "faketcp", true, 16.1, "1/2 台设备直连 · 原生组网 · 业务不经中继", peers[0].Name, peers), "", [], "", DesktopVersion.Number);
+        }
+        Motion.Enabled = preferences.Animations; ShowPage("join"); if (!preview) Shown += async (_, _) => { ApplyTray(); await Poll(); timer.Start(); }; FormClosing += OnClosingWindow;
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
     }
     static Icon MakeIcon()
@@ -103,7 +108,7 @@ public sealed partial class MainWindow : Form
     void ShowPage(string id)
     {
         page = id; content.SuspendLayout(); foreach (Control c in content.Controls.Cast<Control>().ToArray()) c.Dispose(); content.Controls.Clear(); actions.Clear();
-        networkState = addresses = localDevice = peerDevice = quality = pairText = pairHint = null; input = null; approve = reject = null; approvalRow = null;
+        networkState = addresses = localDevice = peerDevice = quality = pairText = pairHint = null; memberList = null; qualityPeer = null; input = null; approve = reject = null; approvalRow = null;
         foreach (var item in nav) { item.Value.Selected = item.Key == id; item.Value.Invalidate(); }
         content.AutoScrollPosition = Point.Empty;
         var stack = Design.Stack(); stack.BackColor = Design.Surface; stack.Width = content.ClientSize.Width - content.Padding.Horizontal - 20; content.Controls.Add(stack);
@@ -119,11 +124,13 @@ public sealed partial class MainWindow : Form
     void UpdateStatus()
     {
         var s = last?.Status; var p = last?.Profile;
-        if (networkState != null) { networkState.Text = s?.State ?? (p?.Pair != null ? "已配对，网络未启动" : "尚未配对"); networkState.ForeColor = s?.Connected == true ? Color.FromArgb(29, 139, 102) : Design.Ink; }
-        if (addresses != null) addresses.Text = p?.Pair != null ? $"本机 10.129.129.{p.Slot}    ·    对端 10.129.129.{3-p.Slot}" + (s?.RttMs is { } rtt ? $"    ·    {rtt:F1} ms" : "") : "配对成功后显示双方虚拟 IP";
+        if (networkState != null) { networkState.Text = s?.State ?? (p?.Pair != null || p?.Mesh != null ? "已配对，网络未启动" : "尚未配对"); networkState.ForeColor = s?.Connected == true ? Color.FromArgb(29, 139, 102) : Design.Ink; }
+        if (addresses != null) addresses.Text = p?.Pair != null ? $"本机 10.129.129.{p.Slot}    ·    对端 10.129.129.{3-p.Slot}" + (s?.RttMs is { } rtt ? $"    ·    {rtt:F1} ms" : "") : "配对成功后显示成员虚拟 IP";
         if (localDevice != null) localDevice.Text = "●  " + (p?.DeviceName ?? Environment.MachineName) + "  ·  本机";
         if (peerDevice != null) peerDevice.Text = "●  " + (s?.PeerName is { Length: > 0 } name ? name : "另一台设备") + (s?.Connected == true ? "  ·  已直连" : "  ·  等待连接");
-        if (quality != null) quality.Text = last?.Quality is { Length: > 0 } q ? q : s?.Detail ?? "业务数据仅在两台设备间传输。";
+        if (quality != null) quality.Text = last?.Quality is { Length: > 0 } q ? q : s?.Detail ?? "业务数据由设备间直接传输。";
+        if (p?.Mesh is { } mesh && addresses != null) addresses.Text = "本机 " + mesh.LocalIp + "    ·    " + (mesh.IsOwner ? "网络创建者" : "网络成员") + "    ·    原生 IPv4 组网";
+        UpdateMembers();
         modeLabel.Text = backend.IsService ? "服务模式 · 关闭界面后继续连接" : preferences.Tray && preferences.CloseToTray ? "前台模式 · 关闭窗口后驻留托盘，退出程序时断开" : "前台模式 · 退出程序时断开，可在设置中安装开机服务";
         if (room != null && pairText != null && pairHint != null && page != "settings") {
             if (owner && page == "create") pairText.Text = string.Join(" ", room.Code.ToCharArray());

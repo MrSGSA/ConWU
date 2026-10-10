@@ -14,6 +14,7 @@ public sealed class ControlWorker : BackgroundService
     CancellationTokenSource? runStop;
     Task? running, measuring;
     NetworkRunner? runner;
+    MeshRunner? meshRunner;
     string quality = "";
     readonly SemaphoreSlim requests = new(1, 1);
     readonly FileStream lease;
@@ -44,15 +45,21 @@ public sealed class ControlWorker : BackgroundService
     void Begin()
     {
         if (running != null && !running.IsCompleted) return;
+        if (profile.Mesh == null && profile.Pair != null && !File.Exists(Path.Combine(AppContext.BaseDirectory, "components", "easytier-core.exe"))) {
+            lock (sync) status = new("旧网络需要迁移", "", "", profile.Pair.Mode, false, null, "此轻量包仅包含原生组网。原配对已保留；请在双方新版上创建并加入多机网络，或使用旧版恢复连接。");
+            return;
+        }
         runStop?.Dispose(); runStop = new();
         var copy = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(profile))!;
         var token = runStop.Token;
         running = Task.Run(async () => {
             while (!token.IsCancellationRequested)
             {
-                runner = new(copy, Log, s => { lock (sync) status = s; }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); } });
-                try { await runner.Run(token); }
+                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) status = s; }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); } } });
+                else runner = new(copy, Log, s => { lock (sync) status = s; }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); } });
+                try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
+                catch (MeshRevokedException ex) { lock (sync) { profile.Enabled = false; store.Save(profile); status = new("已移出网络", "", "", "faketcp", false, null, ex.Message); } Log(ex.Message); break; }
                 catch (Exception ex) { Log("后台连接将重试：" + ex.Message); }
                 try { await Task.Delay(10000, token); } catch (OperationCanceledException) { break; }
             }
@@ -62,7 +69,7 @@ public sealed class ControlWorker : BackgroundService
     {
         runStop?.Cancel(); if (running != null) { try { await running; } catch (OperationCanceledException) { } }
         if (measuring != null) { try { await measuring; } catch { } }
-        running = null; runner = null; lock (sync) { quality = ""; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); }
+        running = null; runner = null; meshRunner = null; lock (sync) { quality = ""; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); }
     }
     ControlReply Reply(string error = "")
     {
@@ -73,31 +80,47 @@ public sealed class ControlWorker : BackgroundService
         await requests.WaitAsync();
         try
         {
+            string issued = "";
             switch (request.Command)
             {
                 case "status": break;
+                case "mesh-create":
+                case "mesh-join":
+                    var mesh = request.Command == "mesh-create" ? MeshIdentity.Create(request.Service, request.Pin, request.Mode) : MeshIdentity.Import(request.Invite);
+                    await End(); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.Slot = 1; profile.LastEntry = 0; store.Save(profile); } break;
+                case "mesh-invite":
+                    lock (sync) {
+                        var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
+                        issued = MeshIdentity.Export(MeshIdentity.Issue(network)); store.Save(profile);
+                        meshRunner?.UpdateDirectory(network.Directory!);
+                    } break;
+                case "mesh-revoke":
+                    lock (sync) {
+                        var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
+                        MeshIdentity.Revoke(network, request.PeerSlot); store.Save(profile); meshRunner?.UpdateDirectory(network.Directory!);
+                    } break;
                 case "create":
                 case "join":
                     var pair = request.Command == "create" ? Pairing.Create(request.Service, request.Pin, request.Mode) : Pairing.Import(request.Invite);
-                    await End(); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; store.Save(profile); } break;
+                    await End(); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Mesh = null; profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; store.Save(profile); } break;
                 case "save":
                     var updated = request.Profile ?? throw new FormatException("配置为空"); updated.Validate();
-                    if (updated.Device != profile.Device || updated.Pair != profile.Pair || updated.Slot != profile.Slot) throw new FormatException("不能通过设置修改配对身份");
+                    if (updated.Device != profile.Device || updated.Pair != profile.Pair || updated.Slot != profile.Slot || JsonSerializer.Serialize(updated.Mesh) != JsonSerializer.Serialize(profile.Mesh)) throw new FormatException("不能通过设置修改配对身份");
                     bool resume = profile.Enabled; await End(); lock (sync) { updated.Enabled = resume; profile = updated; store.Save(profile); } if (resume) Begin(); break;
                 case "start":
-                    lock (sync) { if (profile.Pair == null) throw new IOException("请先创建或加入网络"); profile.Enabled = true; profile.Validate(); store.Save(profile); } Begin(); break;
+                    lock (sync) { if (profile.Pair == null && profile.Mesh == null) throw new IOException("请先创建或加入网络"); profile.Enabled = true; profile.Validate(); store.Save(profile); } Begin(); break;
                 case "stop":
                     lock (sync) { profile.Enabled = false; store.Save(profile); } await End(); break;
                 case "quality":
-                    if (status?.Connected != true || runner == null) throw new IOException("请先连接对端");
+                    if (status?.Connected != true || runner == null && meshRunner == null) throw new IOException("请先连接对端");
                     if (request.Mbps is < 1 or > 60) throw new FormatException("测试速率需为 1–60 Mbps");
                     if (measuring != null && !measuring.IsCompleted) throw new IOException("已有质量测试在运行");
                     quality = "正在测试，20 秒后显示结果";
-                    var current = runner; var token = runStop!.Token;
-                    measuring = Task.Run(async () => { try { var r = await current.Measure(request.Mbps, token); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { lock (sync) quality = "测试未完成：" + ex.Message; } }); break;
+                    var current = runner; var currentMesh = meshRunner; var token = runStop!.Token;
+                    measuring = Task.Run(async () => { try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, token) : await current!.Measure(request.Mbps, token); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { lock (sync) quality = "测试未完成：" + ex.Message; } }); break;
                 default: throw new FormatException("未知控制命令");
             }
-            return Reply();
+            return issued.Length > 0 ? Reply() with { Invite = issued } : Reply();
         }
         catch (Exception ex) { return Reply(ex.Message); }
         finally { requests.Release(); }

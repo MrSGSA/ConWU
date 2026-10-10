@@ -1,4 +1,4 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.3.2')
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.4.0',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -13,7 +13,11 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
         & dotnet run --project tests/StreamLink.ConnectionTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
-        & dotnet run --project tests/StreamLink.MappingTests -c Release -- (Join-Path $EasyTierDirectory 'easytier-core.exe')
+        & dotnet run --project tests/StreamLink.MeshTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
+        & dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe
+        if($LASTEXITCODE -ne 0) {throw 'Native multi-client protocol regression failed'}
+        if($IncludeLegacy) { & dotnet run --project tests/StreamLink.MappingTests -c Release -- (Join-Path $EasyTierDirectory 'easytier-core.exe') } else { & dotnet run --project tests/StreamLink.MappingTests -c Release }
         if($LASTEXITCODE -ne 0) {throw 'Router discovery regression failed'}
         & dotnet run --project tests/StreamLink.RenderingTests -c Release -- (Join-Path $root "artifacts/rendering-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Desktop rendering regression failed'}
@@ -38,8 +42,11 @@ try {
     }
     if((Get-AuthenticodeSignature (Join-Path $wd 'x64\WinDivert64.sys')).Status -ne 'Valid') {throw 'WinDivert driver signature is not valid'}
     if((Get-FileHash (Join-Path $wt 'bin\amd64\wintun.dll')).Hash -ne 'E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE') {throw 'Unexpected official Wintun binary'}
+    $version=$null
+    if($IncludeLegacy) {
     $version=& (Join-Path $EasyTierDirectory 'easytier-core.exe') --version
     if($version -notmatch '2\.6\.4-8428a89d') {throw 'This preview requires the tested EasyTier 2.6.4-8428a89d build'}
+    }
     $stage=Join-Path $root ('out\release-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     $components=Join-Path $stage 'components'; $licenses=Join-Path $stage 'licenses'
     New-Item -ItemType Directory -Path $components,$licenses -Force | Out-Null
@@ -55,7 +62,8 @@ try {
     Copy-Item -LiteralPath $NativeBinary -Destination $components\udp2raw-native.exe
     Copy-Item (Join-Path $wd 'x64\WinDivert.dll'),(Join-Path $wd 'x64\WinDivert64.sys') $components
     Copy-Item (Join-Path $wt 'bin\amd64\wintun.dll') $components
-    foreach($name in @('easytier-core.exe','easytier-cli.exe')) {Copy-Item -LiteralPath (Join-Path $EasyTierDirectory $name) -Destination $components}
+    Copy-Item -LiteralPath 'out/native/streamlink-tun.dll' -Destination $components
+    if($IncludeLegacy) {foreach($name in @('easytier-core.exe','easytier-cli.exe')) {Copy-Item -LiteralPath (Join-Path $EasyTierDirectory $name) -Destination $components}}
     Copy-Item .\LICENSE $licenses\StreamLink-MIT.txt
     Copy-Item .\transport\udp2raw\LICENSE.md $licenses\udp2raw-MIT.txt
     Copy-Item (Join-Path $wd 'LICENSE') $licenses\WinDivert-LGPL.txt
@@ -67,6 +75,7 @@ try {
     Copy-Item (Join-Path $nuget 'microsoft.extensions.hosting.windowsservices\10.0.12\THIRD-PARTY-NOTICES.TXT') $licenses\dotnet-windowsservices-notices.txt
     $sources=Join-Path $stage 'sources'
     New-Item -ItemType Directory -Path $sources -Force | Out-Null
+    if($IncludeLegacy) {
     $etSource=Join-Path $downloads 'EasyTier-8428a89d.zip'
     if(-not(Test-Path $etSource)) {
         if(Test-Path '..\research-sources\easytier\.git') {
@@ -81,12 +90,13 @@ try {
         if(-not $licenseEntry) {throw 'EasyTier source license missing'}
         [IO.Compression.ZipFileExtensions]::ExtractToFile($licenseEntry,(Join-Path $licenses 'EasyTier-LGPL-3.0.txt'),$true)
     } finally {$etArchive.Dispose()}
+    }
     $wdSource=Join-Path $downloads 'WinDivert-v2.2.2-source.zip'
     if(-not(Test-Path $wdSource)) {Invoke-WebRequest 'https://codeload.github.com/basil00/WinDivert/zip/refs/tags/v2.2.2' -OutFile $wdSource}
     Copy-Item $wdSource $sources
-    Copy-Item .\docs\初版使用说明.md $stage\使用说明.md
-    Copy-Item .\docs\发布依赖说明.txt $stage\第三方组件.txt
-    Copy-Item .\docs\releases\0.3-development.md $stage\本版验证说明.md
+    Copy-Item .\docs\native-mesh-0.4.txt $stage\使用说明.txt
+    Copy-Item .\docs\native-mesh-0.4-dependencies.txt $stage\第三方组件.txt
+    Copy-Item .\docs\native-mesh-0.4.txt $stage\原生多机网络说明.txt
     $releaseNotes = Join-Path $root "docs/releases/v$releaseVersion-preview.md"
     if(Test-Path $releaseNotes) {Copy-Item -LiteralPath $releaseNotes -Destination $stage\版本更新说明.md}
     Copy-Item .\docs\初版实测报告-20261010.md $stage\历史实测报告-0.2.md
@@ -99,7 +109,7 @@ try {
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
         [ordered]@{path=[IO.Path]::GetRelativePath($stage,$_.FullName);length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash}
     })
-    [ordered]@{version="$releaseVersion-preview";built=(Get-Date -Format o);architecture='win-x64';easytier=$version;files=$files} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
+    [ordered]@{version="$releaseVersion-preview";built=(Get-Date -Format o);architecture='win-x64';networkBackend='native-wintun';meshProtocol=4;easytier=$version;files=$files} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
     $release=Join-Path $root 'artifacts\releases'
     New-Item -ItemType Directory -Path $release -Force | Out-Null
     $zip=Join-Path $release "StreamLink-$releaseVersion-win-x64-preview.zip"

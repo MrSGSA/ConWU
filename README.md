@@ -1,17 +1,19 @@
 # StreamLink — Windows P2P 直连组网
 
-通过自动映射与 udp2raw 为两台 Windows 提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由两端直传。
+通过自动映射与 udp2raw 为 Windows 设备提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由设备间直传。
 
-**0.3.2 预览版**优化入口公告与组件启动的并行调度、路由器发现和连接状态反馈，补充阶段计时。保留 0.3.1 的滚动修复、6 位配对码、可选后台服务及托盘。原生 udp2raw 数据面不变。GUI 仍需管理员权限。
+**当前开发分支为 0.4.0 原生多机预览版，本地候选尚未完成公网验收。** 使用官方 Wintun 驱动和自主组网层，默认包不含 EasyTier；每网络最多 8 台设备，提供独立成员凭据、逐设备连接状态及按钮动效。两台现用设备仍保留 0.3.2，公网协调服务尚未升级。详见 [0.4 使用、验证与回退说明](docs/native-mesh-0.4.txt)。GUI 仍需管理员权限。
 
 ## 下载与使用
 
-- [v0.3.2-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.2-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号；[0.3.1](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview) 保留用于回退。
+- [v0.3.2-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.2-preview)：现有双机版本。0.4 候选由本分支构建，尚未替换 GitHub Release。私有仓库下载需要登录有权限的 GitHub 账号；[0.3.1](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview) 保留用于回退。
 - [使用说明](docs/初版使用说明.md)：服务器设置、6 位短码、服务/前台模式、升级与回退。
 - [0.3.2 连接优化与实测](docs/releases/v0.3.2-preview.md)、[后续演进与瓶颈分析](docs/演进路线与连接启动分析.md)、[0.3.1 滚动修复](docs/releases/v0.3.1-preview.md)、[0.3 验收记录](docs/releases/0.3-development.md)。
 - [历史公网实测](docs/初版实测报告-20261010.md)、[来源与依赖](docs/来源与依赖.md)、[发布组件](docs/发布依赖说明.txt)。
 
-两端解压完整包，管理员运行 StreamLink.exe，在设置中填写同一个自托管 HTTPS 协调地址。一端创建、另一端输入 6 位配对码点击加入；核对双方校验码后由创建端批准。实际直连成功后显示虚拟 IP 10.129.129.1 / .2。公共协调服务器尚未提供，界面保留选择占位。
+0.4 需要支持 `meshProtocol:4` 的协调服务，继续兼容旧版公告与短码接口。设备解压完整包，管理员运行 StreamLink.exe，在设置中填写同一个自托管 HTTPS 协调地址。一端创建、其他设备逐台输入 6 位配对码点击加入；核对双方校验码后由创建端批准。新网段根据网络身份分配，界面显示各成员 IP。创建者可继续邀请或移除单个成员。公共协调服务器尚未提供，界面保留选择占位。
+
+0.3.x 配对需要在双方升级后重新创建为 0.4 网络，轻量包不会自动迁移或恢复旧 EasyTier 后端。替换旧配对前会在本机受限配置目录保存 DPAPI 备份。不要单端升级现用连接；旧版说明中的固定 IP 与公网测速结果仅适用于旧版。
 
 首次运行不会自动安装服务。前台模式可驻留托盘；需要未登录自动连接时，在设置中明确安装后台服务。服务模式关闭界面后继续组网，点击停止网络才断开。
 
@@ -19,13 +21,15 @@
 
 - WinDivert 原生 udp2raw 双端，FakeTCP + 明文 HTTP 特征；TCP STUN 持续保活、UPnP 短租约、成功入口记忆，也支持已有 Lucky 端点。
 - TCP/UDP 可选，UDP 映射为实验模式。当前不是完整的通用 NAT 打洞框架，不保证双方严格对称 NAT 可连接。
-- 保留固定 EasyTier 2.6.4 core/cli 负责本地虚拟网络，公网数据仅经 udp2raw。未集成 EasyTier Manager GUI。后续替换网络内核需要单独性能和兼容性验证。
+- 默认使用官方签名 Wintun 0.14.1 驱动，自主管理网卡、IPv4 数据报、成员认证、重放窗口和心跳。每台设备一张网卡，各设备对独立连接；连接变化不重建其他成员的网卡。旧 EasyTier 后端仅保留源码兼容路径，可通过 `-IncludeLegacy` 附带旧组件。
 - 6 位码仅定位 5 分钟临时房间；P-256 ECDH 公钥承诺、校验码核对和 AES-GCM 保护长期邀请。不是把 6 位数字当强加密密码，协议尚待独立安全审计。
 - 协调服务仅保存身份槽位与加密端点公告，没有业务转发接口。现为自托管预览，未完成公共多租户运营能力。
-- 当前每台设备一组双端配对，不是多人 Mesh；固定 10.129.129.0/24，冲突时拒绝启动。
+- 每台设备加入一个最多 8 成员的网络，IPv4 单播直连，不转发其他成员流量。A-B、A-C 可连不意味着 B-C 能连。成员证书和目录由创建者签名，各链路采用 ECDH/HKDF/AES-GCM；长期身份密钥暂不提供前向保密。广播、多播及 IPv6 尚不支持。
 - HTTP 特征不是 HTTPS。历史网络中纯 UDP 仍受约 6 Mbps 限制；不承诺任意环境永久绕过 QoS。
 
-0.3.2 双端实测：50 Mbps、20 秒，104142/104142 包，49.98816 Mbps，零丢包，单次 RTT 采样 14.95 ms。Thinkbook 单端服务重启旧版 56.259 秒、新版 52.343 秒（各一次）；改善有限，剩余等待主要在本机虚拟网卡初始化阶段。全新系统、长期运行、冷启动及休眠换网仍需验证。已有服务需明确更新后台才会使用新版逻辑，无需重新配对。
+0.4 本地验证覆盖三节点路由、udp2raw FakeTCP + HTTP 多客户端回环、真实 Wintun 与 Windows UDP socket 往返、独立 HTTPS 协调服务，以及旧配对、服务生命周期和高 DPI 渲染回归。回环结果不能证明公网性能；Akane 离线，新版的 50 Mbps、第三台真实设备、冷启动和休眠换网仍待实测。
+
+历史 0.3.2 双端实测：50 Mbps、20 秒，104142/104142 包，49.98816 Mbps，零丢包，单次 RTT 14.95 ms。单端服务重启从 56.259 秒到 52.343 秒（各一次），改善有限。上述结果不可沿用为 0.4 成绩。
 
 ## 开发
 
@@ -37,9 +41,11 @@ dotnet run --project tests/StreamLink.Tests -c Release
 dotnet run --project tests/StreamLink.PairingTests -c Release
 dotnet run --project tests/StreamLink.WindowsTests -c Release
 dotnet run --project tests/StreamLink.ConnectionTests -c Release
-dotnet run --project tests/StreamLink.MappingTests -c Release -- 'EasyTier 2.6.4 的 easytier-core.exe 路径'
+dotnet run --project tests/StreamLink.MappingTests -c Release
+dotnet run --project tests/StreamLink.MeshTests -c Release
+dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe
 .\scripts\Test-Coordination.ps1
-.\scripts\Package.ps1 -EasyTierDirectory '已验证的 EasyTier 2.6.4 二进制目录'
+.\scripts\Package.ps1
 ```
 
 WindowsTests 使用隔离配置目录，不注册真实服务、不更改生产网络。Test-Coordination 启动独立本地 HTTPS 测试服务，结束后停止。Package 校验签名驱动、生成每文件 SHA-256 清单并附依赖许可证与对应源码。Windows GUI/服务共用一套 .NET 10.0.12 运行时，CLI 保留在源码中，不再放入日常运行包。
@@ -53,6 +59,7 @@ WindowsTests 使用隔离配置目录，不注册真实服务、不更改生产�
 | src/StreamLink.Service | 可复用前台/后台控制、持久配置、自动连接 |
 | src/StreamLink.Discovery | 短码与加密端点协调服务 |
 | transport/udp2raw | 固定 HTTP 分支及原生 Windows 移植 |
+| transport/tun | Wintun 与 Windows IP Helper 原生桥接 |
 | tests / scripts | 回归、构建、打包及独立部署 |
 | docs | 使用、证据、架构及后续工作 |
 

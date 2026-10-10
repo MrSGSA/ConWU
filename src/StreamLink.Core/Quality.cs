@@ -21,11 +21,12 @@ public static class Quality
         if (m.Mbps is < 1 or > 60 || m.Seconds is < 1 or > 20 || m.Mac?.Length != 64) return false;
         try { return CryptographicOperations.FixedTimeEquals(Convert.FromHexString(m.Mac), Convert.FromHexString(Mac(key, m.Id, m.Mbps, m.Seconds))); } catch(FormatException) { return false; }
     }
-    public static async Task Serve(string local, string peer, string key, CancellationToken token)
+    public static Task Serve(string local, string peer, string key, CancellationToken token)
+        => Serve(local, address => address.Equals(IPAddress.Parse(peer)) ? key : null, token);
+    public static async Task Serve(string local, Func<IPAddress, string?> authorize, CancellationToken token)
     {
         using var socket = new UdpClient(new IPEndPoint(IPAddress.Parse(local), Port));
-        var peerIp = IPAddress.Parse(peer);
-        var replies = new Dictionary<ulong, QualityMessage>();
+        var replies = new Dictionary<(IPAddress Address, ulong Id), QualityMessage>();
         Task? sending = null;
         async Task Send(QualityMessage request, IPEndPoint remote)
         {
@@ -43,7 +44,7 @@ public static class Quality
                 await Task.Delay(1, token);
             }
             var done = request with { Op = "done", Count = sent };
-            lock(replies) { if(replies.Count >= 64) replies.Remove(replies.Keys.First()); replies[request.Id] = done; }
+            lock(replies) { if(replies.Count >= 64) replies.Remove(replies.Keys.First()); replies[(remote.Address, request.Id)] = done; }
             await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(done), remote, token);
         }
         try
@@ -51,11 +52,12 @@ public static class Quality
             while(!token.IsCancellationRequested)
             {
                 var data = await socket.ReceiveAsync(token);
-                if(!data.RemoteEndPoint.Address.Equals(peerIp) || data.Buffer.Length > 512) continue;
+                if(data.Buffer.Length > 512) continue;
+                string? key = authorize(data.RemoteEndPoint.Address); if (key == null) continue;
                 QualityMessage? request;
                 try { request = JsonSerializer.Deserialize<QualityMessage>(data.Buffer); } catch(JsonException) { continue; }
                 if(request == null || !Valid(request,key)) continue;
-                QualityMessage? prior; lock(replies) replies.TryGetValue(request.Id,out prior);
+                QualityMessage? prior; lock(replies) replies.TryGetValue((data.RemoteEndPoint.Address, request.Id),out prior);
                 if(prior != null) { await socket.SendAsync(JsonSerializer.SerializeToUtf8Bytes(prior),data.RemoteEndPoint,token); continue; }
                 if(request.Op == "start" && (sending == null || sending.IsCompleted)) sending = Send(request,data.RemoteEndPoint);
             }

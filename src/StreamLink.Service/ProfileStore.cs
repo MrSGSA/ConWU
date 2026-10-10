@@ -30,4 +30,11 @@ public sealed class ProfileStore
         profile.Validate();
         File.WriteAllBytes(file + ".tmp", ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)); File.Move(file + ".tmp", file, true);
     }
+    public void BackupLegacy(DeviceProfile profile)
+    {
+        if (profile.Pair == null || profile.Mesh != null) return;
+        profile.Validate();
+        string backup = Path.Combine(Root, "profile-before-native-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8] + ".dpapi");
+        File.WriteAllBytes(backup, ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine));
+    }
 }

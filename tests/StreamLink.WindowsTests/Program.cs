@@ -38,6 +38,22 @@ static class Program
         using (var worker = new ControlWorker()) {
             var reply = await worker.Handle(new("status"));
             Check(reply.Profile!.Pair == saved && reply.Profile.DeviceName == "Lifecycle test" && !reply.Profile.Enabled, "Persistence/lease release failed");
+            reply = await worker.Handle(new("mesh-create", Service: "https://example.com/", Mode: "faketcp"));
+            Check(reply.Ok && reply.Profile!.Mesh!.IsOwner && reply.Profile.Pair == null && !reply.Profile.Enabled, "Native creation must persist without changing live network");
+            string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
+            var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
+            Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");
+            reply = await worker.Handle(new("mesh-invite"));
+            var member = MeshIdentity.Import(reply.Invite);
+            Check(reply.Ok && member.Self.Slot == 2 && !member.IsOwner && reply.Profile!.Mesh!.Directory!.Members.Length == 2, "Native invitation lost independent member identity");
+            Check(!(await worker.Handle(new("mesh-revoke", PeerSlot: 1))).Ok, "Administrator removed itself");
+            Check((await worker.Handle(new("mesh-revoke", PeerSlot: 2))).Ok, "Single-member revocation failed");
+            var changed = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(reply.Profile))!;
+            changed.Mesh!.Self = member.Self;
+            Check(!(await worker.Handle(new("save", changed))).Ok, "Settings replaced the native identity");
+            reply = await worker.Handle(new("mesh-join", Invite: reply.Invite));
+            Check(reply.Ok && !reply.Profile!.Mesh!.IsOwner, "Native member import failed");
+            Check(!(await worker.Handle(new("mesh-invite"))).Ok, "Guest issued a new member credential");
             await worker.StopLocal();
         }
         string source = Path.Combine(root, "bundle"), parent = Path.Combine(root, "install"), destination = Path.Combine(parent, "candidate");

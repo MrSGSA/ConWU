@@ -9,7 +9,7 @@ if ! id streamlink-coordination >/dev/null 2>&1; then
 fi
 install -d -m 755 /opt/streamlink-coordination
 install -d -m 700 -o streamlink-coordination -g streamlink-coordination /var/lib/streamlink-coordination
-version="0.3.0-$(date +%Y%m%d%H%M%S)"
+version="0.4.0-$(date +%Y%m%d%H%M%S)"
 install -d -m 755 "/opt/streamlink-coordination/$version"
 install -m 755 "$binary" "/opt/streamlink-coordination/$version/StreamLink.Discovery"
 cat > /etc/systemd/system/streamlink-coordination.service <<EOF

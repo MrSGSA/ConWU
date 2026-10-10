@@ -53,8 +53,10 @@ public sealed class PairKeyExchange : IDisposable
     }
     public static string Verification(byte[] shared) => (BitConverter.ToUInt32(HMACSHA256.HashData(shared, "verification"u8.ToArray()), 0) % 1_000_000).ToString("D6");
     public static string Encrypt(byte[] shared, Pairing pair, string room, string candidate)
+        => EncryptInvitation(shared, pair.Invite(), room, candidate);
+    public static string EncryptInvitation(byte[] shared, string invitation, string room, string candidate)
     {
-        byte[] plain = Encoding.UTF8.GetBytes(pair.Invite()), nonce = RandomNumberGenerator.GetBytes(12), cipher = new byte[plain.Length], tag = new byte[16];
+        byte[] plain = Encoding.UTF8.GetBytes(invitation), nonce = RandomNumberGenerator.GetBytes(12), cipher = new byte[plain.Length], tag = new byte[16];
         try {
             using var aes = new AesGcm(shared, 16); aes.Encrypt(nonce, plain, cipher, tag, Encoding.UTF8.GetBytes(room + "/" + candidate));
             return Convert.ToBase64String(nonce.Concat(tag).Concat(cipher).ToArray());
@@ -62,14 +64,18 @@ public sealed class PairKeyExchange : IDisposable
     }
     public static Pairing Decrypt(byte[] shared, string cipher, string room, string candidate, string service, string pin)
     {
+        var pair = Pairing.Import(DecryptInvitation(shared, cipher, room, candidate));
+        if (new Uri(pair.Service) != new Uri(service) || !pair.CertificatePin.Equals(pin, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("邀请中的协调服务器不符");
+        return pair;
+    }
+    public static string DecryptInvitation(byte[] shared, string cipher, string room, string candidate)
+    {
         if (cipher is null || cipher.Length > 6000) throw new FormatException("加密邀请过大");
         byte[] data = Convert.FromBase64String(cipher); if (data.Length < 29) throw new FormatException("加密邀请截断");
         byte[] plain = new byte[data.Length - 28]; using var aes = new AesGcm(shared, 16);
         aes.Decrypt(data.AsSpan(0, 12), data.AsSpan(28), data.AsSpan(12, 16), plain, Encoding.UTF8.GetBytes(room + "/" + candidate));
         try {
-            var pair = Pairing.Import(Encoding.UTF8.GetString(plain));
-            if (new Uri(pair.Service) != new Uri(service) || !pair.CertificatePin.Equals(pin, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("邀请中的协调服务器不符");
-            return pair;
+            return Encoding.UTF8.GetString(plain);
         } finally { CryptographicOperations.ZeroMemory(plain); }
     }
     public void Dispose() => key.Dispose();
@@ -98,6 +104,13 @@ public sealed class ShortPairClient : IDisposable
         return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
     }
     public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name), null, cancel);
+    public async Task RequireMeshSupport(CancellationToken cancel)
+    {
+        using var response = await http.GetAsync("health", cancel); response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancel));
+        if (!document.RootElement.TryGetProperty("meshProtocol", out var version) || version.GetInt32() != 4)
+            throw new IOException("协调服务器尚未支持多机网络。请先升级服务器至 0.4，再创建或加入网络；当前连接已保留。");
+    }
     public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel)
     {
         if (!Regex.IsMatch(code, "^[0-9]{6}$")) throw new FormatException("请输入 6 位数字配对码");
