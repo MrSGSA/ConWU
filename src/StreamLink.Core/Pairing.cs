@@ -7,18 +7,19 @@ using System.Text.RegularExpressions;
 
 namespace StreamLink.Core;
 
-public sealed record Pairing(string Network, string Secret, string Service, string CertificatePin)
+public sealed record Pairing(string Network, string Secret, string Service, string CertificatePin, string Mode = "faketcp")
 {
-    public static Pairing Create(string service, string pin)
+    public static Pairing Create(string service, string pin, string mode = "faketcp")
     {
         var ticket = Invitation.Create("127.0.0.1:1", "faketcp", "");
-        var pair = new Pairing(ticket.Network, ticket.Secret, service, pin); pair.Validate(); return pair;
+        var pair = new Pairing(ticket.Network, ticket.Secret, service, pin, mode); pair.Validate(); return pair;
     }
     public void Validate()
     {
         if (!Guid.TryParseExact(Network, "N", out _) || !Regex.IsMatch(Secret ?? "", "^[A-Za-z0-9_-]{43}$")) throw new FormatException("配对身份无效");
         if (!Uri.TryCreate(Service, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.UserInfo.Length != 0 || !uri.AbsolutePath.EndsWith('/') || uri.Query.Length != 0 || uri.Fragment.Length != 0) throw new FormatException("发现服务必须是以 / 结尾的 HTTPS 地址");
         if (CertificatePin is null || (CertificatePin.Length != 0 && !Regex.IsMatch(CertificatePin, "^[A-Fa-f0-9]{64}$"))) throw new FormatException("证书指纹无效");
+        if (Mode is not ("faketcp" or "udp")) throw new FormatException("传输方式无效");
     }
     public byte[] Key(string purpose) => HMACSHA256.HashData(Encoding.UTF8.GetBytes(Secret), Encoding.UTF8.GetBytes("streamlink-v2/" + purpose));
     public string Auth => Convert.ToHexString(Key("discovery-auth"));
@@ -56,11 +57,12 @@ public sealed record Pairing(string Network, string Secret, string Service, stri
 }
 public sealed record PairInvite(Pairing Pair, long Expires);
 public sealed record Envelope(string Device, long Revision, string Data);
-public sealed record NodeAnnouncement(string Device, int Slot, long Revision, long Expires, string Endpoint, string Preference, int LastEntry, int SelectedEntry, bool Connected)
+public sealed record NodeAnnouncement(string Device, int Slot, long Revision, long Expires, string Endpoint, string Preference, int LastEntry, int SelectedEntry, bool Connected, string Name = "")
 {
     public void Validate()
     {
         if (!Guid.TryParseExact(Device, "N", out _) || Slot is < 1 or > 2 || Revision <= 0 || LastEntry is < 0 or > 2 || SelectedEntry is < 0 or > 2 || Preference is not ("auto" or "local" or "peer")) throw new FormatException("设备公告无效");
+        if (Name is null || Name.Length > 64 || Name.Any(char.IsControl)) throw new FormatException("设备名称无效");
         if (Endpoint != "" && (!IPEndPoint.TryParse(Endpoint, out var ep) || ep.Address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || ep.Address.Equals(IPAddress.Any) || ep.Port == 0)) throw new FormatException("候选端点无效");
     }
 }

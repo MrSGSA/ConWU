@@ -24,7 +24,7 @@ public sealed class ChildJob : IDisposable
         if (handle == IntPtr.Zero || !SetInformationJobObject(handle, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()))
         { if (handle != IntPtr.Zero) CloseHandle(handle); throw new IOException("无法建立子进程生命周期约束"); }
     }
-    public Process Start(string exe, IEnumerable<string> args, string logPath, IDictionary<string, string>? environment = null)
+    public Process Start(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment = null, IEnumerable<string>? secrets = null)
     {
         var info = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(exe)!, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("ET_", StringComparison.Ordinal) || k.StartsWith("STREAMLINK_", StringComparison.Ordinal)).ToArray()) info.Environment.Remove(key);
@@ -34,11 +34,12 @@ public sealed class ChildJob : IDisposable
         if (!process.Start()) throw new IOException("无法启动配套组件");
         if (!AssignProcessToJobObject(handle, process.Handle)) { process.Kill(); process.Dispose(); throw new IOException("无法托管配套组件，已停止启动"); }
         children.Add(process);
-        var writer = new StreamWriter(logPath, false) { AutoFlush = true };
+        var writer = logPath == null ? null : new StreamWriter(logPath, false) { AutoFlush = true };
+        string[] redactions = (secrets ?? []).Where(x => x.Length > 0).Distinct().OrderByDescending(x => x.Length).ToArray();
         var sync = new object();
-        void Record(object sender, DataReceivedEventArgs e) { if(e.Data != null) lock(sync) { try { writer.WriteLine(e.Data); } catch(ObjectDisposedException) { } } }
+        void Record(object sender, DataReceivedEventArgs e) { if(e.Data != null) lock(sync) { try { string line = e.Data; foreach (string secret in redactions) line = line.Replace(secret, "[redacted]", StringComparison.Ordinal); writer?.WriteLine(line); } catch(Exception ex) when (ex is ObjectDisposedException or IOException) { } } }
         process.OutputDataReceived += Record; process.ErrorDataReceived += Record;
-        process.EnableRaisingEvents = true; process.Exited += (_, _) => { lock(sync) writer.Dispose(); };
+        process.EnableRaisingEvents = true; process.Exited += (_, _) => { lock(sync) writer?.Dispose(); };
         process.BeginOutputReadLine(); process.BeginErrorReadLine(); return process;
     }
     public bool AnyExited => children.Any(p => p.HasExited);

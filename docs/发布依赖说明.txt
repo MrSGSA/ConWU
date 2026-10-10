@@ -1,4 +1,4 @@
-StreamLink 0.2.0-preview — Windows x64
+StreamLink 0.3.0-preview — Windows x64
 
 新增 .NET 控制程序、界面、独立映射管理与本项目修改使用 MIT，见 licenses/StreamLink-MIT.txt。
 第三方组件各自适用原许可证。所有组件保持可替换的独立文件/进程；本软件不禁止用户为调试其修改而进行所需的分析或替换。
@@ -6,7 +6,7 @@ StreamLink 0.2.0-preview — Windows x64
 1. udp2raw HTTP fork
    来源: https://github.com/MikeWang000000/udp2raw/tree/c4995eaad3576bd7bca872fe25bc93b519acdfdd
    上游 MIT；内嵌 AES/libev 等保留源码版权与许可。新增 Windows WinDivert 双端支持和实验 UDP 形态封装。
-   修改后完整源码、构建脚本和测试随 StreamLink-0.2.0-source.zip 提供。
+   修改后完整源码、构建脚本和测试随 StreamLink-0.3.0-source.zip 提供。
 
 2. EasyTier core / cli 2.6.4-8428a89d
    来源: https://github.com/EasyTier/EasyTier/tree/8428a89d2dabc94c97d370ec607c6ca142473626
@@ -36,3 +36,7 @@ StreamLink 0.2.0-preview — Windows x64
 本包是本地预览交付，应用 EXE 未签名。不要将预览测试等同于各种全新系统上的安装认证。
 
 0.2 新增 Microsoft.Extensions.Hosting.WindowsServices、System.Security.Cryptography.ProtectedData 10.0.12 与其 .NET 依赖，NuGet 声明 MIT。保留 .NET MIT 许可证与 WindowsServices 第三方声明。发现服务源码亦随源码包提供。
+
+0.3 中界面和服务共享一套 Microsoft.NETCore.App / Microsoft.WindowsDesktop.App 10.0.12 文件；不再分别打包重复运行时，日常包不再附带开发用 StreamLink.Cli。原生 udp2raw 与 EasyTier 二进制保持 0.2 版本。
+社区 TCP STUN 快照（2026-10-10）来源：https://github.com/pradt2/always-online-stun/blob/master/valid_hosts_tcp.txt；设置中可联网补充和自行编辑，不保证每个地址在用户网络均可达。
+彩白背景由内置 GPT-Image 工具生成；提示词随本项目源码的 src/StreamLink.App/Assets/image-prompt.txt 提供。

@@ -11,25 +11,26 @@ public sealed class NetworkRunner(DeviceProfile profile, Action<string> log, Act
         var pair = profile.Pair!;
         using var discovery = new DiscoveryClient(pair);
         using var mappingStop = CancellationTokenSource.CreateLinkedTokenSource(token);
-        IMapping? mapping = null; Task<TcpMapping>? pendingMapping = null; Task? maintain = null;
+        IMapping? mapping = null; Task<IMapping>? pendingMapping = null; Task? maintain = null;
         DateTime nextProbe = DateTime.MinValue, lastWarning = DateTime.MinValue, connectingSince = DateTime.UtcNow;
         NodeAnnouncement? peer = null;
         int selected = 0, failed = 0; string activeEndpoint = ""; long revision = DateTime.UtcNow.Ticks;
         bool remembered = false;
         string Candidate() => mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint;
-        NodeAnnouncement Own() => new(profile.Device, profile.Slot, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), Candidate(), profile.Preference, profile.LastEntry, profile.Slot == 1 ? selected : 0, session?.IsConnected == true);
+        NodeAnnouncement Own() => new(profile.Device, profile.Slot, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), Candidate(), profile.Preference, profile.LastEntry, profile.Slot == 1 ? selected : 0, session?.IsConnected == true, profile.DeviceName);
+        async Task<IMapping> Probe() => pair.Mode == "udp" ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, mappingStop.Token, profile.UdpStun, profile.Device) : await TcpMapping.Create(profile.SourcePort, profile.ListenPort, log, mappingStop.Token, profile.OrderedTcp(), profile.Device);
         try
         {
             while (!token.IsCancellationRequested)
             {
                 if (session?.IsConnected != true && mapping == null && pendingMapping == null && profile.ManualEndpoint.Length == 0 && DateTime.UtcNow >= nextProbe)
                 {
-                    pendingMapping = TcpMapping.Create(profile.SourcePort, profile.ListenPort, log, mappingStop.Token, profile.OrderedTcp(), profile.Device);
+                    pendingMapping = Probe();
                     log("正在探测本机入口能力，同时等待对端公告");
                 }
                 if (pendingMapping?.IsCompleted == true)
                 {
-                    try { mapping = await pendingMapping; maintain = mapping.Maintain(mappingStop.Token); profile.LastStun = ((TcpMapping)mapping).StunServer; remember(profile.LastEntry, profile.LastStun); }
+                    try { mapping = await pendingMapping; maintain = mapping.Maintain(mappingStop.Token); if (mapping is TcpMapping tcp) profile.LastStun = tcp.StunServer; remember(profile.LastEntry, profile.LastStun); }
                     catch (Exception ex) when (!token.IsCancellationRequested) { log("本机入口暂不可用：" + ex.Message); nextProbe = DateTime.UtcNow.AddSeconds(45); }
                     pendingMapping = null;
                 }
@@ -70,13 +71,13 @@ public sealed class NetworkRunner(DeviceProfile profile, Action<string> log, Act
                 if (session == null && selected != 0 && endpoint.Length > 0)
                 {
                     bool host = selected == profile.Slot;
-                    var ticket = new Invitation(1, pair.Network, pair.Secret, endpoint, "faketcp", "test.ustc.edu.cn", DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds());
+                    var ticket = new Invitation(1, pair.Network, pair.Secret, endpoint, pair.Mode, pair.Mode == "faketcp" ? "test.ustc.edu.cn" : "", DateTimeOffset.UtcNow.AddHours(24).ToUnixTimeSeconds());
                     var starting = new StreamSession(Path.Combine(AppContext.BaseDirectory, "components"), log, Path.Combine(ProfileStore.Root, "sessions"));
-                    starting.StatusChanged += report;
+                    starting.StatusChanged += s => report(s with { PeerName = peer?.Name ?? "" });
                     try
                     {
                         log($"协商入口为设备 {selected}，本机固定地址 10.129.129.{profile.Slot}");
-                        await starting.Start(new SessionOptions { Host = host, LocalSlot = profile.Slot, ListenPort = profile.ListenPort, PersistentTicket = ticket }, token, host ? mapping : null);
+                        await starting.Start(new SessionOptions { Host = host, LocalSlot = profile.Slot, ListenPort = profile.ListenPort, PersistentTicket = ticket, Mode = pair.Mode, LogLevel = profile.LogLevel, LogDirectory = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(ProfileStore.Root, "logs") }, token, host ? mapping : null);
                         session = starting; activeEndpoint = selected + "/" + endpoint; connectingSince = DateTime.UtcNow;
                     }
                     catch (Exception ex) when (!token.IsCancellationRequested) { await starting.DisposeAsync(); log("组件启动重试：" + ex.Message); }
@@ -85,7 +86,7 @@ public sealed class NetworkRunner(DeviceProfile profile, Action<string> log, Act
                 {
                     profile.LastEntry = selected; remember(selected, profile.LastStun); remembered = true; log("实际直连握手成功，已记忆入口方向");
                 }
-                if (session == null) report(new("等待自动协商", $"10.129.129.{profile.Slot}", $"10.129.129.{3 - profile.Slot}", "faketcp", false, null, Candidate().Length > 0 ? "本机已有候选映射，等待配对端上线" : "正在寻找可用入口；任一端需有可达映射"));
+                if (session == null) report(new("等待自动协商", $"10.129.129.{profile.Slot}", $"10.129.129.{3 - profile.Slot}", pair.Mode, false, null, Candidate().Length > 0 ? "本机已有候选映射，等待配对端上线" : "正在寻找可用入口；任一端需有可达映射", peer?.Name ?? ""));
                 await Task.Delay(5000, token);
             }
         }

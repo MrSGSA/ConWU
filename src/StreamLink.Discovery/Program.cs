@@ -4,6 +4,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Threading.RateLimiting;
 using StreamLink.Core;
+using StreamLink.Discovery;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Logging.ClearProviders(); // Do not log pairing IDs, authorization headers or payloads.
@@ -12,7 +13,11 @@ builder.Services.AddRateLimiter(o => {
     o.RejectionStatusCode = 429;
     o.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(_ => RateLimitPartition.GetFixedWindowLimiter("all", _ => new() { PermitLimit = 600, Window = TimeSpan.FromSeconds(1), QueueLimit = 0 }));
     o.AddPolicy("metadata", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["network"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    o.AddPolicy("pair-create", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    o.AddPolicy("pair-join", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    o.AddPolicy("pair-room", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["room"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
+static string ClientAddress(HttpContext c) => Environment.GetEnvironmentVariable("STREAMLINK_TRUST_CLOUDFLARE") == "1" && c.Connection.RemoteIpAddress is { } address && System.Net.IPAddress.IsLoopback(address) && System.Net.IPAddress.TryParse(c.Request.Headers["CF-Connecting-IP"].ToString(), out var forwarded) ? forwarded.ToString() : c.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 var app = builder.Build(); app.UseRateLimiter();
 app.Use(async (context, next) => { context.Response.Headers.CacheControl = "no-store"; await next(context); });
 string root = Environment.GetEnvironmentVariable("STREAMLINK_DISCOVERY_DATA") ?? Path.Combine(AppContext.BaseDirectory, "data"); Directory.CreateDirectory(root);
@@ -44,7 +49,16 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
         messages[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); return Results.NoContent();
     }
 }
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink discovery", protocol = 2, relay = false }));
+var pairRooms = new PairRooms();
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, relay = false }));
+app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
+app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
+app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");
+app.MapGet("/v2/pair/{room}/guest", (HttpContext c, string room) => pairRooms.Exchange(c, room, false)).RequireRateLimiting("pair-room");
+app.MapPost("/v2/pair/{room}/owner/reveal", (HttpContext c, string room, PairRoomReveal input) => pairRooms.Exchange(c, room, true, input)).RequireRateLimiting("pair-room");
+app.MapPost("/v2/pair/{room}/guest/reveal", (HttpContext c, string room, PairRoomReveal input) => pairRooms.Exchange(c, room, false, input)).RequireRateLimiting("pair-room");
+app.MapPost("/v2/pair/{room}/approve", (HttpContext c, string room, PairRoomApproval input) => pairRooms.Exchange(c, room, true, approve: input)).RequireRateLimiting("pair-room");
+app.MapDelete("/v2/pair/{room}", (HttpContext c, string room) => pairRooms.Exchange(c, room, true, close: true)).RequireRateLimiting("pair-room");
 app.MapGet("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot) => Exchange(c, network, slot, null)).RequireRateLimiting("metadata");
 app.MapPut("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot, Envelope envelope) => Exchange(c, network, slot, envelope)).RequireRateLimiting("metadata");
 app.Run();

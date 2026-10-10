@@ -1,6 +1,6 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild)
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe')
 $ErrorActionPreference='Stop'
-$releaseVersion='0.2.0'
+$releaseVersion='0.3.0'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
@@ -8,9 +8,14 @@ try {
         & .\scripts\Build.ps1 -Test
         & dotnet run --project tests/StreamLink.Tests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Core regression failed'}
-        foreach($project in @('StreamLink.Cli','StreamLink.App','StreamLink.Service')) {
-            $dest=switch($project) {'StreamLink.Cli' {'out/cli'} 'StreamLink.App' {'out/app'} 'StreamLink.Service' {'out/service'}}
-            & dotnet publish (Join-Path 'src' $project) -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true "-p:Version=$releaseVersion" -o $dest
+        & dotnet run --project tests/StreamLink.PairingTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'Pairing regression failed'}
+        & dotnet run --project tests/StreamLink.WindowsTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
+        & .\scripts\Test-Coordination.ps1
+        foreach($project in @('StreamLink.App','StreamLink.Service')) {
+            $dest=switch($project) {'StreamLink.App' {'out/app-0.3'} 'StreamLink.Service' {'out/service-0.3'}}
+            & dotnet publish (Join-Path 'src' $project) -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false "-p:Version=$releaseVersion" -o $dest
             if($LASTEXITCODE -ne 0) {throw "Publish failed: $project"}
         }
     }
@@ -33,8 +38,16 @@ try {
     $stage=Join-Path $root ('out\release-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
     $components=Join-Path $stage 'components'; $licenses=Join-Path $stage 'licenses'
     New-Item -ItemType Directory -Path $components,$licenses -Force | Out-Null
-    Copy-Item .\out\app\StreamLink.exe,.\out\cli\StreamLink.Cli.exe,.\out\service\StreamLink.Service.exe,.\discovery-defaults.json $stage
-    Copy-Item .\out\native\udp2raw-native.exe $components
+    foreach($published in @('out/app-0.3','out/service-0.3')) {
+        foreach($file in Get-ChildItem -LiteralPath $published -File -Recurse) {
+            $relative=[IO.Path]::GetRelativePath((Join-Path $root $published),$file.FullName)
+            if($file.Extension -eq '.pdb' -or $relative -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hant)[\\/]') {continue}
+            $target=Join-Path $stage $relative
+            New-Item -ItemType Directory -Path (Split-Path -Parent $target) -Force | Out-Null
+            if(Test-Path $target) {if((Get-FileHash $target).Hash -ne (Get-FileHash $file.FullName).Hash){throw "Conflicting shared dependency: $relative"}} else {Copy-Item -LiteralPath $file.FullName -Destination $target}
+        }
+    }
+    Copy-Item -LiteralPath $NativeBinary -Destination $components\udp2raw-native.exe
     Copy-Item (Join-Path $wd 'x64\WinDivert.dll'),(Join-Path $wd 'x64\WinDivert64.sys') $components
     Copy-Item (Join-Path $wt 'bin\amd64\wintun.dll') $components
     foreach($name in @('easytier-core.exe','easytier-cli.exe')) {Copy-Item -LiteralPath (Join-Path $EasyTierDirectory $name) -Destination $components}
@@ -68,7 +81,8 @@ try {
     Copy-Item $wdSource $sources
     Copy-Item .\docs\初版使用说明.md $stage\使用说明.md
     Copy-Item .\docs\发布依赖说明.txt $stage\第三方组件.txt
-    Copy-Item .\docs\初版实测报告-20261010.md $stage\实测报告.md
+    Copy-Item .\docs\releases\0.3-development.md $stage\本版验证说明.md
+    Copy-Item .\docs\初版实测报告-20261010.md $stage\历史实测报告-0.2.md
     Copy-Item .\docs\发现服务运维.txt $stage\发现服务运维.txt
     $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")
     if(Test-Path $verification) {Copy-Item $verification $stage\验证摘要.json}
@@ -85,7 +99,7 @@ try {
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force -CompressionLevel Optimal
     $sourceStage=Join-Path $stage 'source-stage'
     New-Item -ItemType Directory -Path $sourceStage -Force | Out-Null
-    $sourceFiles=@(& rg --files --hidden -g '!out/**' -g '!artifacts/**' -g '!.git/**' -g '!**/bin/**' -g '!**/obj/**' -g '!**/__pycache__/**' -g '!**/*.private.json' -g '!**/*.pfx' -g '!**/*.pem')
+    $sourceFiles=@(& rg --files --hidden -g '!out/**' -g '!artifacts/**' -g '!.git/**' -g '!**/bin/**' -g '!**/obj/**' -g '!**/__pycache__/**' -g '!**/*.private.json' -g '!**/*.pfx' -g '!**/*.pem' -g '!**/*.key' -g '!**/*.dpapi' -g '!**/.env')
     foreach($relative in $sourceFiles) {
         $to=Join-Path $sourceStage $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null

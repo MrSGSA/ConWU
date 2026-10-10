@@ -35,10 +35,10 @@ public sealed class UdpMapping : IMapping
             catch(OperationCanceledException) when(!token.IsCancellationRequested && attempt<2) { }
         }
     }
-    public static async Task<UdpMapping> Create(int sourcePort,int targetPort,Action<string> log,CancellationToken token)
+    public static async Task<UdpMapping> Create(int sourcePort,int targetPort,Action<string> log,CancellationToken token, IEnumerable<string>? servers = null, string? owner = null)
     {
         if(sourcePort!=targetPort || sourcePort is <1024 or >65535) throw new ArgumentException("UDP 探测与传输必须共用同一端口");
-        foreach(var server in Stun.UdpServers)
+        foreach(var server in servers ?? Stun.UdpServers)
         {
             UdpClient? socket=null; Upnp? router=null; RouterMapping? rule=null;
             try
@@ -53,7 +53,7 @@ public sealed class UdpMapping : IMapping
                 var services=await Upnp.Discover(local,token);
                 if(services.Count==0) throw new IOException("未发现 UPnP 网关，本实验 UDP 入口无法自动建立映射");
                 router=new Upnp(services[0]);
-                rule=new RouterMapping(sourcePort,targetPort,local.ToString(),"UDP","StreamLink-"+Guid.NewGuid().ToString("N"));
+                rule=new RouterMapping(sourcePort,targetPort,local.ToString(),"UDP","StreamLink-"+(owner ?? Guid.NewGuid().ToString("N")));
                 await router.Add(rule,token);
                 log($"UDP STUN 映射 {mapped}；仅表示候选地址，仍需对端及质量验证");
                 return new UdpMapping(socket,router,rule,mapped,log);

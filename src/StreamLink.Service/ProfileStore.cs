@@ -8,7 +8,7 @@ namespace StreamLink.Service;
 
 public sealed class ProfileStore
 {
-    public static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink");
+    public static string Root => Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink");
     readonly string file;
     public ProfileStore()
     {

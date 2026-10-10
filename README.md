@@ -1,58 +1,57 @@
 # StreamLink — Windows P2P 直连组网
 
-通过自动打洞与 udp2raw 建立通用虚拟网络，重点改善特定 QoS 环境下的 UDP 传输。软件提供虚拟 IP、P2P 状态和链路质量，组网后使用什么应用由用户决定。完整包内置所需组件，不用预装 Lucky、EasyTier、WSL、Python 或 .NET。
+通过自动映射与 udp2raw 为两台 Windows 提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由两端直传。
 
-**当前 0.2.0 预览版**：持久配对、自动入口选择与成功方向记忆、可编辑 STUN 列表、Windows 后台服务、公网发现服务和端点更新已经完成双端联调。关闭 GUI 继续组网，服务在 Session 0 运行。首次仍需传递长邀请，当前 GUI 需要管理员权限。
+**0.3.0 预览版**重构为加入、创建、设置三页；新增 6 位限时配对码、加密邀请与双端校验、操作忙碌/成功/失败反馈、可选后台服务和托盘，以及独立协调服务。保留 0.2 已验证的原生 udp2raw 数据面。GUI 仍需管理员权限。
 
-0.2.0 最终候选实测：50 Mbps、20 秒收到 **104152/104152 包，49.99296 Mbps，零丢包**；最终连接状态采样 RTT 约 15.4 ms（不是全程延迟统计）。发现服务停机时 P2P ping 20/20 成功。详见实测报告与发布包内的验证摘要。
+## 下载与使用
 
-历史 0.1.0 实测：Akane → Thinkbook 完整链路 50 Mbps 连续 180 秒收到 937435/937435 包，平均 49.996 Mbps，RTT 中位数 18.39 ms。普通 UDP 和 STUN/TURN 形态实验仍约 6 Mbps，尚未绕过这条路径的限制。0.1.1 保持传输内核不变，历史公网数据不冒充新版本重测。
+- [v0.3.0-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.0-preview)：Windows 完整包、项目源码、校验文件、验证摘要。私有仓库下载需要登录有权限的 GitHub 账号。
+- [使用说明](docs/初版使用说明.md)：服务器设置、6 位短码、服务/前台模式、升级与回退。
+- [0.3 发布说明](docs/releases/v0.3.0-preview.md)、[验收记录](docs/releases/0.3-development.md)。
+- [历史公网实测](docs/初版实测报告-20261010.md)、[来源与依赖](docs/来源与依赖.md)、[发布组件](docs/发布依赖说明.txt)。
 
-## 使用和证据
+两端解压完整包，管理员运行 StreamLink.exe，在设置中填写同一个自托管 HTTPS 协调地址。一端创建、另一端输入 6 位配对码点击加入；核对双方校验码后由创建端批准。实际直连成功后显示虚拟 IP 10.129.129.1 / .2。公共协调服务器尚未提供，界面保留选择占位。
 
-- [初版使用说明](docs/初版使用说明.md)：双端启动、邀请、虚拟 IP、NAT 要求及回退。
-- [本轮实测报告](docs/初版实测报告-20261010.md)：测量、实现、失败实验和边界。
-- [来源与依赖](docs/来源与依赖.md)、[发布组件](docs/发布依赖说明.txt)：固定版本、许可证和源码。
-- [下载 Windows x64 完整包](https://github.com/MrSGSA/StreamLink/releases/download/v0.2.0-preview/StreamLink-0.2.0-win-x64-preview.zip)：解压后以管理员权限运行 `StreamLink.exe`，首次操作安装后台服务。
-- [下载本项目源码包](https://github.com/MrSGSA/StreamLink/releases/download/v0.2.0-preview/StreamLink-0.2.0-source.zip)：源码、构建脚本及测试；运行包内 `sources` 另含 EasyTier 和 WinDivert 对应版本源码。
-- [v0.2.0-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.2.0-preview)：发布说明、SHA-256 校验文件和最终验证摘要。私有仓库的下载需要登录有权限的 GitHub 账号。
+首次运行不会自动安装服务。前台模式可驻留托盘；需要未登录自动连接时，在设置中明确安装后台服务。服务模式关闭界面后继续组网，点击停止网络才断开。
 
-这是可运行的预览版，尚未完成干净 Windows 驱动首次安装、长期游戏、晚高峰、休眠换网和各种路由器验证。HTTP 特征不是 HTTPS；域名对 QoS 分类的因果作用没有被证明。不承诺所有 NAT 都能打洞或永久绕过限速。
+## 实现与边界
 
-## 当前实现
+- WinDivert 原生 udp2raw 双端，FakeTCP + 明文 HTTP 特征；TCP STUN 持续保活、UPnP 短租约、成功入口记忆，也支持已有 Lucky 端点。
+- TCP/UDP 可选，UDP 映射为实验模式。当前不是完整的通用 NAT 打洞框架，不保证双方严格对称 NAT 可连接。
+- 保留固定 EasyTier 2.6.4 core/cli 负责本地虚拟网络，公网数据仅经 udp2raw。未集成 EasyTier Manager GUI。后续替换网络内核需要单独性能和兼容性验证。
+- 6 位码仅定位 5 分钟临时房间；P-256 ECDH 公钥承诺、校验码核对和 AES-GCM 保护长期邀请。不是把 6 位数字当强加密密码，协议尚待独立安全审计。
+- 协调服务仅保存身份槽位与加密端点公告，没有业务转发接口。现为自托管预览，未完成公共多租户运营能力。
+- 当前每台设备一组双端配对，不是多人 Mesh；固定 10.129.129.0/24，冲突时拒绝启动。
+- HTTP 特征不是 HTTPS。历史网络中纯 UDP 仍受约 6 Mbps 限制；不承诺任意环境永久绕过 QoS。
 
-- WinDivert 原生 udp2raw 客户端和服务端，IPv4 FakeTCP/UDP；不引入标准 TCP 有序重传。
-- 自研 STUN TCP 持续保活、UPnP 短租约、规则所有权检查；不依赖 Lucky 程序。保留已有 Lucky 端点入口。
-- 内置固定 EasyTier 2.6.4，公网只经 udp2raw；没有业务中继或静默 TCP 回退。
-- 中文 WinForms、长邀请配对、双方虚拟 IP、连接状态、任一端可发起的 20 秒 50 Mbps 测试、日志、退出清理和崩溃后恢复。
-- 两端临时地址 10.129.129.1 / .2；支持一对设备，不是多人 Mesh。使用长邀请加自托管发现服务及持久配对，尚无六位短码、账户体系、自动升级或多节点 Mesh。
+0.2 最终候选历史实测：50 Mbps、20 秒，104152/104152 包，49.99296 Mbps，零丢包，单次 RTT 采样约 15.4 ms。0.3 没有为测试中断现有连接，不能将历史成绩当成本版完整公网回归。全新系统、长期运行、冷启动及休眠换网仍需验证。
 
 ## 开发
 
-Windows x64，.NET SDK 10、MinGW-w64 x64、CMake、Ninja；协议测试需 Python 3。用户运行包不需要这些开发依赖。
+Windows x64，.NET SDK 10、MinGW-w64 x64、CMake、Ninja；原生协议测试使用 Python 3。运行包不需要这些开发工具。
 
 ```powershell
 .\scripts\Build.ps1 -Test
 dotnet run --project tests/StreamLink.Tests -c Release
+dotnet run --project tests/StreamLink.PairingTests -c Release
+dotnet run --project tests/StreamLink.WindowsTests -c Release
+.\scripts\Test-Coordination.ps1
 .\scripts\Package.ps1 -EasyTierDirectory '已验证的 EasyTier 2.6.4 二进制目录'
 ```
 
-打包脚本验证驱动签名、保留依赖许可证、产生每文件 SHA256 清单和源码包。自包含运行时为本次验证的 .NET 10.0.12。首次打包下载官方 WinDivert/Wintun 和固定 EasyTier 源码，需联网。
+WindowsTests 使用隔离配置目录，不注册真实服务、不更改生产网络。Test-Coordination 启动独立本地 HTTPS 测试服务，结束后停止。Package 校验签名驱动、生成每文件 SHA-256 清单并附依赖许可证与对应源码。Windows GUI/服务共用一套 .NET 10.0.12 运行时，CLI 保留在源码中，不再放入日常运行包。
 
-`udp2raw-protocol-test.exe` 仅为回环协议替身，不能验证公网 QoS，打包时排除。正式 `udp2raw-native.exe --native-info` 不加载驱动；运行会话由控制器显式允许按需加载官方签名驱动。本次复用两端已有驱动，未升级或卸载它们。
+协调服务部署见 [运维说明](docs/发现服务运维.txt)。Cloudflare Tunnel 的公网 HTTPS 可以指向同机 HTTP 回环源站；不要混淆这两段协议。
 
 | 目录 | 内容 |
 |---|---|
-| `src/StreamLink.Core` | 映射、邀请、进程/网卡生命周期、质量测试 |
-| `src/StreamLink.App` / `StreamLink.Cli` | 中文桌面程序和自动验证入口 |
-| `transport/udp2raw` | 固定 HTTP 分支及原生 Windows 移植 |
-| `src/StreamLink.Service` | Windows 服务、持久配置及自动连接 |
-| `src/StreamLink.Discovery` | 可自托管的加密元数据发现服务 |
-| `tests` | 9 项历史传输回归；35 项核心校验，另有 5 项公网发现和 12 项真实服务检查 |
-| `scripts` | 编译与完整发布打包 |
-| `docs` | 用户说明、证据、架构和后续工作 |
-| `out` / `artifacts` | 本地构建、发布包及测试输出 |
+| src/StreamLink.Core | 映射、配对、质量测试与传输生命周期 |
+| src/StreamLink.App | WinForms 界面、托盘与显式服务安装 |
+| src/StreamLink.Service | 可复用前台/后台控制、持久配置、自动连接 |
+| src/StreamLink.Discovery | 短码与加密端点协调服务 |
+| transport/udp2raw | 固定 HTTP 分支及原生 Windows 移植 |
+| tests / scripts | 回归、构建、打包及独立部署 |
+| docs | 使用、证据、架构及后续工作 |
 
-[产品与架构](docs/产品与架构.md)和[开发顺序与验收](docs/开发顺序与验收.md)包含后续产品蓝图；以本 README 与当日实测报告为已实现范围。原有验证包及生产网络保持独立。
-
-关闭界面后后台服务继续运行；要断开连接，请点击“停止网络”。版本更新前先停止旧版本，保留需要回退的旧包及其说明。
+[产品与架构](docs/产品与架构.md)及[开发顺序与验收](docs/开发顺序与验收.md)保留产品蓝图，以本 README 和各版本验证摘要为已实现范围。

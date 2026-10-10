@@ -1,0 +1,111 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
+using System.Text.RegularExpressions;
+
+namespace StreamLink.Core;
+
+public sealed record PairRoomCreate(string Commitment, string Name);
+public sealed record PairRoomJoin(string Code, string Commitment, string Name);
+public sealed record PairRoomTicket(string Room, string Code, string Token, string HostCommitment, string HostName, long Expires, string Candidate = "");
+public sealed record PairRoomState(string Candidate, string GuestCommitment, string GuestName, string HostPublic, string GuestPublic, string Ciphertext, bool Approved, long Expires);
+public sealed record PairRoomReveal(string PublicKey);
+public sealed record PairRoomApproval(string Candidate, string Ciphertext);
+
+// Six digits locate an expiring rendezvous, never an encryption key.
+// Both public keys are committed before either is revealed. Users compare the
+// derived authentication string before the owner releases an encrypted invite.
+public sealed class PairKeyExchange : IDisposable
+{
+    readonly ECDiffieHellman key = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+    public string PublicKey => Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
+    public string Commitment => Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(PublicKey)));
+    public static bool ValidCommitment(string value) => value != null && Regex.IsMatch(value, "^[A-F0-9]{64}$");
+    public static void ValidatePublic(string value, string commitment)
+    {
+        if (!ValidCommitment(commitment) || value is null || value.Length > 180) throw new FormatException("配对公钥无效");
+        byte[] bytes = Convert.FromBase64String(value);
+        if (!CryptographicOperations.FixedTimeEquals(SHA256.HashData(bytes), Convert.FromHexString(commitment))) throw new CryptographicException("配对公钥承诺不符");
+        using var peer = ECDiffieHellman.Create(); peer.ImportSubjectPublicKeyInfo(bytes, out int used);
+        if (used != bytes.Length || peer.KeySize != 256 || peer.ExportParameters(false).Curve.Oid.Value != "1.2.840.10045.3.1.7") throw new CryptographicException("配对曲线无效");
+    }
+    public byte[] Derive(string remotePublic, string commitment, string room, string candidate, bool owner)
+    {
+        ValidatePublic(remotePublic, commitment);
+        if (!Guid.TryParseExact(room, "N", out _) || !Guid.TryParseExact(candidate, "N", out _)) throw new FormatException("配对会话无效");
+        using var peer = ECDiffieHellman.Create(); peer.ImportSubjectPublicKeyInfo(Convert.FromBase64String(remotePublic), out _);
+        byte[] shared = key.DeriveKeyFromHash(peer.PublicKey, HashAlgorithmName.SHA256);
+        string host = owner ? PublicKey : remotePublic, guest = owner ? remotePublic : PublicKey;
+        try { return HKDF.DeriveKey(HashAlgorithmName.SHA256, shared, 32, Encoding.UTF8.GetBytes(room + candidate), Encoding.UTF8.GetBytes("streamlink-pair-v3/" + host + "/" + guest)); }
+        finally { CryptographicOperations.ZeroMemory(shared); }
+    }
+    public static void ValidateState(PairRoomTicket ticket, PairRoomState? previous, PairRoomState state, PairKeyExchange key, bool owner)
+    {
+        if (state.Expires != ticket.Expires || (!owner && state.Candidate != ticket.Candidate) ||
+            (previous?.Candidate.Length > 0 && (previous.Candidate != state.Candidate || previous.GuestCommitment != state.GuestCommitment)) ||
+            (state.HostPublic.Length > 0 && owner && state.HostPublic != key.PublicKey) ||
+            (state.GuestPublic.Length > 0 && !owner && state.GuestPublic != key.PublicKey))
+            throw new CryptographicException("配对会话发生变化，请重新生成配对码");
+        if (state.HostPublic.Length > 0) ValidatePublic(state.HostPublic, ticket.HostCommitment);
+        if (state.GuestPublic.Length > 0) ValidatePublic(state.GuestPublic, state.GuestCommitment);
+    }
+    public static string Verification(byte[] shared) => (BitConverter.ToUInt32(HMACSHA256.HashData(shared, "verification"u8.ToArray()), 0) % 1_000_000).ToString("D6");
+    public static string Encrypt(byte[] shared, Pairing pair, string room, string candidate)
+    {
+        byte[] plain = Encoding.UTF8.GetBytes(pair.Invite()), nonce = RandomNumberGenerator.GetBytes(12), cipher = new byte[plain.Length], tag = new byte[16];
+        try {
+            using var aes = new AesGcm(shared, 16); aes.Encrypt(nonce, plain, cipher, tag, Encoding.UTF8.GetBytes(room + "/" + candidate));
+            return Convert.ToBase64String(nonce.Concat(tag).Concat(cipher).ToArray());
+        } finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+    public static Pairing Decrypt(byte[] shared, string cipher, string room, string candidate, string service, string pin)
+    {
+        if (cipher is null || cipher.Length > 6000) throw new FormatException("加密邀请过大");
+        byte[] data = Convert.FromBase64String(cipher); if (data.Length < 29) throw new FormatException("加密邀请截断");
+        byte[] plain = new byte[data.Length - 28]; using var aes = new AesGcm(shared, 16);
+        aes.Decrypt(data.AsSpan(0, 12), data.AsSpan(28), data.AsSpan(12, 16), plain, Encoding.UTF8.GetBytes(room + "/" + candidate));
+        try {
+            var pair = Pairing.Import(Encoding.UTF8.GetString(plain));
+            if (new Uri(pair.Service) != new Uri(service) || !pair.CertificatePin.Equals(pin, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("邀请中的协调服务器不符");
+            return pair;
+        } finally { CryptographicOperations.ZeroMemory(plain); }
+    }
+    public void Dispose() => key.Dispose();
+}
+
+public sealed class ShortPairClient : IDisposable
+{
+    readonly HttpClient http;
+    public ShortPairClient(string service, string pin)
+    {
+        Pairing.Create(service, pin).Validate();
+        var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
+        if (pin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(pin));
+        http = new(handler) { BaseAddress = new(service), Timeout = TimeSpan.FromSeconds(12), MaxResponseContentBufferSize = 16384 };
+    }
+    async Task<T> Send<T>(HttpMethod method, string path, object? body, string? token, CancellationToken cancel)
+    {
+        using var request = new HttpRequestMessage(method, path);
+        if (body != null) request.Content = JsonContent.Create(body);
+        if (token != null) request.Headers.Authorization = new("Bearer", token);
+        using var response = await http.SendAsync(request, cancel);
+        if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new IOException("配对请求过于频繁，请稍后重试");
+        if (response.StatusCode == HttpStatusCode.NotFound) throw new IOException("配对码无效、已使用或已过期，请让创建端生成新码");
+        if (response.StatusCode == HttpStatusCode.Conflict) throw new IOException("此配对码已有设备申请，请创建端确认或生成新码");
+        if (!response.IsSuccessStatusCode) throw new IOException($"协调服务未完成配对请求（HTTP {(int)response.StatusCode}）");
+        return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
+    }
+    public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name), null, cancel);
+    public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel)
+    {
+        if (!Regex.IsMatch(code, "^[0-9]{6}$")) throw new FormatException("请输入 6 位数字配对码");
+        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name), null, cancel);
+    }
+    public Task<PairRoomState> Poll(PairRoomTicket ticket, bool owner, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Get, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}", null, ticket.Token, cancel);
+    public Task<PairRoomState> Reveal(PairRoomTicket ticket, bool owner, PairKeyExchange key, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}/reveal", new PairRoomReveal(key.PublicKey), ticket.Token, cancel);
+    public Task<PairRoomState> Approve(PairRoomTicket ticket, string candidate, string cipher, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/approve", new PairRoomApproval(candidate, cipher), ticket.Token, cancel);
+    public async Task Close(PairRoomTicket ticket, CancellationToken cancel) => _ = await Send<JsonElement>(HttpMethod.Delete, $"v2/pair/{ticket.Room}", null, ticket.Token, cancel);
+    public void Dispose() => http.Dispose();
+}

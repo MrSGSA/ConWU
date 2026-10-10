@@ -10,7 +10,7 @@ public sealed record StunResult(string Protocol, string Server, IPEndPoint Local
 // RFC 8489 framing/transaction checks. No third-party implementation is copied.
 public static class Stun
 {
-    public static readonly string[] TcpServers = ["fwa.lifesizecloud.com:3478", "stun.nextcloud.com:3478", "stun.sipnet.com:3478", "global.turn.twilio.com:3478"];
+    public static readonly string[] TcpServers = new[] { "fwa.lifesizecloud.com:3478", "stun.nextcloud.com:3478", "stun.sipnet.com:3478", "global.turn.twilio.com:3478" }.Concat(StunCatalog.Snapshot()).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
     public static readonly string[] UdpServers = ["stun.miwifi.com:3478", "stun.chat.bilibili.com:3478", "stun.hitv.com:3478", "stun.nextcloud.com:3478"];
     public static byte[] Request()
     {

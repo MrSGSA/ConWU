@@ -46,4 +46,6 @@ public sealed class SessionOptions
     public int SourcePort { get; set; } = 42691;
     public string HttpHost { get; set; } = "test.ustc.edu.cn";
     public string Mode { get; set; } = "faketcp";
+    public string LogLevel { get; set; } = "info";
+    public string LogDirectory { get; set; } = "";
 }

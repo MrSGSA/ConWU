@@ -7,7 +7,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail);
+public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "");
 
 [SupportedOSPlatform("windows")]
 public sealed class StreamSession : IAsyncDisposable
@@ -60,6 +60,8 @@ public sealed class StreamSession : IAsyncDisposable
             throw new IOException("初版虚拟网段 10.129.129.0/24 已占用，请先停止本软件其他会话");
         if (options.ListenPort is < 1024 or > 65535) throw new ArgumentException("监听端口无效");
         Directory.CreateDirectory(root);
+        string logsRoot = options.LogDirectory.Length > 0 ? Path.Combine(options.LogDirectory, Path.GetFileName(root)) : root;
+        if (options.LogLevel != "off") Directory.CreateDirectory(logsRoot);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(stop.Token, cancellation);
         var token = linked.Token;
         try
@@ -98,7 +100,8 @@ public sealed class StreamSession : IAsyncDisposable
             coreConfig += "[flags]\nmtu = 1280\nenable_ipv6 = false\ndisable_p2p = true\np2p_only = true\ndisable_udp_hole_punching = true\ndisable_tcp_hole_punching = true\ndisable_upnp = true\nbind_device = false\naccept_dns = false\n";
             string corePath = Path.Combine(root, "network.toml"); await File.WriteAllTextAsync(corePath, coreConfig, token);
             string raw = options.Host ? $"-s\n-l {local}:{options.ListenPort}\n-r 127.0.0.1:{appPort}\n" : $"-c\n-l 127.0.0.1:{appPort}\n-r {Ticket.Endpoint}\n";
-            raw += $"-k {Ticket.RawKey}\n--raw-mode {(Ticket.Mode.StartsWith("udp") ? "udp" : "faketcp")}\n--fix-gro\n--seq-mode 3\n--log-level 4\n";
+            int rawLog = options.LogLevel == "debug" ? 5 : options.LogLevel == "error" ? 2 : 4;
+            raw += $"-k {Ticket.RawKey}\n--raw-mode {(Ticket.Mode.StartsWith("udp") ? "udp" : "faketcp")}\n--fix-gro\n--seq-mode 3\n--log-level {rawLog}\n";
             if (Ticket.Mode == "faketcp" && Ticket.HttpHost.Length > 0) raw += $"--fake-http {Ticket.HttpHost}\n";
             string rawPath = Path.Combine(root, "transport.conf"); await File.WriteAllTextAsync(rawPath, raw, token);
             rule = "StreamLink-" + id;
@@ -110,8 +113,8 @@ public sealed class StreamSession : IAsyncDisposable
             var rawEnvironment = new Dictionary<string,string> { ["STREAMLINK_ALLOW_DRIVER_INSTALL"] = "1" };
             if(Ticket.Mode == "udp-stun") rawEnvironment["STREAMLINK_UDP_SHAPE"]="stun";
             if(mapping is UdpMapping udpMapping) { rawEnvironment["STREAMLINK_UDP_SHARED_BIND"]="1"; rawEnvironment["STREAMLINK_STUN_ENDPOINT"]=udpMapping.StunEndpoint.ToString(); }
-            job.Start(Path.Combine(bin, "udp2raw-native.exe"), ["--conf-file", rawPath], Path.Combine(root, "transport.log"), rawEnvironment);
-            job.Start(Path.Combine(bin, "easytier-core.exe"), ["--config-file", corePath, "--disable-env-parsing", "--rpc-portal", $"127.0.0.1:{rpc}", "--console-log-level", "warn", "--file-log-level", "off", "--disable-upnp", "true", "--accept-dns", "false"], Path.Combine(root, "network.log"));
+            job.Start(Path.Combine(bin, "udp2raw-native.exe"), ["--conf-file", rawPath], options.LogLevel == "off" ? null : Path.Combine(logsRoot, "transport.log"), rawEnvironment, [Ticket.Secret, Ticket.RawKey]);
+            job.Start(Path.Combine(bin, "easytier-core.exe"), ["--config-file", corePath, "--disable-env-parsing", "--rpc-portal", $"127.0.0.1:{rpc}", "--console-log-level", options.LogLevel == "debug" ? "debug" : options.LogLevel == "error" ? "error" : "warn", "--file-log-level", "off", "--disable-upnp", "true", "--accept-dns", "false"], options.LogLevel == "off" ? null : Path.Combine(logsRoot, "network.log"), secrets: [Ticket.Secret, Ticket.RawKey]);
             for (int i = 0; i < 40; i++)
             {
                 await Task.Delay(250, token);
