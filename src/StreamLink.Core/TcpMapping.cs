@@ -25,11 +25,14 @@ public sealed class TcpMapping : IMapping
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
+        var timeline = new ConnectionTimeline(log);
         var (binding, result) = await TcpBinding.Connect(sourcePort, null, log, token, servers);
+        timeline.Mark("TCP STUN 建连与查询完成");
         try
         {
             log($"TCP STUN 返回 {result.Public}，正在发现路由器；尚未确认入站可达");
             var services = await Upnp.Discover(result.Local.Address, token);
+            timeline.Mark("路由器发现完成");
             if (services.Count == 0) throw new IOException("未发现可用 UPnP 网关。自动映射不可用；可使用已有 Lucky 端点或手动转发。");
             Exception? last = null;
             foreach (var service in services)
@@ -41,6 +44,7 @@ public sealed class TcpMapping : IMapping
                 {
                     await router.Add(rule, token); added = true;
                     result = await binding.Pulse(token);
+                    timeline.Mark("路由器租约与映射复核完成");
                     log($"已申请 180 秒路由器租约 {sourcePort} → {targetPort}，保活使用同一 STUN 连接；等待对端验证");
                     return new TcpMapping(router, rule, binding, result, log) { servers = servers ?? Stun.TcpServers, StunServer = result.Server };
                 }

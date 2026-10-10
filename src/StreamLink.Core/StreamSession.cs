@@ -9,8 +9,16 @@ namespace StreamLink.Core;
 
 public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "");
 
+public interface IStreamSession : IAsyncDisposable
+{
+    bool IsConnected { get; }
+    event Action<SessionStatus>? StatusChanged;
+    Task Start(SessionOptions options, CancellationToken cancellation = default, IMapping? preparedMapping = null);
+    Task<QualityResult> Measure(int mbps, CancellationToken token);
+}
+
 [SupportedOSPlatform("windows")]
-public sealed class StreamSession : IAsyncDisposable
+public sealed class StreamSession : IStreamSession
 {
     readonly string bin;
     readonly Action<string> log;
@@ -26,6 +34,8 @@ public sealed class StreamSession : IAsyncDisposable
     string rule = "";
     int rpc;
     bool disposed;
+    ConnectionTimeline? startup;
+    bool handshakeTimed;
     public Invitation? Ticket { get; private set; }
     public string LocalIp { get; private set; } = "";
     public string PeerIp { get; private set; } = "";
@@ -52,12 +62,17 @@ public sealed class StreamSession : IAsyncDisposable
 
     public async Task Start(SessionOptions options, CancellationToken cancellation = default, IMapping? preparedMapping = null)
     {
+        cancellation.ThrowIfCancellationRequested();
+        startup = new(log);
+        startup.Mark("开始准备会话");
         if (!WindowsHost.IsAdmin) throw new IOException("启动虚拟网络需要管理员权限，请以管理员身份运行");
         Recovery.Recover(log, sessionsRoot);
+        startup.Mark("旧会话检查完成");
         foreach (string file in new[] { "udp2raw-native.exe", "WinDivert.dll", "WinDivert64.sys", "easytier-core.exe", "easytier-cli.exe", "wintun.dll" })
             if (!File.Exists(Path.Combine(bin, file))) throw new FileNotFoundException("配套组件不完整：" + file);
         if (NetworkInterface.GetAllNetworkInterfaces().SelectMany(n => n.GetIPProperties().UnicastAddresses).Any(a => a.Address.ToString().StartsWith("10.129.129.")))
             throw new IOException("初版虚拟网段 10.129.129.0/24 已占用，请先停止本软件其他会话");
+        startup.Mark("网段冲突检查完成");
         if (options.ListenPort is < 1024 or > 65535) throw new ArgumentException("监听端口无效");
         Directory.CreateDirectory(root);
         string logsRoot = options.LogDirectory.Length > 0 ? Path.Combine(options.LogDirectory, Path.GetFileName(root)) : root;
@@ -104,17 +119,21 @@ public sealed class StreamSession : IAsyncDisposable
             raw += $"-k {Ticket.RawKey}\n--raw-mode {(Ticket.Mode.StartsWith("udp") ? "udp" : "faketcp")}\n--fix-gro\n--seq-mode 3\n--log-level {rawLog}\n";
             if (Ticket.Mode == "faketcp" && Ticket.HttpHost.Length > 0) raw += $"--fake-http {Ticket.HttpHost}\n";
             string rawPath = Path.Combine(root, "transport.conf"); await File.WriteAllTextAsync(rawPath, raw, token);
+            startup.Mark("传输配置准备完成");
             rule = "StreamLink-" + id;
             Recovery.Record(root,rule);
             await File.WriteAllTextAsync(Path.Combine(root, "owned-rule.txt"), rule, token);
             WindowsHost.AddFirewall(rule, LocalIp, PeerIp);
+            startup.Mark("本会话防火墙规则就绪");
             job = new ChildJob();
             Report("正在启动", false, "建立本机传输与虚拟网卡");
             var rawEnvironment = new Dictionary<string,string> { ["STREAMLINK_ALLOW_DRIVER_INSTALL"] = "1" };
             if(Ticket.Mode == "udp-stun") rawEnvironment["STREAMLINK_UDP_SHAPE"]="stun";
             if(mapping is UdpMapping udpMapping) { rawEnvironment["STREAMLINK_UDP_SHARED_BIND"]="1"; rawEnvironment["STREAMLINK_STUN_ENDPOINT"]=udpMapping.StunEndpoint.ToString(); }
             job.Start(Path.Combine(bin, "udp2raw-native.exe"), ["--conf-file", rawPath], options.LogLevel == "off" ? null : Path.Combine(logsRoot, "transport.log"), rawEnvironment, [Ticket.Secret, Ticket.RawKey]);
+            startup.Mark("udp2raw 进程已启动");
             job.Start(Path.Combine(bin, "easytier-core.exe"), ["--config-file", corePath, "--disable-env-parsing", "--rpc-portal", $"127.0.0.1:{rpc}", "--console-log-level", options.LogLevel == "debug" ? "debug" : options.LogLevel == "error" ? "error" : "warn", "--file-log-level", "off", "--disable-upnp", "true", "--accept-dns", "false"], options.LogLevel == "off" ? null : Path.Combine(logsRoot, "network.log"), secrets: [Ticket.Secret, Ticket.RawKey]);
+            startup.Mark("组网进程已启动，等待虚拟 IP");
             for (int i = 0; i < 40; i++)
             {
                 await Task.Delay(250, token);
@@ -122,6 +141,7 @@ public sealed class StreamSession : IAsyncDisposable
                 if (NetworkInterface.GetAllNetworkInterfaces().SelectMany(n => n.GetIPProperties().UnicastAddresses).Any(a => a.Address.ToString() == LocalIp)) break;
                 if (i == 39) throw new IOException("虚拟网卡启动超时");
             }
+            startup.Mark("虚拟 IP 就绪");
             if (mapping != null && ownsMapping)
             {
                 mapping.Changed += endpoint => { Ticket = Ticket with { Endpoint = endpoint.ToString() }; InviteChanged?.Invoke(Ticket.Encode()); Report("映射已更新", false, "请向对端发送更新后的邀请"); };
@@ -129,6 +149,7 @@ public sealed class StreamSession : IAsyncDisposable
             }
             if(options.Host) InviteChanged?.Invoke(Ticket.Encode());
             qualityServer = Quality.Serve(LocalIp,PeerIp,Ticket.Secret,stop.Token);
+            startup.Mark("本地质量检测端口就绪");
             log("组件已启动；邀请信息包含密钥，请只分享给配对设备");
             Report("等待对端", false, "公网映射尚待实际握手确认");
             monitor = Monitor(stop.Token);
@@ -171,6 +192,7 @@ public sealed class StreamSession : IAsyncDisposable
                             rtt = connection.GetProperty("stats").GetProperty("latency_us").GetDouble() / 1000;
                         }
                     }
+                    if (connected && !handshakeTimed) { handshakeTimed = true; startup?.Mark("实际直连握手完成"); }
                     Report(connected ? "已直连" : "等待对端", connected, connected ? "已确认独立传输链路；实际可用码率请运行质量测试" : "尚未完成对端握手，请核对映射与邀请", rtt);
                 }
                 finally { if (!cli.HasExited) cli.Kill(); }

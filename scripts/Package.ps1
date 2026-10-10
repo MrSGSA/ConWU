@@ -11,6 +11,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Pairing regression failed'}
         & dotnet run --project tests/StreamLink.WindowsTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
+        & dotnet run --project tests/StreamLink.ConnectionTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
         & dotnet run --project tests/StreamLink.RenderingTests -c Release -- (Join-Path $root "artifacts/rendering-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Desktop rendering regression failed'}
         & .\scripts\Test-Coordination.ps1

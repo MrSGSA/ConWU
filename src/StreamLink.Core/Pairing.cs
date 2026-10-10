@@ -77,7 +77,12 @@ public static class EntryElection
             .ThenBy(n => n.Slot).Select(n => n.Slot).FirstOrDefault();
     }
 }
-public sealed class DiscoveryClient : IDisposable
+public interface IDiscoveryClient : IDisposable
+{
+    Task Publish(NodeAnnouncement node, CancellationToken token);
+    Task<NodeAnnouncement?> Read(int slot, CancellationToken token);
+}
+public sealed class DiscoveryClient : IDiscoveryClient
 {
     readonly Pairing pair;
     readonly HttpClient http;
