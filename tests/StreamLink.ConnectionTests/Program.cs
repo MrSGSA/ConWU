@@ -26,6 +26,30 @@ var testsRoot = Path.Combine(Path.GetTempPath(), "streamlink-connection-" + Guid
 Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT", testsRoot);
 try
 {
+    // Real coordinator flow shared by two runners: both machines must begin
+    // their slow adapter initialization before either machine finishes it.
+    using (var stop = new CancellationTokenSource())
+    using (var release = new ManualResetEventSlim())
+    {
+        var shared = new ConcurrentDictionary<int, NodeAnnouncement>();
+        var leftDiscovery = new FakeDiscovery { Shared = shared };
+        var rightDiscovery = new FakeDiscovery { Shared = shared };
+        FakeSession Pending() => new((s, ct) => { release.Wait(ct); s.Connect(); return Task.CompletedTask; });
+        var leftSession = Pending(); var rightSession = Pending();
+        var left = new NetworkRunner(Profile(), _ => { }, _ => { }, (_, _) => { }, Services(leftDiscovery, () => leftSession));
+        var right = new NetworkRunner(Profile(2), _ => { }, _ => { }, (_, _) => { }, Services(rightDiscovery, () => rightSession));
+        Task first = left.Run(stop.Token), second = right.Run(stop.Token);
+        try
+        {
+            await Until(() => leftSession.Started && rightSession.Started);
+            Check(!leftSession.StartExited && !rightSession.StartExited, "Peer startup waited for the other adapter to finish");
+            Check(leftSession.Options!.Host && !rightSession.Options!.Host, "Both runners failed to agree on entry direction");
+            release.Set(); await Until(() => leftSession.IsConnected && rightSession.IsConnected);
+            Check(shared[1].SelectedEntry == 1, "Creator did not publish its entry decision");
+        }
+        finally { stop.Cancel(); await Stop(first, stop); await Stop(second, stop); }
+        Check(leftSession.Disposed && rightSession.Disposed, "Paired runner cleanup leaked a session");
+    }
     // Block *synchronously* inside Start, like COM/driver initialization. Both
     // the initial election and later metadata must still reach the other peer.
     using (var stop = new CancellationTokenSource())
@@ -116,12 +140,13 @@ sealed class FakeDiscovery : IDiscoveryClient
 {
     public readonly ConcurrentQueue<NodeAnnouncement> Published = new();
     public NodeAnnouncement? Peer;
+    public ConcurrentDictionary<int, NodeAnnouncement>? Shared;
     public volatile bool Fail, Disposed;
     public int Reads;
     public Task Publish(NodeAnnouncement node, CancellationToken token)
-    { token.ThrowIfCancellationRequested(); if (Fail) throw new IOException("synthetic discovery outage"); Published.Enqueue(node); return Task.CompletedTask; }
+    { token.ThrowIfCancellationRequested(); if (Fail) throw new IOException("synthetic discovery outage"); Published.Enqueue(node); if (Shared != null) Shared[node.Slot] = node; return Task.CompletedTask; }
     public Task<NodeAnnouncement?> Read(int slot, CancellationToken token)
-    { token.ThrowIfCancellationRequested(); Interlocked.Increment(ref Reads); if (Fail) throw new IOException("synthetic discovery outage"); return Task.FromResult(Peer); }
+    { token.ThrowIfCancellationRequested(); Interlocked.Increment(ref Reads); if (Fail) throw new IOException("synthetic discovery outage"); return Task.FromResult(Shared?.GetValueOrDefault(slot) ?? Peer); }
     public void Dispose() => Disposed = true;
 }
 sealed class FakeSession(Func<FakeSession, CancellationToken, Task> start) : IStreamSession

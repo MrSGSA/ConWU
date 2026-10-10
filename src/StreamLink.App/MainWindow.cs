@@ -83,7 +83,14 @@ public sealed partial class MainWindow : Form
         finally { uiGate.Release(); SetBusy(false); UpdateStatus(); }
     }
     async Task<ControlReply> Call(ControlRequest request) { var reply = await backend.Call(request, lifetime.Token); if (!reply.Ok) throw new IOException(reply.Error); return reply; }
-    void Apply(ControlReply reply) { last = reply; UpdateStatus(); }
+    void Apply(ControlReply reply)
+    {
+        last = reply;
+        // This is local IPC only. Faster startup feedback does not increase
+        // requests to the public coordination service.
+        timer.Interval = reply.Profile?.Enabled == true && reply.Status?.Connected != true ? 750 : 2500;
+        UpdateStatus();
+    }
     async Task Poll()
     {
         if (busy || polling || preview || lifetime.IsCancellationRequested || !await uiGate.WaitAsync(0)) return;

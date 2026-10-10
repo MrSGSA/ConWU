@@ -44,7 +44,6 @@ public sealed class StreamSession : IStreamSession
     public event Action<SessionStatus>? StatusChanged;
     public event Action<string>? InviteChanged;
     public StreamSession(string bin, Action<string> log, string? sessionsRoot = null) { this.bin = Path.GetFullPath(bin); this.log = log; this.sessionsRoot = sessionsRoot ?? Recovery.Root; root = Path.Combine(this.sessionsRoot, Guid.NewGuid().ToString("N")); }
-    static string Q(string value) => JsonSerializer.Serialize(value);
     static int FreePort(SocketType type)
     {
         using var s = new Socket(AddressFamily.InterNetwork, type, type == SocketType.Stream ? ProtocolType.Tcp : ProtocolType.Udp);
@@ -108,11 +107,7 @@ public sealed class StreamSession : IStreamSession
             else { Ticket = Invitation.Decode(options.Invite); }
             int appPort = FreePort(SocketType.Dgram); rpc = FreePort(SocketType.Stream);
             string id = Guid.NewGuid().ToString("N");
-            string listen = options.Host ? $"udp://127.0.0.1:{appPort}" : "";
-            string network = "streamlink-" + Ticket.Network;
-            string coreConfig = $"instance_name = {Q("sl-" + id[..8])}\nhostname = {Q(slot == 1 ? "StreamLink-Host" : "StreamLink-Guest")}\nipv4 = {Q(LocalIp)}\ndev_name = {Q("sl_" + id[..8])}\nlisteners = [{(options.Host ? Q(listen) : "")}]\n[network_identity]\nnetwork_name = {Q(network)}\nnetwork_secret = {Q(Ticket.Secret)}\n";
-            if (!options.Host) coreConfig += $"[[peer]]\nuri = {Q($"udp://127.0.0.1:{appPort}")}\n";
-            coreConfig += "[flags]\nmtu = 1280\nenable_ipv6 = false\ndisable_p2p = true\np2p_only = true\ndisable_udp_hole_punching = true\ndisable_tcp_hole_punching = true\ndisable_upnp = true\nbind_device = false\naccept_dns = false\n";
+            string coreConfig = NetworkConfiguration.Create(Ticket, id[..8], slot, LocalIp, options.Host, appPort);
             string corePath = Path.Combine(root, "network.toml"); await File.WriteAllTextAsync(corePath, coreConfig, token);
             string raw = options.Host ? $"-s\n-l {local}:{options.ListenPort}\n-r 127.0.0.1:{appPort}\n" : $"-c\n-l 127.0.0.1:{appPort}\n-r {Ticket.Endpoint}\n";
             int rawLog = options.LogLevel == "debug" ? 5 : options.LogLevel == "error" ? 2 : 4;

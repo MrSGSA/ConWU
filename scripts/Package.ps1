@@ -1,4 +1,4 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.3.1')
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.3.2')
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -13,6 +13,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
         & dotnet run --project tests/StreamLink.ConnectionTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
+        & dotnet run --project tests/StreamLink.MappingTests -c Release -- (Join-Path $EasyTierDirectory 'easytier-core.exe')
+        if($LASTEXITCODE -ne 0) {throw 'Router discovery regression failed'}
         & dotnet run --project tests/StreamLink.RenderingTests -c Release -- (Join-Path $root "artifacts/rendering-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Desktop rendering regression failed'}
         & .\scripts\Test-Coordination.ps1

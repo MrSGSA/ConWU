@@ -31,12 +31,10 @@ public sealed class TcpMapping : IMapping
         try
         {
             log($"TCP STUN 返回 {result.Public}，正在发现路由器；尚未确认入站可达");
-            var services = await Upnp.Discover(result.Local.Address, token);
-            timeline.Mark("路由器发现完成");
-            if (services.Count == 0) throw new IOException("未发现可用 UPnP 网关。自动映射不可用；可使用已有 Lucky 端点或手动转发。");
             Exception? last = null;
-            foreach (var service in services)
+            await foreach (var service in Upnp.DiscoverServices(result.Local.Address, token))
             {
+                timeline.Mark("发现路由器候选，立即尝试租约");
                 var router = new Upnp(service);
                 var rule = new RouterMapping(sourcePort, targetPort, result.Local.Address.ToString(), "TCP", "StreamLink-" + (owner ?? Guid.NewGuid().ToString("N")));
                 bool added = false;
@@ -55,6 +53,7 @@ public sealed class TcpMapping : IMapping
                     router.Dispose(); if (token.IsCancellationRequested) throw;
                 }
             }
+            if (last == null) throw new IOException("未发现可用 UPnP 网关。自动映射不可用；可使用已有 Lucky 端点或手动转发。");
             throw new IOException("自动映射失败：" + last?.Message, last);
         }
         catch { binding.Dispose(); throw; }
