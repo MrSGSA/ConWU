@@ -12,7 +12,7 @@ using StreamLink.Discovery;
 using StreamLink.EndpointPoc;
 
 if (args.FirstOrDefault() == "--serve-syn") { await NetworkObservation.Serve(args); return; }
-if (args.FirstOrDefault() == "--native-observe") { await NetworkObservation.Probe(args); return; }
+if (args.FirstOrDefault() is "--native-observe" or "--native-observe-fresh") { await NetworkObservation.Probe(args); return; }
 if (args.Length is < 2 or > 3 || args[0] != "--output") throw new ArgumentException("--output file [--linux-raw]");
 bool raw = args.Length == 3 && args[2] == "--linux-raw";
 string output = Path.GetFullPath(args[1]), root = Path.Combine(Path.GetTempPath(), "streamlink-syn-" + Guid.NewGuid().ToString("N"));
@@ -87,6 +87,7 @@ try {
     var results = await TcpShapeProbe.Run(owner, control, () => { charged++; return true; }, _ => { }, ct, new());
     Check(charged == 3 && results.Length == 4 && results.All(o => o.State == "SynObserved" && o.Mapped == lease.Local.ToString()), "same held source through four destinations and authenticated register/read");
     Check(results.All(o => o.ResourceId == lease.Id && o.NetworkGeneration == generation && o.Protocol == "TCP" && o.Filtering == "Unknown" && o.TcpHandshakeVerified == "NotTested" && o.LegacyPayloadVerified == "NotTested"), "resource, generation and independent evidence levels survive product adapter");
+    Check(results.All(o => o.LocalProbeStartedAt > 0 && Stopwatch.GetElapsedTime(o.LocalProbeStartedAt).TotalSeconds >= 6), "legacy final observations retain local probe age and cannot serve as two-second prediction anchors");
     Check(io.Sent == 12 && io.Sources.All(ep => ep.Equals(lease.Local)) && helper.Accepted == 1, "one exclusive helper, no rebind, bounded twelve SYN packets");
     using (var reference = lease.AcquireAttempt(generation)) Check((await reference.Observe(ct)).Public.Equals(lease.Local), "same kernel helper still works after native endpoint observations");
     Check(owner.Status.Sessions == 0, "finished diagnostic leaves no session or tuple reservation");
@@ -108,6 +109,7 @@ try {
     Check((await client.TcpObservation("read", ticket, null, ct)).Evidence.Single().State == "NotObserved", "late SYN cannot revive expired observation");
     rows.Add(new { scope = raw ? "Linux real loopback IPv4 raw I/O and locked kernel BPF; not Windows WinDivert or WAN NAT" : "real HTTPS and exclusive TCP helper with in-memory broker I/O; no raw I/O or NAT",
         elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds, io.Sent, charged, results });
+    rows.Add(await FreshObservationTests.Run(observer, url, pin, points, Check, ct, raw));
     if (raw) {
         long before = capture!.ReceivedPackets;
         // Same target with invalid flags/port/size cannot reach user-space capture.

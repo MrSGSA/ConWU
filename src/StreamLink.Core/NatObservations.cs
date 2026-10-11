@@ -3,7 +3,7 @@ using System.Net;
 namespace StreamLink.Core;
 
 public sealed record NatObservation(Guid SocketId, Guid NetworkGeneration, string Protocol,
-    IPEndPoint Local, IPEndPoint Target, IPEndPoint Mapped, DateTimeOffset ObservedAt);
+    IPEndPoint Local, IPEndPoint Target, IPEndPoint Mapped, DateTimeOffset ObservedAt, long ProbeStartedAt = 0);
 public sealed record NatAssessment(string Mapping, string Filtering, string Reason);
 
 // Observations are scoped to a socket, route generation and time window. This

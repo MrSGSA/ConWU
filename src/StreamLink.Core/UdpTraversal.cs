@@ -171,12 +171,13 @@ public sealed partial class UdpTraversal : IAsyncDisposable
             var completion = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
             queries[id] = new(server, request, completion);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token); deadline.CancelAfter(3500);
+            long probeStarted = Stopwatch.GetTimestamp(); // conservative age, includes any send admission/queue delay
             try {
                 for (;;) {
                     if (resources.TrySend(request.Length)) await socket.Send(request, server, deadline.Token);
                     var finished = await Task.WhenAny(completion.Task, Task.Delay(700, deadline.Token));
                     deadline.Token.ThrowIfCancellationRequested();
-                    if (finished == completion.Task) return new(socket.Id, generation, "udp", Local, server, await completion.Task, DateTimeOffset.UtcNow);
+                    if (finished == completion.Task) return new(socket.Id, generation, "udp", Local, server, await completion.Task, DateTimeOffset.UtcNow, probeStarted);
                 }
             } finally { queries.TryRemove(id, out _); }
         } finally { observing.Release(); }

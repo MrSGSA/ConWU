@@ -14,18 +14,20 @@ public sealed record TcpSynEvidence(Guid ProbeId, string ObserverId, string Targ
     string? Source, long? ObservedAt, int Retransmissions,
     string TcpHandshakeVerified = "NotTested", string LegacyPayloadVerified = "NotTested");
 public sealed record TcpObserverReply(int Version, Guid Epoch, Guid TicketId, long Expires,
-    TcpObserverPoint[] Points, TcpSynEvidence[] Evidence);
+    TcpObserverPoint[] Points, TcpSynEvidence[] Evidence,
+    int CaptureWindowMs = TcpObserverProtocol.WindowSeconds * 1000, bool Final = false, int FreshWindowMs = 0);
 // Resource identity and route generation are local diagnostics, never published as candidates.
 public sealed record TcpShapeObservation(Guid ResourceId, Guid NetworkGeneration, string Local, string Helper,
     Guid ProbeId, string Target, string? Mapped, long? ObservedAt, long Expires, string State,
     string Protocol = "TCP", string TransportProfile = "udp2raw-http-c4995ea-syn",
     string Confidence = "IssTargetWindowOnly", string Filtering = "Unknown",
     string TcpHandshakeVerified = "NotTested", string LegacyPayloadVerified = "NotTested",
-    Guid CaptureOwnerId = default, string InterfaceId = "", long ProbeWindowEndsAt = 0);
+    Guid CaptureOwnerId = default, string InterfaceId = "", long ProbeWindowEndsAt = 0, long LocalProbeStartedAt = 0);
 
 public static class TcpObserverProtocol
 {
     public const int Version = 1, WindowSeconds = 8, RetentionSeconds = 60;
+    public const int FreshWindowMs = 750;
     static byte[] Data(string network, TcpObserverRequest r) => JsonSerializer.SerializeToUtf8Bytes(new {
         domain = "streamlink-tcp-syn-observation-v1", network, r.Version, r.RequestId, r.TicketId,
         r.Slot, r.Device, r.BootId, r.Operation, r.Expires, r.Probes });
@@ -36,9 +38,10 @@ public static class TcpObserverProtocol
         if (r.Version != Version || r.RequestId == Guid.Empty || r.BootId == Guid.Empty || r.Slot is < 1 or > 254 ||
             !Guid.TryParseExact(r.Device, "N", out _) || r.Expires <= now || r.Expires > now + 30 ||
             r.Signature is null || r.Signature.Length > 256 || r.Probes is null ||
-            r.Operation is not ("catalog" or "register" or "read") ||
+            r.Operation is not ("catalog" or "register" or "register-fresh" or "read") ||
             (r.Operation == "catalog" ? r.TicketId != Guid.Empty : r.TicketId == Guid.Empty) ||
-            (r.Operation == "register" ? r.Probes.Length is < 1 or > 4 : r.Probes.Length != 0) ||
+            (r.Operation == "register" ? r.Probes.Length is < 1 or > 4 :
+                r.Operation == "register-fresh" ? r.Probes.Length is < 1 or > 2 : r.Probes.Length != 0) ||
             r.Probes.Any(p => p == null || p.ProbeId == Guid.Empty || p.ObserverId is not { Length: >= 1 and <= 32 }) ||
             r.Probes.Select(p => p.ProbeId).Distinct().Count() != r.Probes.Length ||
             r.Probes.Select(p => p.ObserverId).Distinct().Count() != r.Probes.Length)

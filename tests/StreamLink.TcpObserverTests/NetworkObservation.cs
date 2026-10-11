@@ -71,10 +71,15 @@ static class NetworkObservation
                 using var held = lease.AcquireAttempt(lease.NetworkGeneration); var before = await held.Observe(stop.Token);
                 long captureBefore = await Count();
                 var clock = Stopwatch.StartNew();
-                var observations = await TcpShapeProbe.Run(owner, control, () => true, ep => {
+                Action<IPEndPoint> checkRoute = ep => {
                     var local = Stun.LocalAddress(ep); Physical(local);
                     if (!local.Equals(lease.Local.Address)) throw new IOException("Observation route differs from held helper source");
-                }, stop.Token);
+                };
+                bool fresh = args[0] == "--native-observe-fresh";
+                var observations = fresh ? await TcpShapeProbe.RunFresh(owner, control, () => true, checkRoute, stop.Token, destinations: 2) :
+                    await TcpShapeProbe.Run(owner, control, () => true, checkRoute, stop.Token);
+                var agesAtReturnMs = observations.Select(o => Stopwatch.GetElapsedTime(o.LocalProbeStartedAt).TotalMilliseconds).ToArray();
+                double probeElapsedMs = clock.Elapsed.TotalMilliseconds;
                 var after = await held.Observe(stop.Token);
                 long captureAfterNative = await Count();
                 // Independent ordinary TCP reachability control, with unrelated
@@ -90,6 +95,7 @@ static class NetworkObservation
                     status = observations.All(o => o.State == "SynObserved") ? "SynObserved" : "PartialOrNotObserved",
                     elapsedMs = clock.Elapsed.TotalMilliseconds, scope = "Windows physical source and real WinDivert capture owner, remote Linux public SYN observer; no business/handshake/NAT classification proof",
                     helperBefore = before.Public.ToString(), helperAfter = after.Public.ToString(), owner = owner.Status, observations, failures,
+                    mode = fresh ? "fresh-final-window" : "legacy-eight-second", probeElapsedMs, agesAtReturnMs,
                     captureBefore, captureAfterNative, captureAfterKernelControl
                 }, new JsonSerializerOptions { WriteIndented = true }));
                 Console.WriteLine($"Observed {observations.Count(o => o.State == "SynObserved")}/{observations.Length}; helper remains queryable; no handshake/business claim");

@@ -18,7 +18,7 @@ sealed class NatLab
     readonly Dictionary<string, Binding> bindings = [];
     public static readonly IPEndPoint[] Reflectors = [IPEndPoint.Parse("198.51.100.10:3478"), IPEndPoint.Parse("198.51.100.11:3478"), IPEndPoint.Parse("198.51.100.11:3479")];
     public List<(IPEndPoint Source, IPEndPoint Target, byte[] Packet)> Wire { get; } = [];
-    public Port Add(string ip, string mapping, string filtering, int seed, bool stunOnly = false, int maximumPayload = 1472) => new(this, IPAddress.Parse(ip), mapping, filtering, seed, stunOnly, maximumPayload);
+    public Port Add(string ip, string mapping, string filtering, int seed, bool stunOnly = false, int maximumPayload = 1472, int localPort = 42000) => new(this, IPAddress.Parse(ip), mapping, filtering, seed, stunOnly, maximumPayload, localPort);
     internal void Send(Port source, byte[] packet, IPEndPoint target)
     {
         lock (gate) {
@@ -51,7 +51,7 @@ sealed class NatLab
         response[25] = 1; BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(26), (ushort)(observed.Port ^ 0x2112));
         BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(28), BinaryPrimitives.ReadUInt32BigEndian(observed.Address.GetAddressBytes()) ^ 0x2112a442); return response;
     }
-    public sealed class Port(NatLab lab, IPAddress external, string mapping, string filtering, int seed, bool stunOnly, int maximumPayload) : ITraversalSocket
+    public sealed class Port(NatLab lab, IPAddress external, string mapping, string filtering, int seed, bool stunOnly, int maximumPayload, int localPort) : ITraversalSocket
     {
         // This model drops above its configured maximum; it never fragments.
         // It is NOT evidence of real NIC or NAT DF behavior.
@@ -64,7 +64,7 @@ sealed class NatLab
         internal readonly int MaximumPayload = maximumPayload;
         internal int NextPort = seed;
         public Guid Id { get; } = Guid.NewGuid();
-        public IPEndPoint Local { get; } = new(IPAddress.Parse("10.200.0." + external.GetAddressBytes()[3]), 42000);
+        public IPEndPoint Local { get; } = new(IPAddress.Parse("10.200.0." + external.GetAddressBytes()[3]), localPort);
         public bool Disposed { get; private set; }
         public ValueTask Send(ReadOnlyMemory<byte> packet, IPEndPoint remote, CancellationToken token) { token.ThrowIfCancellationRequested(); ObjectDisposedException.ThrowIf(Disposed, this); lab.Send(this, packet.ToArray(), remote); return ValueTask.CompletedTask; }
         public ValueTask<TraversalDatagram> Receive(CancellationToken token) => Incoming.Reader.ReadAsync(token);

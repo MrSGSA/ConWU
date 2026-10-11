@@ -18,7 +18,7 @@ public sealed class TcpSynObserver
         public bool Ambiguous;
     }
     sealed record Ticket(string Network, int Slot, string Device, Guid Boot, byte[] Fingerprint,
-        Guid Id, long Start, long Expires, Probe[] Probes);
+        Guid Id, long Start, long Expires, int WindowMs, Probe[] Probes);
     readonly object gate = new();
     readonly Dictionary<Guid, Ticket> tickets = [];
     readonly TcpObserverPoint[] points;
@@ -37,9 +37,9 @@ public sealed class TcpSynObserver
         lock (gate) {
             Prune();
             if (!available) return (503, null);
-            if (request.Operation == "catalog") return (200, new(1, epoch, Guid.Empty, 0, points, []));
+            if (request.Operation == "catalog") return (200, new(1, epoch, Guid.Empty, 0, points, [], FreshWindowMs: TcpObserverProtocol.FreshWindowMs));
             var hash = TcpObserverProtocol.Fingerprint(network, request);
-            if (request.Operation == "register") {
+            if (request.Operation is "register" or "register-fresh") {
                 if (tickets.TryGetValue(request.TicketId, out var existing)) {
                     if (!System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(hash, existing.Fingerprint)) return (409, null);
                     return (200, Reply(existing)); // Identical HTTP retry never renews the window.
@@ -49,11 +49,13 @@ public sealed class TcpSynObserver
                 // Globally reserve ISS+target across the retention interval, including
                 // expired captures. A collision cannot be attributed to either member.
                 if (request.Probes.Any(p => tickets.Values.Any(t => t.Probes.Any(old => old.Spec.ObserverId == p.ObserverId && old.Spec.Iss == p.Iss)))) return (409, null);
+                int windowMs = request.Operation == "register-fresh" ? TcpObserverProtocol.FreshWindowMs : TcpObserverProtocol.WindowSeconds * 1000;
                 var added = new Ticket(network, request.Slot, request.Device, request.BootId, hash, request.TicketId,
-                    Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow.AddSeconds(TcpObserverProtocol.WindowSeconds).ToUnixTimeMilliseconds(),
+                    Stopwatch.GetTimestamp(), DateTimeOffset.UtcNow.AddMilliseconds(windowMs).ToUnixTimeMilliseconds(), windowMs,
                     request.Probes.Select(p => new Probe(p, points.Single(s => s.Id == p.ObserverId))).ToArray());
                 tickets.Add(added.Id, added); return (200, Reply(added));
             }
+            if (request.Operation != "read") return (400, null);
             if (!tickets.TryGetValue(request.TicketId, out var found)) return (404, null);
             if (found.Network != network || found.Slot != request.Slot || found.Device != request.Device || found.Boot != request.BootId) return (403, null);
             return (200, Reply(found));
@@ -61,8 +63,9 @@ public sealed class TcpSynObserver
     }
     TcpObserverReply Reply(Ticket t) => new(1, epoch, t.Id, t.Expires, [], t.Probes.Select(p => new TcpSynEvidence(
         p.Spec.ProbeId, p.Point.Id, p.Point.Endpoint, p.Ambiguous ? "Ambiguous" : p.Source != null ? "SynObserved" :
-        Stopwatch.GetElapsedTime(t.Start).TotalSeconds >= TcpObserverProtocol.WindowSeconds ? "NotObserved" : "Pending",
-        p.Ambiguous ? null : p.Source, p.ObservedAt, p.Duplicates)).ToArray());
+        Stopwatch.GetElapsedTime(t.Start).TotalMilliseconds >= t.WindowMs ? "NotObserved" : "Pending",
+        p.Ambiguous ? null : p.Source, p.ObservedAt, p.Duplicates)).ToArray(), t.WindowMs,
+        Final: Stopwatch.GetElapsedTime(t.Start).TotalMilliseconds >= t.WindowMs);
     public void Observe(ReadOnlySpan<byte> packet)
     {
         if (!TcpShapeSyn.Read(packet, out var source, out var target, out uint iss)) return;
@@ -70,7 +73,7 @@ public sealed class TcpSynObserver
             if (!available) return;
             Prune();
             foreach (var t in tickets.Values) {
-                if (Stopwatch.GetElapsedTime(t.Start).TotalSeconds >= TcpObserverProtocol.WindowSeconds) continue;
+                if (Stopwatch.GetElapsedTime(t.Start).TotalMilliseconds >= t.WindowMs) continue;
                 foreach (var p in t.Probes) {
                     if (p.Spec.Iss != iss || p.Point.Endpoint != target.ToString()) continue;
                     string seen = source.ToString();

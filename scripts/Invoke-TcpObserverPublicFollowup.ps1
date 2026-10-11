@@ -4,7 +4,8 @@ param(
     [Parameter(Mandatory)][string]$RemoteDirectory,
     [Parameter(Mandatory)][string]$WinDivert,
     [ValidateRange(1024,65535)][int]$FirstPort = 47221,
-    [ValidateRange(1024,65535)][int]$SecondPort = 47222
+    [ValidateRange(1024,65535)][int]$SecondPort = 47222,
+    [switch]$Fresh
 )
 $ErrorActionPreference = 'Stop'
 Set-Location (Split-Path $PSScriptRoot -Parent)
@@ -26,7 +27,8 @@ try {
     } while ($true)
     & scp -q -o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=yes "${HostName}:$RemoteDirectory/followup-config.json" "$prefix-config.json"
     if ($LASTEXITCODE -ne 0) { throw 'Failed to fetch isolated certificate pin' }
-    & dotnet $client --native-observe "$prefix-config.json" (Resolve-Path $WinDivert) "$prefix.json" fwa.lifesizecloud.com:3478 stun.nextcloud.com:3478 stun.sipnet.com:3478 > "$prefix-client.log" 2>&1
+    $probeMode=if($Fresh){'--native-observe-fresh'}else{'--native-observe'}
+    & dotnet $client $probeMode "$prefix-config.json" (Resolve-Path $WinDivert) "$prefix.json" fwa.lifesizecloud.com:3478 stun.nextcloud.com:3478 stun.sipnet.com:3478 > "$prefix-client.log" 2>&1
     if ($LASTEXITCODE -ne 0) { throw "Probe failed; see $prefix-client.log" }
     Get-Content -LiteralPath "$prefix.json"
 } finally {

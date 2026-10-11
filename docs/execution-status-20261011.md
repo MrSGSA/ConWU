@@ -10,7 +10,7 @@
 | M2 原生 SO | 状态机及原生路径接入 Router；8 秒期限贯穿原生、认证与提名 | 既有模型/协议/双 Windows Router 记录；本次增两 Windows 各 1 轮真实 Wintun 功能贯通、各 10 个完整内层包，握手窗口 RST 0；公网 SO 超时、嵌套负载不达标 | 否，须显式受管候选 |
 | M3 协商/预算/正式接线 | 正式 Runner、共享 broker/池、HTTP 共桶与每pair机会窗已接；新增受管原生SYN/HTTP/bare/心跳在实际注入前共用全机控制预算，提名后业务免于控制限额；kernel与兼容实例总账、完整迁移仍待完成 | 10月12日原生计账72、paced Runner117、Router52、授权拒绝13组、协议10项通过；本机50Mbps两方向各20秒约49.96Mbps且报告丢失0；均非公网/八真机证明，详见计账记录 | 匹配wireControl能力的实验TCP自动使用；默认兼容入口，现用部署未升级 |
 | M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网正例 Gate 待完成 | 既有本地记录；本次真实 Wintun 拒绝 1260 MTU 旧隧道负例；公网两次测试未得到认证包，未进入负载 | 仅显式实验开关，标记质量待验证 |
-| M5 观察/条件增强 | TCP 同源 SYN 观察协议、成员认证票据、Linux 有界捕获、正式后台诊断与设置已接入；预测/概率增强未完成 | 本地193、Linux回环195、Runner55记录保留；10月12日物理WinDivert→公网已知可达端口取得SynObserved，实际公网源端口不同于同资源TCP STUN；另一高位端口仍未观察到；SO/业务/完整NAT分类均未验证 | TCP 映射诊断默认关闭，需受管 TCP + 服务器能力；现用部署未替换 |
+| M5 观察/条件增强 | TCP 同源观察与正式诊断已接；新增四种预测规则、独立留出/干扰/单调时钟/两败停用，以及750ms最终观察窗；正式预测候选协商、校准收集器和概率策略仍未完成 | 10月12日模型53、工厂5、Windows观察266、Linux真实raw268、UDP回归82通过；短窗两种回归各30轮；物理WinDivert→公网目标取得约1476ms新鲜SynObserved，另一目标未观察到。模型UDP预测通过MeshLink完整包；不代表公网预测、SO或完整NAT分类 | TCP诊断默认关闭；短窗显式实验；模型/资格报告不启用预测候选；现用部署未替换 |
 | M6 质量/效率 | 选路、降级后恢复、双向健康及队列观测已接产品；新增受管 TCP/UDP 共用实际外层字节 pacing/成员公平队列；兼容入口 pacing、完整管线队列、AutoQuality 和完整指标待完成 | pacing 正式 Runner113通过，22正确性检查通过但性能Gate失败：50Mbps下单peer49.530、七peer48.876；非公网/八真机；此前双机质量负例保留 | 默认兼容入口不变；pacing默认0关闭、UDP降级独立许可、AutoQuality拒绝启用；现用部署未替换 |
 | M7 映射/IPv6 | PCP/NAT-PMP TCP/UDP、同 socket UDP IPv6 已接入；新增 ABI 2/broker-only 原生 FakeTCP IPv6、源所有权和正式 Runner；网关主动通知待完成 | 原生 IPv6 30轮690检查、Runner43、拒绝10组、基线65、UDP54、协议10项通过；真实TCP helper/C++/HTTPS，raw与IP适配器受控；公网/WinDivert/Wintun/无分片Gate仍待实测 | 映射、UDP及FakeTCP IPv6均默认关闭；须服务/双端/后端对应能力及物理地址；UDP另需独立许可；现用部署未替换 |
 | M8 安全/恢复 | 随各模块实现；升级候选与原Active所有者链；新增watch 403后下一预算轮询验证签名撤销 | 10月12日正式工厂/Runner/C++本地集成：360.13秒双端HTTPS中断，692包持续；STUN查询超时后持续；签名撤销5.28秒退出，10检查通过；watch34、基线65通过。raw/IP模拟，真实Wintun/网关/系统生命周期Gate待完成 | 撤销修复无需开关；已有发布包尚未重打；保留既有密码不变量 |
@@ -75,3 +75,5 @@ ABI 2 原生 FakeTCP IPv6、捕获/校验和、双栈协商与受控 30 轮：[M
 协调中断六分钟、反射查询失效、签名撤销正式修复：[M8 生命周期](m8-control-lifecycle-20261012.md)。
 
 原生SYN/HTTP/心跳全机计账、正式提名接线及受控负载：[M3 原生计账](m3-native-wire-budget-20261012.md)。
+
+条件预测、单调新鲜度、短窗口公网来源观察与仍待完成的产品协商：[M5 预测与短窗](m5-prediction-short-observer-20261012.md)。

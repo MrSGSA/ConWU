@@ -44,4 +44,6 @@ public static class TraversalLimits
     public const int LongPollHoldSeconds = 25, LongPollTimeoutSeconds = 35;
     public const int EventQueueSize = 128, GlobalWaiters = 64;
     public const int InnerMtu = 1280, MeshOverhead = 64, UdpRequiredPayload = InnerMtu + MeshOverhead;
+    public const int PredictionWindows = 20, PredictionWindowLimit = 128, PredictionPorts = 8, PredictionAgeMs = 2000;
+    public const int PredictionFailedAttempts = 2, PredictionForecastLimit = 64;
 }
