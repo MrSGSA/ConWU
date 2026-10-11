@@ -24,11 +24,17 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     Process? process;
     Task heartbeat = Task.CompletedTask;
     int disposed, childExited, childId;
+    long startTimestamp;
     uint request = 1;
     public Guid AttachId => reference.AttachId;
     public Guid LeaseId { get; }
     public bool Armed { get; private set; }
     public bool Started { get; private set; }
+    // Start transmission, not the acknowledgement, begins the one round clock.
+    // Preparation and duplicate Start never reset it. Authentication/nomination
+    // must use the remaining interval instead of allocating another eight seconds.
+    public TimeSpan RemainingRound => Volatile.Read(ref startTimestamp) is var stamp && stamp != 0
+        ? TimeSpan.FromMilliseconds(TraversalLimits.SoRoundMs) - Stopwatch.GetElapsedTime(stamp) : TimeSpan.Zero;
     public bool Exited {
         get {
             if (Volatile.Read(ref childExited) != 0 || process == null) return true;
@@ -109,6 +115,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         byte[] message = (byte[])identity.Clone();
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), type);
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(12), request++);
+        if (type == 3) Interlocked.CompareExchange(ref startTimestamp, Stopwatch.GetTimestamp(), 0);
         await pipe.WriteAsync(message, token);
         byte[] reply = new byte[Size]; await pipe.ReadExactlyAsync(reply, token);
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), expected);

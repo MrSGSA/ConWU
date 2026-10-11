@@ -12,6 +12,9 @@ if (args is ["--reject-attach", var nativeBinary, "--output", var negativeOutput
 if (args is ["--so-protocol", var soBinary, "--output", var soOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(soBinary), Path.GetFullPath(soOutput), true);
 if (args is ["--so-matrix", var matrixBinary, "--output", var matrixOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(matrixBinary), Path.GetFullPath(matrixOutput), true, true);
 if (args is ["--prepared-so", var preparedBinary, "--output", var preparedOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(preparedBinary), Path.GetFullPath(preparedOutput), true, prepared: true);
+if (args is ["--native-router", var routerBinary, "--output", var routerOutput]) return await NativeRouterPoc.Run(Path.GetFullPath(routerBinary), Path.GetFullPath(routerOutput));
+if (args is ["--prepare-router-network", var configs]) { NativeRouterNetwork.Prepare(Path.GetFullPath(configs)); return 0; }
+if (args is ["--router-network", var config]) return await NativeRouterNetwork.Run(Path.GetFullPath(config));
 
 // A separate process attempts a conflicting bind with SO_REUSEADDR. This is
 // deliberately loopback-only and targets only a socket owned by this test run.
