@@ -181,7 +181,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     } else mapped = (await udp.Observe(target, deadline.Token)).Mapped;
                 } else if (captureBroker) {
                     pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;
-                    if (family == AddressFamily.InterNetwork) ObserveInBackground(pooled.Owner); // observer wire protocol is still IPv4-only
+                    if (family == AddressFamily.InterNetwork) ObserveInBackground(pooled.Owner, peer); // observer wire protocol is still IPv4-only
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);
                     tcp = await TcpEndpointLease.Open(local, target, generation, connect.Token);

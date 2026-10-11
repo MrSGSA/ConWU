@@ -46,4 +46,7 @@ public static class TraversalLimits
     public const int InnerMtu = 1280, MeshOverhead = 64, UdpRequiredPayload = InnerMtu + MeshOverhead;
     public const int PredictionWindows = 20, PredictionWindowLimit = 128, PredictionPorts = 8, PredictionAgeMs = 2000;
     public const int PredictionFailedAttempts = 2, PredictionForecastLimit = 64;
+    // <= two retained observer tickets/member in a sixty-second interval.
+    public const int CalibrationWindowIntervalMs = 31000, CalibrationDeadlineMs = 900000;
+    public const int CalibrationInterruptedCooldownMs = 90000; // signed request lifetime + server ticket retention
 }

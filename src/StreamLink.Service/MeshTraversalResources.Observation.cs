@@ -15,9 +15,10 @@ internal sealed partial class MeshCandidateFactory
     readonly List<PortAllocationWindow> predictionWindows = [];
     public void ConfigureObservation(ITcpObservationControl control, MeshRequestBudget budget, Action<string> log)
     { lock (observationGate) { observer = control; observationBudget = budget; observationLog = log; } }
-    void ObserveInBackground(TcpCaptureOwner owner)
+    void ObserveInBackground(TcpCaptureOwner owner, MeshMember peer)
     {
         lock (observationGate) {
+            if (options.TcpPortCalibration) { StartCalibration(owner.Lease.Local.Address, owner.Lease.Reflector, peer.Slot); return; }
             // At most one running probe, eight source resources per service
             // lifetime. No retries/fan-out per peer; diagnostic failure cannot
             // delay Gather, reset STUN or replace a healthy data path.
@@ -55,6 +56,7 @@ internal sealed partial class MeshCandidateFactory
     {
         Task pending;
         lock (observationGate) { observationStop.Cancel(); pending = observationTask; }
-        await pending;
+        try { await Task.WhenAll(pending, calibrationTask); }
+        finally { CalibratedTcpModel?.Invalidate(); }
     }
 }

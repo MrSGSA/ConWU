@@ -8,6 +8,26 @@ namespace StreamLink.Core;
 // cannot by itself satisfy the predictor's interference qualification gate.
 public static class TcpPredictionEvidence
 {
+    // Counts observed interfering probes, not confirmed NAT allocations. A SYN
+    // arriving at another destination cannot reveal the gateway mapping table.
+    public static PortAllocationWindow? CalibrationWindow(IReadOnlyList<TcpShapeObservation> observations, bool interference)
+    {
+        if (observations.Count != (interference ? 3 : 2) || observations.Any(o => o == null || o.State != "SynObserved" || o.LocalProbeStartedAt <= 0)) return null;
+        var ordered = observations.OrderBy(o => o.LocalProbeStartedAt).ToArray();
+        var before = ordered[0]; var after = ordered[^1];
+        var window = Windows([before, after]).SingleOrDefault();
+        if (window == null || before.LocalProbeStartedAt >= after.LocalProbeStartedAt || before.ObservedAt >= after.ObservedAt) return null;
+        if (!interference) return window;
+        var background = ordered[1];
+        // Reuse the same full owner/profile/interface/window validation for the
+        // middle probe. It must actually arrive between both main observations.
+        if (Windows([before, background]).Length != 1 || Windows([background, after]).Length != 1 ||
+            background.Target == after.Target || background.ProbeId == after.ProbeId ||
+            background.ObservedAt <= before.ObservedAt || background.ObservedAt >= after.ObservedAt ||
+            background.LocalProbeStartedAt <= before.LocalProbeStartedAt || background.LocalProbeStartedAt >= after.LocalProbeStartedAt ||
+            !IPEndPoint.Parse(background.Mapped!).Address.Equals(IPEndPoint.Parse(before.Mapped!).Address)) return null;
+        return window with { ObservedBackgroundActivity = 1 };
+    }
     public static PortAllocationWindow[] Windows(IReadOnlyList<TcpShapeObservation> observations)
     {
         if (observations.Count is < 2 or > 4) return [];

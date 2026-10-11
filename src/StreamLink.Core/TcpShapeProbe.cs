@@ -12,6 +12,12 @@ public static class TcpShapeProbe
         Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources = null) =>
         RunCore(owner, control, takeRequest, checkRoute, token, resources, freshDestinations: 0);
 
+    // Uses a new dedicated owner per window. Quiet and interference windows
+    // measure the SAME first/last destinations; only the middle probe differs.
+    public static Task<TcpShapeObservation[]> RunCalibration(TcpCaptureOwner owner, ITcpObservationControl control,
+        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, bool interference, CancellationToken token, TraversalResources? resources = null, Action? registrationConfirmed = null) =>
+        RunCore(owner, control, takeRequest, checkRoute, token, resources, 0, interference, registrationConfirmed);
+
     // Explicit, capability-gated observation primitive for a future calibrated
     // strategy. Caller retains the lease after return; this does not publish a
     // candidate, certify mapping stability or authorize another TCP tuple.
@@ -22,7 +28,7 @@ public static class TcpShapeProbe
         return RunCore(owner, control, takeRequest, checkRoute, token, resources, destinations);
     }
     static async Task<TcpShapeObservation[]> RunCore(TcpCaptureOwner owner, ITcpObservationControl control,
-        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations)
+        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations, bool? calibration = null, Action? registrationConfirmed = null)
     {
         bool fresh = freshDestinations != 0;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(20000);
@@ -38,6 +44,10 @@ public static class TcpShapeProbe
         if (fresh && catalog.FreshWindowMs != TcpObserverProtocol.FreshWindowMs) throw new IOException("观察服务不支持短窗口；不能使用旧观察代替新鲜端点");
         TcpObserverProtocol.ValidatePoints(catalog.Points);
         var points = catalog.Points.Where(p => !TcpObserverProtocol.Endpoint(p.Endpoint).Equals(owner.Lease.Reflector)).ToArray();
+        if (calibration != null) {
+            if (points.Length < 3) throw new IOException("校准需要至少三个独立观察目标，含背景探测目标");
+            points = calibration.Value ? [points[0], points[1], points[2]] : [points[0], points[2]];
+        }
         if (fresh) points = points.Take(freshDestinations).ToArray();
         foreach (var point in points) checkRoute(TcpObserverProtocol.Endpoint(point.Endpoint));
         if (points.Length == 0) throw new IOException("观察点与 helper 四元组冲突");
@@ -56,6 +66,7 @@ public static class TcpShapeProbe
         var opened = await Request(fresh ? "register-fresh" : "register", ticket, specs);
         int windowMs = fresh ? TcpObserverProtocol.FreshWindowMs : TcpObserverProtocol.WindowSeconds * 1000;
         Validate(opened, ticket, catalog.Epoch, specs, group, windowMs);
+        registrationConfirmed?.Invoke(); // local receipt is later than server ticket creation
         // Counting request-budget queuing conservatively can only reject a
         // marginal window. Server UTC never extends local send/freshness limits.
         if (fresh && Stopwatch.GetElapsedTime(registering).TotalMilliseconds >= windowMs) throw new IOException("短窗口登记已过期");

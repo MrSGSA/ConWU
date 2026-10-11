@@ -10,6 +10,7 @@ public sealed class SettingsWindow : Form
     readonly ComboBox selection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
     readonly CheckBox udpFallback = new() { AutoSize = true, Text = "TCP 不可用时允许 UDP 降级直连（需启用实验 TCP + UDP）" };
     readonly CheckBox tcpObservation = new() { AutoSize = true, Text = "TCP 映射诊断（实验，需服务器支持）" };
+    readonly CheckBox tcpCalibration = new() { AutoSize = true, Text = "TCP 端口校准（实验，约 10 分钟；需专用观察服务，仅收集规律）" };
     readonly CheckBox portControl = new() { AutoSize = true, Text = "TCP PCP / NAT-PMP 后备映射（实验，需网关支持）" };
     readonly CheckBox udpIpv6 = new() { AutoSize = true, Text = "IPv6 UDP 备用（实验，需双方原生 IPv6 与新版服务器）" };
     readonly CheckBox tcpIpv6 = new() { AutoSize = true, Text = "IPv6 FakeTCP（实验，需双方原生 IPv6 与新版服务器）" };
@@ -20,7 +21,7 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -60,6 +61,15 @@ public sealed class SettingsWindow : Form
         tcpIpv6.CheckedChanged += (_, _) => { if (supportsFakeTcpIpv6) profile.FakeTcpIpv6 = tcpIpv6.Checked; };
         if (!supportsFakeTcpIpv6) tcpIpv6.Text = "IPv6 FakeTCP 需更新后台组件。";
         var extra = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
+        tcpCalibration.Checked = profile.TcpPortCalibration;
+        tcpCalibration.CheckedChanged += (_, _) => { if (supportsCalibration) profile.TcpPortCalibration = tcpCalibration.Checked; };
+        void CalibrationAvailability() {
+            tcpCalibration.Enabled = supportsCalibration && supportsObserver && tcpObservation.Checked && traversal.SelectedIndex != 0;
+            if (!tcpCalibration.Enabled && supportsCalibration) tcpCalibration.Checked = false;
+        }
+        if (!supportsCalibration) tcpCalibration.Text = "TCP 端口校准需更新后台组件。";
+        tcpObservation.CheckedChanged += (_, _) => CalibrationAvailability(); traversal.SelectedIndexChanged += (_, _) => CalibrationAvailability();
+        CalibrationAvailability(); extra.Controls.Add(tcpCalibration);
         extra.Controls.AddRange([portControl, tcpIpv6, udpIpv6]); layout.Controls.Add(extra);
         pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
         traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;

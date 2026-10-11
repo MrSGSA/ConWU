@@ -43,9 +43,9 @@ try {
     Reject(regular.Concat(regular).ToArray(), "replayed window IDs cannot inflate independent sample count");
     Reject(regular.Select((w, i) => i == 19 ? w with { Scope = w.Scope with { Profile = TraversalProfile.UdpDirect } } : w).ToArray(), "TCP and UDP evidence cannot be pooled");
     Reject(regular.Select((w, i) => i == 19 ? w with { Scope = w.Scope with { NetworkGeneration = Guid.NewGuid() } } : w).ToArray(), "route generation cannot be pooled");
-    Reject(regular.Select(w => w with { ObservedBackgroundAllocations = 0 }).ToArray(), "training without an interference experiment stays disabled");
-    Reject(regular.Select((w, i) => i >= 10 ? w with { ObservedBackgroundAllocations = 0 } : w).ToArray(), "interference must also appear in the held-out half");
-    Reject(regular.Select(w => w with { ObservedBackgroundAllocations = 1 }).ToArray(), "interference-only fitting cannot claim a quiet-baseline model");
+    Reject(regular.Select(w => w with { ObservedBackgroundActivity = 0 }).ToArray(), "training without an interference experiment stays disabled");
+    Reject(regular.Select((w, i) => i >= 10 ? w with { ObservedBackgroundActivity = 0 } : w).ToArray(), "interference must also appear in the held-out half");
+    Reject(regular.Select(w => w with { ObservedBackgroundActivity = 1 }).ToArray(), "interference-only fitting cannot claim a quiet-baseline model");
     Reject(regular.Select(w => w with { Before = w.Before with { Evidence = PortAllocationEvidence.KernelTcpStun } }).ToArray(), "kernel TCP STUN cannot substitute for native allocation evidence");
     Reject(regular.Select((w, i) => i == 19 ? w with { Before = w.Before with { NewDestination = false } } : w).ToArray(), "a reused mapping does not measure a fresh allocation");
     Reject(regular.Select((w, i) => i == 19 ? w with { After = w.After with { ResourceId = Guid.NewGuid() } } : w).ToArray(), "one sample transition requires the same held resource");
@@ -113,11 +113,22 @@ try {
         Native(nativeWindow.After with { ObservationId = Guid.NewGuid(), Target = "198.51.100.11:47221", ObservedAt = nativeWindow.After.ObservedAt.AddMilliseconds(400) }),
         Native(nativeWindow.After with { ObservationId = Guid.NewGuid(), Target = "198.51.100.11:47222", ObservedAt = nativeWindow.After.ObservedAt.AddMilliseconds(800) }) };
     var converted = TcpPredictionEvidence.Windows(native);
-    Check(converted.Length == 1 && converted[0].ObservedBackgroundAllocations == 0, "four destinations in one native observer ticket count as one window, without invented interference evidence");
+    Check(converted.Length == 1 && converted[0].ObservedBackgroundActivity == 0, "four destinations in one native observer ticket count as one window, without invented interference evidence");
     Check(TcpPredictionEvidence.Windows(native.Select(o => o with { InterfaceId = "Unknown" }).ToArray()).Length == 0 &&
         TcpPredictionEvidence.Windows(native.Select(o => o with { State = "Ambiguous" }).ToArray()).Length == 0, "unknown interface and ambiguous SYN correlation cannot train a predictor");
     Check(TcpPredictionEvidence.Windows(native.Select((o, i) => i == 0 ? o with { CaptureOwnerId = Guid.NewGuid() } : o).ToArray()).Length == 0,
         "native evidence from different capture owners cannot form one allocation window");
+    var calibration = native.Take(3).Select((o, i) => o with { LocalProbeStartedAt = clock.GetTimestamp() + i + 1 }).ToArray();
+    Check(TcpPredictionEvidence.CalibrationWindow([calibration[0], calibration[2]], false) is { ObservedBackgroundActivity: 0 } &&
+        TcpPredictionEvidence.CalibrationWindow(calibration, true) is { ObservedBackgroundActivity: 1 }, "quiet and interference windows use identical main targets and separately observed middle activity");
+    Check(TcpPredictionEvidence.CalibrationWindow(calibration[..2], true) == null && TcpPredictionEvidence.CalibrationWindow(calibration, false) == null,
+        "background activity cannot be inferred from a counter or an unspecified probe layout");
+    Check(TcpPredictionEvidence.CalibrationWindow(calibration.Select((o, i) => i == 1 ? o with { State = "NotObserved", Mapped = null } : o).ToArray(), true) == null,
+        "sending a background probe without seeing its source is insufficient interference evidence");
+    Check(TcpPredictionEvidence.CalibrationWindow(calibration.Select((o, i) => i == 1 ? o with { ObservedAt = calibration[2].ObservedAt + 1 } : o).ToArray(), true) == null,
+        "background evidence arriving outside the measured allocation transition is rejected");
+    Check(TcpPredictionEvidence.CalibrationWindow(calibration.Select((o, i) => i == 1 ? o with { CaptureOwnerId = Guid.NewGuid() } : o).ToArray(), true) == null,
+        "background source cannot be substituted from an unrelated capture owner");
     await UdpModel.Run(Check, rows);
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows,
         scope = "deterministic allocation evidence and in-memory NAT running real UdpTraversal/MeshLink; no public NAT, native TCP I/O, physical Windows or Wintun" }, new JsonSerializerOptions { WriteIndented = true }));

@@ -10,7 +10,7 @@ public enum PortAllocationEvidence { Unknown, NativeSynObserved, UdpStunObserved
 public sealed record PortAllocationSample(Guid ResourceId, Guid ObservationId, string Local, string Target, string Mapped,
     DateTimeOffset ObservedAt, bool NewDestination, PortAllocationEvidence Evidence, Guid CaptureOwnerId = default, long ProbeStartedAt = 0);
 public sealed record PortAllocationWindow(Guid WindowId, PortPredictionScope Scope, PortAllocationSample Before,
-    PortAllocationSample After, int ObservedBackgroundAllocations);
+    PortAllocationSample After, int ObservedBackgroundActivity);
 public sealed record PortPredictionAssessment(string State, string Reason, string Model, int TrainingWindows,
     int ValidationWindows, int TrainingHits, int ValidationHits, int TrainingInterference, int ValidationInterference,
     int MaximumPorts, Guid ModelId);
@@ -98,7 +98,7 @@ public sealed class NatPortPrediction
                 w.Before.ResourceId != w.After.ResourceId || w.Before.CaptureOwnerId != w.After.CaptureOwnerId || w.Before.Local != w.After.Local || w.Before.Target == w.After.Target ||
                 w.Before.ObservedAt <= previous || w.After.ObservedAt <= w.Before.ObservedAt ||
                 (w.After.ObservedAt - w.Before.ObservedAt).TotalMilliseconds > MaximumAgeMs ||
-                w.ObservedBackgroundAllocations is < 0 or > 1024 ||
+                w.ObservedBackgroundActivity is < 0 or > 1024 ||
                 !observations.Add(w.Before.ObservationId) || !observations.Add(w.After.ObservationId) ||
                 !tuples.Add(TupleKey(w.Before)) || !tuples.Add(TupleKey(w.After))) {
                 assessment = Reject("mixed-replayed-reused-or-unordered-evidence"); return null;
@@ -112,7 +112,7 @@ public sealed class NatPortPrediction
         // window size or a second model after a failed validation result.
         int count = windows.Count / 2;
         var train = windows.Take(count).ToArray(); var validation = windows.Skip(count).ToArray();
-        int trainNoise = train.Count(w => w.ObservedBackgroundAllocations > 0), validationNoise = validation.Count(w => w.ObservedBackgroundAllocations > 0);
+        int trainNoise = train.Count(w => w.ObservedBackgroundActivity > 0), validationNoise = validation.Count(w => w.ObservedBackgroundActivity > 0);
         if (trainNoise == 0 || validationNoise == 0 || trainNoise == train.Length || validationNoise == validation.Length) { assessment = Reject("missing-baseline-or-interference-observations"); return null; }
         var rules = new List<Rule> { new("preserved-local-port"), new("stable-observed-port") };
         foreach (int step in train.Select(w => IPEndPoint.Parse(w.After.Mapped).Port - IPEndPoint.Parse(w.Before.Mapped).Port).Where(d => d != 0 && Math.Abs(d) <= 4096).Distinct().Order())

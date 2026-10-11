@@ -7,7 +7,7 @@ using StreamLink.Core;
 using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
-static class PredictionQualificationTests
+static partial class PredictionQualificationTests
 {
     public static async Task<object> Run(string binary, string root, Action<bool, string> check, CancellationToken token)
     {
@@ -44,7 +44,8 @@ static class PredictionQualificationTests
             await resource.DisposeAsync(); await factory.DisposeAsync();
             check(io?.Closed == true && helper.Accepted == 1, "qualification reporting retains one helper then joins capture teardown without a second bind");
         }
-        return new { rows, scope = "formal factory and TcpShapeProbe; real loopback TCP helper; controlled observer API and raw I/O, no native worker, Wintun or public NAT" };
+        rows.Add(await Calibration(binary, root, check, token));
+        return new { rows, scope = "formal factory and TcpShapeProbe; real loopback TCP helpers; controlled observer API/NAT raw I/O, no native worker, Wintun or public NAT; calibration scheduling interval accelerated only in fixture" };
     }
     sealed class Observer
     {

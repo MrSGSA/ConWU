@@ -172,6 +172,7 @@ public sealed class MeshRunner
                     savingRevision = directory.Revision; saving = discovery.SaveDirectory(directory, stop); nextSave = now + 5000;
                 }
                 var statuses = router?.Status() ?? [];
+                if (factory is MeshCandidateFactory calibrationFactory) calibrationFactory.UpdateCalibrationStatus(statuses, router != null);
                 bool allConnected = statuses.Length > 0 && statuses.All(p => p.Connected);
                 if (reading == null && now >= nextRead && (traversal == null || requestBudget.Take(priority: true))) {
                     bool watching = discovery is IMeshChangeDiscovery { SupportsLongPolling: true };
