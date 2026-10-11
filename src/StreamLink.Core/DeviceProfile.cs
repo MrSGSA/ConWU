@@ -34,6 +34,7 @@ public sealed class DeviceProfile
     // Experimental native outer IPv6 UDP. Requires both peers and coordinator
     // support, physical IPv6 and the existing explicit UDP fallback policy.
     public bool UdpIpv6 { get; set; }
+    public bool FakeTcpIpv6 { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")

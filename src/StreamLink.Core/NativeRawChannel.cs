@@ -32,7 +32,7 @@ internal sealed class NativeRawChannel : IAsyncDisposable
             using var ready = CancellationTokenSource.CreateLinkedTokenSource(stop.Token); ready.CancelAfter(20000);
             await pipe.WaitForConnectionAsync(ready.Token);
             if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out uint pid) || pid != processId) throw new IOException("Raw pipe is not the authorized worker");
-            byte[] hello = new byte[96]; await pipe.ReadExactlyAsync(hello, ready.Token);
+            byte[] hello = new byte[identity.Length]; await pipe.ReadExactlyAsync(hello, ready.Token);
             if (!hello.AsSpan().SequenceEqual(identity)) throw new IOException("Raw pipe attachment mismatch");
             await session.CaptureReady.WaitAsync(ready.Token); await pipe.WriteAsync(identity, ready.Token);
             input = Input(); output = Output();

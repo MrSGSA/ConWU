@@ -11,7 +11,7 @@ namespace StreamLink.EndpointPoc;
 
 static class CaptureBrokerPoc
 {
-    public static async Task<int> Run(string binary, int rounds, string output)
+    public static async Task<int> Run(string binary, int rounds, string output, bool ipv6 = false)
     {
         if (rounds is < 1 or > 30) throw new ArgumentException("1..30 rounds");
         int checks = 0; var rows = new List<object>();
@@ -21,16 +21,17 @@ static class CaptureBrokerPoc
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(10)); var token = deadline.Token;
         try {
             for (int round = 1; round <= rounds; round++) {
-                await using var reflector = new Reflector(); var generation = Guid.NewGuid();
+                var source = ipv6 ? IPAddress.IPv6Loopback : IPAddress.Loopback;
+                await using var reflector = new Reflector(new(source, 0)); var generation = Guid.NewGuid();
                 var leases = new List<TcpEndpointLease>(); var owners = new List<TcpCaptureOwner>(); var paths = new List<NativeDatagramPath>();
-                var routers = new List<MeshRouter>(); var adapters = new List<Adapter>(); var wire = new Network();
+                var routers = new List<MeshRouter>(); var adapters = new List<Adapter>(); var wire = new Network(ipv6);
                 var a = MeshIdentity.Create("https://example.com/", "", "faketcp");
                 var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); var c = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));
                 b.Directory = c.Directory = a.Directory; var profiles = new[] { a, b, c };
                 var timer = Stopwatch.StartNew();
                 try {
                     for (int i = 0; i < 3; i++) {
-                        var lease = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, token); leases.Add(lease);
+                        var lease = await TcpEndpointLease.Open(new(source, 0), reflector.Endpoint, generation, token); leases.Add(lease);
                         using var query = lease.AcquireAttempt(generation); await query.Observe(token);
                         owners.Add(new(lease, generation, (local, _) => wire.Open(local))); await owners[^1].Ready;
                         var adapter = new Adapter(); adapters.Add(adapter); routers.Add(new(profiles[i], adapter));
@@ -95,7 +96,8 @@ static class CaptureBrokerPoc
                     Check(owners.All(o => o.Status is { Closed: true, Sessions: 0, Failure: "" }) && leases.All(l => l.Closed), "capture I/O joins before the final source reference is released");
                     Check(owners.All(o => o.Status.Queues is { Enqueued: > 0, Dequeued: > 0, PeakSessionDepth: > 0, PipeWrites: > 0 } q &&
                         q.Dequeued <= q.Enqueued && q.PipeWrites <= q.Dequeued), "cumulative capture/pipe diagnostics survive worker release and preserve stage counts");
-                    rows.Add(new { round, elapsedMs = timer.ElapsedMilliseconds, exitDetectedMs, owners = owners.Select(o => o.Status).ToArray(), wirePackets = wire.Count });
+                    Check(wire.ChecksumsValid && wire.Count > 0, "raw packets retain correct address family, lengths and IPv6 TCP pseudo-header checksums");
+                    rows.Add(new { round, ipv6, elapsedMs = timer.ElapsedMilliseconds, exitDetectedMs, owners = owners.Select(o => o.Status).ToArray(), wirePackets = wire.Count, maximumIpBytes = wire.MaximumBytes });
                     Console.WriteLine($"Broker {round}/{rounds} passed");
                 } finally {
                     foreach (var router in routers) await router.DisposeAsync(); foreach (var path in paths) await path.DisposeAsync();
@@ -119,14 +121,25 @@ static class CaptureBrokerPoc
         public void Dispose() => Outgoing.Dispose();
     }
     sealed record Header(string Source, string Target, byte Flags, int Payload, uint Sequence, long Tick);
-    sealed class Network {
+    sealed class Network(bool ipv6) {
         readonly ConcurrentDictionary<string, Io> endpoints = new();
         public readonly ConcurrentQueue<Header> Rows = new();
         public int Count => Rows.Count;
+        public bool ChecksumsValid = true; public int MaximumBytes;
         public Io Open(IPEndPoint local) { var io = new Io(this); if (!endpoints.TryAdd(local.ToString(), io)) throw new IOException("duplicate capture"); return io; }
         public bool Send(ReadOnlySpan<byte> p) {
-            int ip = (p[0] & 15) * 4; string source = new IPEndPoint(new IPAddress(p.Slice(12, 4)), BinaryPrimitives.ReadUInt16BigEndian(p[ip..])).ToString();
-            string target = new IPEndPoint(new IPAddress(p.Slice(16, 4)), BinaryPrimitives.ReadUInt16BigEndian(p[(ip + 2)..])).ToString();
+            int ip = ipv6 ? 40 : (p[0] & 15) * 4, size = ipv6 ? 16 : 4;
+            if (p[0] >> 4 != (ipv6 ? 6 : 4) || ipv6 && (p[6] != 6 || BinaryPrimitives.ReadUInt16BigEndian(p[4..]) + 40 != p.Length)) { ChecksumsValid = false; return false; }
+            if (ipv6) {
+                uint sum = 6 + (uint)(p.Length - 40);
+                for (int i = 8; i < 40; i += 2) sum += BinaryPrimitives.ReadUInt16BigEndian(p[i..]);
+                for (int i = 40; i < p.Length; i += 2) sum += i + 1 < p.Length ? BinaryPrimitives.ReadUInt16BigEndian(p[i..]) : (uint)p[i] << 8;
+                while (sum > 65535) sum = (sum & 65535) + (sum >> 16);
+                if (sum != 65535) { ChecksumsValid = false; return false; }
+            }
+            MaximumBytes = Math.Max(MaximumBytes, p.Length);
+            string source = new IPEndPoint(new IPAddress(p.Slice(ipv6 ? 8 : 12, size)), BinaryPrimitives.ReadUInt16BigEndian(p[ip..])).ToString();
+            string target = new IPEndPoint(new IPAddress(p.Slice(ipv6 ? 24 : 16, size)), BinaryPrimitives.ReadUInt16BigEndian(p[(ip + 2)..])).ToString();
             Rows.Enqueue(new(source, target, p[ip + 13], p.Length - ip - (p[ip + 12] >> 4) * 4, BinaryPrimitives.ReadUInt32BigEndian(p[(ip + 4)..]), Environment.TickCount64));
             return endpoints.TryGetValue(target, out var io) && io.Receiving.Writer.TryWrite(new(p.ToArray(), false));
         }

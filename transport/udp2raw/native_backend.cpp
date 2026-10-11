@@ -153,8 +153,8 @@ int test_port(const char *name, bool allow_zero=false) {
 }
 
 int init_raw_socket() {
-    if (raw_ip_version != AF_INET || (raw_mode != mode_faketcp && raw_mode != mode_udp) || use_tcp_dummy_socket || lower_level) {
-        mylog(log_fatal, "native backend requires IPv4 --raw-mode faketcp or udp (without --easy-tcp)\n");
+    if ((raw_ip_version != AF_INET && !(raw_ip_version==AF_INET6 && native_broker_mode() && raw_mode==mode_faketcp)) || (raw_mode != mode_faketcp && raw_mode != mode_udp) || use_tcp_dummy_socket || lower_level) {
+        mylog(log_fatal, "native backend requires IPv4, or authorized brokered IPv6 FakeTCP (without --easy-tcp)\n");
         myexit(-1);
     }
     send_with_pcap = 0;

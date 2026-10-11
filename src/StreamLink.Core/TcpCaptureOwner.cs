@@ -61,19 +61,30 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     {
         lock (gate) {
             if (retiring || closing || failure.Length != 0 || generation != Lease.NetworkGeneration ||
-                peer.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || peer.Port == 0 ||
+                peer.AddressFamily != Lease.Local.AddressFamily || peer.Port == 0 ||
+                peer.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !Ipv6Direct.UnscopedUnicast(peer.Address) ||
                 peer.Equals(Lease.Local) || peer.Equals(Lease.Reflector) || sessions.Count >= 8)
                 throw new IOException("Capture owner unavailable or unauthorized tuple");
             if (sessions.ContainsKey(peer)) throw new IOException("The TCP wire tuple already has a live or retiring session");
             var session = new Session(this, new(peer.Address, peer.Port)); sessions.Add(session.Peer, session); return session;
         }
     }
-    // IPv4/TCP metadata only; payload authentication remains in udp2raw/MeshLink.
+    // Unfragmented IPv4/TCP or fixed-header IPv6/TCP. Extension/fragment/jumbo
+    // packets are deliberately rejected, never parsed at an assumed TCP offset.
     // A capture tuple is an authorization boundary, never a member identity proof.
     internal static bool Tuple(ReadOnlySpan<byte> p, out IPEndPoint source, out IPEndPoint target, bool exactLength = false)
     {
         source = target = null!;
-        if (p.Length < 40 || p.Length > 65535 || p[0] >> 4 != 4 || p[9] != 6 || (p[6] & 0x3f) != 0 || p[7] != 0) return false;
+        if (p.Length < 40 || p.Length > 65535) return false;
+        if (p[0] >> 4 == 6) {
+            int size = 40 + BinaryPrimitives.ReadUInt16BigEndian(p[4..]);
+            if (p.Length < 60 || p[6] != 6 || size < 60 || size > p.Length || exactLength && size != p.Length ||
+                (p[52] >> 4) < 5 || 40 + (p[52] >> 4) * 4 > size) return false;
+            source = new(new IPAddress(p.Slice(8, 16)), BinaryPrimitives.ReadUInt16BigEndian(p[40..]));
+            target = new(new IPAddress(p.Slice(24, 16)), BinaryPrimitives.ReadUInt16BigEndian(p[42..]));
+            return source.Port != 0 && target.Port != 0 && Ipv6Direct.UnscopedUnicast(source.Address) && Ipv6Direct.UnscopedUnicast(target.Address);
+        }
+        if (p[0] >> 4 != 4 || p[9] != 6 || (p[6] & 0x3f) != 0 || p[7] != 0) return false;
         int ip = (p[0] & 15) * 4, declared = BinaryPrimitives.ReadUInt16BigEndian(p[2..]);
         if (ip < 20 || p.Length < ip + 20 || declared < ip + 20 || declared > p.Length || exactLength && declared != p.Length) return false;
         int tcp = (p[ip + 12] >> 4) * 4;

@@ -17,6 +17,7 @@ internal interface IMeshCandidateFactory
 {
     TraversalProfile[] Profiles { get; }
     bool SupportsUdpIpv6 => false;
+    bool SupportsFakeTcpIpv6 => false;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
         bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => Gather(peer, profile, attempt, token);
@@ -40,7 +41,7 @@ internal sealed class MeshRequestBudget
 }
 
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
-    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null) : IMeshCandidateFactory, IAsyncDisposable
+    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
@@ -50,19 +51,21 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     readonly Dictionary<int, (string Device, bool GatewayNext)> udpMethods = [];
     internal Action<IPEndPoint, IPAddress?, bool>? RouteCheckForTest { get; init; }
     internal Func<bool>? Ipv6AvailableForTest { get; init; }
+    internal Func<IPEndPoint, IPEndPoint, IEndpointPacketIo>? OpenCaptureForTest { get; init; }
     internal Func<string, AddressFamily, CancellationToken, Task<IPEndPoint>> ResolveTarget { get; init; } = Stun.Resolve;
     internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
         (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
-        (local, helper) => new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper)); } }
+        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper)); } }
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
+    public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();
         if (profile.TraversalMode == "legacy") return null;
         var supported = new List<TraversalProfile>();
-        bool broker = false;
+        bool broker = false, ipv6 = false;
         try {
             var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             info.ArgumentList.Add("--native-info");
@@ -74,6 +77,8 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 if (process.ExitCode != 0 || json.Length > 8192) throw new IOException("原生能力响应无效");
                 using var document = JsonDocument.Parse(json); var r = document.RootElement;
                 broker = r.TryGetProperty("captureBroker", out var capture) && capture.GetInt32() == 1;
+                ipv6 = broker && r.TryGetProperty("ipv6", out var v6) && v6.GetBoolean() && r.TryGetProperty("ipv6Abi", out var abi6) && abi6.GetInt32() == 2 &&
+                    r.TryGetProperty("ipv6Attach", out var attach6) && attach6.GetString() == "broker-only";
                 if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == "windivert" &&
                     r.TryGetProperty("preparedStart", out var prepared) && prepared.GetBoolean() &&
                     r.TryGetProperty("simultaneousOpen", out var so) && so.GetBoolean() && r.GetProperty("wireProtocol").GetString() == "udp2raw-http-c4995ea")
@@ -81,7 +86,8 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             } finally { if (!process.HasExited) { process.Kill(); await process.WaitForExitAsync(); } }
         } catch (Exception ex) when (!token.IsCancellationRequested) { log("原生双主动暂未启用：" + ex.GetType().Name); }
         if (profile.TraversalMode == "tcp-udp" && profile.Selection().Allows(TraversalProfile.UdpDirect)) supported.Add(TraversalProfile.UdpDirect);
-        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log);
+        if (profile.FakeTcpIpv6 && !ipv6) log("FakeTCP IPv6 暂未启用：原生组件需提供 ABI 2 与统一捕获能力，继续 IPv4");
+        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
@@ -112,14 +118,17 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
+        bool supported6 = kind == TraversalProfile.UdpDirect ? SupportsUdpIpv6 : SupportsFakeTcpIpv6;
         if (remote?.AddressFamily == AddressFamily.InterNetworkV6) {
-            if (!allowIpv6 || !SupportsUdpIpv6 || kind != TraversalProfile.UdpDirect) throw new IOException("本轮未协商 IPv6 UDP");
+            if (!allowIpv6 || !supported6) throw new IOException("本轮未协商该承载的 IPv6 能力");
             return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, deadline.Token);
         }
         // The Offer selects one family; the responder must follow it. A failed
-        // first IPv6 check leaves the second existing UDP round for IPv4.
-        if (remote == null && round == 1 && allowIpv6 && SupportsUdpIpv6 && kind == TraversalProfile.UdpDirect &&
-            (Ipv6AvailableForTest?.Invoke() ?? Ipv6Direct.Available())) {
+        // first IPv6 check leaves the second existing profile round for IPv4.
+        bool try6 = remote == null && round == 1 && allowIpv6 && supported6;
+        bool available6 = try6 && (Ipv6AvailableForTest?.Invoke() ?? Ipv6Direct.Available());
+        if (try6 && !available6) diagnostic?.Invoke("IPv6Unavailable：未找到可用的原生物理 IPv6 源地址，继续 IPv4");
+        if (available6) {
             using var fast = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); fast.CancelAfter(3500);
             try { return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, fast.Token); }
             catch (Exception ex) when (!deadline.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) {
@@ -163,7 +172,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     } else mapped = (await udp.Observe(target, deadline.Token)).Mapped;
                 } else if (captureBroker) {
                     pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;
-                    ObserveInBackground(pooled.Owner);
+                    if (family == AddressFamily.InterNetwork) ObserveInBackground(pooled.Owner); // observer wire protocol is still IPv4-only
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);
                     tcp = await TcpEndpointLease.Open(local, target, generation, connect.Token);

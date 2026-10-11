@@ -12,13 +12,14 @@ public sealed class SettingsWindow : Form
     readonly CheckBox tcpObservation = new() { AutoSize = true, Text = "TCP 映射诊断（实验，需服务器支持）" };
     readonly CheckBox portControl = new() { AutoSize = true, Text = "TCP PCP / NAT-PMP 后备映射（实验，需网关支持）" };
     readonly CheckBox udpIpv6 = new() { AutoSize = true, Text = "IPv6 UDP 备用（实验，需双方原生 IPv6 与新版服务器）" };
+    readonly CheckBox tcpIpv6 = new() { AutoSize = true, Text = "IPv6 FakeTCP（实验，需双方原生 IPv6 与新版服务器）" };
     readonly TextBox tcp = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     readonly TextBox udp = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     readonly TextBox manual = new() { Dock = DockStyle.Fill, PlaceholderText = "留空自动探测；也可填写 Lucky 公网 IPv4:端口" };
     readonly NumericUpDown source = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -53,8 +54,12 @@ public sealed class SettingsWindow : Form
         traversal.SelectedIndexChanged += (_, _) => Ipv6Availability(); selection.SelectedIndexChanged += (_, _) => Ipv6Availability(); udpFallback.CheckedChanged += (_, _) => Ipv6Availability();
         udpIpv6.CheckedChanged += (_, _) => { if (supportsUdpIpv6) profile.UdpIpv6 = udpIpv6.Checked; };
         if (!supportsUdpIpv6) udpIpv6.Text = "IPv6 UDP 备用需更新后台组件。";
+        tcpIpv6.Checked = profile.FakeTcpIpv6; tcpIpv6.Enabled = supportsFakeTcpIpv6 && traversal.SelectedIndex != 0;
+        traversal.SelectedIndexChanged += (_, _) => tcpIpv6.Enabled = supportsFakeTcpIpv6 && traversal.SelectedIndex != 0;
+        tcpIpv6.CheckedChanged += (_, _) => { if (supportsFakeTcpIpv6) profile.FakeTcpIpv6 = tcpIpv6.Checked; };
+        if (!supportsFakeTcpIpv6) tcpIpv6.Text = "IPv6 FakeTCP 需更新后台组件。";
         var extra = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
-        extra.Controls.AddRange([portControl, udpIpv6]); layout.Controls.Add(extra);
+        extra.Controls.AddRange([portControl, tcpIpv6, udpIpv6]); layout.Controls.Add(extra);
         var ports = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill }; source.Value = profile.SourcePort; listen.Value = profile.ListenPort;
         ports.Controls.AddRange([new Label { Text = "探测源端口", AutoSize = true }, source, new Label { Text = "本机传输端口", AutoSize = true }, listen]); layout.Controls.Add(ports);
         manual.Text = profile.ManualEndpoint; layout.Controls.Add(manual);

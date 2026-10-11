@@ -14,7 +14,7 @@ namespace StreamLink.Core;
 [SupportedOSPlatform("windows")]
 public sealed class NativeAttachment : IDisposable, IAsyncDisposable
 {
-    const int Size = 96;
+    readonly int Size;
     readonly IDisposable reference;
     readonly TcpCaptureOwner.Session? brokerSession;
     readonly NativeRawChannel? rawChannel;
@@ -50,8 +50,11 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
 
     NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner)
     {
-        if (peer.AddressFamily != AddressFamily.InterNetwork || peer.Equals(lease.Reflector) || peer.Equals(lease.Local))
-            throw new ArgumentException("Native peer and helper must be distinct IPv4 tuples");
+        bool v6 = lease.Local.AddressFamily == AddressFamily.InterNetworkV6;
+        Size = v6 ? 144 : 96;
+        if (peer.AddressFamily != lease.Local.AddressFamily || peer.Equals(lease.Reflector) || peer.Equals(lease.Local) ||
+            v6 && (!Ipv6Direct.UnscopedUnicast(peer.Address) || captureOwner == null))
+            throw new ArgumentException("Native peer and helper require distinct same-family tuples; IPv6 requires the capture broker");
         if (captureOwner != null) {
             if (!ReferenceEquals(captureOwner.Lease, lease)) throw new ArgumentException("Capture owner does not hold this lease");
             brokerSession = captureOwner.Register(generation, peer); reference = brokerSession; AttachId = brokerSession.AttachId;
@@ -64,11 +67,11 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance, Size * 2, Size * 2);
             PipeName = name;
             identity = new byte[Size]; "SLNA"u8.CopyTo(identity);
-            BinaryPrimitives.WriteUInt16LittleEndian(identity.AsSpan(4), TraversalLimits.NativeAbi);
-            BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(8), Size);
+            BinaryPrimitives.WriteUInt16LittleEndian(identity.AsSpan(4), (ushort)(v6 ? 2 : TraversalLimits.NativeAbi));
+            BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(8), (uint)Size);
             AttachId.TryWriteBytes(identity.AsSpan(16)); lease.Id.TryWriteBytes(identity.AsSpan(32));
             generation.TryWriteBytes(identity.AsSpan(48));
-            Endpoint(identity, 64, lease.Local); Endpoint(identity, 70, lease.Reflector); Endpoint(identity, 76, peer);
+            Endpoint(identity, 64, lease.Local, v6 ? 96 : 64); Endpoint(identity, 70, lease.Reflector, v6 ? 112 : 70); Endpoint(identity, 76, peer, v6 ? 128 : 76);
             identity[82] = (byte)(server ? 2 : 1); identity[83] = (byte)(simultaneousOpen ? 2 : 1); // same HTTP data profile
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(84), 10000);
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(88), 1); // immutable capture descriptor
@@ -80,9 +83,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         } catch { pipe?.Dispose(); reference.Dispose(); job?.Dispose(); throw; }
     }
     string PipeName { get; }
-    static void Endpoint(byte[] frame, int offset, IPEndPoint ep)
+    static void Endpoint(byte[] frame, int offset, IPEndPoint ep, int addressOffset)
     {
-        ep.Address.GetAddressBytes().CopyTo(frame, offset);
+        ep.Address.GetAddressBytes().CopyTo(frame, addressOffset);
         BinaryPrimitives.WriteUInt16LittleEndian(frame.AsSpan(offset + 4), checked((ushort)ep.Port));
     }
 
@@ -111,7 +114,12 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             if (startImmediately) await owner.Start(deadline.Token);
             owner.heartbeat = owner.KeepControlAlive();
             return owner;
-        } catch { await owner.DisposeAsync(); throw; }
+        } catch (Exception ex) {
+            await owner.DisposeAsync();
+            if (peer.AddressFamily == AddressFamily.InterNetworkV6 && ex is EndOfStreamException)
+                throw new IOException("Native ABI 2 IPv6 接入未获确认；请核对原生组件版本和 broker 授权记录", ex);
+            throw;
+        }
     }
     // Prepare (Launch with startImmediately=false) establishes capture ownership
     // only. The pair coordinator calls Start after both peers report Ready.

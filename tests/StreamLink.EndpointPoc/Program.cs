@@ -15,6 +15,7 @@ if (args is ["--prepared-so", var preparedBinary, "--output", var preparedOutput
 if (args is ["--native-router", var routerBinary, "--output", var routerOutput]) return await NativeRouterPoc.Run(Path.GetFullPath(routerBinary), Path.GetFullPath(routerOutput));
 if (args is ["--path-timeout", var timeoutBinary, "--output", var timeoutOutput]) return await NativePathTimeoutPoc.Run(Path.GetFullPath(timeoutBinary), Path.GetFullPath(timeoutOutput));
 if (args is ["--capture-broker", var brokerBinary, "--rounds", var brokerRounds, "--output", var brokerOutput]) return await CaptureBrokerPoc.Run(Path.GetFullPath(brokerBinary), int.Parse(brokerRounds), Path.GetFullPath(brokerOutput));
+if (args is ["--capture-broker-ipv6", var broker6Binary, "--rounds", var broker6Rounds, "--output", var broker6Output]) return await CaptureBrokerPoc.Run(Path.GetFullPath(broker6Binary), int.Parse(broker6Rounds), Path.GetFullPath(broker6Output), ipv6: true);
 if (args is ["--broker-load", var loadBinary, "--mbps", var loadMbps, "--seconds", var loadSeconds, "--rounds", var loadRounds, "--output", var loadOutput])
     return await BrokerLoadPoc.Run(Path.GetFullPath(loadBinary), int.Parse(loadMbps), int.Parse(loadSeconds), int.Parse(loadRounds), Path.GetFullPath(loadOutput));
 if (args is ["--prepare-router-network", var configs]) { NativeRouterNetwork.Prepare(Path.GetFullPath(configs)); return 0; }

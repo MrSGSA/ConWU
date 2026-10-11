@@ -61,13 +61,9 @@ int handle_lower_level(raw_info_t &) {
 int server_event_loop() {
     g_default_loop = ev_default_loop(0);
     if (!g_default_loop) myexit(-1);
-    if (local_addr.get_type() != AF_INET) {
-        mylog(log_fatal, "native milestone 1 supports IPv4 only\n");
-        myexit(-1);
-    }
-    if (local_addr.inner.ipv4.sin_addr.s_addr != 0) {
+    if (local_addr.get_type() == AF_INET6 || local_addr.inner.ipv4.sin_addr.s_addr != 0) {
         bind_addr_used = 1;
-        bind_addr.v4 = local_addr.inner.ipv4.sin_addr.s_addr;
+        bind_addr.from_address_t(local_addr);
     }
     // Reserve the port without making Windows perform the TCP handshake.
     if (!native_attached() && try_to_list_and_bind2(bind_fd, local_addr) != 0) {

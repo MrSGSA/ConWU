@@ -3,7 +3,8 @@
 #include <mutex>
 extern std::mutex native_injection_mutex;
 
-// Managed ABI 1: one authorized peer tuple per capture owner in the first PoC.
+// Managed ABI 1 (IPv4) / ABI 2 (brokered IPv6): one authorized peer per worker.
+// A managed capture owner can route multiple non-overlapping worker tuples.
 // No environment variable can authorize skipping bind.
 void native_attach_arguments(int &argc, char **argv);
 void native_attach_configure();

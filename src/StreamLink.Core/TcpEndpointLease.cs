@@ -36,11 +36,13 @@ public sealed class TcpEndpointLease : IDisposable
     }
     public static async Task<TcpEndpointLease> Open(IPEndPoint local, IPEndPoint reflector, Guid generation, CancellationToken token)
     {
-        if (local.AddressFamily != AddressFamily.InterNetwork || reflector.AddressFamily != AddressFamily.InterNetwork || generation == Guid.Empty)
-            throw new ArgumentException("Explicit IPv4 endpoints and a network generation are required");
+        if (local.AddressFamily is not (AddressFamily.InterNetwork or AddressFamily.InterNetworkV6) || reflector.AddressFamily != local.AddressFamily || generation == Guid.Empty ||
+            local.AddressFamily == AddressFamily.InterNetworkV6 && (!Ipv6Direct.UnscopedUnicast(local.Address) || !Ipv6Direct.UnscopedUnicast(reflector.Address)))
+            throw new ArgumentException("Explicit same-family endpoints and a network generation are required");
         var quota = sockets.Acquire(); Socket? socket = null;
         try {
-            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
+            socket = new Socket(local.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
+            if (local.AddressFamily == AddressFamily.InterNetworkV6) socket.DualMode = false;
             socket.Bind(local); await socket.ConnectAsync(reflector, token);
             return new(socket, reflector, generation, quota);
         } catch { socket?.Dispose(); quota.Dispose(); throw; }
@@ -103,7 +105,7 @@ public sealed class TcpEndpointLease : IDisposable
                 if (size > 4096) throw new IOException("Oversized STUN response");
                 byte[] packet = new byte[20 + size]; header.CopyTo(packet, 0);
                 await stream.ReadExactlyAsync(packet.AsMemory(20), deadline.Token);
-                return new("tcp", Reflector.ToString(), Local, Stun.Parse(packet, request));
+                return new("tcp", Reflector.ToString(), Local, Stun.Parse(packet, request, Local.AddressFamily));
             } catch { lock (gate) faulted = true; throw; }
         } finally { io.Release(); }
     }

@@ -52,7 +52,7 @@ bool native_so_receive() {
         discard_raw_packet(); return true;
     }
     const auto *raw=reinterpret_cast<const unsigned char*>(g_packet_buf);
-    unsigned ihl=(raw[0]&15)*4;
+    unsigned ihl=raw_ip_version==AF_INET6?40:(raw[0]&15)*4;
     std::uint8_t flags=raw[ihl+13];
     if ((flags&4) && outer_complete) return false; // retain the legacy data-phase reset policy
     shape.recv_info=r;

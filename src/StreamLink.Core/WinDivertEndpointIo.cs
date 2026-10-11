@@ -29,12 +29,15 @@ public sealed class WinDivertEndpointIo : IEndpointPacketIo
     public string Filter { get; }
     public static string FilterFor(IPEndPoint local, IPEndPoint helper)
     {
-        if (local.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || local.Port == 0 || IPAddress.IsLoopback(local.Address) || local.Address.Equals(IPAddress.Any) ||
-            helper.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || helper.Port == 0 || helper.Address.Equals(IPAddress.Any) || local.Equals(helper))
-            throw new ArgumentException("A held physical IPv4 source endpoint is required");
+        bool v6 = local.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6;
+        if (local.AddressFamily is not (System.Net.Sockets.AddressFamily.InterNetwork or System.Net.Sockets.AddressFamily.InterNetworkV6) || local.Port == 0 || IPAddress.IsLoopback(local.Address) || local.Address.Equals(IPAddress.Any) ||
+            helper.AddressFamily != local.AddressFamily || helper.Port == 0 || helper.Address.Equals(IPAddress.Any) || local.Equals(helper) ||
+            v6 && (!Ipv6Direct.UnscopedUnicast(local.Address) || !Ipv6Direct.UnscopedUnicast(helper.Address)))
+            throw new ArgumentException("A held physical same-family source endpoint is required");
+        string ip = v6 ? "ipv6" : "ip";
         // WinDivert permits negation of a test, not !(compound expression).
         // De Morgan form excludes exactly the helper tuple in both directions.
-        return $"!loopback and ip and tcp and ((inbound and ip.DstAddr == {local.Address} and tcp.DstPort == {local.Port} and (ip.SrcAddr != {helper.Address} or tcp.SrcPort != {helper.Port})) or (outbound and ip.SrcAddr == {local.Address} and tcp.SrcPort == {local.Port} and (ip.DstAddr != {helper.Address} or tcp.DstPort != {helper.Port})))";
+        return $"!loopback and {ip} and tcp and ((inbound and {ip}.DstAddr == {local.Address} and tcp.DstPort == {local.Port} and ({ip}.SrcAddr != {helper.Address} or tcp.SrcPort != {helper.Port})) or (outbound and {ip}.SrcAddr == {local.Address} and tcp.SrcPort == {local.Port} and ({ip}.DstAddr != {helper.Address} or tcp.DstPort != {helper.Port})))";
     }
     public WinDivertEndpointIo(string dll, IPEndPoint local, IPEndPoint helper)
     {
@@ -58,13 +61,16 @@ public sealed class WinDivertEndpointIo : IEndpointPacketIo
         uint flags = BinaryPrimitives.ReadUInt32LittleEndian(address.AsSpan(8));
         bool outbound = (flags & (1u << 17)) != 0;
         // Same normalization as native backend; only checksums, no seq/payload changes.
-        if ((flags & ((1u << 21) | (1u << 22))) != ((1u << 21) | (1u << 22)) && !checksums(packet, length, address, 0))
+        uint required = (flags & (1u << 20)) != 0 ? 1u << 22 : (1u << 21) | (1u << 22);
+        if ((flags & required) != required && !checksums(packet, length, address, 0))
             throw new IOException("Capture checksum normalization failed");
         return ValueTask.FromResult(new EndpointPacket(packet.AsSpan(0, checked((int)length)).ToArray(), outbound, (byte[])address.Clone()));
     }
     public bool Inject(ReadOnlySpan<byte> packet)
     {
-        byte[] address = new byte[80]; BinaryPrimitives.WriteUInt32LittleEndian(address.AsSpan(8), (1u << 17) | (1u << 21) | (1u << 22));
+        if (packet.Length < 40) return false;
+        bool v6 = packet[0] >> 4 == 6;
+        byte[] address = new byte[80]; BinaryPrimitives.WriteUInt32LittleEndian(address.AsSpan(8), (1u << 17) | (1u << 22) | (v6 ? 1u << 20 : 1u << 21));
         byte[] data = packet.ToArray();
         return checksums(data, (uint)data.Length, address, 0) && send(handle, data, (uint)data.Length, out uint sent, address) && sent == data.Length;
     }

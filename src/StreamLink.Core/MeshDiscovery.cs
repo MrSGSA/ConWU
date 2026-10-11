@@ -10,7 +10,7 @@ public sealed record MeshAnnouncement(int Slot, string Device, long Revision, lo
     MeshTraversalCapabilities? Traversal = null);
 public sealed record MeshEnvelope(int Slot, string Device, long Revision, string Data, string Signature);
 public sealed record MeshSnapshot(MeshDirectory Directory, MeshEnvelope[] Nodes,
-    MeshTraversalMessage[]? Traversal = null, int TraversalVersion = 0, int UdpIpv6 = 0);
+    MeshTraversalMessage[]? Traversal = null, int TraversalVersion = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0);
 public static class MeshMetadata
 {
     static byte[] SignedData(string network, MeshEnvelope e) => JsonSerializer.SerializeToUtf8Bytes(new { domain = "streamlink-metadata-v4", network, e.Slot, e.Device, e.Revision, e.Data });
@@ -65,6 +65,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     public Guid BootId => boot;
     public bool SupportsTraversal { get; private set; }
     public bool SupportsUdpIpv6 { get; private set; }
+    public bool SupportsFakeTcpIpv6 { get; private set; }
     public MeshDiscoveryClient(MeshProfile profile)
     {
         profile.Validate(); this.profile = profile;
@@ -95,17 +96,18 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed) {
                 // Only an explicit old-server route response enables fallback.
                 // Auth failures, rate limiting and malformed data are not downgraded.
-                SupportsLongPolling = false; SupportsTraversal = false; SupportsUdpIpv6 = false; return await Read(token);
+                SupportsLongPolling = false; SupportsTraversal = false; SupportsUdpIpv6 = false; SupportsFakeTcpIpv6 = false; return await Read(token);
             }
             response.EnsureSuccessStatusCode();
             var change = await response.Content.ReadFromJsonAsync<MeshWatchResponse>(token) ?? throw new IOException("协调通知为空");
             if (change.ServerEpoch == Guid.Empty || change.Cursor < 0 || change.Changes is null || change.Changes.Length > TraversalLimits.EventQueueSize || change.Snapshot is null ||
                 change.ServerEpoch == serverEpoch && change.Cursor < cursor || change.ServerEpoch != serverEpoch && !change.Reset ||
-                change.Snapshot.TraversalVersion is not (0 or MeshTraversal.Version) || change.Snapshot.UdpIpv6 is < 0 or > 1 || change.Snapshot.Traversal is { Length: > MeshTraversal.MaxInbox })
+                change.Snapshot.TraversalVersion is not (0 or MeshTraversal.Version) || change.Snapshot.UdpIpv6 is < 0 or > 1 || change.Snapshot.FakeTcpIpv6 is < 0 or > 1 || change.Snapshot.Traversal is { Length: > MeshTraversal.MaxInbox })
                 throw new IOException("协调通知游标无效");
             // Membership and every announcement are still verified by MeshRunner.
             SupportsTraversal = change.Snapshot.TraversalVersion == MeshTraversal.Version;
             SupportsUdpIpv6 = SupportsTraversal && change.Snapshot.UdpIpv6 == 1;
+            SupportsFakeTcpIpv6 = SupportsTraversal && change.Snapshot.FakeTcpIpv6 == 1;
             serverEpoch = change.ServerEpoch; cursor = change.Cursor; return change.Snapshot;
         } finally { Volatile.Write(ref waiting, 0); }
     }

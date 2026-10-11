@@ -32,16 +32,16 @@ bool exact(void *buffer,unsigned count,bool write,DWORD timeout) {
 [[noreturn]] void invalid(const char *reason) { mylog(log_fatal,"capture broker rejected: %s\n",reason); ExitProcess(74); }
 }
 
-void native_broker_configure(const std::string &control_name,const unsigned char *authorization,unsigned parent) {
-    if(enabled || control_name.size()!=50) invalid("configuration");
+void native_broker_configure(const std::string &control_name,const unsigned char *authorization,unsigned size,unsigned parent) {
+    if(enabled || control_name.size()!=50 || (size!=96 && size!=144)) invalid("configuration");
     std::string name="\\\\.\\pipe\\StreamLink.Raw."+control_name.substr(18);
     halt=CreateEventW(nullptr,TRUE,FALSE,nullptr); if(!halt) invalid("stop event");
     channel=CreateFileA(name.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,
         FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr);
     ULONG server=0;
     if(channel==INVALID_HANDLE_VALUE || !GetNamedPipeServerProcessId(channel,&server) || server!=parent) invalid("parent identity");
-    unsigned char hello[96]; memcpy(hello,authorization,sizeof(hello));
-    if(!exact(hello,sizeof(hello),true,5000) || !exact(hello,sizeof(hello),false,5000) || memcmp(hello,authorization,sizeof(hello))) invalid("attachment identity");
+    unsigned char hello[144]; memcpy(hello,authorization,size);
+    if(!exact(hello,size,true,5000) || !exact(hello,size,false,5000) || memcmp(hello,authorization,size)) invalid("attachment identity");
     enabled=true;
 }
 bool native_broker_mode() { return enabled; }
