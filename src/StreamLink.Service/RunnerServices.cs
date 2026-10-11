@@ -18,7 +18,7 @@ internal sealed record RunnerServices(
         log => new StreamSession(Path.Combine(AppContext.BaseDirectory, "components"), log, Path.Combine(ProfileStore.Root, "sessions")),
         async (profile, log, token) => profile.Pair!.Mode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)
-            : await TcpMapping.Create(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
+            : await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
         // Two peers, PUT + GET: at most 96 regular requests/minute while
         // connecting, leaving headroom under the existing 120/minute limit.
         TimeSpan.FromMilliseconds(2500), TimeSpan.FromSeconds(5));

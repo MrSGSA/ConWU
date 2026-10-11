@@ -15,8 +15,11 @@ static class UdpGatewayTests
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromMinutes(3)); token = deadline.Token;
         await SharedBudget(check, token);
         await RetainedWinner(check, token);
+        await MissingStun(root, url, pin, check, token);
         await StaleCandidate(root, url, pin, check, token);
-        return await Runners(root, url, pin, check, token);
+        var afterChecks = await Runners(root, url, pin, check, token);
+        var withoutStun = await Runners(root, url, pin, check, token, noStun: true);
+        return new { afterChecks, withoutStun };
     }
     static async Task Wait(Func<bool> ready, CancellationToken token) { while (!ready()) await Task.Delay(20, token); }
     static UdpTraversal Socket(TraversalResources budget, Guid attempt, int local, int remote, byte[] key, Guid generation)
@@ -89,13 +92,41 @@ static class UdpGatewayTests
         check(a.Closed && b.Closed && gateway.Deletes == deleted + 2, "final path release joins gateway maintenance and deletes only its mappings before releasing data ports");
     }
     static DeviceProfile Profile(MeshProfile mesh, string stun) => new() { Mesh = mesh, TraversalMode = "tcp-udp", AllowUdpFallback = true, PortControlMapping = true, UdpStun = [stun] };
-    static MeshCandidateFactory Factory(DeviceProfile profile, string root, Gateway gateway, Action<string>? log = null)
+    static MeshCandidateFactory Factory(DeviceProfile profile, string root, Gateway gateway, Action<string>? log = null, bool failDns = false)
         => new(profile, "unused-native", root, [TraversalProfile.UdpDirect], diagnostic: log) {
+            GatewaySources = () => [IPAddress.Loopback],
+            ResolveTarget = (name, family, ct) => failDns ? Task.FromException<IPEndPoint>(new SocketException((int)SocketError.HostNotFound)) : Stun.Resolve(name, family, ct),
             OpenUdpGateway = (_, port, token) => gateway.Map(port, token),
             RouteCheckForTest = (endpoint, expected, _) => {
                 if (!IPAddress.IsLoopback(endpoint.Address) || expected != null && !IPAddress.IsLoopback(expected)) throw new IOException("fixture must stay loopback");
             }
         };
+    static async Task MissingStun(string root, string url, string pin, Action<bool, string> check, CancellationToken token)
+    {
+        await using var gateway = new Gateway();
+        var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));
+        foreach (bool missingDns in new[] { true, false }) {
+            var profile = Profile(a, "unresolvable.invalid:3478"); if (!missingDns) profile.UdpStun = [];
+            int resolves = 0, selections = 0;
+            await using var factory = new MeshCandidateFactory(profile, "unused", root, [TraversalProfile.UdpDirect]) {
+                ResolveTarget = (_, _, _) => { resolves++; throw new SocketException((int)SocketError.HostNotFound); },
+                GatewaySources = () => { selections++; return [IPAddress.Loopback]; },
+                OpenUdpGateway = (_, port, ct) => gateway.Map(port, ct),
+                RouteCheckForTest = (e, expected, _) => { if (!IPAddress.IsLoopback(e.Address)) throw new IOException(); }
+            };
+            await using var candidate = await factory.Gather(b.Self, TraversalProfile.UdpDirect, Guid.NewGuid(), token);
+            check(candidate.Candidate.ObservationTarget == gateway.Route.Gateway.ToString() && resolves == (missingDns ? 1 : 0) && selections == 1,
+                "gateway UDP gather succeeds independently when " + (missingDns ? "every STUN hostname fails DNS" : "the STUN list is empty"));
+        }
+        check(gateway.Leases.All(l => l.Snapshot.State == "Closed"), "independent UDP candidates close their exact sockets and mappings on disposal");
+        var disabled = Profile(a, "unused.invalid:3478"); disabled.PortControlMapping = false; disabled.UdpStun = [];
+        int selected = 0;
+        await using var noGateway = new MeshCandidateFactory(disabled, "unused", root, [TraversalProfile.UdpDirect]) {
+            GatewaySources = () => { selected++; throw new Exception("disabled"); }
+        };
+        for (int i = 0; i < 2; i++) try { await using var failed = await noGateway.Gather(b.Self, TraversalProfile.UdpDirect, Guid.NewGuid(), token); } catch (IOException) { }
+        check(selected == 0, "disabled experimental provider never enumerates or probes gateways after STUN failure");
+    }
     static async Task StaleCandidate(string root, string url, string pin, Action<bool, string> check, CancellationToken token)
     {
         await using var gateway = new Gateway { Lifetime = 10, ChangePort = true }; await using var reflector = new Reflector();
@@ -119,12 +150,13 @@ static class UdpGatewayTests
         bool activation = false; try { await prepared.Activate(token); } catch (IOException) { activation = true; }
         check(stale && !prepared.Armed && activation, "mapping changes invalidate the frozen Offer and prevent old Ready/Start from activating a different endpoint");
     }
-    static async Task<object> Runners(string root, string url, string pin, Action<bool, string> check, CancellationToken token)
+    static async Task<object> Runners(string root, string url, string pin, Action<bool, string> check, CancellationToken token, bool noStun = false)
     {
         await using var ga = new Gateway { Lifetime = 30 }; await using var gb = new Gateway { Lifetime = 30, Pmp = true }; await using var reflector = new Reflector { BlackholeMappings = true };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var profiles = new[] { Profile(a, reflector.Endpoint.ToString()), Profile(b, reflector.Endpoint.ToString()) }; var gateways = new[] { ga, gb };
-        var logs = new ConcurrentQueue<string>(); var inners = profiles.Select((p, i) => Factory(p, root, gateways[i], logs.Enqueue)).ToArray();
+        if (noStun) foreach (var profile in profiles) profile.UdpStun = ["unresolvable.invalid:3478"];
+        var logs = new ConcurrentQueue<string>(); var inners = profiles.Select((p, i) => Factory(p, root, gateways[i], logs.Enqueue, failDns: noStun)).ToArray();
         var factories = inners.Select(i => new Inspect(i)).ToArray(); var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(token); int legacy = 0;
         MeshRuntimeServices Services(int i) => new(mesh => new MeshDiscoveryClient(mesh), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
@@ -142,7 +174,10 @@ static class UdpGatewayTests
                 await Task.Delay(20, token);
             }
             connected = clock.ElapsedMilliseconds;
-            check(legacy == 0 && factories.All(f => f.Paths.Count == 1 && f.Gathers == 2) && states.All(s => s!.Degraded), "after real checks to an unreachable STUN candidate fail, production Runners automatically retry using gateway UDP candidates, without legacy or relay");
+            check(legacy == 0 && factories.All(f => f.Paths.Count == 1 && f.Gathers == (noStun ? 1 : 2)) && states.All(s => s!.Degraded), noStun
+                ? "two formal Runners connect using independent gateway candidates when all configured STUN DNS fails, without wasting alternate failed rounds"
+                : "after real checks to an unreachable STUN candidate fail, production Runners automatically retry using gateway UDP candidates, without legacy or relay");
+            if (noStun) check(reflector.Count == 0, "helper-free formal Runner connection emits no STUN traffic");
             check(ga.Leases.Single().Snapshot.Provider == PortControlKind.Pcp && gb.Leases.Single().Snapshot.Provider == PortControlKind.NatPmp,
                 "formal UDP data path works across one PCP grant and one explicitly negotiated NAT-PMP grant");
             for (int i = 0; i < 2; i++) {
@@ -165,7 +200,7 @@ static class UdpGatewayTests
         check(gateways.All(g => g.Leases.All(l => l.Snapshot.State == "Closed")) && adapters.All(a => a.Disposed), "Runner shutdown joins final UDP path, gateway and adapter owners");
         check(gb.Deletes == 0 && gb.Leases.Single().Snapshot.Cleanup == "NaturalExpiry", "formal NAT-PMP path shutdown never sends an unowned deletion request");
         return new { connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, realHttps = true, realUdp = true, realPcpDatagrams = true, realNatPmpDatagrams = true,
-            realNat = false, wintun = false, peers = factories.Select(f => f.Paths.Select(p => new { socketId = p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray() };
+            realNat = false, wintun = false, noStun, peers = factories.Select(f => f.Paths.Select(p => new { socketId = p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray() };
     }
     sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {

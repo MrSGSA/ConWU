@@ -6,6 +6,13 @@ namespace StreamLink.Core;
 
 public sealed record PortControlRoute(string InterfaceId, IPAddress Local, IPEndPoint Gateway, string Generation)
 {
+    // Enumerate configured physical IPv4 exits without resolving or contacting
+    // any STUN host. The actual gateway and later peer path are checked again.
+    public static IPAddress[] LocalSources() => NetworkInterface.GetAllNetworkInterfaces()
+        .Where(Ipv6Direct.Physical).SelectMany(n => n.GetIPProperties().UnicastAddresses)
+        .Where(a => a.Address.AddressFamily == AddressFamily.InterNetwork &&
+            (!OperatingSystem.IsWindows() || a.DuplicateAddressDetectionState == DuplicateAddressDetectionState.Preferred))
+        .Select(a => a.Address).Distinct().Where(a => Discover(a).Length != 0).Take(4).ToArray();
     // Nonstandard ports are only used by isolated tests, never configuration.
     internal int NotificationPort { get; init; } = 5350;
     internal int NotificationInterface()

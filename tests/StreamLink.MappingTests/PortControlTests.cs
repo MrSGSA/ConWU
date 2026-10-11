@@ -140,6 +140,7 @@ static partial class PortControlTests
         }
         await Notifications(Check, rows, ct);
         await MulticastNotifications(Check, rows, ct);
+        await IndependentTcp(Check, rows, ct);
         string output = Environment.GetEnvironmentVariable("STREAMLINK_MAPPING_REPORT") ?? "artifacts/m7-port-control-20261011.json";
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));

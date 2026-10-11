@@ -1,5 +1,7 @@
 # M7：UDP_DIRECT 网关映射正式接线
 
+后续补充：[独立网关收集](m7-independent-gateway-20261012.md) 已解除网关轮次对 STUN 解析成功的依赖；本页保留初次接线的历史证据。
+
 从 `63d09a2` 继续，将上一轮 PCP/NAT-PMP Provider 接入 `MeshCandidateFactory → UdpTraversal → Prepared → MeshRunner → MeshLink`。本次仍未使用真实路由器或 Wintun，不能据此声称公网 NAT 覆盖扩大。FakeTCP+HTTP 数据 profile 和禁止业务中继的约束保持不变。
 
 ## 收集与选路
