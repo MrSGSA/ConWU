@@ -40,6 +40,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Traversal foundation regression failed'}
+        & dotnet run --project tests/StreamLink.EgressTests -c Release -- (Join-Path $root "artifacts/egress-correctness-$releaseVersion.json") --correctness-only
+        if($LASTEXITCODE -ne 0) {throw 'Egress lifecycle / same-socket / queue regression failed'}
         & dotnet run --project tests/StreamLink.PredictionTests -c Release -- --output (Join-Path $root "artifacts/prediction-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Conditional port prediction regression failed'}
         & dotnet run --project tests/StreamLink.EndpointPoc -c Release -- --port-window-wide (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --output (Join-Path $root "artifacts/native-port-window-$releaseVersion.json")

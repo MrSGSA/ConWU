@@ -14,13 +14,15 @@ namespace StreamLink.EndpointPoc;
 static class BrokerLoadPoc
 {
     const int Size = 1280;
-    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output, bool countWireControl = false)
+    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output, bool countWireControl = false, int egressMbps = 0)
     {
         if (mbps is < 1 or > 60 || seconds is < 3 or > 20 || rounds is < 1 or > 5) throw new ArgumentException("bounded load: 1..60 Mbps, 3..20 seconds, 1..5 rounds");
+        if (egressMbps is < 0 or > 100) throw new ArgumentException("controlled outer pacing: 0..100 Mbps");
         string root = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileNameWithoutExtension(output) + "-logs"); Directory.CreateDirectory(root);
         var rows = new List<object>(); using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12)); var token = deadline.Token;
         var leases = new List<TcpEndpointLease>(); var owners = new List<TcpCaptureOwner>(); var paths = new List<NativeDatagramPath>();
         var routers = new List<MeshRouter>(); var adapters = new List<Adapter>(); var wire = new Wire();
+        var pacers = new List<EgressPacer>();
         var machineBudgets = Enumerable.Range(0, 3).Select(_ => new TraversalResources()).ToArray();
         var a = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); var c = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));
@@ -31,7 +33,8 @@ static class BrokerLoadPoc
             for (int i = 0; i < 3; i++) {
                 var lease = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, token); leases.Add(lease);
                 using var query = lease.AcquireAttempt(generation); await query.Observe(token);
-                owners.Add(new(lease, generation, (local, _) => wire.Open(local))); await owners[^1].Ready;
+                EgressPacer? pacer = egressMbps == 0 ? null : new(egressMbps); if (pacer != null) pacers.Add(pacer);
+                owners.Add(new(lease, generation, (local, _) => wire.Open(local), pacer)); await owners[^1].Ready;
                 adapters.Add(new()); routers.Add(new(profiles[i], adapters[i]));
             }
             var contexts = new List<TraversalAttemptContext>();
@@ -65,6 +68,7 @@ static class BrokerLoadPoc
                     int run = round * 2 + (fanIn ? 1 : 0); var sink = new Sink(run); foreach (var adapter in adapters) adapter.Sink = sink;
                     var templates = Enumerable.Range(1, 2).Select(i => Packet(profiles[fanIn ? i : 0].LocalIp, profiles[fanIn ? 0 : i].LocalIp, run)).ToArray();
                     var startOwners = owners.Select(o => o.Status).ToArray(); long wireDrops = wire.Drops;
+                    var egressStart = pacers.Select(p => p.Snapshot()).ToArray();
                     var initialRouterDrops = routers.Sum(r => r.Status().Sum(p => p.DroppedPackets));
                     long allocated = GC.GetTotalAllocatedBytes(true); var cpu = self.TotalProcessorTime; var childCpu = children.Select(p => p.TotalProcessorTime).ToArray();
                     int offered = 0, accepted = 0; var clock = Stopwatch.StartNew();
@@ -98,6 +102,7 @@ static class BrokerLoadPoc
                         managedCpuMs = (self.TotalProcessorTime - cpu).TotalMilliseconds,
                         nativeCpuMs = children.Select((p, i) => (p.TotalProcessorTime - childCpu[i]).TotalMilliseconds).ToArray(),
                         managedWorkingSet = self.WorkingSet64, nativeWorkingSet = children.Select(p => p.WorkingSet64).ToArray(),
+                        egressMbps, egressStart, egressEnd = pacers.Select(p => p.Snapshot()).ToArray(),
                         allPairsHealthy = routers[0].Status().All(p => p.Connected) && routers.Skip(1).All(r => r.Status().Single(p => p.Slot == 1).Connected) };
                     rows.Add(row); Console.WriteLine(JsonSerializer.Serialize(row));
                     foreach (var adapter in adapters) adapter.Sink = null;
@@ -108,9 +113,10 @@ static class BrokerLoadPoc
         finally {
             foreach (var router in routers) await router.DisposeAsync(); foreach (var path in paths) await path.DisposeAsync();
             foreach (var owner in owners) await owner.DisposeAsync(); foreach (var lease in leases) lease.Dispose();
+            foreach (var pacer in pacers) pacer.Dispose();
         }
-        bool completed = failure.Length == 0 && rows.Count == rounds * 2 && owners.All(o => o.Closed.IsCompletedSuccessfully) && leases.All(l => l.Closed);
-        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure, countWireControl, wireControl = paths.Select(p => p.WireControl).ToArray(),
+        bool completed = failure.Length == 0 && rows.Count == rounds * 2 && owners.All(o => o.Closed.IsCompletedSuccessfully) && leases.All(l => l.Closed) && pacers.All(p => p.Snapshot() is { Failure: "", QueuedBytes: 0 });
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure, countWireControl, egressMbps, egressFinal = pacers.Select(p => p.Snapshot()).ToArray(), wireControl = paths.Select(p => p.WireControl).ToArray(),
             hashes = new { core = Hash(typeof(MeshRouter).Assembly.Location), native = Hash(binary), harness = Hash(typeof(BrokerLoadPoc).Assembly.Location) },
             scope = "One Windows host: real protocol workers/pipes/UDP bridge/MeshRouter; synthetic bounded IP adapters and memory raw I/O; no driver, WAN, QoS or Wintun. Completion is not a quality pass. Delay uses one shared monotonic host clock." }, new JsonSerializerOptions { WriteIndented = true }));
         if (!completed) throw new IOException(failure); return 0;

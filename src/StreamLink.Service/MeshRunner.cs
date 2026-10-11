@@ -213,7 +213,7 @@ public sealed class MeshRunner
                 if (now >= nextReport) {
                     var egress = factory?.Egress;
                     if (egress != null && now >= nextEgressReport) {
-                        log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" + (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));
+                        log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，突发上限 {egress.BurstBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" + (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));
                         nextEgressReport = now + 30000;
                     }
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);

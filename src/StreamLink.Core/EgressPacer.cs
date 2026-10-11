@@ -12,6 +12,8 @@ public sealed record EgressStats(int Mbps, int QueuedBytes, int PeakQueuedBytes,
     public long TimerWaits { get; init; }
     public double TimerWaitMs { get; init; }
     public double BackloggedTokenOverrunBytes { get; init; }
+    public int BurstBytes { get; init; }
+    public string WorkerPriority { get; init; } = "";
 }
 
 // One instance per device runner, shared by all managed sockets/capture owners
@@ -19,16 +21,17 @@ public sealed record EgressStats(int Mbps, int QueuedBytes, int PeakQueuedBytes,
 // per source address). Bytes are OUTER IP bytes; never estimated application bps.
 public sealed class EgressPacer : IDisposable
 {
-    const int Quantum = 1536, Burst = 4 * Quantum, MaximumFlows = 64;
+    const int Quantum = 1536, MaximumDatagram = 4 * Quantum, MaximumFlows = 64;
     readonly object gate = new();
     readonly Dictionary<string, Peer> peers = [];
     readonly List<Peer> order = [];
     readonly AutoResetEvent changed = new(false);
     readonly PreciseTimer timer = new();
     readonly Thread worker;
+    readonly string priorityName;
     readonly double rate, priorityRate;
-    readonly int limit, reserve;
-    double tokens = Burst, priorityTokens = 2 * Quantum;
+    readonly int limit, reserve, burst;
+    double tokens, priorityTokens = 2 * Quantum;
     long at = Stopwatch.GetTimestamp(), sent, overflow, cancelled, failures, priorityPackets;
     readonly long[] histogram = new long[12];
     static readonly double[] buckets = [.1, .25, .5, 1, 2, 5, 10, 20, 50, 100, 500, double.PositiveInfinity];
@@ -47,12 +50,22 @@ public sealed class EgressPacer : IDisposable
     }
     internal sealed record Item(Flow Flow, byte[] Packet, int Bytes, object? Context, long At, bool Priority,
         CancellationToken Token, TaskCompletionSource? Completion);
-    public EgressPacer(int mbps)
+    // 50 Mbps Windows A/B: a ~2ms credit ceiling plus one AboveNormal sender
+    // avoids losing capacity to wakeup jitter, without spin or process-wide
+    // priority/timer changes. Retain the old four-packet floor at low rates,
+    // cap at eight; no unbounded repayment of missed time. Pacing stays opt-in.
+    public EgressPacer(int mbps) : this(mbps, (int)Math.Clamp((long)mbps * 250 / Quantum, 4, 8), ThreadPriority.AboveNormal) { }
+    // Bounded A/B parameter, not a user-facing override of the rate envelope.
+    internal EgressPacer(int mbps, int burstPackets, ThreadPriority priority = ThreadPriority.Normal)
     {
         if (mbps is < 1 or > 10000) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(mbps)); }
+        if (burstPackets is < 4 or > 8) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(burstPackets)); }
+        if (priority is not (ThreadPriority.Normal or ThreadPriority.AboveNormal)) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(priority)); }
         Mbps = mbps; rate = mbps * 125000d; priorityRate = Math.Min(8192, rate * .05);
+        tokens = burst = burstPackets * Quantum;
+        priorityName = priority.ToString();
         limit = Math.Min(1 << 20, (int)(rate * .020)); reserve = Math.Min(2 * Quantum, limit / 4);
-        worker = new Thread(Run) { IsBackground = true, Name = "StreamLink egress" }; worker.Start();
+        worker = new Thread(Run) { IsBackground = true, Name = "StreamLink egress", Priority = priority }; worker.Start();
     }
     public Flow Register(string peer, Func<ReadOnlyMemory<byte>, object?, bool> send)
     {
@@ -73,7 +86,7 @@ public sealed class EgressPacer : IDisposable
             for (int i = 0; i < histogram.Length && total > 0; i++) { count += histogram[i]; if (count >= Math.Ceiling(total * .95)) { p95 = double.IsInfinity(buckets[i]) ? maximumAge : buckets[i]; break; } }
             return new(Mbps, bytes, peak, limit, sent, overflow, cancelled, failures, maximumAge, p95, priorityPackets,
                 order.Select(p => new EgressPeerStats(p.Key, p.Sent, p.Packets, p.Overflow, p.Cancelled, p.Failures)).ToArray(), failure)
-                { TimerWaits = timerWaits, TimerWaitMs = timerWaitMs, BackloggedTokenOverrunBytes = tokenOverrun };
+                { TimerWaits = timerWaits, TimerWaitMs = timerWaitMs, BackloggedTokenOverrunBytes = tokenOverrun, BurstBytes = burst, WorkerPriority = priorityName };
         }
     }
     void Drop(Item item, bool capacity)
@@ -86,7 +99,7 @@ public sealed class EgressPacer : IDisposable
     bool Enqueue(Flow flow, ReadOnlySpan<byte> packet, int wireBytes, object? context, bool priority,
         CancellationToken token, TaskCompletionSource? completion)
     {
-        if (wireBytes < packet.Length || wireBytes is < 28 or > Burst || packet.Length == 0) throw new ArgumentOutOfRangeException(nameof(wireBytes));
+        if (wireBytes < packet.Length || wireBytes is < 28 or > MaximumDatagram || packet.Length == 0) throw new ArgumentOutOfRangeException(nameof(wireBytes));
         lock (gate) {
             if (stopping || !flow.Alive || token.IsCancellationRequested) return false;
             int ceiling = priority ? limit : limit - reserve;
@@ -107,8 +120,8 @@ public sealed class EgressPacer : IDisposable
     void Refill()
     {
         long now = Stopwatch.GetTimestamp(); double elapsed = Stopwatch.GetElapsedTime(at, now).TotalSeconds; at = now;
-        if (bytes > 0) tokenOverrun += Math.Max(0, tokens + elapsed * rate - Burst);
-        tokens = Math.Min(Burst, tokens + elapsed * rate);
+        if (bytes > 0) tokenOverrun += Math.Max(0, tokens + elapsed * rate - burst);
+        tokens = Math.Min(burst, tokens + elapsed * rate);
         priorityTokens = Math.Min(2 * Quantum, priorityTokens + elapsed * priorityRate);
     }
     Item? Select(out bool priority)
