@@ -9,7 +9,7 @@ using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
 sealed record TraversalNode(DeviceProfile Profile, string Local, string Peer, string Kind, string Route, int SourcePort,
-    int ReflectorPort, int PeerReflectorPort, int MeasureDelay, int LifetimeSeconds = 100);
+    int ReflectorPort, int PeerReflectorPort, int MeasureDelay, int LifetimeSeconds = 100, bool CaptureBroker = false);
 
 static class TraversalNetwork
 {
@@ -94,15 +94,17 @@ static class TraversalNetwork
         using var udp = new UdpClient(new IPEndPoint(IPAddress.Parse(local), EchoPort)); var allowed = IPAddress.Parse(peer);
         while (!token.IsCancellationRequested) { var data = await udp.ReceiveAsync(token); if (data.RemoteEndPoint.Address.Equals(allowed) && data.Buffer.Length == 1252) await udp.SendAsync(data.Buffer, data.RemoteEndPoint, token); }
     }
-    sealed class SingleProfile(IMeshCandidateFactory inner, TraversalProfile profile) : IMeshCandidateFactory {
+    sealed class SingleProfile(IMeshCandidateFactory inner, TraversalProfile profile) : IMeshCandidateFactory, IAsyncDisposable {
         public TraversalProfile[] Profiles => inner.Profiles.Contains(profile) ? [profile] : throw new IOException("Requested profile unavailable");
         public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token) => inner.Gather(peer, kind, attempt, token);
+        public async ValueTask DisposeAsync() { if (inner is IAsyncDisposable owner) await owner.DisposeAsync(); }
     }
-    sealed class HostFactory(TraversalNode config, string components, string folder) : IMeshCandidateFactory, IDisposable
+    sealed class HostFactory(TraversalNode config, string components, string folder) : IMeshCandidateFactory, IDisposable, IAsyncDisposable
     {
         readonly Guid generation = Guid.NewGuid(); readonly List<object> observations = [];
         readonly TraversalNode node = config; readonly string root = folder, binary = Path.Combine(components, "udp2raw-native.exe"), divert = Path.Combine(components, "WinDivert.dll");
         TcpEndpointLease? tcp; UdpTraversal? udp; WireObserver? wire; long armed, ended;
+        TcpCaptureOwner? capture;
         public TraversalProfile[] Profiles => [node.Kind == "tcp" ? TraversalProfile.FakeTcpHttpSo : TraversalProfile.UdpDirect];
         public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
         {
@@ -112,6 +114,7 @@ static class TraversalNetwork
             if (kind == TraversalProfile.FakeTcpHttpSo) {
                 tcp = await TcpEndpointLease.Open(local, remote, generation, token); using var reference = tcp.AcquireAttempt(generation);
                 observed = (await reference.Observe(token)).Public;
+                if (node.CaptureBroker) { capture = new(tcp, generation, (source, helper) => new WinDivertEndpointIo(divert, source, helper)); await capture.Ready; }
                 observations.Add(new { resource = tcp.Id, protocol = "tcp", local = tcp.Local.ToString(), target = remote.ToString(), mapped = observed.ToString() });
             } else {
                 byte[] key = MeshIdentity.SharedKey(node.Profile.Mesh!, peer);
@@ -122,11 +125,12 @@ static class TraversalNetwork
             }
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             return new Resource(this, peer, new(Guid.NewGuid(), 1, observed.ToString(), remote.ToString(), now, now + 120, CandidatePurpose.Host));
-            } catch { tcp?.Dispose(); if (udp != null) await udp.DisposeAsync(); throw; }
+            } catch { if (capture != null) await capture.DisposeAsync(); tcp?.Dispose(); if (udp != null) await udp.DisposeAsync(); throw; }
         }
         public void FinishWireCapture() { ended = Environment.TickCount64; wire?.Dispose(); }
-        public object Evidence() => new { observations, resourceClosed = (tcp?.Closed ?? true) && (udp?.Closed ?? true), wire = wire?.Snapshot(armed, ended == 0 ? Environment.TickCount64 : ended) };
+        public object Evidence() => new { observations, captureBroker = node.CaptureBroker, capture = capture?.Status, resourceClosed = (tcp?.Closed ?? true) && (udp?.Closed ?? true), wire = wire?.Snapshot(armed, ended == 0 ? Environment.TickCount64 : ended) };
         public void Dispose() { wire?.Dispose(); }
+        public async ValueTask DisposeAsync() { if (capture != null) { await capture.DisposeAsync(); await capture.Closed; } tcp?.Dispose(); }
         sealed class Resource(HostFactory owner, MeshMember peer, MeshTraversalCandidate candidate) : IMeshCandidateResource {
             bool transferred;
             public MeshTraversalCandidate Candidate => candidate;
@@ -134,7 +138,8 @@ static class TraversalNetwork
                 if (owner.udp != null) { var result = owner.udp.PreparePath(context, owner.generation, remote); transferred = true; return result; }
                 owner.wire = new WireObserver(owner.divert, owner.tcp!.Local, remote);
                 byte[] key = MeshIdentity.SharedKey(owner.node.Profile.Mesh!, peer);
-                try { var result = await NativeDatagramPath.Prepare(owner.binary, owner.root, owner.tcp, owner.generation, context, remote, key, token); owner.armed = Environment.TickCount64; return result; }
+                try { var result = await NativeDatagramPath.Prepare(owner.binary, owner.root, owner.tcp, owner.generation, context, remote, key, token,
+                    captureOwner: owner.capture); owner.armed = Environment.TickCount64; return result; }
                 finally { CryptographicOperations.ZeroMemory(key); }
             }
             public async ValueTask DisposeAsync() { if (owner.ended == 0) owner.ended = Environment.TickCount64; owner.tcp?.Dispose(); if (!transferred && owner.udp != null) await owner.udp.DisposeAsync(); }

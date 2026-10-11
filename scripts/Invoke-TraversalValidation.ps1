@@ -24,6 +24,7 @@ try {
  Invoke-Check 'native-negative' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--reject-attach','out\native\udp2raw-protocol-test.exe','--output',(Join-Path $OutputDirectory 'attach-negative.json'))
  Invoke-Check 'native-prepared-so' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--prepared-so','out\native\udp2raw-protocol-test.exe','--output',(Join-Path $OutputDirectory 'prepared-so.json'))
  Invoke-Check 'native-router' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--native-router','out\native\udp2raw-protocol-test.exe','--output',(Join-Path $OutputDirectory 'native-router.json'))
+ Invoke-Check 'native-capture-broker' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--capture-broker','out\native\udp2raw-protocol-test.exe','--rounds','30','--output',(Join-Path $OutputDirectory 'capture-broker.json'))
  Invoke-Check 'native-path-timeout' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--path-timeout','out\native\udp2raw-protocol-test.exe','--output',(Join-Path $OutputDirectory 'native-timeout.json'))
  Invoke-Check 'protocol-profile' 'py' @('-3','tests\protocol_loopback.py','--output',(Join-Path $OutputDirectory 'protocol.json'))
  Invoke-Check 'mesh-watch' 'dotnet' @('run','--project','tests\StreamLink.MeshWatchTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'watch.json'))
@@ -39,7 +40,7 @@ try {
  $hashes=@('out\native\udp2raw-native.exe','out\native\udp2raw-protocol-test.exe') | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object {
    [pscustomobject]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}
  }
- $status=if($results.Count -eq 17 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
+ $status=if($results.Count -eq 18 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
  [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
    gate='Local only: no driver, no NAT, no release claim';remainingGates=@('M1 controlled two-Windows 30 rounds and WAN','M2 SO + business','M3 product integration','M4 Wintun UDP_DIRECT','M5-M9')} |
    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json')

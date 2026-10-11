@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     if (argc == 2 && strcmp(argv[1], "--native-info") == 0) {
         puts("{\"stage\":\"experimental\",\"client\":true,\"server\":true,"
              "\"ipv4\":true,\"ipv6\":false,\"nativeAbi\":1,\"managedAttach\":\"single-peer-experimental\",\"wireProtocol\":\"udp2raw-http-c4995ea\","
-             "\"preparedStart\":true,\"simultaneousOpen\":true,"
+             "\"preparedStart\":true,\"simultaneousOpen\":true,\"captureBroker\":1,"
 #ifdef UDP2RAW_TEST_IO
              "\"backend\":\"loopback-test-only\","
 #else

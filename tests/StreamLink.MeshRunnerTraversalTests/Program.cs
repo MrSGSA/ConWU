@@ -36,6 +36,9 @@ await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
     await AdmissionTests.Run(binary, root, Check, token);
+    CaptureFilterTests.Run(Path.Combine(Path.GetDirectoryName(binary)!, "..", "downloads", "WinDivert-2.2.2-A", "x64", "WinDivert.dll"), Check);
+    await EndpointPoolTests.Run(Check, token);
+    await SharedBrokerRunner.Run(binary, root, url, pin, Check, token);
     foreach (var kind in new[] { TraversalProfile.UdpDirect, TraversalProfile.FakeTcpHttpSo }) for (int round = 1; round <= rounds; round++) {
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         await using var reflector = new Reflector { Silent = false }; await using var proxy = new RawProtocolProxy(0, 0); proxy.Begin();

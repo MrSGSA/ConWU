@@ -21,7 +21,7 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 }
 
 // One authorized native attachment and one loopback bridge. The native child
-// remains the sole raw capture owner; this class never binds the helper's TCP P.
+// uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
 public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath
@@ -54,6 +54,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public bool Closed { get { lock (gate) return closing?.IsCompleted == true; } }
     public TimeSpan RemainingAttemptTime => native?.RemainingRound ?? TimeSpan.Zero;
     public Guid AttachId => native?.AttachId ?? Guid.Empty;
+    public Guid? CaptureOwnerId => native?.CaptureOwnerId;
     public int ProcessId => native?.ProcessId ?? 0;
     // Bridge sends are not physical SYN counters. Start acknowledges the worker
     // command, not the peer handshake; only an authenticated full payload proves it.
@@ -84,7 +85,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public static async Task<NativeDatagramPath> Prepare(string executable, string sessionRoot,
         TcpEndpointLease lease, Guid generation, TraversalAttemptContext context, IPEndPoint peer,
         byte[] sharedKey, CancellationToken token, TraversalResources? resources = null,
-        IDictionary<string, string>? environment = null)
+        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null)
     {
         Directory.CreateDirectory(sessionRoot);
         var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared);
@@ -103,7 +104,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await File.WriteAllTextAsync(path.configuration,
                 $"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n", token);
             path.native = await NativeAttachment.Launch(lease, generation, executable, ["--conf-file", path.configuration], peer,
-                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false);
+                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner);
             path.native.ProcessExited += path.Fault;
             if (path.native.Exited) throw new IOException("Native exited during preparation");
             path.receiver = path.ReceiveLoop(); path.sender = path.SendLoop();

@@ -2,6 +2,7 @@
 #include "network.h"
 #include "misc.h"
 #include "native_attach.h"
+#include "native_broker.h"
 #include <tlhelp32.h>
 #include <atomic>
 #include <thread>
@@ -109,7 +110,7 @@ void native_attach_configure() {
     if (!read_frame(authorization, GetTickCount64()+8000) || !base_valid(authorization) || read16(authorization+6)!=1 || read32(authorization+12)!=1) reject("invalid Attach frame");
     unsigned char zero[16]{};
     for (int offset: {16,32,48}) if (memcmp(authorization+offset,zero,16)==0) reject("empty identity");
-    if (raw_mode!=mode_faketcp || raw_ip_version!=AF_INET || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || read32(authorization+92)!=0) reject("unsupported profile or descriptor");
+    if (raw_mode!=mode_faketcp || raw_ip_version!=AF_INET || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || read32(authorization+92)>1) reject("unsupported profile or descriptor");
     local=endpoint(authorization+64,read16(authorization+68));
     helper=endpoint(authorization+70,read16(authorization+74));
     peer=endpoint(authorization+76,read16(authorization+80));
@@ -118,7 +119,8 @@ void native_attach_configure() {
         if (!(remote_addr==peer)) reject("configured peer differs from authorization");
         source_addr=local; force_source_ip=1; source_port=local.get_port(); force_source_port=1;
     } else if (!(local_addr==local)) reject("configured listener differs from authorization");
-    mylog(log_info,"managed endpoint authorized; ABI=1, single peer, source=%s\n",local.get_str());
+    if(read32(authorization+92)==1) native_broker_configure(pipe_name,authorization,server);
+    mylog(log_info,"managed endpoint authorized; ABI=1, %s, source=%s\n",native_broker_mode()?"brokered worker":"single peer",local.get_str());
 }
 bool native_attached() { return pipe_handle!=INVALID_HANDLE_VALUE; }
 bool native_attachment_so() { return native_attached() && authorization[83]==2; }

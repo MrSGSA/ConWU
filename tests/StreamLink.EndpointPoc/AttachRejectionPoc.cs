@@ -14,7 +14,7 @@ static class AttachRejectionPoc
     {
         using var deadline = new CancellationTokenSource(25000);
         var cases = new List<object>();
-        foreach (string scenario in new[] { "wrong-abi", "old-attach", "old-generation", "wrong-request", "ipc-close-before-start" }) {
+        foreach (string scenario in new[] { "wrong-abi", "unknown-capture-mode", "old-attach", "old-generation", "wrong-request", "ipc-close-before-start" }) {
             string name = "StreamLink.Attach." + Guid.NewGuid().ToString("N");
             using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
                 PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance);
@@ -46,8 +46,9 @@ static class AttachRejectionPoc
                 Ep(64, owner.Local); Ep(70, reflector.Endpoint); Ep(76, new(IPAddress.Loopback, 45454));
                 frame[82] = 1; frame[83] = 1;
                 BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(84), 10000); BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(88), 1);
+                if (scenario == "unknown-capture-mode") frame[92] = 2;
                 await pipe.WriteAsync(frame, deadline.Token);
-                if (scenario != "wrong-abi") {
+                if (scenario is not ("wrong-abi" or "unknown-capture-mode")) {
                     byte[] armed = new byte[96]; await pipe.ReadExactlyAsync(armed, deadline.Token);
                     if (BinaryPrimitives.ReadUInt16LittleEndian(armed.AsSpan(6)) != 2) throw new Exception("Expected Armed");
                     await Task.Delay(100, deadline.Token); quiet = raw.Available == 0;

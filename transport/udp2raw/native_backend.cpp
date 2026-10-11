@@ -5,6 +5,7 @@
 #include "native_backend.h"
 #include "native_attach.h"
 #include "native_so.h"
+#include "native_broker.h"
 #include <atomic>
 #include <thread>
 #include "windivert.h"
@@ -38,6 +39,8 @@ sockaddr_in test_peer{};
 
 void stop_capture() {
     stopping.store(true);
+    const bool broker_reader=native_broker_mode() && reader.joinable();
+    if(broker_reader) native_broker_shutdown();
 #ifdef UDP2RAW_TEST_IO
     if (test_socket != INVALID_SOCKET) {
         closesocket(test_socket);
@@ -46,6 +49,7 @@ void stop_capture() {
     if (handle != INVALID_HANDLE_VALUE) wd_shutdown(handle, WINDIVERT_SHUTDOWN_BOTH);
 #endif
     if (reader.joinable()) reader.join();
+    if(broker_reader) native_broker_close();
 #ifdef UDP2RAW_TEST_IO
     test_socket = INVALID_SOCKET;
 #endif
@@ -90,6 +94,14 @@ void capture() {
     receiving.store(true);
     while (!stopping.load()) {
         UINT length = 0;
+        if(native_broker_mode()) {
+            int n=native_broker_receive(packet,sizeof(packet));
+            if(n<0) {
+                if(!stopping.load()) reader_error.store(ERROR_BROKEN_PIPE);
+                ev_async_send(g_default_loop,&async_watcher); break;
+            }
+            length=n;
+        } else {
 #ifdef UDP2RAW_TEST_IO
         int received = recv(test_socket, packet, sizeof(packet), 0);
         if (received == SOCKET_ERROR) {
@@ -118,6 +130,7 @@ void capture() {
         if ((!address.IPChecksum || (raw_mode == mode_udp ? !address.UDPChecksum : !address.TCPChecksum)) &&
             !wd_checksums(packet, length, &address, 0)) continue;
 #endif
+        }
         if (length == 0 || length > huge_data_len) continue;
         pthread_mutex_lock(&queue_mutex);
         if (!my_queue.full()) my_queue.push_back(packet, length);
@@ -173,6 +186,7 @@ void init_filter(int port) {
     my_queue.clear();
     pthread_mutex_unlock(&queue_mutex);
     filter_port = port;
+    if(!native_broker_mode()) {
 #ifdef UDP2RAW_TEST_IO
     // Test-only datagram carriage of raw packets, always loopback. Never shipped.
     test_socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
@@ -235,6 +249,7 @@ void init_filter(int port) {
         fail("cannot configure bounded WinDivert queue");
     mylog(log_info, "native capture: %s\n", filter.c_str());
 #endif
+    }
     reader = std::thread(capture);
     while (!receiving.load()) Sleep(1);
     native_attachment_armed();
@@ -244,6 +259,7 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     std::unique_lock<std::mutex> lock(native_injection_mutex, std::defer_lock);
     if (native_attached()) lock.lock();
     if (!native_attachment_packet(packet,length)) return -1;
+    if(native_broker_mode()) return native_broker_send(packet,length);
 #ifdef UDP2RAW_TEST_IO
     return send(test_socket, packet, length, 0) == length ? 0 : -1;
 #else

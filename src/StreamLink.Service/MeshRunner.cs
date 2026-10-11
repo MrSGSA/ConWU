@@ -202,7 +202,7 @@ public sealed class MeshRunner
             }
         } finally {
             cancellation.Cancel();
-            if (gatheringFactory != null) try { await gatheringFactory; } catch { }
+            if (gatheringFactory != null) try { factory = await gatheringFactory; } catch { }
             if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { log("打洞调度退出：" + ex.Message); }
             if (probe != null) { try { mapping = await probe; } catch { } }
             if (opening != null) { try { (await opening).Dispose(); } catch { } }
@@ -211,6 +211,7 @@ public sealed class MeshRunner
             try { server?.Dispose(); } catch (Exception ex) { log("入口清理：" + ex.Message); }
             if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { log("映射清理：" + ex.Message); } }
             if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { log("原生网络已停止：" + ex.Message); } router = null; }
+            if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { log("源端点清理：" + ex.Message); }
             try { services.Firewall(rule, mesh.LocalIp, ""); File.Delete(Path.Combine(folder, "owner.json")); } catch (Exception ex) { log("会话规则等待下次恢复：" + ex.Message); }
         }
     }

@@ -6,12 +6,12 @@
 | 工作包 | 实现/接入状态 | 本轮验证 | 默认启用 |
 |---|---|---|---|
 | M0 契约与证据 | 最薄 DTO/失败码/统一参数已加入；UDP 与 native 验证失败关联资源和阶段；完整事件接线继续 | Local 入口与独立产物；原生取消/无对端负例 14 检查 | 无新增能力 |
-| M1 native/Lease 共存 | Core Lease + ABI 1 单 peer 授权、捕获、撤销及 NativeDatagramPath 已实现；共享多 peer broker 未完成 | 两真实 Windows 经旧虚拟接口各 30 轮完整原生 SO/Router；RST 0、helper 未截流；受控 NAT/WAN Gate 待完成 | 否 |
+| M1 native/Lease 共存 | 唯一源端点捕获 broker、授权数据管道、独立 peer worker、源端点池已接入正式实验收集器 | broker 内存原始报文 30 轮/570 检查；三 Runner 共享源全互连；两 Windows 真实 broker/Wintun 单轮功能通过、窗口 RST 0，嵌套 50 Mbps 负载未达标；受控 NAT/WAN Gate 待完成 | 仅实验 TCP 模式且 capability 匹配；旧默认不变 |
 | M2 原生 SO | 状态机及原生路径接入 Router；8 秒期限贯穿原生、认证与提名 | 既有模型/协议/双 Windows Router 记录；本次增两 Windows 各 1 轮真实 Wintun 功能贯通、各 10 个完整内层包，握手窗口 RST 0；公网 SO 超时、嵌套负载不达标 | 否，须显式受管候选 |
-| M3 协商/预算/正式接线 | 正式 Runner 已接收集器、Actor、自动协商、两轻量/一原生准入、HTTP 共用请求桶；broker、兼容资源/原生包总账和完整迁移待完成 | Runner 经真实 HTTPS 各 30 轮 TCP/UDP；准入与完整流程补测 20 检查；TCP 配额/生命周期 247 检查；旧连接 44 检查 | 新模式有实验设置，默认兼容入口；现用部署未升级 |
+| M3 协商/预算/正式接线 | 正式 Runner 已接收集器、Actor、自动协商、两轻量/一原生准入、共享 broker/池、HTTP 共用请求桶；兼容资源/原生包总账和完整迁移待完成 | 本次完整 Local 清单 18/18 Pass；正式 Runner 经真实 HTTPS 的 TCP/UDP 各 30 轮，含新增三组共享源实例，共 217 检查；非公网/八真机证明 | 新模式有实验设置，默认兼容入口；现用部署未升级 |
 | M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网正例 Gate 待完成 | 既有本地记录；本次真实 Wintun 拒绝 1260 MTU 旧隧道负例；公网两次测试未得到认证包，未进入负载 | 仅显式实验开关，标记质量待验证 |
 | M5 观察/条件增强 | 未完成 | 未执行 | 否 |
-| M6 质量/效率 | PreferFakeTcp 保护、有界 UDP 队列、按实际资源验证双向健康与 RTT；完整选路、pacing/指标待完成 | Router 36 检查含持续单向业务负例；正式 Runner TCP/UDP 各 1 轮回归；旧连接 44 检查 | 保留既有 FakeTCP；未替换现用部署 |
+| M6 质量/效率 | PreferFakeTcp 保护、有界 UDP/捕获队列、按实际资源验证双向健康与 RTT；完整选路、pacing/指标待完成 | Router 36 检查；broker 真机嵌套负载量出本机捕获队列溢出 2713 次，管道性能需继续优化，不作为质量通过 | 保留既有 FakeTCP；未替换现用部署 |
 | M7 映射/IPv6 | 未完成 | 未执行 | 否 |
 | M8 安全/恢复 | 随各模块实现 | 未执行新增检查 | 保留既有不变量 |
 | M9 包/真机/回滚 | 未完成 | 未执行 | 未部署 |
@@ -45,3 +45,5 @@ M3 本次实现与测试边界：[准备与长轮询](m3-preparation-watch-20261
 正式 Wintun 双 Windows、物理出口失败与清理：[独立双机证据](m4-windows-runner-20261011.md)。
 
 按路径验证双向健康、超时与取消分类：[M6 局部实现](m6-bidirectional-health-20261011.md)。
+
+共享捕获 broker、端点池正式接入与双 Windows 实测：[M1/M3 继续实现](m1-capture-broker-20261011.md)。
