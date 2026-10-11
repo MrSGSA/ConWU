@@ -11,7 +11,9 @@ using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
 if (args.Length > 0 && args[0] == "--serve") { await ControlServer.Run(args); return; }
-if (args.Length != 6 || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json");
+bool upgradeOnly = args.Length == 7 && args[6] == "--upgrade-only";
+bool baselineOnly = args.Length == 7 && args[6] == "--baseline-only";
+if ((!upgradeOnly && !baselineOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -35,6 +37,8 @@ app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
+    if (!baselineOnly) rows.Add(await UpgradeTests.Run(binary, root, url, pin, Check, token));
+    if (!upgradeOnly) {
     await AdmissionTests.Run(binary, root, Check, token);
     CaptureFilterTests.Run(Path.Combine(Path.GetDirectoryName(binary)!, "..", "downloads", "WinDivert-2.2.2-A", "x64", "WinDivert.dll"), Check);
     await EndpointPoolTests.Run(Check, token);
@@ -77,6 +81,7 @@ try {
             foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(8)); } catch (OperationCanceledException) { }
             Check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed), "Runner shutdown closes the final endpoint references and adapter");
         }
+    }
     }
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices" }, new JsonSerializerOptions { WriteIndented = true }));
 } catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() }, new JsonSerializerOptions { WriteIndented = true })); throw; }

@@ -40,6 +40,7 @@ public static class TraversalLimits
     public const int ControlBytesPerSecond = 65536, MaintenancePps = 24;
     public const int RoundPackets = 120, CompletionReserve = 24, RoundBytes = 65536;
     public const int UdpRoundMs = 6000, SoRoundMs = 8000, PairOpportunityMs = 60000;
+    public const int UpgradeResidenceMs = 30000, UpgradeCooldownMs = 60000;
     public const int LongPollHoldSeconds = 25, LongPollTimeoutSeconds = 35;
     public const int EventQueueSize = 128, GlobalWaiters = 64;
     public const int InnerMtu = 1280, MeshOverhead = 64, UdpRequiredPayload = InnerMtu + MeshOverhead;

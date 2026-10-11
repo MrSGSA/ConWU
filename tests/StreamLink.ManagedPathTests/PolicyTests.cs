@@ -41,6 +41,8 @@ static class PolicyTests
         var original = Pair(originalContext);
         Register(original, originalContext, 1);
         await Until(() => Active(ra, 2, original.Left) && Active(rb, 1, original.Right), "baseline policy path jointly selected");
+        check(!ra.ReserveTraversal(2, TraversalProfile.FakeTcpHttpSo) && !ra.ReserveTraversal(2, TraversalProfile.UdpDirect),
+            "background replacement reservation cannot displace healthy FakeTCP even with an allowed profile");
         original.A.Filter = original.B.Filter = p => p[4] != 6; // suppress only authenticated pong frames
         await Until(() => !ra.Status().Single().Connected && !rb.Status().Single().Connected, "both old-path round-trip proofs expire while resources stay owned", 15000);
         var nextContext = Context(a, b, ra.BootId, rb.BootId, TraversalProfile.UdpDirect); var next = Pair(nextContext);

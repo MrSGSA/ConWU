@@ -15,6 +15,12 @@ static class AdmissionTests
         var discovery = new Discovery(); var factory = new PendingFactory();
         await using var router = new MeshRouter(mesh, new EmptyAdapter(), discovery.BootId, new(AllowUdpFallback: true));
         await using var manager = new MeshTraversalManager(mesh, router, discovery, factory, new(), _ => { }, stop.Token);
+        var oldCaps = System.Text.Json.JsonSerializer.Deserialize<MeshTraversalCapabilities>("{\"Version\":1,\"NativeAbi\":0,\"BootId\":\"" + Guid.NewGuid() + "\",\"Profiles\":[3]}")!;
+        MeshTraversal.ValidateCapabilities(oldCaps);
+        check(oldCaps.BackgroundUpgrade == 0 && manager.Capabilities.BackgroundUpgrade == 1, "old capability JSON defaults to no background upgrade instead of inferring it from SO support");
+        bool rejectedUpgrade = false;
+        try { MeshTraversal.ValidateCapabilities(oldCaps with { BackgroundUpgrade = 2 }); } catch (FormatException) { rejectedUpgrade = true; }
+        check(rejectedUpgrade, "unknown background upgrade version is rejected before negotiation");
         var announcements = peers.ToDictionary(p => p.Self.Slot, p => new MeshAnnouncement(p.Self.Slot, p.Self.Device, 1,
             DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), "", "test", new(1, 0, Guid.NewGuid(), [TraversalProfile.UdpDirect])));
         manager.Tick(announcements, ""); manager.Tick(announcements, "");

@@ -4,10 +4,17 @@ public sealed partial class MeshRouter
 {
     // A runner must stop its obsolete legacy client when taking this reservation.
     // A healthy legacy path is never displaced to make room for an experiment.
-    public bool ReserveTraversal(int slot)
+    public bool ReserveTraversal(int slot, TraversalProfile? replacement = null)
     {
         lock (gate) {
-            if (!peers.TryGetValue(slot, out var peer) || Healthy(peer)) return false;
+            if (!peers.TryGetValue(slot, out var peer)) return false;
+            // A healthy negotiated UDP path may keep transporting while one
+            // FakeTCP candidate is prepared. No legacy ownership is displaced,
+            // and retired references must converge before another candidate.
+            if (Healthy(peer)) return replacement == TraversalProfile.FakeTcpHttpSo &&
+                Selection.Allows(replacement.Value) && peer.Managed is { Candidate: null } managed &&
+                managed.Paths.Count == 1 && managed.Active is { Identity.Profile: TraversalProfile.UdpDirect } active &&
+                active.Nomination.Stage == NominationStage.Selected;
             if (peer.Managed != null) return peer.Managed.Paths.Count == 0;
             peer.Active = null; peer.Candidate = null; peer.Probes.Clear(); peer.Retired.Clear();
             peer.Managed = new(); return true;
