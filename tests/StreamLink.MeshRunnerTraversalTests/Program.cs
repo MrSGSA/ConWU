@@ -10,6 +10,7 @@ using StreamLink.Discovery;
 using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
+if (args.Length > 0 && args[0] == "--serve") { await ControlServer.Run(args); return; }
 if (args.Length != 6 || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);

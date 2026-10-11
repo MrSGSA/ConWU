@@ -3,6 +3,7 @@ using StreamLink.Core;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshConnectionTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshRunnerTraversalTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshHarness")]
 
 namespace StreamLink.Service;
 

@@ -41,7 +41,7 @@ public sealed partial class UdpTraversal
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
             var result = await owner.Punch([remote], new(DurationMs: TraversalLimits.UdpRoundMs), linked.Token);
-            if (!result.Success) throw new IOException("UDP 连通检查失败：" + result.Failure);
+            if (!result.Success) throw new IOException($"UDP 连通检查失败：{result.Failure}; socket={owner.SocketId:N}; attempt={context.AttemptId:N}; local={owner.Local}; peer={remote}; sent={result.SentPackets}; authenticated={result.AuthenticatedPackets}; learned={result.LearnedCandidates}; elapsedMs={result.ElapsedMs:F0}");
             linked.Token.ThrowIfCancellationRequested();
             return owner.RetainPath(generation, Guid.NewGuid());
         }

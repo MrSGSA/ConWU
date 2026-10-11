@@ -6,6 +6,7 @@ using StreamLink.Service;
 // Explicit isolated integration harness. It never opens the installed control
 // pipe or registers a Windows service. The caller supplies a private profile.
 if (args.Length < 1) throw new ArgumentException("Expected prepare or run");
+if (args[0].StartsWith("traversal-", StringComparison.Ordinal)) { await TraversalNetwork.Run(args); return; }
 if (args[0] == "prepare") {
     string folder = Path.GetFullPath(args[1]); Directory.CreateDirectory(folder);
     var owner = MeshIdentity.Create(args[2], args.Length > 3 ? args[3] : "", "faketcp"); var guest = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));
