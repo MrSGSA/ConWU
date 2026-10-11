@@ -90,6 +90,7 @@ static class BrokerLoadPoc
                         fixtureQueueDrops = offered - accepted, fixtureWireDrops = wire.Drops - wireDrops,
                         captureQueueDrops = finalOwners.Select((s, i) => s.QueueDrops - startOwners[i].QueueDrops).ToArray(),
                         captureReceived = finalOwners.Select((s, i) => s.Received - startOwners[i].Received).ToArray(),
+                        captureQueuesCumulative = finalOwners.Select(s => s.Queues).ToArray(),
                         routerDrops = routers.Sum(r => r.Status().Sum(p => p.DroppedPackets)) - initialRouterDrops,
                         sample.Duplicates, sample.Reordered, sample.P50Ms, sample.P95Ms, sample.P99Ms, sample.MaximumMs,
                         managedAllocatedBytes = GC.GetTotalAllocatedBytes(true) - allocated,

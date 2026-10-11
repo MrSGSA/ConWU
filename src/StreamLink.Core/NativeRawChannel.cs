@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.IO.Pipes;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
@@ -60,7 +61,9 @@ internal sealed class NativeRawChannel : IAsyncDisposable
         while (true) {
             byte[] packet = await session.Receive(stop.Token), frame = new byte[4 + packet.Length];
             BinaryPrimitives.WriteInt32LittleEndian(frame, packet.Length); packet.CopyTo(frame, 4);
+            long started = Stopwatch.GetTimestamp();
             await pipe.WriteAsync(frame, stop.Token);
+            session.RecordPipeWrite(started);
         }
     }
     public async ValueTask DisposeAsync() { stop.Cancel(); pipe.Dispose(); await running; stop.Dispose(); }

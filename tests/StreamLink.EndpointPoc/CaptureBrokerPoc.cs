@@ -93,6 +93,8 @@ static class CaptureBrokerPoc
                     foreach (var lease in leases) lease.Dispose();
                     await Task.WhenAll(owners.Select(o => o.Closed));
                     Check(owners.All(o => o.Status is { Closed: true, Sessions: 0, Failure: "" }) && leases.All(l => l.Closed), "capture I/O joins before the final source reference is released");
+                    Check(owners.All(o => o.Status.Queues is { Enqueued: > 0, Dequeued: > 0, PeakSessionDepth: > 0, PipeWrites: > 0 } q &&
+                        q.Dequeued <= q.Enqueued && q.PipeWrites <= q.Dequeued), "cumulative capture/pipe diagnostics survive worker release and preserve stage counts");
                     rows.Add(new { round, elapsedMs = timer.ElapsedMilliseconds, exitDetectedMs, owners = owners.Select(o => o.Status).ToArray(), wirePackets = wire.Count });
                     Console.WriteLine($"Broker {round}/{rounds} passed");
                 } finally {

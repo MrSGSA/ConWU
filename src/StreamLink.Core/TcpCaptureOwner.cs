@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Threading.Channels;
 
@@ -14,7 +15,12 @@ public interface IEndpointPacketIo : IDisposable
 }
 
 public sealed record CaptureOwnerStatus(Guid OwnerId, Guid LeaseId, bool Retiring, bool Closed, int Sessions,
-    long Received, long Injected, long KernelSuppressed, long HelperReinjected, long QueueDrops, string Failure);
+    long Received, long Injected, long KernelSuppressed, long HelperReinjected, long QueueDrops, string Failure)
+{
+    public CaptureQueueDiagnostics Queues { get; init; } = new(0, 0, 0, 0, 0, 0, 0, 0);
+}
+public sealed record CaptureQueueDiagnostics(long Enqueued, long Dequeued, int PeakSessionDepth,
+    double MaximumQueueMs, long QueuedOver20Ms, long PipeWrites, double MaximumPipeWriteMs, long PipeWritesOver16Ms);
 
 // Exactly one capture handle owns this exclusive source endpoint. Workers own
 // independent session references, never a second handle/bind on the same P.
@@ -33,12 +39,17 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     bool retiring, closing;
     string failure = "";
     long received, injected, suppressed, helperReinjected, queueDrops;
+    long enqueued, dequeued, queueTicks, queuedOver20, pipeWrites, pipeTicks, pipeOver16;
+    int peakDepth;
     public TcpEndpointLease Lease { get; }
     public Guid OwnerId => reference.AttachId;
     public Task Ready => ready.Task;
     public Task Closed => closed.Task;
     public bool Failed { get { lock (gate) return failure.Length != 0 || closing; } }
-    public CaptureOwnerStatus Status { get { lock (gate) return new(OwnerId, Lease.Id, retiring, closed.Task.IsCompletedSuccessfully, sessions.Count, received, injected, suppressed, helperReinjected, queueDrops, failure); } }
+    public CaptureOwnerStatus Status { get { lock (gate) return new(OwnerId, Lease.Id, retiring, closed.Task.IsCompletedSuccessfully, sessions.Count, received, injected, suppressed, helperReinjected, queueDrops, failure) {
+        Queues = new(enqueued, dequeued, peakDepth, queueTicks * 1000d / Stopwatch.Frequency, queuedOver20,
+            pipeWrites, pipeTicks * 1000d / Stopwatch.Frequency, pipeOver16)
+    }; } }
 
     public TcpCaptureOwner(TcpEndpointLease lease, Guid generation, Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open)
     {
@@ -90,8 +101,10 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
                         continue;
                     }
                     if (packet.Outbound) { suppressed++; continue; }
-                    if (sessions.TryGetValue(remote, out var session) && session.started && !session.retired && !session.revoked &&
-                        !session.incoming.Writer.TryWrite(packet.Bytes)) queueDrops++;
+                    if (sessions.TryGetValue(remote, out var session) && session.started && !session.retired && !session.revoked) {
+                        if (!session.incoming.Writer.TryWrite(new(packet.Bytes, Stopwatch.GetTimestamp()))) queueDrops++;
+                        else { enqueued++; session.depth++; peakDepth = Math.Max(peakDepth, session.depth); }
+                    }
                 }
             }
         } catch (Exception ex) when (stop.IsCancellationRequested && ex is OperationCanceledException or ObjectDisposedException or IOException or ChannelClosedException) { }
@@ -136,7 +149,9 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     public sealed class Session : IDisposable
     {
         readonly TcpCaptureOwner owner;
-        internal readonly Channel<byte[]> incoming = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true });
+        internal readonly record struct QueuedPacket(byte[] Bytes, long EnqueuedAt);
+        internal readonly Channel<QueuedPacket> incoming = Channel.CreateBounded<QueuedPacket>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true });
+        internal int depth;
         internal bool started, retired, revoked;
         readonly IPEndPoint peer;
         internal Session(TcpCaptureOwner owner, IPEndPoint peer) { this.owner = owner; this.peer = peer; }
@@ -157,7 +172,24 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
                 bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent;
             }
         }
-        public ValueTask<byte[]> Receive(CancellationToken token) => incoming.Reader.ReadAsync(token);
+        public async ValueTask<byte[]> Receive(CancellationToken token)
+        {
+            var packet = await incoming.Reader.ReadAsync(token);
+            long ticks = Stopwatch.GetTimestamp() - packet.EnqueuedAt;
+            lock (owner.gate) {
+                depth--; owner.dequeued++; owner.queueTicks = Math.Max(owner.queueTicks, ticks);
+                if (ticks * 1000d / Stopwatch.Frequency > 20) owner.queuedOver20++;
+            }
+            return packet.Bytes;
+        }
+        internal void RecordPipeWrite(long started)
+        {
+            long ticks = Stopwatch.GetTimestamp() - started;
+            lock (owner.gate) {
+                owner.pipeWrites++; owner.pipeTicks = Math.Max(owner.pipeTicks, ticks);
+                if (ticks * 1000d / Stopwatch.Frequency > 16) owner.pipeOver16++;
+            }
+        }
         // The caller must confirm its native worker exited before releasing this
         // tuple; Revoke alone must not allow a second independent ISS/state.
         public void Dispose() => owner.Release(this);
