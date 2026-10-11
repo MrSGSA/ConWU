@@ -82,6 +82,9 @@ public sealed class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDiscovery
         try {
             var request = MeshWatch.Create(profile, boot, serverEpoch, cursor);
             using var response = await watchHttp.PostAsJsonAsync($"v3/mesh/{profile.Pair.Network}/watch", request, token);
+            // Initial registration may race the first watch; retry normally,
+            // without disabling watch or invoking failure backoff.
+            if (response.StatusCode == HttpStatusCode.PreconditionFailed) return null;
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed) {
                 // Only an explicit old-server route response enables fallback.
                 // Auth failures, rate limiting and malformed data are not downgraded.

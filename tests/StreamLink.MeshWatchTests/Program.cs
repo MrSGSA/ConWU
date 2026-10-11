@@ -106,6 +106,7 @@ try {
     var fresh = MeshIdentity.Create(url, pin, "faketcp"); var friend = Guest(fresh);
     using var client = new MeshDiscoveryClient(fresh);
     using var publisher = new MeshDiscoveryClient(friend);
+    Check(await client.WaitForChanges(all.Token) == null && client.SupportsLongPolling, "first watch racing network registration keeps capability and normal retry cadence");
     await client.SaveDirectory(fresh.Directory!, all.Token);
     Check((await client.WaitForChanges(all.Token))!.Directory.Members.Length == 2, "production client reads new watch API over pinned HTTPS");
     var clock = Stopwatch.StartNew();

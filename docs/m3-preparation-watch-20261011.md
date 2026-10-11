@@ -34,6 +34,7 @@
 ## 本轮证据
 
 - `artifacts/mesh-watch-20261011c.json`：23 项检查；八身份批量变更、成员签名/重放/撤销、64 等待者与短请求共存、取消回收、每设备突发上限、真实回环 HTTPS 的 25 秒等待和旧服务回退。
+- 后续 `artifacts/mesh-watch-registration-20261011.json`：24 项通过，增加首次 watch 与网络登记竞态；412 按正常重试处理，不触发额外失败退避或降级。
 - `artifacts/mesh-connection-watch-20261011.txt`：44 项 TCP/正式 MeshRunner 连接检查。新增确认 Runner 实际选择长轮询接口；HTTP 阻塞期间子进程恢复和数据传输保持原有行为。
 - `artifacts/mesh-regression-watch-20261011.txt`：40 项原有 MeshLink/签名/多成员/禁止转发回归。
 - native/Core/Service/Discovery 构建通过，无编译警告。
