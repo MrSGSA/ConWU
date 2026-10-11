@@ -1,0 +1,373 @@
+StreamLink：当前实现、验证证据与打洞研发计划
+供 PRO 技术评审使用｜2026-10-11
+整理基线：774ad0e；产品实测基线：f0fa2a2（0.4.1-preview）。
+
+请先阅读这份材料，再评审架构与后续研发顺序。本文区分“已实现”“已实测”
+和“计划”，不代表计划能力已经存在。没有提供密钥、动态公网地址或服务器
+登录信息。项目仓库目前私有，不能假定你能够访问源码；关键行为已在下文说明。
+
+一、我们希望解决什么
+
+StreamLink 是面向 Windows 的简易 P2P 虚拟组网软件。用户安装后配对，获得
+稳定的虚拟 IP，再自行用于游戏串流、远程桌面、文件传输或其他应用。
+它不是 Sunshine / Moonlight 插件，也不以特定串流软件作为组网基础。
+
+主要诉求：
+1. 对部分疑似按协议实施 QoS 的网络，使用 udp2raw FakeTCP + HTTP 特征
+   承载数据报，保留 UDP 不等待丢失包重传的传输语义。
+2. 无需预装 Lucky、EasyTier、WSL、Python 或 .NET，Windows 双端配置简单。
+3. 允许自托管协调/发现服务器交换控制信息，但业务数据禁止经过服务器中继，
+   也不通过其他成员转发。无法直连时如实显示失败。
+4. 当前最多八台设备，先做好每对设备直连，不追求大规模网络。
+5. 已有网络效果得到用户认可。下一阶段主要研究 TCP / UDP 打洞效率和
+   成功率，尤其不理想 NAT；TCP / FakeTCP 优先，吞吐测试转为回归项。
+6. 面向一般用户，不能将我们两台电脑、特定路由器或静态端口写成通用前提。
+
+二、环境与历史：哪些结论可以沿用
+
+A 端（Akane）：Windows，家庭移动宽带，CGNAT，无公网 IPv4；用户惯称
+NAT1。家庭路由器可转发，曾用 Lucky 2.27.2 TCP STUN 很快取得可用入口。
+B 端（Thinkbook）：Windows，校园网，无可用公网 IPv4/IPv6，用户惯称
+对称 NAT / NAT4。常作为主动连接方。
+
+这些 NAT1/NAT4 名称是环境描述，不是已完成 RFC 行为测试后的严格分类。
+本机曾从同一 UDP socket 查询四个不同 STUN IP，公网端口均不同，没有
+观察到固定步长；因目标拓扑不足，仍不能区分 ADM/APDM，更不能断言完全随机。
+
+历史体验：纯 UDP、QUIC 和部分 FakeTCP 方案出现约 6 Mbps 上行限制；
+真实 TCP P2P 可长期稳定串流。EasyTier 的 FakeTCP 曾能连接，但高码率
+丢包明显；更换为 udp2raw 后用户体验改善。尚无证据把问题全部归因于某个
+QoS 分类器，也不能把所有 FakeTCP 实现等同处理。
+
+此前用户满意的串流路径包含 TCP 公网映射，外层是 udp2raw FakeTCP；
+“内层承载 UDP”不等于“外层通过 UDP 打洞”。当前优化目标要保持这个区分。
+
+三、版本状态
+
+项目阶段                组网后端              当前状态
+0.3.2 日常运行版          EasyTier 独立组件      两台现用服务仍为此版
+0.4.1 开发候选           自主组网 + Wintun     双端隔离公网测试已完成
+UDP 打洞基础模块         自主 UdpTraversal     仅回环/模型及少量观测
+新候选协商、双主动握手    计划中                 尚未实现或发布
+
+0.4.1 默认运行包约 51.5 MiB，不含 EasyTier core/cli。旧 EasyTier 兼容路径
+保留在源码，可显式构建附带旧组件的包；新版多机路径不依赖它。
+正式公网协调服务尚未升级到 meshProtocol:4；本轮新协议使用独立协调实例。
+0.3.x 配对不能直接作为 0.4 网络使用，需要配套协调服务和两端迁移。
+
+四、已实现的用户功能
+
+- 中文 Windows GUI：加入网络、创建网络、设置；按钮有进行中反馈及局部动效。
+- 六位配对码，显式点击加入；另有双方校验码核对和创建端批准。
+- 创建者可继续邀请或移除成员；设备列表显示 IP、连接状态和 RTT。
+- 自定义 HTTPS 协调服务器；公共服务选择仅占位，尚无默认公共接入点。
+- STUN 列表编辑、导入/导出、在线更新与最近成功服务器优先。
+  TCP 列表来源包括 pradt2/always-online-stun 的 valid_hosts_tcp.txt。
+- 前台运行与可选托盘；后台服务在设置中由用户明确安装、更新或卸载。
+- 持久配对、日志等级/目录、日志快照、GitHub 入口、更新检查和连接质量测试。
+- 服务模式设计为无需登录桌面即可运行；0.4.1 尚未做 Windows 冷启动未登录
+  的真实验收，不能仅凭实现了服务就宣称已完成此场景验证。
+
+五、0.4.1 的架构与数据路径
+
+控制路径：
+  GUI / Windows 服务
+      ├─ 配对、成员证书和目录
+      ├─ TCP STUN、UPnP、入口公告、连接管理
+      └─ HTTPS 协调服务：交换短码消息、签名目录及加密端点公告
+
+业务路径：
+  A 的 Windows 应用
+      → IPv4 虚拟 IP / 官方 Wintun
+      → 自主 MeshRouter + 每对成员的 MeshLink 加密数据报
+      → 本机回环 UDP
+      → 原生 udp2raw / WinDivert
+      → 公网 FakeTCP + 明文 HTTP 特征
+      → B 的 udp2raw → MeshLink → Wintun → Windows 应用
+
+实现构成：
+- C# / .NET 10：界面、Windows 服务、身份、配对、协调、映射、组网层。
+- C/C++：基于 udp2raw HTTP 分支的原生 Windows 后端；WinDivert 2.2.2-A
+  收发/处理原始 IPv4 报文，Wintun 0.14.1 提供虚拟三层网卡。
+- 自研的是用户态组网和协议适配，没有自研内核虚拟网卡驱动；使用官方驱动。
+- 当前原生路径不依赖 Npcap、WSL 或 Lucky 程序。
+
+网络语义：
+- 每台设备一张 Wintun、一个网络，IPv4 单播；按成员目标 IP 选择独立链路。
+- 虚拟 MTU 为 1280；MeshLink 增加 48 字节头和 16 字节认证标签。
+- MeshLink 和 FakeTCP 数据通道不为业务增加可靠重传或按序等待。
+  若内层应用本身使用 TCP，其 TCP 语义仍由应用两端系统实现。
+- 当前不支持广播、多播、IPv6 和跨网段路由，不接管默认网关和全局 DNS。
+- A-B 和 A-C 成功不代表 B-C 成功。创建者是成员授权者，不是业务转发中心。
+- 数据面 P2P，但发现依赖配置的协调服务器，不能称为完全无中心的发现系统。
+- 当前主动维护已知成员的候选连接，并非业务出现后才按需打洞。八成员最多
+  28 个无向设备对；新增高成本策略需要全机预算，不能按每对各放一份预算。
+
+六、当前 TCP“打洞”实际如何工作
+
+已有成功路径是“持续 TCP STUN + 路由器显式映射 + 对端主动 FakeTCP”。
+设探测源端口为 P，udp2raw 监听端口为 Q，P 与 Q 不同：
+
+  A:本地 P ──真实 TCP 连接──→ STUN
+                    STUN 返回观察到的公网 IP:端口 E
+
+  A 向家庭路由器申请 TCP P → A:Q 的 UPnP 短租约
+  保持原 STUN TCP 连接，并通过协调服务发布 E
+  B 使用原生 FakeTCP 主动连接 E
+  经外层 NAT 和家庭路由器到 A:Q，最终以双向认证数据确认是否可用
+
+“外部 E 最终能通到 Q”是需要实际验证的结果，不是从 UPnP 成功就能推导的
+通用保证。内外层 NAT 的映射、过滤及端口重写行为都会影响此路径。
+
+实现参数：
+- TCP STUN 每轮总预算 12 秒，优先实际固定源端口。
+- 350 ms 后首选仍未完成，最多三路临时端口筛选备用服务器。
+  临时端口看到的公网端点丢弃，最后必须从实际固定源端口重新查询/保活。
+- 同一时刻最多一个实际源端口连接；记忆成功 STUN，长列表备用起点轮换。
+- UPnP 请求 180 秒租约；维护循环约每 10 秒 STUN 查询，六轮后续租。
+- 源端点变化时更新公告；映射清理有所有权判断，不覆盖其他软件规则。
+- 允许手工配置已有 Lucky 入口。一端没有 UPnP 时，仍能主动连接有入口的对端。
+
+重要限制：
+1. 这不是 TCP simultaneous-open，不是任意两台 NAT4 都能互穿。
+2. MeshTransport 当前没有为出站 udp2raw 指定 --source-port；客户端可能
+   自选并占用端口。未来探测与承载的端口必须真实一致。
+3. 客户端握手状态只接受来自指定 IP:端口的 SYN+ACK；收到交叉裸 SYN
+   会判为非预期包。WinDivert 客户端过滤器也固定对端 IP:端口。
+4. 因此只让两个现有 udp2raw 客户端同时启动，不会自动成为双主动打洞。
+5. TCP STUN socket 和 FakeTCP 原始报文不是同一种资源。不能把关闭内核
+   TCP 连接、重新占用同端口视为无损接管；RST/FIN、序列号、TIME_WAIT
+   和 NAT 状态都要验证。普通 TCP connect 成功也不能代替 FakeTCP 验收。
+
+七、HTTP 特征的具体程度
+
+原生后端来自 MikeWang000000/udp2raw 的固定 HTTP 分支并有 Windows 修改。
+当前配置使用 --raw-mode faketcp、--fake-http test.ustc.edu.cn、
+--fix-gro、--seq-mode 3。
+
+connection.cpp 的 send_handshake 在发送 udp2raw 自身握手前调用
+send_fake_http：构造明文 GET / HTTP/1.1、Host、User-Agent、Accept，
+作为原始 TCP payload 发给隧道对端，等待约 32 ms 后继续协议握手。
+共享的握手发送函数会在相应握手/重试时调用它，并非完整浏览器 HTTP 会话。
+
+这里没有 TLS ClientHello、证书验证或 TLS record；不是 HTTPS。Host 只是
+协议特征中的字符串，不会让流量经过该网站或使用该网站的 IP 作为中继。
+当前没有证明改善来自某个域名白名单，也没有近期同条件 HTTP 开/关归因测试。
+
+外层 udp2raw 保留默认 aes128cbc / auth_md5，MeshTransport 未显式覆盖；
+这个 md5 选项不是现代 AEAD。新版另外以 MeshLink AES-GCM 保护成员数据，
+不能把两层混为一谈，也不能把内层加密当作外层解析器不需要审计的理由。
+
+八、身份、加密和信任边界
+
+- 六位配对码只定位五分钟临时房间，不充当网络长期密钥。
+- 临时 P-256 ECDH 公钥承诺/揭示、双方短校验码和 AES-GCM 用于交付邀请。
+- 创建者签发成员证书和版本递增的成员目录。当前创建者生成被邀请成员的
+  身份私钥并加密交付，因此创建者是信任根；不是所有节点私钥都仅由本人生成。
+- 每对成员通过长期 ECDH 与 HKDF 得到链路密钥；会话/方向再派生 AES-GCM
+  数据报密钥。会话随机标识、单调序号和 4096 包窗口处理重放及乱序。
+- 内层不等待缺失序号再交付；源/目标虚拟 IP 也需要匹配授权成员。
+- 长期身份设计目前不提供前向保密；独立密码协议审计尚未完成。
+- 端点公告是网络共享密钥加密、各发布成员签名；协调服务保存签名成员
+  目录及密文公告，不持有端点解密密钥。TLS 终止方可见部分控制元数据。
+- 外层 udp2raw 秘密为网络共享；成员移除依赖签名目录在内层拒绝，不是
+  每次撤销都自动完成全网络共享密钥轮换。离线成员拿到新目录前有撤销延迟。
+- 持久配置用机器级 DPAPI 和管理员/SYSTEM ACL；服务组件用 Job Object
+  托管。GUI 目前仍需要管理员权限。
+
+九、控制与恢复已经做到了什么
+
+MeshAnnouncement 目前每设备只发布一个 IPv4 Endpoint，带身份、版本和
+过期时间。公告有效期约 120 秒，没有多候选集合及双方打洞轮次协议。
+当前接口是 /v3/mesh/...，能力标识为 meshProtocol:4；路径版本与协议能力
+编号不同。每网络协调配额 512 请求/分钟，客户端 HTTP 超时八秒，签名密文
+公告 Data 上限 4096 字符。服务总连接数上限 128；长轮询扩展必须同时设计
+连接/等待者配额、超时和合并更新，不能只把现有 GET 挂起更久。
+
+0.4.1 已将本地调度与协调 HTTP 分开：
+- 本地调度约 100 ms；未全部连通时 GET 间隔 2.5 秒，全连后 5 秒。
+- 端点不变时约 15 秒续公告；变化时最短间隔 2.5 秒。
+- GET、PUT、目录保存及旧租约清理异步进行；失败后退避。
+- 每个成员最多一条已验证路径和一条待验证替代传输。
+- 新路径需要同一路径上的 MeshLink 加密随机挑战往返，确认后才释放旧传输。
+- 单个 udp2raw 退出可单独重建，保留 Wintun 和其他成员。
+
+这里 MeshRouter 看到的 Active/Candidate 是本机回环 UDP 传输端点。
+它证明本机选中的传输能够认证往返，不等于 udp2raw 已经会学习公网 prflx。
+100 ms 调度也不等于 100 ms 断线检测；链路存活窗口仍约 12 秒。
+
+十、UDP 打洞模块的状态
+
+已编写但未接默认数据面：
+- UdpTraversal 使用独占、未 Connect 的 UDP socket，统一处理 STUN、检查
+  与后续负载；STUN 校验事务 ID 和回应来源。
+- 控制层需提供 AttemptId 与共享秘密；模块用 HKDF/HMAC 验证本轮检查。
+- 对有效请求的真实来源建立有界候选，并触发反向挑战，避免死守 STUN 端口。
+- 1400 字节检查包验证大报文；有 SendPayload / ReceivePayload 接口，
+  本层不负责业务加密，需承载 MeshLink 等已认证帧。
+- 当前全机默认最多八个 socket、每秒 60 个控制包、突发八个；每轮默认
+  六秒、最多 120 个控制包、八个候选。是实验预算，不是完整 ICE 参数。
+- NatObservations 记录 socket、协议、接口/出口代次、目标、端点与时间。
+  有足够目标拓扑才判断观测上的 EIM/ADM/APDM；过滤行为始终 unknown。
+
+已有 66 项回环/模型检查，包含获胜 socket 上的真实 MeshLink 加密帧。
+模型验证 EIM+APDF 双端，以及一端 EIM+EIF/ADF、另一端 APDM+APDF 的部分
+组合；不能通过的严格组合如实失败。当前模型端口固定步长，没有完整随机、
+端口块、TCP SYN 状态或真实校园网成功率覆盖。
+
+生产 UdpMapping 仍为 STUN + UPnP 路线，尚未被该模块替换。
+尚未完成：双方一致的候选提名、长期保活/迁移、正式数据面接入、预测和概率打洞。
+两个共享本地端口的 Windows socket 不能当成同一个获胜 socket。
+
+十一、实测结果与能证明的范围
+
+2026-10-11，两台真实 Windows 使用独立配置、端口、网段和 MeshHarness
+调用实际 MeshRunner。业务走新版 Wintun + udp2raw 公网路径，未使用旧版
+EasyTier 数据路径；TCP STUN + UPnP 由新版独立完成，没有借用 Lucky 测试规则。
+
+方向              目标 Mbps   时长       实收 Mbps     丢包
+A → B             10          8 秒       9.99240       0%
+A → B             40          8 秒       39.99480      0%
+A → B             50          20 秒      49.99728      0%
+B → A             10          8 秒       9.99480       0%
+B → A             40          8 秒       39.96240      0%
+B → A             50          20 秒      49.97904      0%
+
+两个方向依次测量，不是同时双向满载。50 Mbps 两轮分别为 104161/104161
+和 104123/104123 包。每包 UDP payload 1200 字节，去重统计序号，发送结束
+后留一秒接收收尾；不测每包截止时间，因此不能证明没有迟到视频帧。
+
+负载期间 24 次 ping 全部成功，RTT 13–15 ms、平均 14 ms；不是单向延迟
+或大样本 p95。通过新虚拟 IP 连接 Windows SSH 成功，验证真实 TCP 应用。
+
+恢复/控制故障：
+- 初次进程启动到已直连：B 为 19.500 秒，A 为 17.391 秒，起点相差约 2.3 秒。
+- 单个新版 udp2raw 退出后 5.271 秒首次 ping 成功，此后短暂仍有三次超时；
+  整个 24 次故障探测有 14 次超时。不能写成 5.271 秒完全无损恢复。
+- 完整重启 B 的新版测试进程：18.891 秒连接，其中 Wintun 就绪 8.414 秒。
+- A 的 TCP STUN + UPnP 租约复核 778 ms，本机候选入口就绪 1372 ms。
+- 阻断 A 对测试协调实例的访问、确认 HTTP 超时后，已有链路仍完成
+  50 Mbps / 20 秒：49.96944 Mbps，104103/104103 包，零丢包。
+
+限制：控制实例经旧虚拟网络访问，仅业务为新独立直连。这验证了新数据面，
+不等于正式公网域名的冷启动时序，也不是双方同时完全失去控制服务。
+未做新版小时级串流、Windows 重启未登录、休眠换网、真实第三台或八台压测。
+以上吞吐不能归因于 HTTP 域名单一因素，亦不保证所有时段永久绕过 QoS。
+18.891 秒是整体启动，不是已经分离出来的纯打洞耗时。
+
+十二、拟定研发路线：请重点评审合理性
+
+TRV-1：共同候选模型与双方尝试协商（第一项代码任务）
+- 候选记录身份、协议/类型、端点、观测时间、接口、出口代次、有效期；
+  本地资源引用不发送给服务器。
+- 每对设备有 AttemptId、角色、候选对、截止时间、挑战与原始失败原因。
+- 初步状态：Offer → Ready → Start → Check → Nominate/Confirm。
+- 处理双端同时发起、迟到、重复、乱序、旧轮次、切网与取消；稳定节点身份
+  排序解决角色冲突。网络创建者不固定为传输服务器。
+- 可达入口和近期成功候选优先，不等待完整 NAT 分类；缓存需复核、切网失效。
+- 候选包括局域网地址，避免无意义依赖公网 hairpin。
+- 协调优先有界长轮询/变更通知，每设备一条订阅合并多对端事件，保留轮询兼容。
+  这是待评审方案，不是已实现的完整 ICE；现公告容量和请求配额不能直接滥用。
+
+TRV-2：原生 TCP/FakeTCP 端口观测及双主动握手（主线）
+- 先验证“实际源端口归谁拥有、怎样观察公网端点、怎样持续使用”，再改握手。
+- 比较原生后端直接参与反射交互，与受控的 Windows socket 辅助路径；
+  不能预设普通 TCP 握手可以无缝接管到 FakeTCP。
+- 扩展原生状态机处理交叉 SYN、SYN+ACK、ACK、重传与 RST；分离传输方向
+  和 udp2raw 上层/HTTP 的角色。保留无业务重传、无按序等待的语义。
+- 有限范围接收候选来源，身份验证前不替换已验证链路。
+- 先验证映射稳定而过滤严格的组合，再考虑端口预测。
+- Windows 内核 TCP simultaneous-open 可做对照，不自动变成业务回退。
+
+TRV-3：UDP 普通打洞与 prflx 接入产品
+- 复用 TRV-1，让探测和获胜后的传输使用相同 socket，补提名、保活和重启。
+- 架构待选：把 UdpTraversal 置于实际拥有 socket 的原生后端，或提供明确
+  UDP 收发接口；独立直接承载 MeshLink 也可作为实验路线，但必须如实标识。
+- UDP 可达不代表 UDP 已绕过 QoS，不能仅因更快握手就自动抢占 FakeTCP。
+
+TRV-4：有条件的严格 NAT 增强
+- 端口规律探测需要多次证据和有效期；小范围预测需协商基线与发包顺序。
+- 一端公网端点稳定、另一端端口随机：有界多 socket 概率打洞，保留获胜资源。
+- 双端随机 APDM+APDF：不套用单端稳定的概率，设置时间/发包/映射总预算。
+- PCP/NAT-PMP、IPv6 作为候选扩展；IPv6 还需要原生数据后端支持。
+- 无直连条件就解释失败，不暗中启用中继。
+
+TRV-5：验证与实验发布
+- 分别计时启动、网卡、候选、双方 Ready、首包、双向认证、真实业务可用。
+- 每种可控拓扑先做 30 轮基线/新策略对照，报告成功数/总数、失败原因、
+  成功耗时 p50/p95、超时及成本；30 轮只是起点，不宣传成总体成功率。
+- 新/旧映射、热重连分别统计，使用随机种子、并发干扰与多层 NAT 模型。
+- 原生报文模型和真实 Windows/路由器交叉验证，模型成功不等于公网覆盖。
+- 重点验证相同获胜资源上的双向认证数据，50 Mbps 为阶段回归而非研发主线。
+
+十三、希望 PRO 回答的具体问题
+
+请按“判断依据—适用前提—修改点—最小实验—失败/退出条件”回答，优先指出
+最可能让我们走错方向的假设，再给建议。请不要只复述 ICE/STUN 通用流程。
+
+1. TCP 主线选择：对于保留 udp2raw 数据报语义的产品，直接扩展 FakeTCP
+   双主动 SYN 是否值得优先？与增强显式入口、PCP/NAT-PMP 或其他无中继
+   路线相比，哪一条更可能提高实际覆盖，而不只是增加协议复杂度？
+2. 端口所有权：Windows 上如何组织 STUN、占用端口、WinDivert 与原生 SYN，
+   避免另一个 socket/五元组让观测失效，以及 FIN/RST 清掉需要的状态？
+   请分别讨论 EIM、ADM、APDM，不将 STUN 映射等同于对端映射。
+3. 握手设计：最小可行 FakeTCP 双主动状态机应该有哪些状态、序号校验、
+   角色裁决和重试规则？与现有单主动/被动路径如何共存，如何处理晚到 RST？
+4. 控制层：Offer/Ready/Start 和候选提名的方案是否有过度设计或遗漏？
+   八成员下，长轮询、WebSocket 或其他控制机制应如何选择？协议如何分代，
+   才能避免重放、双端竞态、候选过期以及对旧客户端的破坏？
+5. UDP 接入：把探测移进原生后端、提供 socket 传递/收发接口、直接用
+   MeshLink UDP 作为独立承载，哪种更可靠且改动最小？请说明获胜资源生命周期。
+6. 严格 NAT：哪些观测足够支持小范围预测或单端稳定的概率策略？什么时候
+   应跳过增强？预算、置信度、全局并发限制和重试退避怎样设定才可验证？
+7. 最小实验平台：现只有一台可部署服务的公网服务器，完整行为发现可能
+   需要两个不同公网 IP。应自建哪些反射能力、哪些可用公共 STUN 辅助？
+   怎样确认测试拓扑真的具有声明的映射/过滤行为，而不只是给 SNAT 起名字？
+8. 现有安全/协议边界有没有会直接影响打洞集成的缺陷，例如共享外层秘密、
+   候选公告认证、来源学习、成员撤销或创建者生成成员私钥？请区分必须先修
+   的问题与可延后的改进，不要仅列泛泛的安全清单。
+
+希望最终输出：
+- 推荐主线及理由，以及一个值得保留的备选路线。
+- 各策略适用/不适用的 NAT 组合与不可保证的边界。
+- 前三个最小 PoC 的步骤和明确通过标准。
+- 应修改的模块、开发顺序及最主要风险。
+- 对本计划应删除、调整或补充的部分。
+可以引用标准与开源源码，但请区分标准要求、项目真实实现、理想模型和实测。
+若判断某类网络无中继无法保证可用，请直接指出；无需把业务中继改成默认方案。
+
+十四、源码定位与参考
+
+本项目重点文件：
+src/StreamLink.Core/TcpBinding.cs、TcpMapping.cs、Mapping.cs、Stun.cs
+src/StreamLink.Core/UdpTraversal.cs、NatObservations.cs
+src/StreamLink.Core/MeshIdentity.cs、MeshLink.cs、MeshRouter.cs、MeshTransport.cs
+src/StreamLink.Core/MeshDiscovery.cs
+src/StreamLink.Service/MeshRunner.cs、MeshPeerTransports.cs、MeshRuntimeServices.cs
+src/StreamLink.Discovery/MeshRegistry.cs、Program.cs
+transport/udp2raw/client.cpp、server.cpp、connection.cpp、connection.h
+transport/udp2raw/network.cpp、native_backend.cpp、native_server.cpp
+tests/StreamLink.TraversalTests/、StreamLink.MeshConnectionTests/、StreamLink.MeshHarness/
+
+项目内已有记录：
+docs/native-mesh-0.4.txt
+docs/releases/v0.4.1-preview.txt
+docs/traversal-foundation-20261011.txt
+docs/wan-test-0.4.1-20261011.txt
+docs/traversal-roadmap-20261011.txt
+
+公开上游与依据：
+原版：https://github.com/wangyu-/udp2raw
+原跨平台分支：https://github.com/wangyu-/udp2raw-multiplatform
+HTTP 基线：https://github.com/MikeWang000000/udp2raw/tree/c4995eaad3576bd7bca872fe25bc93b519acdfdd
+STUN 列表：https://github.com/pradt2/always-online-stun/blob/master/valid_hosts_tcp.txt
+ICE：https://www.rfc-editor.org/rfc/rfc8445.html
+ICE-TCP：https://www.rfc-editor.org/rfc/rfc6544.html
+TCP NAT：https://www.rfc-editor.org/rfc/rfc5382.html
+行为发现：https://www.rfc-editor.org/rfc/rfc5780.html
+预测机制：https://www.rfc-editor.org/rfc/rfc5128.html
+Windows 端口复用：https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
+稳定端/严格端分析：https://tailscale.com/blog/how-nat-traversal-works
+
+说明：Lucky 仅作为已知成功机制和公开资料的研究参照，未逆向或打包其闭源
+2.27.2 实现；当前自主 TCP 模块基于公开协议实现，不应归称为 Lucky 源码移植。
