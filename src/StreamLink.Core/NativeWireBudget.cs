@@ -9,19 +9,21 @@ public sealed record NativeWireStats(long HandshakePackets, long HandshakeBytes,
 
 // The public-IP frame is charged at its final injection point. Upper-layer
 // bridge/nomination enqueue attempts must not charge the same packet again.
-public sealed class NativeWireBudget(TraversalControlRound round)
+public sealed class NativeWireBudget(TraversalControlRound round, NativeAttemptGroup? group = null)
 {
     readonly object gate = new();
     long started, handshakePackets, handshakeBytes, maintenancePackets, maintenanceBytes, businessPackets, businessBytes, denied;
     bool selected;
-    public void Start(long timestamp)
+    public long Start(long timestamp)
     {
         lock (gate) {
+            if (group != null && !ReferenceEquals(round, group.ControlRound)) throw new InvalidOperationException("A tuple must use its group's control allowance");
             if (timestamp <= 0 || started != 0 && started != timestamp) throw new InvalidOperationException("Wire round cannot restart its deadline");
-            started = timestamp;
+            started = group?.Join(timestamp) ?? timestamp;
+            return started;
         }
     }
-    public void Select() { lock (gate) { if (started == 0) throw new InvalidOperationException("Wire round has not started"); selected = true; } }
+    public void Select() { lock (gate) { if (started == 0 || group != null && !group.Claimed) throw new InvalidOperationException("Wire round has not started or acquired its first-probe permit"); selected = true; } }
     public NativeWireStats Snapshot() { lock (gate) return new(handshakePackets, handshakeBytes, maintenancePackets, maintenanceBytes, businessPackets, businessBytes, denied, selected); }
     public bool Admit(NativeWireKind kind, int bytes)
     {
@@ -31,7 +33,7 @@ public sealed class NativeWireBudget(TraversalControlRound round)
             // only an attempt packet and cannot bypass the shared round budget.
             if (!selected) {
                 if (started == 0 || Stopwatch.GetElapsedTime(started).TotalMilliseconds >= TraversalLimits.SoRoundMs ||
-                    !round.TrySend(bytes, kind is NativeWireKind.Completion or NativeWireKind.Maintenance)) { denied++; return false; }
+                    !round.TrySend(bytes, kind is NativeWireKind.Completion or NativeWireKind.Maintenance) || group != null && !group.Claim()) { denied++; return false; }
                 handshakePackets++; handshakeBytes += bytes; return true;
             }
             if (kind == NativeWireKind.Business) { businessPackets++; businessBytes += bytes; return true; }

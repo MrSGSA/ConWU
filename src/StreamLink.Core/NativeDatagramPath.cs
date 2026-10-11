@@ -73,15 +73,15 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
     NativeDatagramPath(TcpEndpointLease lease, Guid generation, TraversalAttemptContext context,
-        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources, bool countWireControl)
+        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources, bool countWireControl, NativeAttemptGroup? group)
     {
         if (context.Profile != TraversalProfile.FakeTcpHttpSo || sharedKey.Length != 32 || generation != lease.NetworkGeneration)
             throw new ArgumentException("Native 受管路径需要已协商的 SO profile、成员密钥及当前资源代次");
         digest = PathNomination.ContextDigest(context); Context = context; client = context.ProtocolClient;
         key = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, key, digest, "streamlink-native-path-check-v1"u8);
         identity = new(Guid.NewGuid(), context.AttemptId, lease.Id, null, generation, lease.Local, Copy(peer), context.Profile, PathQualification.MtuQualified);
-        ControlRound = new(resources);
-        if (countWireControl) wireBudget = new(ControlRound);
+        ControlRound = group?.ControlRound ?? new(resources);
+        if (countWireControl) wireBudget = new(ControlRound, group);
         configuration = Path.Combine(sessionRoot, "managed-raw-" + Guid.NewGuid().ToString("N") + ".conf");
         bridge = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try {
@@ -93,10 +93,11 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public static async Task<NativeDatagramPath> Prepare(string executable, string sessionRoot,
         TcpEndpointLease lease, Guid generation, TraversalAttemptContext context, IPEndPoint peer,
         byte[] sharedKey, CancellationToken token, TraversalResources? resources = null,
-        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false)
+        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false, NativeAttemptGroup? group = null)
     {
         Directory.CreateDirectory(sessionRoot);
-        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl);
+        if (group != null && (!countWireControl || captureOwner == null)) throw new ArgumentException("Multi-tuple attempts require broker wire accounting");
+        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl, group);
         byte[] rawSecret = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, rawSecret, path.digest, "streamlink-native-outer-v1"u8);
         string rawKey = Convert.ToHexString(rawSecret); CryptographicOperations.ZeroMemory(rawSecret);
         try {

@@ -42,6 +42,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Traversal foundation regression failed'}
         & dotnet run --project tests/StreamLink.PredictionTests -c Release -- --output (Join-Path $root "artifacts/prediction-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Conditional port prediction regression failed'}
+        & dotnet run --project tests/StreamLink.EndpointPoc -c Release -- --port-window-wide (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --output (Join-Path $root "artifacts/native-port-window-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Native bounded port-window regression failed'}
         & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Authenticated TCP observation regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe

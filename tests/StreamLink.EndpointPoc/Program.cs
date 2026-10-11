@@ -5,6 +5,11 @@ using System.Text.Json;
 using StreamLink.EndpointPoc;
 using StreamLink.Core;
 
+if (args is ["--port-window", var windowBinary, "--rounds", var windowRounds, "--output", var windowOutput])
+    return await NativePortWindowPoc.Run(Path.GetFullPath(windowBinary), int.Parse(windowRounds), Path.GetFullPath(windowOutput));
+if (args is ["--port-window-wide", var wideBinary, "--output", var wideOutput])
+    return await NativePortWindowPoc.Run(Path.GetFullPath(wideBinary), 1, Path.GetFullPath(wideOutput), wide: true);
+
 if (args is ["--managed", var binary, "--output", var reportPath])
     return await ManagedProtocolPoc.Run(Path.GetFullPath(binary), Path.GetFullPath(reportPath));
 if (args is ["--network", var networkConfig]) return await NetworkPoc.Run(networkConfig);

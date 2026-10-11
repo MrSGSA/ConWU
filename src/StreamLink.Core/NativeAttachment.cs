@@ -147,7 +147,8 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(12), request++);
         if (type == 3) {
             Interlocked.CompareExchange(ref startTimestamp, Stopwatch.GetTimestamp(), 0);
-            wireBudget?.Start(startTimestamp); brokerSession?.Start();
+            if (wireBudget != null) startTimestamp = wireBudget.Start(startTimestamp);
+            brokerSession?.Start();
         }
         await pipe.WriteAsync(message, token);
         byte[] reply = new byte[Size]; await pipe.ReadExactlyAsync(reply, token);
