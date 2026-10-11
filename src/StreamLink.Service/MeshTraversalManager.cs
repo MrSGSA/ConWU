@@ -70,7 +70,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
     {
         this.mesh = mesh; this.router = router; this.discovery = discovery; this.factory = factory; this.budget = budget; this.log = log; this.token = token;
         var allowed = factory.Profiles.Where(router.Selection.Allows).Distinct().ToArray();
-        Capabilities = new(1, allowed.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, allowed, BackgroundUpgrade: 1);
+        Capabilities = new(1, allowed.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, allowed, BackgroundUpgrade: 1,
+            UdpIpv6: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpIpv6 ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -265,7 +266,14 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         e.Deadline = e.Upgrade ? e.Began + TraversalLimits.PairOpportunityMs : opportunities[peer.Slot].Deadline;
         if (e.Upgrade) upgradeAt[peer.Slot] = Environment.TickCount64 + TraversalLimits.UpgradeCooldownMs;
         e.Stop.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, e.Deadline - Environment.TickCount64))); owned.Add(peer.Slot); entries[peer.Slot] = e;
-        try { e.Gathering = factory.Gather(peer, kind, attempt, e.Stop.Token); }
+        try {
+            var endpoint = offer?.Candidate is {} candidate ? IPEndPoint.Parse(candidate.Endpoint) : null;
+            if (endpoint?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !discovery.SupportsUdpIpv6)
+                throw new IOException("协调服务不支持 IPv6 候选");
+            e.Gathering = factory.GatherForPeer(peer, kind, attempt,
+                discovery.SupportsUdpIpv6 && remote.UdpIpv6 == 1 && Capabilities.UdpIpv6 == 1, endpoint,
+                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), e.Stop.Token);
+        }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
         log($"设备 {peer.Slot} " + (e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +
             $"；attempt={attempt:N}；机会窗={(e.Upgrade ? "background-upgrade" : opportunities[peer.Slot].Id.ToString("N"))}；剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms");

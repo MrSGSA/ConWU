@@ -73,7 +73,7 @@ public sealed class ControlWorker : BackgroundService
     }
     ControlReply Reply(string error = "")
     {
-        lock (sync) return new(error.Length == 0, error, profile, status, profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2);
+        lock (sync) return new(error.Length == 0, error, profile, status, profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1);
     }
     public async Task<ControlReply> Handle(ControlRequest request)
     {

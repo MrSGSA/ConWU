@@ -21,13 +21,25 @@ public interface ITraversalSocket : IDisposable
 // one binding. Never share a Windows UDP port using SO_REUSEADDR.
 public sealed class TraversalSocket : ITraversalSocket
 {
-    readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+    readonly Socket socket;
     public Guid Id { get; } = Guid.NewGuid();
     public IPEndPoint Local => (IPEndPoint)socket.LocalEndPoint!;
     public bool DontFragment { get; }
     public TraversalSocket(IPEndPoint local)
     {
-        try { socket.ExclusiveAddressUse = true; socket.DontFragment = true; DontFragment = socket.DontFragment; socket.Bind(local); socket.ReceiveBufferSize = 1 << 20; }
+        socket = new(local.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
+        try {
+            socket.ExclusiveAddressUse = true;
+            if (local.AddressFamily == AddressFamily.InterNetworkV6) {
+                socket.DualMode = false;
+                // Winsock IPV6_DONTFRAG = 14. Socket.DontFragment addresses IPv4.
+                // Do not silently qualify a fragmented path on other platforms.
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("原生 IPv6 PMTU 当前仅验证 Windows");
+                socket.SetSocketOption(SocketOptionLevel.IPv6, (SocketOptionName)14, 1);
+                DontFragment = (int)socket.GetSocketOption(SocketOptionLevel.IPv6, (SocketOptionName)14)! != 0;
+            } else { socket.DontFragment = true; DontFragment = socket.DontFragment; }
+            socket.Bind(local); socket.ReceiveBufferSize = 1 << 20;
+        }
         catch { socket.Dispose(); throw; }
     }
     public async ValueTask Send(ReadOnlyMemory<byte> packet, IPEndPoint remote, CancellationToken token)
@@ -35,7 +47,8 @@ public sealed class TraversalSocket : ITraversalSocket
     public async ValueTask<TraversalDatagram> Receive(CancellationToken token)
     {
         byte[] buffer = new byte[4096];
-        var result = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), token);
+        var result = await socket.ReceiveFromAsync(buffer, SocketFlags.None,
+            new IPEndPoint(socket.AddressFamily == AddressFamily.InterNetworkV6 ? IPAddress.IPv6Any : IPAddress.Any, 0), token);
         return new(buffer[..result.ReceivedBytes], (IPEndPoint)result.RemoteEndPoint);
     }
     public void Dispose() => socket.Dispose();
@@ -136,9 +149,10 @@ public sealed partial class UdpTraversal : IAsyncDisposable
         receiving = Receive();
         } catch { socket.Dispose(); lease?.Dispose(); throw; }
     }
-    static bool ValidEndpoint(IPEndPoint ep)
+    bool ValidEndpoint(IPEndPoint ep)
     {
-        if (ep.AddressFamily != AddressFamily.InterNetwork || ep.Port is < 1 or > 65535) return false;
+        if (ep.AddressFamily != Local.AddressFamily || ep.Port is < 1 or > 65535) return false;
+        if (ep.AddressFamily == AddressFamily.InterNetworkV6) return Ipv6Direct.UnscopedUnicast(ep.Address);
         byte first = ep.Address.GetAddressBytes()[0]; return first is > 0 and < 224 && !ep.Address.Equals(IPAddress.Broadcast);
     }
     public async Task<NatObservation> Observe(IPEndPoint server, CancellationToken token)
@@ -211,7 +225,10 @@ public sealed partial class UdpTraversal : IAsyncDisposable
                 byte[] packet = message.Data;
                 if (packet.Length >= 20 && packet.AsSpan(4, 4).SequenceEqual(new byte[] { 0x21, 0x12, 0xa4, 0x42 }) &&
                     queries.TryGetValue(Convert.ToHexString(packet.AsSpan(8, 12)), out var pending)) {
-                    if (message.Source.Equals(pending.Target)) { try { pending.Reply.TrySetResult(Stun.Parse(packet, pending.Request)); } catch (IOException) { } }
+                    if (message.Source.Equals(pending.Target)) { try {
+                        var mapped = Stun.Parse(packet, pending.Request, Local.AddressFamily);
+                        if (ValidEndpoint(mapped)) pending.Reply.TrySetResult(mapped);
+                    } catch (IOException) { } }
                     continue;
                 }
                 if (packet.Length >= 4 && packet.AsSpan(0, 4).SequenceEqual("SLP2"u8)) {

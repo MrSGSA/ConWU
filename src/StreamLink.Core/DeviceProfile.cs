@@ -31,6 +31,9 @@ public sealed class DeviceProfile
     // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
     // rounds. It does not enable UDP itself or bypass path-quality selection.
     public bool PortControlMapping { get; set; }
+    // Experimental native outer IPv6 UDP. Requires both peers and coordinator
+    // support, physical IPv6 and the existing explicit UDP fallback policy.
+    public bool UdpIpv6 { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")
@@ -59,7 +62,8 @@ public sealed class DeviceProfile
         if (servers == null || servers.Length is < 1 or > 256) throw new FormatException("STUN 列表需包含 1–256 项");
         foreach (var server in servers)
         {
-            if (server == null || server.Length > 260 || !Regex.IsMatch(server, "^[A-Za-z0-9][A-Za-z0-9.-]*:[0-9]{1,5}$") || !int.TryParse(server[(server.LastIndexOf(':') + 1)..], out int port) || port is < 1 or > 65535) throw new FormatException("STUN 应按每行 主机名:端口 填写");
+            bool literal6 = server != null && server.StartsWith('[') && System.Net.IPEndPoint.TryParse(server, out var ep) && Ipv6Direct.UnscopedUnicast(ep.Address);
+            if (server == null || server.Length > 260 || !literal6 && !Regex.IsMatch(server, "^[A-Za-z0-9][A-Za-z0-9.-]*:[0-9]{1,5}$") || !int.TryParse(server[(server.LastIndexOf(':') + 1)..], out int port) || port is < 1 or > 65535) throw new FormatException("STUN 应按每行 主机名:端口 或 [IPv6]:端口 填写");
         }
     }
     public string[] OrderedTcp() => TcpStun.OrderByDescending(s => s == LastStun).ToArray();

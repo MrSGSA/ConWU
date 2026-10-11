@@ -62,6 +62,7 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
         Guid? attemptId = null)
     {
         Membership(local, peer, mine, theirs, profile);
+        RequireFamily(candidate, mine, theirs);
         if (local.Self.Slot >= peer.Slot) throw new InvalidOperationException("由较小成员编号统一发起本轮，避免交叉 Offer");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, profile, candidate, attemptId ?? Guid.NewGuid(), Guid.NewGuid(), revision, sequence);
         try { result.phase = MeshAttemptPhase.Offering; result.outbound = result.Message(MeshTraversalStage.Offer); return result; }
@@ -75,6 +76,12 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
         if (offer.Stage != MeshTraversalStage.Offer || peer.Slot >= local.Self.Slot || offer.FromBoot != theirs.BootId || offer.ToBoot != mine.BootId ||
             offer.ProtocolClientSlot != peer.Slot || offer.NominatorSlot != peer.Slot)
             throw new CryptographicException("过期启动代次或非授权 Offer 角色");
+        RequireFamily(offer.Candidate!, mine, theirs);
+    }
+    static void RequireFamily(MeshTraversalCandidate candidate, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs)
+    {
+        if (System.Net.IPEndPoint.Parse(candidate.Endpoint).AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
+            (mine.UdpIpv6 != 1 || theirs.UdpIpv6 != 1)) throw new CryptographicException("双方尚未协商原生 IPv6 UDP 能力");
     }
     public static MeshTraversalAttempt Answer(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine,
         MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence)

@@ -16,7 +16,10 @@ internal interface IMeshCandidateResource : IAsyncDisposable
 internal interface IMeshCandidateFactory
 {
     TraversalProfile[] Profiles { get; }
+    bool SupportsUdpIpv6 => false;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
+    Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
+        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => Gather(peer, profile, attempt, token);
 }
 
 // One request budget for all discovery operations of this running device.
@@ -46,11 +49,14 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     readonly object poolGate = new();
     readonly Dictionary<int, (string Device, bool GatewayNext)> udpMethods = [];
     internal Action<IPEndPoint, IPAddress?, bool>? RouteCheckForTest { get; init; }
+    internal Func<bool>? Ipv6AvailableForTest { get; init; }
+    internal Func<string, AddressFamily, CancellationToken, Task<IPEndPoint>> ResolveTarget { get; init; } = Stun.Resolve;
     internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
         (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
         (local, helper) => new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper)); } }
     public TraversalProfile[] Profiles => profiles;
+    public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();
@@ -80,6 +86,12 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
         if (RouteCheckForTest != null) { RouteCheckForTest(endpoint, expected, gatewayCandidate); return; }
+        if (endpoint.AddressFamily == AddressFamily.InterNetworkV6) {
+            if (gatewayCandidate || !Ipv6Direct.Global(endpoint.Address) || endpoint.Port == 0) throw new IOException("候选不是原生全局 IPv6 单播地址");
+            var source = Stun.LocalAddress(endpoint);
+            if (expected != null && !source.Equals(expected) || !Ipv6Direct.SourceReady(source)) throw new IOException("IPv6 物理出口或保留的源地址已失效");
+            return;
+        }
         if (gatewayCandidate && !PortControlRoute.GlobalV4(endpoint.Address)) throw new IOException("UDP 网关只返回内层地址，未推断外层 CGN 可达");
         byte[] ip = endpoint.Address.GetAddressBytes();
         if (ip.Length != 4 || ip[0] is 0 or 127 or >= 224 || ip[0] == 169 && ip[1] == 254 || endpoint.Port == 0)
@@ -94,11 +106,33 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             nic.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) || nic.Description.Contains("EasyTier", StringComparison.OrdinalIgnoreCase))
             throw new IOException("未找到可用的直接出口，避免依赖其他组网承载");
     }
-    public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
+    public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
+        => GatherForPeer(peer, kind, attempt, false, null, 1, token);
+    public async Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile kind, Guid attempt,
+        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
+        if (remote?.AddressFamily == AddressFamily.InterNetworkV6) {
+            if (!allowIpv6 || !SupportsUdpIpv6 || kind != TraversalProfile.UdpDirect) throw new IOException("本轮未协商 IPv6 UDP");
+            return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, deadline.Token);
+        }
+        // The Offer selects one family; the responder must follow it. A failed
+        // first IPv6 check leaves the second existing UDP round for IPv4.
+        if (remote == null && round == 1 && allowIpv6 && SupportsUdpIpv6 && kind == TraversalProfile.UdpDirect &&
+            (Ipv6AvailableForTest?.Invoke() ?? Ipv6Direct.Available())) {
+            using var fast = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); fast.CancelAfter(3500);
+            try { return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, fast.Token); }
+            catch (Exception ex) when (!deadline.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) {
+                diagnostic?.Invoke("本轮未获得 IPv6 候选，继续 IPv4 同端点观察");
+            }
+        }
+        return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetwork, deadline.Token);
+    }
+    async Task<IMeshCandidateResource> GatherFamily(MeshMember peer, TraversalProfile kind, Guid attempt, AddressFamily family, CancellationToken token)
     {
         if (!Profiles.Contains(kind)) throw new NotSupportedException();
         bool useGateway = false;
-        if (kind == TraversalProfile.UdpDirect && options.PortControlMapping) lock (poolGate) {
+        if (family == AddressFamily.InterNetwork && kind == TraversalProfile.UdpDirect && options.PortControlMapping) lock (poolGate) {
             var prior = udpMethods.GetValueOrDefault(peer.Slot);
             useGateway = prior.Device == peer.Device && prior.GatewayNext;
             udpMethods[peer.Slot] = (peer.Device, !useGateway);
@@ -111,7 +145,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             MeshTcpEndpointPool.Use? pooled = null;
             bool transferred = false, gatewayTried = false;
             try {
-                var target = await Stun.Resolve(name, deadline.Token); CheckRoute(target);
+                var target = await ResolveTarget(name, family, deadline.Token); CheckRoute(target);
                 var local = new IPEndPoint(Stun.LocalAddress(target), 0);
                 IPEndPoint mapped; string observation = target.ToString(); double lifetime = 120;
                 if (kind == TraversalProfile.UdpDirect) {

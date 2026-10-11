@@ -16,7 +16,8 @@ bool baselineOnly = args.Length == 7 && args[6] == "--baseline-only";
 bool opportunityOnly = args.Length == 7 && args[6] == "--opportunity-only";
 bool tcpRetryOnly = args.Length == 7 && args[6] == "--tcp-retry-only";
 bool gatewayOnly = args.Length == 7 && args[6] == "--gateway-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only]");
+bool ipv6Only = args.Length == 7 && args[6] == "--ipv6-only";
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -40,6 +41,8 @@ app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
+    if (ipv6Only || args.Length == 6) rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token));
+    if (!ipv6Only) {
     if (gatewayOnly || !baselineOnly && !upgradeOnly && !opportunityOnly && !tcpRetryOnly) rows.Add(await UdpGatewayTests.Run(root, url, pin, Check, token));
     if (!gatewayOnly) {
     if (!baselineOnly && !upgradeOnly && !tcpRetryOnly) rows.Add(await OpportunityTests.Run(Check, token));
@@ -91,7 +94,10 @@ try {
     }
     }
     }
-    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = gatewayOnly
+    }
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = ipv6Only
+        ? "production UDP gathering/Runner over real IPv6/IPv4 loopback sockets and HTTPS; memory IP adapters; not Internet IPv6, native FakeTCP IPv6, wire fragmentation capture or Wintun"
+        : gatewayOnly
         ? "production UDP gathering/Runner with real loopback PCP, STUN, HTTPS, UDP and memory IP adapters; no real NAT, router or Wintun"
         : opportunityOnly
         ? "production pair scheduler and legacy admission with controlled failing/held resource factories; real timers, no native I/O, WAN, Wintun or real 8 devices"

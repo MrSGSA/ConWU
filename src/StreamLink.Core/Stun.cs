@@ -21,7 +21,7 @@ public static class Stun
         return bytes;
     }
 
-    public static IPEndPoint Parse(ReadOnlySpan<byte> data, ReadOnlySpan<byte> request)
+    public static IPEndPoint Parse(ReadOnlySpan<byte> data, ReadOnlySpan<byte> request, AddressFamily family = AddressFamily.InterNetwork)
     {
         if (request.Length != 20 || data.Length < 20 || BinaryPrimitives.ReadUInt16BigEndian(data) != 0x0101 ||
             BinaryPrimitives.ReadUInt32BigEndian(data[4..]) != 0x2112a442 || !data.Slice(8, 12).SequenceEqual(request.Slice(8, 12)))
@@ -37,34 +37,43 @@ public static class Stun
             int next = pos + 4 + ((size + 3) & ~3);
             if (next > data.Length) throw new IOException("STUN 属性截断");
             var value = data.Slice(pos + 4, size);
-            if ((type == 0x20 || type == 1) && size >= 2 && value[1] == 1)
+            if ((type == 0x20 || type == 1) && size >= 2 && value[1] == (family == AddressFamily.InterNetworkV6 ? 2 : 1))
             {
-                if (size != 8) throw new IOException("STUN IPv4 属性长度无效");
+                int addressLength = value[1] == 1 ? 4 : 16;
+                if (size != addressLength + 4) throw new IOException("STUN 地址属性长度无效");
                 int port = BinaryPrimitives.ReadUInt16BigEndian(value[2..]);
-                uint address = BinaryPrimitives.ReadUInt32BigEndian(value[4..]);
-                if (type == 0x20) { port ^= 0x2112; address ^= 0x2112a442; }
-                byte[] addr = new byte[4];
-                BinaryPrimitives.WriteUInt32BigEndian(addr, address);
+                byte[] addr = value[4..].ToArray();
+                if (type == 0x20) {
+                    port ^= 0x2112;
+                    // RFC 8489: IPv6 mask is cookie followed by the 96-bit transaction ID.
+                    for (int i = 0; i < addr.Length; i++) addr[i] ^= request[4 + i];
+                }
                 if (port == 0) throw new IOException("STUN 端口为零");
                 mapped = new IPEndPoint(new IPAddress(addr), port);
                 if (type == 0x20) return mapped;
             }
             pos = next;
         }
-        return mapped ?? throw new IOException("STUN 未返回 IPv4 映射");
+        return mapped ?? throw new IOException("STUN 未返回有效地址映射");
     }
 
-    public static async Task<IPEndPoint> Resolve(string server, CancellationToken token)
+    public static Task<IPEndPoint> Resolve(string server, CancellationToken token) => Resolve(server, AddressFamily.InterNetwork, token);
+    public static async Task<IPEndPoint> Resolve(string server, AddressFamily family, CancellationToken token)
     {
-        var parts = server.Split(':');
-        if (parts.Length != 2 || !int.TryParse(parts[1], out int port) || port is < 1 or > 65535) throw new ArgumentException("服务器格式应为 host:port");
-        var ip = (await Dns.GetHostAddressesAsync(parts[0], token)).FirstOrDefault(ip => ip.AddressFamily == AddressFamily.InterNetwork);
-        return new IPEndPoint(ip ?? throw new IOException("服务器没有 IPv4 地址"), port);
+        if (family is not (AddressFamily.InterNetwork or AddressFamily.InterNetworkV6)) throw new ArgumentException("地址族无效");
+        int split = server.LastIndexOf(':');
+        if (split < 1 || !int.TryParse(server[(split + 1)..], out int port) || port is < 1 or > 65535) throw new ArgumentException("服务器格式应为 host:port 或 [IPv6]:port");
+        string host = server[..split];
+        if (host.StartsWith('[') && host.EndsWith(']')) host = host[1..^1];
+        else if (host.Contains(':')) throw new ArgumentException("IPv6 地址必须带方括号");
+        var ip = IPAddress.TryParse(host, out var literal) ? literal : (await Dns.GetHostAddressesAsync(host, token)).FirstOrDefault(ip => ip.AddressFamily == family);
+        if (ip?.AddressFamily != family || ip.IsIPv4MappedToIPv6) throw new IOException("服务器没有所需地址族的原生地址");
+        return new IPEndPoint(ip, port);
     }
 
     public static IPAddress LocalAddress(IPEndPoint remote)
     {
-        using var route = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
+        using var route = new Socket(remote.AddressFamily, SocketType.Dgram, ProtocolType.Udp);
         route.Connect(remote);
         return ((IPEndPoint)route.LocalEndPoint!).Address;
     }

@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace StreamLink.Core;
 
 public sealed record MeshTraversalCapabilities(int Version, int NativeAbi, Guid BootId, TraversalProfile[] Profiles,
-    int BackgroundUpgrade = 0);
+    int BackgroundUpgrade = 0, int UdpIpv6 = 0);
 public enum MeshTraversalStage { Offer = 1, Ready = 2, Start = 3, Cancel = 4, Selected = 5 }
 // Public observations only. Local lease/attachment IDs and socket handles never
 // leave the endpoint. Both TCP and UDP retain their own profile and observations.
@@ -30,8 +30,9 @@ public static class MeshTraversal
     public static void ValidateCapabilities(MeshTraversalCapabilities? c)
     {
         if (c == null) return;
-        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.BootId == Guid.Empty ||
+        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.BootId == Guid.Empty ||
             c.Profiles is not { Length: >= 1 and <= 2 } || c.Profiles.Distinct().Count() != c.Profiles.Length ||
+            c.UdpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.UdpDirect) ||
             c.Profiles.Any(p => p is not (TraversalProfile.FakeTcpHttpSo or TraversalProfile.UdpDirect)) ||
             c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) && c.NativeAbi != TraversalLimits.NativeAbi)
             throw new FormatException("打洞能力或启动代次无效");
@@ -39,10 +40,12 @@ public static class MeshTraversal
     static void ValidateCandidate(MeshTraversalCandidate? c, TraversalProfile profile, long now, bool fresh)
     {
         if (c == null) return;
-        static bool Endpoint(string? value) => value is { Length: >= 3 and <= 64 } && IPEndPoint.TryParse(value, out var ep) &&
-            ep.AddressFamily == AddressFamily.InterNetwork && ep.Port > 0 && !ep.Address.Equals(IPAddress.Any) &&
-            !ep.Address.Equals(IPAddress.Broadcast) && ep.Address.GetAddressBytes()[0] < 224;
+        bool Endpoint(string? value) => value is { Length: >= 3 and <= 64 } && IPEndPoint.TryParse(value, out var ep) && ep.Port > 0 &&
+            (ep.AddressFamily == AddressFamily.InterNetwork && !ep.Address.Equals(IPAddress.Any) &&
+             !ep.Address.Equals(IPAddress.Broadcast) && ep.Address.GetAddressBytes()[0] < 224 ||
+             profile == TraversalProfile.UdpDirect && Ipv6Direct.UnscopedUnicast(ep.Address));
         if (c.Id == Guid.Empty || c.Version <= 0 || !Endpoint(c.Endpoint) || c.ObservationTarget != null && !Endpoint(c.ObservationTarget) ||
+            c.ObservationTarget != null && IPEndPoint.Parse(c.Endpoint).AddressFamily != IPEndPoint.Parse(c.ObservationTarget).AddressFamily ||
             c.ObservedAt <= 0 || c.ObservedAt > now + 5 || c.Expires > c.ObservedAt + 180 || c.Expires < c.ObservedAt ||
             fresh && (c.ObservedAt < now - 180 || c.Expires <= now) ||
             c.Purpose != CandidatePurpose.Host && c.Purpose != (profile == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen))
@@ -67,6 +70,8 @@ public static class MeshTraversal
         // reports an already authenticated path; it cannot prepare/promote one.
         ValidateCandidate(m.Candidate, m.Profile, now, m.Stage != MeshTraversalStage.Selected);
         ValidateCandidate(m.PeerCandidate, m.Profile, now, m.Stage != MeshTraversalStage.Selected);
+        if (m.Candidate != null && m.PeerCandidate != null && IPEndPoint.Parse(m.Candidate.Endpoint).AddressFamily != IPEndPoint.Parse(m.PeerCandidate.Endpoint).AddressFamily)
+            throw new FormatException("候选对地址族不匹配");
     }
     public static MeshTraversalMessage Sign(MeshProfile local, MeshTraversalMessage message)
     {
@@ -99,5 +104,6 @@ public interface IMeshTraversalDiscovery
 {
     Guid BootId { get; }
     bool SupportsTraversal { get; }
+    bool SupportsUdpIpv6 => false;
     Task PublishTraversal(MeshTraversalMessage[] messages, CancellationToken token);
 }
