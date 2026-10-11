@@ -8,6 +8,8 @@
 
 打洞基础模块正在独立开发：同 socket UDP 检查、认证后学习真实来源和观测诊断已通过回环及 NAT 模型验证，尚未接入默认 udp2raw 路径；没有新增业务中继。参见 [打洞源码核对、验证与集成顺序](docs/traversal-foundation-20261011.txt)。
 
+**下一阶段重点是严格 NAT 下的打洞效率与成功率，TCP / FakeTCP 优先。** 先补候选与双端尝试协商，再实验原生 FakeTCP 双主动握手，同时推进 UDP 同 socket 集成和有条件的预测/概率策略。现有传输吞吐转为阶段回归项目。实现次序及成功率、p50/p95、资源成本的验收见 [打洞研发目标](docs/traversal-roadmap-20261011.txt)；这些增强尚未发布。
+
 ## 下载与使用
 
 - [v0.3.2-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.2-preview)：现有双机版本。0.4 候选由本分支构建，尚未替换 GitHub Release。私有仓库下载需要登录有权限的 GitHub 账号；[0.3.1](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview) 保留用于回退。
