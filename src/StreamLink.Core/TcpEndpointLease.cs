@@ -5,6 +5,13 @@ using StreamLink.Core;
 
 namespace StreamLink.Core;
 
+public sealed class TcpEndpointBusyException(IPEndPoint local, SocketException error)
+    : IOException($"EndpointBusy：无法独占绑定 TCP {local}（{error.SocketErrorCode}）；端口被占用或仍在内核退役中", error)
+{
+    public IPEndPoint Local { get; } = new(local.Address, local.Port);
+    public SocketError SocketError { get; } = error.SocketErrorCode;
+}
+
 // One exclusive kernel TCP reflection flow; helper health and ownership differ.
 // Observing a mapped endpoint alone does not validate a FakeTCP candidate.
 // A path reference must be retained BEFORE releasing an attempt. Only a future
@@ -43,7 +50,9 @@ public sealed class TcpEndpointLease : IDisposable
         try {
             socket = new Socket(local.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
             if (local.AddressFamily == AddressFamily.InterNetworkV6) socket.DualMode = false;
-            socket.Bind(local); await socket.ConnectAsync(reflector, token);
+            try { socket.Bind(local); }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied) { throw new TcpEndpointBusyException(local, ex); }
+            await socket.ConnectAsync(reflector, token);
             return new(socket, reflector, generation, quota);
         } catch { socket?.Dispose(); quota.Dispose(); throw; }
     }

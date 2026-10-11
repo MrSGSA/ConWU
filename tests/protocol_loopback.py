@@ -138,10 +138,11 @@ class Tunnel:
                 if len(packet) >= 40 and packet[9] == 6:
                     ihl = (packet[0] & 15) * 4
                     if ihl >= 20 and len(packet) >= ihl + 20:
-                        _, _, seq, ack = struct.unpack_from("!HHII", packet, ihl)
+                        source_port, destination_port, seq, ack = struct.unpack_from("!HHII", packet, ihl)
                         with self.wire_lock:
                             if len(self.wire) < 512:
                                 self.wire.append(dict(side="client" if sock is self.proxy_c else "server",
+                                    source_ip=socket.inet_ntoa(packet[12:16]), source_port=source_port, destination_port=destination_port,
                                     at=time.monotonic(), flags=packet[ihl + 13], seq=seq, ack=ack,
                                     payload_bytes=len(payload), http=payload.startswith(b"GET / HTTP/1.1\r\n")))
                 if payload[:2] == b'\x00\x17' and payload[4:8] == b'\x21\x12\xa4\x42':
@@ -216,6 +217,20 @@ class Tunnel:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_legacy_faketcp_ports_have_exclusive_owners(self):
+        with Tunnel() as tunnel:
+            tunnel.ready()
+            with tunnel.wire_lock:
+                syn = next(p for p in tunnel.wire if p["side"] == "client" and p["flags"] & 0x12 == 2)
+            for endpoint in (("127.0.0.1", tunnel.server_raw), (syn["source_ip"], syn["source_port"])):
+                with self.subTest(endpoint=endpoint), socket.socket(socket.AF_INET, socket.SOCK_STREAM) as rival:
+                    rival.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    with self.assertRaises(OSError) as refused:
+                        rival.bind(endpoint)
+                    self.assertIn(refused.exception.winerror, (10013, 10048))
+            tunnel.app.send(b"after-port-contention")
+            self.assertEqual(tunnel.receive(), b"after-port-contention")
+
     def test_existing_http_handshake_sequence_profile(self):
         with Tunnel() as tunnel:
             tunnel.ready()

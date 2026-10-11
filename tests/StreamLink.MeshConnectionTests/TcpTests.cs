@@ -7,7 +7,7 @@ using StreamLink.Core;
 
 namespace StreamLink.MeshConnectionTests;
 
-static class TcpTests
+static partial class TcpTests
 {
     static int Port() { using var s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); s.Bind(new IPEndPoint(IPAddress.Loopback, 0)); return ((IPEndPoint)s.LocalEndPoint!).Port; }
     public static async Task Run()
@@ -60,6 +60,7 @@ static class TcpTests
             Program.Check(failed && clock.ElapsedMilliseconds is >= 11000 and < 14500, "entire TCP selection round is bounded to twelve seconds");
             await Program.Until(() => servers.All(s => s.Active == 0), "budget exhaustion cleans all probe sockets", 1500);
         } finally { foreach (var s in servers) await s.DisposeAsync(); }
+        await Ownership();
     }
 
     sealed class StunServer : IAsyncDisposable
@@ -69,7 +70,7 @@ static class TcpTests
         readonly Task accepting;
         readonly ConcurrentBag<Task> handlers = [];
         public ConcurrentBag<int> SourcePorts = [];
-        public int Accepted, Active, Requests;
+        public int Accepted, Active, Requests, Eof, Resets;
         public bool Silent, WrongTransaction;
         public int SilentPort;
         public string Address => listener.LocalEndpoint.ToString()!;
@@ -98,7 +99,10 @@ static class TcpTests
                         await stream.WriteAsync(result, stop.Token);
                     }
                 }
-            } catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException) { }
+            } catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException) {
+                if (ex is EndOfStreamException) Interlocked.Increment(ref Eof);
+                if (ex is SocketException { SocketErrorCode: SocketError.ConnectionReset } || ex.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionReset }) Interlocked.Increment(ref Resets);
+            }
             finally { Interlocked.Decrement(ref Active); }
         }
         public async ValueTask DisposeAsync()

@@ -1,18 +1,20 @@
-using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading.Channels;
 
 namespace StreamLink.Core;
 
+public sealed record TcpBindingSnapshot(Guid LeaseId, Guid Generation, string Local, string Reflector, string Server, bool QueryUsable, bool Closed);
+
 // Keep the actual STUN TCP flow alive; do not depend on an unrelated HTTP host.
 public sealed class TcpBinding : IDisposable
 {
-    readonly Socket socket;
-    readonly NetworkStream stream;
+    readonly TcpEndpointLease lease;
     readonly string server;
+    int disposed;
     static int fallbackOffset;
-    TcpBinding(Socket socket, string server) { this.socket = socket; this.server = server; stream = new NetworkStream(socket, false); }
+    TcpBinding(TcpEndpointLease lease, string server) { this.lease = lease; this.server = server; }
+    public TcpBindingSnapshot Snapshot => new(lease.Id, lease.NetworkGeneration, lease.Local.ToString(), lease.Reflector.ToString(), server, lease.QueryUsable, lease.Closed);
     public static async Task<(TcpBinding Binding, StunResult Result)> Connect(int port, IPAddress? local, Action<string> log, CancellationToken token, IEnumerable<string>? servers = null)
     {
         if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
@@ -54,11 +56,11 @@ public sealed class TcpBinding : IDisposable
             await Task.WhenAny(preferred, available);
             if (preferred.IsCompleted) {
                 try { var first = await preferred; winner = first.Binding; return first; }
-                catch (Exception ex) when (!round.IsCancellationRequested) { log("TCP STUN 首选服务失败：" + Failure(ex)); }
+                catch (Exception ex) when (!round.IsCancellationRequested && ex is not TcpEndpointBusyException) { log("TCP STUN 首选服务失败：" + Failure(ex)); }
             } else if (await available) {
                 preferredStop.Cancel();
                 try { var first = await preferred; winner = first.Binding; return first; }
-                catch (Exception) when (!round.IsCancellationRequested) { log("TCP STUN 切换到已通过检查的备用服务"); }
+                catch (Exception ex) when (!round.IsCancellationRequested && ex is not TcpEndpointBusyException) { log("TCP STUN 切换到已通过检查的备用服务"); }
             } else {
                 var first = await preferred; winner = first.Binding; return first;
             }
@@ -66,7 +68,7 @@ public sealed class TcpBinding : IDisposable
             while (await ready.Reader.WaitToReadAsync(round.Token)) {
                 while (ready.Reader.TryRead(out string? candidate)) {
                     try { var result = await Open(candidate, port, local, round.Token); winner = result.Binding; return result; }
-                    catch (Exception ex) when (!round.IsCancellationRequested) { log("TCP STUN 固定端口复核失败：" + Failure(ex)); }
+                    catch (Exception ex) when (!round.IsCancellationRequested && ex is not TcpEndpointBusyException) { log("TCP STUN 固定端口复核失败：" + Failure(ex)); }
                 }
             }
             throw new IOException("没有可用的 TCP STUN 服务");
@@ -81,29 +83,22 @@ public sealed class TcpBinding : IDisposable
     static string Failure(Exception ex) => ex is OperationCanceledException ? "超时" : ex is SocketException socket ? socket.SocketErrorCode.ToString() : ex.Message;
     static async Task<(TcpBinding Binding, StunResult Result)> Open(string server, int port, IPAddress? local, CancellationToken token)
     {
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = false, LingerState = new LingerOption(true, 0) };
+        TcpEndpointLease? lease = null;
         TcpBinding? connection = null;
         try {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(4000);
             var endpoint = await Stun.Resolve(server, timeout.Token);
-            socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-            socket.Bind(new IPEndPoint(local ?? Stun.LocalAddress(endpoint), port));
-            await socket.ConnectAsync(endpoint, timeout.Token);
-            connection = new TcpBinding(socket, server);
+            lease = await TcpEndpointLease.Open(new(local ?? Stun.LocalAddress(endpoint), port), endpoint, Guid.NewGuid(), timeout.Token);
+            connection = new TcpBinding(lease, server);
             return (connection, await connection.Pulse(timeout.Token));
-        } catch { connection?.Dispose(); socket.Dispose(); throw; }
+        } catch { connection?.Dispose(); lease?.Dispose(); throw; }
     }
     public async Task<StunResult> Pulse(CancellationToken token)
     {
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(4000); token = timeout.Token;
-        byte[] request = Stun.Request(), header = new byte[20];
-        await stream.WriteAsync(request, token);
-        await stream.ReadExactlyAsync(header, token);
-        int size = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(2));
-        if (size > 4096) throw new IOException("STUN 响应过大");
-        var packet = new byte[size + 20]; header.CopyTo(packet, 0);
-        await stream.ReadExactlyAsync(packet.AsMemory(20), token);
-        return new StunResult("tcp", server, (IPEndPoint)socket.LocalEndPoint!, Stun.Parse(packet, request));
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
+        if (!lease.QueryUsable) throw new IOException("STUN 辅助资源在失败事务后不可再查询");
+        using var reference = lease.AcquireAttempt(lease.NetworkGeneration);
+        return (await reference.Observe(token)) with { Server = server };
     }
-    public void Dispose() { stream.Dispose(); socket.Dispose(); }
+    public void Dispose() { if (Interlocked.Exchange(ref disposed, 1) == 0) lease.Dispose(); }
 }

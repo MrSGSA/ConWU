@@ -84,26 +84,16 @@ public static class Stun
         timeout.CancelAfter(TimeSpan.FromSeconds(4));
         token = timeout.Token;
         var remote = await Resolve(server, token);
-        using var socket = new Socket(AddressFamily.InterNetwork, tcp ? SocketType.Stream : SocketType.Dgram, tcp ? ProtocolType.Tcp : ProtocolType.Udp);
-        if (tcp) { socket.ExclusiveAddressUse = false; socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true); socket.LingerState = new LingerOption(true, 0); }
+        if (tcp) {
+            using var lease = await TcpEndpointLease.Open(new(local ?? LocalAddress(remote), sourcePort), remote, Guid.NewGuid(), token);
+            using var reference = lease.AcquireAttempt(lease.NetworkGeneration);
+            return (await reference.Observe(token)) with { Server = server };
+        }
+        using var socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         socket.Bind(new IPEndPoint(local ?? LocalAddress(remote), sourcePort));
         await socket.ConnectAsync(remote, token);
         var req = Request();
         IPEndPoint endpoint;
-        if (tcp)
-        {
-            using var stream = new NetworkStream(socket, false);
-            await stream.WriteAsync(req, token);
-            byte[] header = new byte[20];
-            await stream.ReadExactlyAsync(header, token);
-            int length = BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(2));
-            if (length > 4096) throw new IOException("STUN 消息过大");
-            var packet = new byte[20 + length];
-            header.CopyTo(packet, 0);
-            await stream.ReadExactlyAsync(packet.AsMemory(20), token);
-            endpoint = Parse(packet, req);
-        }
-        else
         {
             byte[] data = new byte[4096];
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -121,7 +111,7 @@ public static class Stun
                 catch (OperationCanceledException) when (!token.IsCancellationRequested && attempt < 2) { }
             }
         }
-        return new StunResult(tcp ? "tcp" : "udp", server, (IPEndPoint)socket.LocalEndPoint!, endpoint);
+        return new StunResult("udp", server, (IPEndPoint)socket.LocalEndPoint!, endpoint);
     }
 
     public static async Task<StunResult> First(bool tcp, int port, Action<string> log, CancellationToken token, IPAddress? local = null)

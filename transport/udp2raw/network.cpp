@@ -2800,6 +2800,15 @@ int try_to_list_and_bind2(int &fd, address_t address)  // try to bind to a port,
     temp_bind_addr.sin_addr.s_addr = local_ip_uint32;*/
 
 #ifdef UDP2RAW_NATIVE
+    if (raw_mode == mode_faketcp) {
+        // Legacy client/server endpoints are native-owned. Managed attachments
+        // skip this function and keep their C# lease as the sole bind owner.
+        int exclusive = 1;
+        if (setsockopt(fd, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, (const char *)&exclusive, sizeof(exclusive)) != 0) {
+            mylog(log_error, "cannot reserve exclusive native TCP port, error=%d\n", WSAGetLastError());
+            sock_close(fd); fd = -1; return -1;
+        }
+    }
     const char *shared_udp = getenv("STREAMLINK_UDP_SHARED_BIND");
     if (raw_mode == mode_udp && program_mode == server_mode && shared_udp && strcmp(shared_udp, "1") == 0) {
         int reuse = 1;

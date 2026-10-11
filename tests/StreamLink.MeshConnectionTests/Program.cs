@@ -22,8 +22,15 @@ static class Program
     static MeshProfile Guest(MeshProfile owner) => MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));
     static async Task Stop(Task task, CancellationTokenSource cancellation)
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
-    public static async Task Main()
+    public static async Task Main(string[] args)
     {
+        if (args is ["--contend", var contenderPort]) {
+            using var rival = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = false };
+            rival.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+            try { rival.Bind(new IPEndPoint(IPAddress.Loopback, int.Parse(contenderPort))); Environment.ExitCode = 2; }
+            catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AccessDenied or SocketError.AddressAlreadyInUse) { Console.WriteLine(ex.SocketErrorCode); }
+            return;
+        }
         await TcpTests.Run();
         await Migration();
         await Scheduler();

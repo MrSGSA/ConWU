@@ -22,17 +22,20 @@ public sealed class TcpMapping : IMapping
     public bool IsValid => !Volatile.Read(ref disposed) && (gateway?.Valid ?? true);
     public PortControlSnapshot? GatewayLease => gateway?.Snapshot;
     public StunResult? HelperObservation { get; private set; }
+    public TcpBindingSnapshot HelperResource => binding.Snapshot;
     public event Action<IPEndPoint>? Changed;
     TcpMapping(Upnp router, RouterMapping rule, TcpBinding binding, StunResult result, Action<string> log)
     {
         this.router = router; this.rule = rule; this.binding = binding; this.log = log;
         LocalAddress = result.Local.Address; sourcePort = result.Local.Port; PublicEndpoint = result.Public;
         HelperObservation = result;
+        LogHelper();
     }
     internal TcpMapping(PortControlLease gateway, TcpBinding binding, StunResult result, Action<string> log)
     {
         this.gateway = gateway; this.binding = binding; this.log = log; LocalAddress = result.Local.Address; sourcePort = result.Local.Port;
         HelperObservation = result; PublicEndpoint = GatewayCandidate(gateway);
+        LogHelper();
         log($"网关通知模式 {gateway.Snapshot.NotificationMode}，降级原因 {gateway.Snapshot.NotificationReason}");
         gateway.Changed += _ => {
             if (!gateway.Valid) return;
@@ -46,6 +49,11 @@ public sealed class TcpMapping : IMapping
         if (!lease.Valid || !PortControlRoute.GlobalV4(endpoint.Address))
             throw new IOException("网关只返回内层或无效地址；未把 STUN 的外层端点拼接到该映射，需独立验证外层映射链");
         return endpoint;
+    }
+    void LogHelper()
+    {
+        var owner = binding.Snapshot;
+        log($"TCP helper 独占资源 lease={owner.LeaseId:N} generation={owner.Generation:N} local={owner.Local} reflector={owner.Reflector}");
     }
 
     public static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false)
@@ -140,6 +148,7 @@ public sealed class TcpMapping : IMapping
                 log("STUN 保活连接断开，正在重建并复核映射");
                 (binding, result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, servers.OrderByDescending(s => s == StunServer));
                 StunServer = result.Server;
+                LogHelper();
             }
             if (!result.Public.Equals(PublicEndpoint))
             {
@@ -160,6 +169,7 @@ public sealed class TcpMapping : IMapping
                 else {
                     (binding, var result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, servers.OrderByDescending(s => s == StunServer));
                     HelperObservation = result; StunServer = result.Server; connected = true;
+                    LogHelper();
                 }
             } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or System.Net.Sockets.SocketException or OperationCanceledException) {
                 binding.Dispose(); HelperObservation = null; connected = false;
