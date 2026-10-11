@@ -18,8 +18,9 @@ public sealed class SettingsWindow : Form
     readonly TextBox manual = new() { Dock = DockStyle.Fill, PlaceholderText = "留空自动探测；也可填写 Lucky 公网 IPv4:端口" };
     readonly NumericUpDown source = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
+    readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -60,6 +61,12 @@ public sealed class SettingsWindow : Form
         if (!supportsFakeTcpIpv6) tcpIpv6.Text = "IPv6 FakeTCP 需更新后台组件。";
         var extra = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false };
         extra.Controls.AddRange([portControl, tcpIpv6, udpIpv6]); layout.Controls.Add(extra);
+        pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
+        traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
+        pacing.ValueChanged += (_, _) => { if (supportsPacing) profile.ManagedEgressMbps = (int)pacing.Value; };
+        var paceRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
+        paceRow.Controls.AddRange([new Label { Text = "实验链路出口上限（Mbps）", AutoSize = true }, pacing, new Label { Text = "0 关闭；兼容入口不受此限速", AutoSize = true }]);
+        extra.Controls.Add(paceRow);
         var ports = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill }; source.Value = profile.SourcePort; listen.Value = profile.ListenPort;
         ports.Controls.AddRange([new Label { Text = "探测源端口", AutoSize = true }, source, new Label { Text = "本机传输端口", AutoSize = true }, listen]); layout.Controls.Add(ports);
         manual.Text = profile.ManualEndpoint; layout.Controls.Add(manual);

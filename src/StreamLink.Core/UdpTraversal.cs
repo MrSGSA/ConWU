@@ -130,11 +130,11 @@ public sealed partial class UdpTraversal : IAsyncDisposable
         : this(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, resources ?? TraversalResources.Shared, null) { }
     // Production callers obtain quota BEFORE binding the actual candidate
     // socket. The public injected-socket constructor remains for owned adapters.
-    public static UdpTraversal Create(IPEndPoint local, Guid networkGeneration, Guid attemptId, int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources? resources = null)
+    public static UdpTraversal Create(IPEndPoint local, Guid networkGeneration, Guid attemptId, int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources? resources = null, EgressPacer? pacer = null, string? fairnessKey = null)
     {
         var machine = resources ?? TraversalResources.Shared; var quota = machine.Acquire();
         ITraversalSocket? socket = null;
-        try { socket = new TraversalSocket(local); return new(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, machine, quota); }
+        try { socket = new TraversalSocket(local); if (pacer != null) socket = new PacedTraversalSocket(socket, pacer, fairnessKey ?? remoteSlot.ToString()); return new(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, machine, quota); }
         catch { socket?.Dispose(); quota.Dispose(); throw; }
     }
     UdpTraversal(ITraversalSocket socket, Guid networkGeneration, Guid attemptId, int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources resources, IDisposable? quota)

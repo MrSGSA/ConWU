@@ -17,8 +17,9 @@ bool opportunityOnly = args.Length == 7 && args[6] == "--opportunity-only";
 bool tcpRetryOnly = args.Length == 7 && args[6] == "--tcp-retry-only";
 bool gatewayOnly = args.Length == 7 && args[6] == "--gateway-only";
 bool ipv6Only = args.Length == 7 && args[6] == "--ipv6-only";
+bool egressOnly = args.Length == 7 && args[6] == "--egress-only";
 bool nativeIpv6Only = args.Length == 7 && args[6] == "--native-ipv6-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only|--native-ipv6-only]");
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only|--native-ipv6-only|--egress-only]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -42,8 +43,9 @@ app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (nativeIpv6Only || args.Length == 6) rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token));
-    if (!nativeIpv6Only) {
+    if (nativeIpv6Only || egressOnly || args.Length == 6) rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token, egressOnly));
+    if (egressOnly) rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token, true));
+    if (!nativeIpv6Only && !egressOnly) {
     if (ipv6Only || args.Length == 6) rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token));
     if (!ipv6Only) {
     if (gatewayOnly || !baselineOnly && !upgradeOnly && !opportunityOnly && !tcpRetryOnly) rows.Add(await UdpGatewayTests.Run(root, url, pin, Check, token));
@@ -99,7 +101,7 @@ try {
     }
     }
     }
-    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = nativeIpv6Only
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = egressOnly ? "production paced native and UDP factories/Runner; real timer, native, TCP helpers, UDP, HTTPS; memory raw/IP adapters, no physical driver or WAN" : nativeIpv6Only
         ? "production FakeTCP IPv6 factory/Runner, actual native workers/helpers/HTTPS; pure WinDivert filter evaluation; memory raw and IP adapters, not physical WinDivert/Wintun or WAN"
         : ipv6Only
         ? "production UDP gathering/Runner over real IPv6/IPv4 loopback sockets and HTTPS; memory IP adapters; not Internet IPv6, native FakeTCP IPv6, wire fragmentation capture or Wintun"

@@ -8,7 +8,7 @@ namespace StreamLink.Service;
 // Candidate references and native worker references have separate lifetimes.
 internal sealed class MeshTcpEndpointPool(Guid generation,
     Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open,
-    TraversalResources? resources = null) : IAsyncDisposable
+    TraversalResources? resources = null, EgressPacer? pacer = null) : IAsyncDisposable
 {
     readonly SemaphoreSlim gate = new(1);
     readonly Dictionary<string, Entry> entries = [];
@@ -46,7 +46,7 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
             if (entry == null) {
                 using var connect = CancellationTokenSource.CreateLinkedTokenSource(linked.Token); connect.CancelAfter(3500);
                 var lease = await TcpEndpointLease.Open(new(source, 0), reflector, generation, connect.Token);
-                try { entry = new(lease, new(lease, generation, open)); await entry.Owner.Ready; }
+                try { entry = new(lease, new(lease, generation, open, pacer)); await entry.Owner.Ready; }
                 catch { lease.Dispose(); throw; }
                 entries.Add(key, entry);
             }

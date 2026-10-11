@@ -18,6 +18,7 @@ internal interface IMeshCandidateFactory
     TraversalProfile[] Profiles { get; }
     bool SupportsUdpIpv6 => false;
     bool SupportsFakeTcpIpv6 => false;
+    EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
         bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => Gather(peer, profile, attempt, token);
@@ -46,6 +47,8 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
     readonly string binary = executable, root = folder;
+    readonly EgressPacer? pacer = profile.ManagedEgressMbps > 0 ? new(profile.ManagedEgressMbps) : null;
+    public EgressStats? Egress => pacer?.Snapshot();
     MeshTcpEndpointPool? pool;
     readonly object poolGate = new();
     readonly Dictionary<int, (string Device, bool GatewayNext)> udpMethods = [];
@@ -56,7 +59,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
         (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
-        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper)); } }
+        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer); } }
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
@@ -87,6 +90,9 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         } catch (Exception ex) when (!token.IsCancellationRequested) { log("原生双主动暂未启用：" + ex.GetType().Name); }
         if (profile.TraversalMode == "tcp-udp" && profile.Selection().Allows(TraversalProfile.UdpDirect)) supported.Add(TraversalProfile.UdpDirect);
         if (profile.FakeTcpIpv6 && !ipv6) log("FakeTCP IPv6 暂未启用：原生组件需提供 ABI 2 与统一捕获能力，继续 IPv4");
+        if (profile.ManagedEgressMbps > 0 && supported.Contains(TraversalProfile.FakeTcpHttpSo) && !broker)
+            throw new IOException("实验出口调度要求受管捕获后端，请升级原生组件或关闭出口上限");
+        if (profile.ManagedEgressMbps > 0) log($"实验链路共享 {profile.ManagedEgressMbps} Mbps 外层 IP 出口预算；兼容入口、内核反射与 HTTPS 控制流不在此范围");
         return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
@@ -159,7 +165,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 IPEndPoint mapped; string observation = target.ToString(); double lifetime = 120;
                 if (kind == TraversalProfile.UdpDirect) {
                     byte[] shared = MeshIdentity.SharedKey(options.Mesh!, peer);
-                    try { udp = UdpTraversal.Create(local, generation, attempt, options.Mesh!.Self.Slot, peer.Slot, shared); }
+                    try { udp = UdpTraversal.Create(local, generation, attempt, options.Mesh!.Self.Slot, peer.Slot, shared, pacer: pacer, fairnessKey: peer.Device); }
                     finally { CryptographicOperations.ZeroMemory(shared); }
                     if (useGateway) {
                         gatewayTried = true;
@@ -223,5 +229,5 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             if (udp != null && !prepared) await udp.DisposeAsync(); // Prepared owns original UDP reference after transfer.
         }
     }
-    public async ValueTask DisposeAsync() { try { await StopObservation(); } finally { if (pool != null) await pool.DisposeAsync(); } }
+    public async ValueTask DisposeAsync() { try { await StopObservation(); } finally { try { if (pool != null) await pool.DisposeAsync(); } finally { pacer?.Dispose(); } } }
 }

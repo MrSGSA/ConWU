@@ -48,7 +48,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
 
-    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner)
+    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner, string? fairnessKey)
     {
         bool v6 = lease.Local.AddressFamily == AddressFamily.InterNetworkV6;
         Size = v6 ? 144 : 96;
@@ -57,7 +57,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             throw new ArgumentException("Native peer and helper require distinct same-family tuples; IPv6 requires the capture broker");
         if (captureOwner != null) {
             if (!ReferenceEquals(captureOwner.Lease, lease)) throw new ArgumentException("Capture owner does not hold this lease");
-            brokerSession = captureOwner.Register(generation, peer); reference = brokerSession; AttachId = brokerSession.AttachId;
+            brokerSession = captureOwner.Register(generation, peer, fairnessKey); reference = brokerSession; AttachId = brokerSession.AttachId;
         } else { var owned = lease.AcquireNativeAttachment(generation); reference = owned; AttachId = owned.AttachId; }
         LeaseId = lease.Id;
         try {
@@ -92,9 +92,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public static async Task<NativeAttachment> Launch(TcpEndpointLease lease, Guid generation,
         string executable, IEnumerable<string> arguments, IPEndPoint peer, bool server,
         string? logPath, CancellationToken token, IDictionary<string, string>? environment = null,
-        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null)
+        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null, string? fairnessKey = null)
     {
-        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner);
+        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner, fairnessKey);
         try {
             owner.process = owner.job.Start(executable, arguments.Concat(["--managed-pipe", owner.PipeName]), logPath, environment, secrets);
             owner.childId = owner.process.Id;

@@ -104,7 +104,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await File.WriteAllTextAsync(path.configuration,
                 $"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n", token);
             path.native = await NativeAttachment.Launch(lease, generation, executable, ["--conf-file", path.configuration], peer,
-                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner);
+                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId);
             path.native.ProcessExited += path.Fault;
             if (path.native.Exited) throw new IOException("Native exited during preparation");
             path.receiver = path.ReceiveLoop(); path.sender = path.SendLoop();

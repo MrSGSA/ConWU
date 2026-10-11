@@ -11,12 +11,12 @@ using StreamLink.Service;
 
 static class NativeIpv6RunnerTests
 {
-    public static async Task<object> Run(string binary, string root, string url, string pin, Action<bool, string> check, CancellationToken token)
+    public static async Task<object> Run(string binary, string root, string url, string pin, Action<bool, string> check, CancellationToken token, bool paced = false)
     {
         CaptureFilterTests.Run(Path.Combine(Path.GetDirectoryName(binary)!, "..", "downloads", "WinDivert-2.2.2-A", "x64", "WinDivert.dll"), check);
         await Contract(check);
         var rows = new List<object>();
-        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-native-abi", "old-service" }) rows.Add(await Pair(binary, root, url, pin, mode, check, token));
+        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-native-abi", "old-service" }) rows.Add(await Pair(binary, root, url, pin, mode, check, token, paced));
         return new { rows, actualNative = true, realTcpHelpers = true, realHttps = true, rawCaptureSimulated = true, realWinDivertIo = false, realNat = false, wintun = false };
     }
     static async Task Contract(Action<bool, string> check)
@@ -32,11 +32,11 @@ static class NativeIpv6RunnerTests
         check(rejected, "UDP IPv6 capability cannot authorize a FakeTCP IPv6 Offer");
         check(!new DeviceProfile().FakeTcpIpv6, "FakeTCP IPv6 remains disabled in default/existing device profiles");
     }
-    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token)
+    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced)
     {
         await using var v4 = new Reflector(); await using var v6 = new Reflector(new(IPAddress.IPv6Loopback, 0));
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-        var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only", FakeTcpIpv6 = true, TcpStun = ["fixture.invalid:3478"] }).ToArray();
+        var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only", FakeTcpIpv6 = true, TcpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0 }).ToArray();
         var wire = new Wire(mode == "ipv6-unreachable"); var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select((p, i) => new Inspect(new MeshCandidateFactory(p, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true,
             diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0) {
@@ -72,17 +72,20 @@ static class NativeIpv6RunnerTests
             while (adapters.Any(x => x.Incoming.Count == 0)) await Task.Delay(20, token);
             check(adapters[0].Incoming.Single().SequenceEqual(Packet(b.LocalIp, a.LocalIp)) && adapters[1].Incoming.Single().SequenceEqual(Packet(a.LocalIp, b.LocalIp)), mode + ": authenticated MeshLink transports full inner IPv4 through actual native workers in both directions");
             check(wire.Packets > 0 && wire.MaximumBytes >= 1392, mode + ": native serialized packet length is measured separately from UDP framing");
+            if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
         } finally {
             running.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
         }
         check(wire.Endpoints.Values.All(io => io.Closed) && adapters.All(ad => ad.Disposed), mode + ": shutdown joins actual capture/worker owners before resource release");
+        if (paced) check(factories.All(f => f.Egress?.QueuedBytes == 0), mode + ": pacing closes without retaining a worker or queued packet");
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, wire.Packets, wire.MaximumBytes,
-            paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray() };
+            paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
     }
     sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
+        public EgressStats? Egress => inner.Egress;
         public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile p, Guid a, CancellationToken t) => GatherForPeer(peer, p, a, false, null, 1, t);
         public async Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile p, Guid a, bool v6, IPEndPoint? r, int round, CancellationToken t)
         { Interlocked.Increment(ref Gathers); return new Resource(await inner.GatherForPeer(peer, p, a, v6, r, round, t), this); }

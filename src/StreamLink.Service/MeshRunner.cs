@@ -62,7 +62,7 @@ public sealed class MeshRunner
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
-        long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0;
+        long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0;
         int probeFailures = 0, readFailures = 0, serverFailures = 0;
         string publishedEndpoint = "\0", publishingEndpoint = "";
         string firewallMembers = "";
@@ -210,10 +210,15 @@ public sealed class MeshRunner
                     traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
+                    var egress = factory?.Egress;
+                    if (egress != null && now >= nextEgressReport) {
+                        log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" + (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));
+                        nextEgressReport = now + 30000;
+                    }
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);
                     int degraded = statuses.Count(p => p.Degraded);
                     report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
-                        $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses));
+                        $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) { Egress = egress });
                     nextReport = now + 1000;
                 }
                 await Task.Delay(100, stop);

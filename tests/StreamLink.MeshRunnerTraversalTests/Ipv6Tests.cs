@@ -10,13 +10,13 @@ using StreamLink.Service;
 
 static class Ipv6Tests
 {
-    public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token)
+    public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromMinutes(4)); token = deadline.Token;
         await Encoding(check, token);
         var pmtu = await Sockets(rounds, check, token);
         var rows = new List<object>();
-        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-peer", "old-service" }) rows.Add(await Runners(root, url, pin, mode, check, token));
+        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-peer", "old-service" }) rows.Add(await Runners(root, url, pin, mode, check, token, paced));
         return new { rounds, pmtu, runners = rows, realIPv6Sockets = true, realHttps = true, realNat = false, wintun = false, nativeFakeTcpIpv6 = false };
     }
     static async Task Encoding(Action<bool, string> check, CancellationToken token)
@@ -112,11 +112,11 @@ static class Ipv6Tests
         public ValueTask<TraversalDatagram> Receive(CancellationToken t) => inner.Receive(t);
         public void Dispose() => inner.Dispose();
     }
-    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token)
+    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced)
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"] }).ToArray();
+        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0 }).ToArray();
         var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select(p => new Inspect(new MeshCandidateFactory(p, "unused", root, [TraversalProfile.UdpDirect], diagnostic: logs.Enqueue) {
             Ipv6AvailableForTest = () => true,
@@ -150,16 +150,19 @@ static class Ipv6Tests
             adapters[0].Outgoing.Add(Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(Packet(b.LocalIp, a.LocalIp));
             while (adapters.Any(x => x.Incoming.Count == 0)) await Task.Delay(20, token);
             check(adapters[0].Incoming.Single().SequenceEqual(Packet(b.LocalIp, a.LocalIp)) && adapters[1].Incoming.Single().SequenceEqual(Packet(a.LocalIp, b.LocalIp)), mode + ": formal MeshRunner/MeshLink delivers full 1280-byte inner IPv4 in both directions");
+            if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": same-socket UDP pacing reports actual outer bytes through formal Runner");
         } finally {
             stopping.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
         }
         check(adapters.All(x => x.Disposed), mode + ": Runner stops and joins its adapters and candidate paths");
-        return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray() };
+        if (paced) check(factories.All(f => f.Egress?.QueuedBytes == 0), mode + ": UDP pacing drains cancelled resources at shutdown");
+        return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
     }
     sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
         public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = []; public int Gathers;
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsUdpIpv6 => inner.SupportsUdpIpv6;
+        public EgressStats? Egress => inner.Egress;
         public Task<IMeshCandidateResource> Gather(MeshMember p, TraversalProfile k, Guid a, CancellationToken t) => GatherForPeer(p, k, a, false, null, 1, t);
         public async Task<IMeshCandidateResource> GatherForPeer(MeshMember p, TraversalProfile k, Guid a, bool allow, IPEndPoint? remote, int round, CancellationToken t)
         { Interlocked.Increment(ref Gathers); return new Resource(await inner.GatherForPeer(p, k, a, allow, remote, round, t), this); }

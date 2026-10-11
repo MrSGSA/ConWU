@@ -31,6 +31,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     readonly object gate = new();
     readonly TcpEndpointLease.NativeReference reference;
     readonly IEndpointPacketIo io;
+    readonly EgressPacer? pacer;
     readonly Dictionary<IPEndPoint, Session> sessions = [];
     readonly CancellationTokenSource stop = new();
     readonly Task receiver;
@@ -51,13 +52,14 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
             pipeWrites, pipeTicks * 1000d / Stopwatch.Frequency, pipeOver16)
     }; } }
 
-    public TcpCaptureOwner(TcpEndpointLease lease, Guid generation, Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open)
+    public TcpCaptureOwner(TcpEndpointLease lease, Guid generation, Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open, EgressPacer? pacer = null)
     {
+        this.pacer = pacer;
         reference = lease.AcquireNativeAttachment(generation); Lease = lease;
         try { io = open(lease.Local, lease.Reflector); receiver = Task.Factory.StartNew(Receive, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap(); }
         catch { reference.Dispose(); throw; }
     }
-    public Session Register(Guid generation, IPEndPoint peer)
+    public Session Register(Guid generation, IPEndPoint peer, string? fairnessKey = null)
     {
         lock (gate) {
             if (retiring || closing || failure.Length != 0 || generation != Lease.NetworkGeneration ||
@@ -66,7 +68,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
                 peer.Equals(Lease.Local) || peer.Equals(Lease.Reflector) || sessions.Count >= 8)
                 throw new IOException("Capture owner unavailable or unauthorized tuple");
             if (sessions.ContainsKey(peer)) throw new IOException("The TCP wire tuple already has a live or retiring session");
-            var session = new Session(this, new(peer.Address, peer.Port)); sessions.Add(session.Peer, session); return session;
+            var session = new Session(this, new(peer.Address, peer.Port), fairnessKey); sessions.Add(session.Peer, session); return session;
         }
     }
     // Unfragmented IPv4/TCP or fixed-header IPv6/TCP. Extension/fragment/jumbo
@@ -165,7 +167,9 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         internal int depth;
         internal bool started, retired, revoked;
         readonly IPEndPoint peer;
-        internal Session(TcpCaptureOwner owner, IPEndPoint peer) { this.owner = owner; this.peer = peer; }
+        readonly EgressPacer.Flow? outbound;
+        internal Session(TcpCaptureOwner owner, IPEndPoint peer, string? fairnessKey)
+        { this.owner = owner; this.peer = peer; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, _) => SendNow(packet.Span)); }
         public Guid AttachId { get; } = Guid.NewGuid();
         public Guid CaptureOwnerId => owner.OwnerId;
         public TcpEndpointLease Lease => owner.Lease;
@@ -178,9 +182,21 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         {
             if (!Tuple(packet, out var source, out var target, exactLength: true) || !source.Equals(Lease.Local) || !target.Equals(Peer))
                 throw new IOException("Worker attempted an unauthorized raw tuple");
+            lock (owner.gate) if (!started || Failed) return false;
+            if (outbound == null) return SendNow(packet);
+            int ip = (packet[0] >> 4) == 6 ? 40 : (packet[0] & 15) * 4;
+            int tcp = (packet[ip + 12] >> 4) * 4;
+            // Only actual small TCP shape controls get priority. Encrypted
+            // udp2raw payloads cannot be classified by guessed application data.
+            bool control = packet.Length <= 256 && (packet.Length == ip + tcp || (packet[ip + 13] & 7) != 0);
+            return outbound.TrySend(packet, packet.Length, priority: control);
+        }
+        bool SendNow(ReadOnlySpan<byte> packet)
+        {
             lock (owner.gate) {
                 if (!started || Failed) return false;
-                bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent;
+                try { bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent; }
+                catch (Exception ex) { owner.failure = "inject-" + ex.GetType().Name; throw; }
             }
         }
         public async ValueTask<byte[]> Receive(CancellationToken token)
@@ -203,6 +219,6 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         }
         // The caller must confirm its native worker exited before releasing this
         // tuple; Revoke alone must not allow a second independent ISS/state.
-        public void Dispose() => owner.Release(this);
+        public void Dispose() { outbound?.Dispose(); owner.Release(this); }
     }
 }
