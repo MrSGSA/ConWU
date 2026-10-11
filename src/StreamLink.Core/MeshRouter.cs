@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
+using System.Diagnostics;
 
 namespace StreamLink.Core;
 
@@ -16,6 +17,9 @@ public sealed class MeshRouter : IAsyncDisposable
         public readonly MeshMember Member = member;
         public readonly MeshLink Link = link;
         public IPEndPoint? Candidate, Active;
+        public long ActiveReceived;
+        public readonly Dictionary<IPEndPoint, (long Token, long At, long Sent)> Probes = [];
+        public readonly Queue<IPEndPoint> Retired = [];
         public string Name = "", Detail = "等待对端上线";
         public long Sent, Received, Dropped;
     }
@@ -60,11 +64,34 @@ public sealed class MeshRouter : IAsyncDisposable
     public void SetCandidate(int slot, IPEndPoint? candidate, string name, string detail)
     {
         if (candidate != null && !IPAddress.IsLoopback(candidate.Address)) throw new ArgumentException("数据接口仅允许本机 udp2raw");
-        lock (gate) if (peers.TryGetValue(slot, out var peer)) { peer.Candidate = candidate; peer.Name = name; peer.Detail = detail; }
+        lock (gate) if (peers.TryGetValue(slot, out var peer)) {
+            bool changed = !Equals(peer.Candidate, candidate);
+            peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
+            if (changed && candidate != null && !candidate.Equals(peer.Active)) {
+                peer.Probes.Remove(candidate); Send(peer.Link.Hello(), candidate); Challenge(peer, candidate);
+            }
+        }
+    }
+    static bool Healthy(Peer peer) => peer.Link.Connected && peer.Active != null && peer.ActiveReceived != 0 && Stopwatch.GetElapsedTime(peer.ActiveReceived).TotalSeconds < 12;
+    public bool UsesPath(int slot, IPEndPoint? endpoint)
+    {
+        lock (gate) return endpoint != null && peers.TryGetValue(slot, out var peer) && Healthy(peer) && endpoint.Equals(peer.Active);
+    }
+    void Challenge(Peer peer, IPEndPoint endpoint)
+    {
+        if (endpoint.Equals(peer.Active)) return;
+        bool found = peer.Probes.TryGetValue(endpoint, out var probe);
+        if (found && Stopwatch.GetElapsedTime(probe.Sent).TotalSeconds < 1) return;
+        if (!peer.Probes.ContainsKey(endpoint) && peer.Probes.Count >= 4) peer.Probes.Remove(peer.Probes.MinBy(p => p.Value.At).Key);
+        long now = Stopwatch.GetTimestamp();
+        bool reuse = found && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5;
+        long nonce = reuse ? probe.Token : BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
+        byte[]? frame = peer.Link.ProbePath(nonce);
+        if (frame != null) { peer.Probes[endpoint] = (nonce, reuse ? probe.At : now, now); Send(frame, endpoint); }
     }
     public MeshPeerStatus[] Status()
     {
-        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", p.Link.Connected, p.Link.RttMs, p.Link.Connected ? "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
+        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Link.RttMs, Healthy(p) ? "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
     {
@@ -79,7 +106,7 @@ public sealed class MeshRouter : IAsyncDisposable
             int count = adapter.Read(buffer); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peers.TryGetValue(slot, out var peer)) {
-                if (Send(peer.Link.Data(packet), peer.Active)) peer.Sent += count; else peer.Dropped++;
+                if (Healthy(peer) && Send(peer.Link.Data(packet), peer.Active)) peer.Sent += count; else peer.Dropped++;
             }
         }
     }
@@ -95,8 +122,14 @@ public sealed class MeshRouter : IAsyncDisposable
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
-                if (buffer[4] != 1) peer.Active = endpoint;
                 Send(result.Reply, endpoint);
+                if (buffer[4] != 1) {
+                    if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
+                    else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
+                        if (peer.Active != null) { peer.Retired.Enqueue(peer.Active); while (peer.Retired.Count > 8) peer.Retired.Dequeue(); }
+                        peer.Active = endpoint; peer.ActiveReceived = Stopwatch.GetTimestamp(); peer.Probes.Clear();
+                    } else if (endpoint.Equals(peer.Candidate) || !Healthy(peer) || !peer.Retired.Contains(endpoint)) Challenge(peer, endpoint);
+                }
                 if (result.Packet != null) {
                     if (MeshPackets.Accept(result.Packet, local, peer.Member.Slot) && adapter.Write(result.Packet)) peer.Received += result.Packet.Length; else peer.Dropped++;
                 }
@@ -107,11 +140,12 @@ public sealed class MeshRouter : IAsyncDisposable
     {
         while (!stop.IsCancellationRequested) {
             lock (gate) foreach (var peer in peers.Values) {
-                if (peer.Link.Connected) Send(peer.Link.Ping(), peer.Active);
+                if (Healthy(peer)) Send(peer.Link.Ping(), peer.Active);
                 else {
                     byte[] hello = peer.Link.Hello(); Send(hello, peer.Candidate);
                     if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) Send(hello, peer.Active);
                 }
+                if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) { Send(peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate); }
             }
             await Task.Delay(1500, stop.Token);
         }

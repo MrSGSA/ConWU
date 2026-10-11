@@ -1,4 +1,4 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.4.0',[switch]$IncludeLegacy)
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.4.1',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -13,6 +13,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Windows lifecycle/feedback regression failed'}
         & dotnet run --project tests/StreamLink.ConnectionTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
+        & dotnet run --project tests/StreamLink.MeshConnectionTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'TCP selection / mesh recovery regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
@@ -101,6 +103,8 @@ try {
     Copy-Item .\docs\native-mesh-0.4.txt $stage\原生多机网络说明.txt
     $releaseNotes = Join-Path $root "docs/releases/v$releaseVersion-preview.md"
     if(Test-Path $releaseNotes) {Copy-Item -LiteralPath $releaseNotes -Destination $stage\版本更新说明.md}
+    $releaseText = Join-Path $root "docs/releases/v$releaseVersion-preview.txt"
+    if(Test-Path $releaseText) {Copy-Item -LiteralPath $releaseText -Destination $stage\版本更新说明.txt}
     Copy-Item .\docs\初版实测报告-20261010.md $stage\历史实测报告-0.2.md
     Copy-Item .\docs\发现服务运维.txt $stage\发现服务运维.txt
     $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")

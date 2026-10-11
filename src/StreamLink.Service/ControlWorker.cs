@@ -55,7 +55,7 @@ public sealed class ControlWorker : BackgroundService
         running = Task.Run(async () => {
             while (!token.IsCancellationRequested)
             {
-                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) status = s; }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); } } });
+                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) status = s; }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); } } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); } });
                 else runner = new(copy, Log, s => { lock (sync) status = s; }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); } });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }

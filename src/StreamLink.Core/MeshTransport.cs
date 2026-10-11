@@ -4,10 +4,15 @@ using System.Runtime.Versioning;
 
 namespace StreamLink.Core;
 
+public interface IMeshTransport : IDisposable
+{
+    IPEndPoint? ClientEndpoint { get; }
+    bool Exited { get; }
+}
 // A server multiplexes authenticated peers on the same mapped public port.
 // Outbound clients are independent: changing one peer never recreates the TUN.
 [SupportedOSPlatform("windows")]
-public sealed class MeshTransport : IDisposable
+public sealed class MeshTransport : IMeshTransport
 {
     readonly ChildJob job = new();
     readonly string configuration;

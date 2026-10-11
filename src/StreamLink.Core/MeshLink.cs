@@ -5,7 +5,7 @@ using System.Text;
 
 namespace StreamLink.Core;
 
-public sealed record MeshReceive(bool Authenticated, byte[]? Reply = null, byte[]? Packet = null);
+public sealed record MeshReceive(bool Authenticated, byte[]? Reply = null, byte[]? Packet = null, long? PongToken = null);
 
 // Authenticated datagrams with independent directional/session keys. No data
 // retransmission or in-order delivery: reordered packets within the replay
@@ -56,6 +56,16 @@ public sealed class MeshLink : IDisposable
         }
     }
     public byte[]? Data(ReadOnlySpan<byte> packet) { lock (gate) return Connected ? Encode(4, remoteEpoch!, packet) : null; }
+    // A separate nonce for path validation; does not disturb the RTT heartbeat.
+    // Uses the existing authenticated Ping/Pong wire format (mesh protocol 4).
+    public byte[]? ProbePath(long challenge)
+    {
+        lock (gate) {
+            if (remoteEpoch == null) return null;
+            Span<byte> body = stackalloc byte[8]; BinaryPrimitives.WriteInt64BigEndian(body, challenge);
+            return Encode(5, remoteEpoch, body);
+        }
+    }
     public MeshReceive Receive(ReadOnlySpan<byte> message)
     {
         lock (gate) {
@@ -101,7 +111,7 @@ public sealed class MeshLink : IDisposable
     MeshReceive Pong(byte[] payload)
     {
         if (pendingPing != 0 && BinaryPrimitives.ReadInt64BigEndian(payload) == pendingPing) { RttMs = Stopwatch.GetElapsedTime(pendingPing).TotalMilliseconds; pendingPing = 0; }
-        return new(true);
+        return new(true, PongToken: BinaryPrimitives.ReadInt64BigEndian(payload));
     }
     public void Dispose() { lock (gate) { if (disposed) return; disposed = true; sendCipher.Dispose(); receiveCipher?.Dispose(); CryptographicOperations.ZeroMemory(secret); } }
 }
