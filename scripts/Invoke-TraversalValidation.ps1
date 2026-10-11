@@ -28,11 +28,14 @@ try {
  Invoke-Check 'mesh-nomination-model' 'dotnet' @('run','--project','tests\StreamLink.NominationTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'nomination-model.json'))
  Invoke-Check 'mesh-connections' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release')
  Invoke-Check 'mesh-regression' 'dotnet' @('run','--project','tests\StreamLink.MeshTests','-c','Release')
+ Invoke-Check 'managed-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'managed-router.json'))
+ Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
+ Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))
 } finally {
  $hashes=@('out\native\udp2raw-native.exe','out\native\udp2raw-protocol-test.exe') | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object {
    [pscustomobject]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}
  }
- $status=if($results.Count -eq 10 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
+ $status=if($results.Count -eq 13 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
  [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
    gate='Local only: no driver, no NAT, no release claim';remainingGates=@('M1 controlled two-Windows 30 rounds and WAN','M2 SO + business','M3 product integration','M4 Wintun UDP_DIRECT','M5-M9')} |
    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json')

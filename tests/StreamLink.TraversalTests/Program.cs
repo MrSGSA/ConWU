@@ -2,7 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using StreamLink.Core;
 
-static class Program
+static partial class Program
 {
     static int checks;
     static readonly CancellationToken None = CancellationToken.None;
@@ -83,6 +83,7 @@ static class Program
                 if (learn) Check(result[0].LearnedCandidates > 0 && a.Selected != null && !a.Selected.Equals(observedB.Mapped), "authenticated prflx learns the actual destination-dependent source");
                 await Data(a, b, key);
             } else Check(result.All(r => r.Failure.Length > 0), "failure is explicit and never reported as established");
+            if (maximumPayload is >= 96 and < 1344 && !stunOnly) Check(result.All(r => r.Failure == "mtu-unverified"), "small packets succeed but PMTU failure is reported separately");
         }
         Check(left.Disposed && right.Disposed, "unsuccessful and successful paths both release socket resources");
     }
@@ -116,7 +117,7 @@ static class Program
             bool rejected = false; try { await a.SendPayload(new byte[40], None); } catch (IOException) { rejected = true; }
             Check(rejected, "application data is refused before verification");
         }
-        var captured = lab.Wire.First(w => w.Source.Address.Equals(right.External) && w.Packet.Length == 1400);
+        var captured = lab.Wire.First(w => w.Source.Address.Equals(right.External) && w.Packet.Length == 96);
         var replayLab = new NatLab(); var replayPort = replayLab.Add("192.0.2.1", "eim", "eif", 41111);
         await using (var target = Session(replayPort, Guid.NewGuid(), 1, rememberedKey)) {
             var check = target.Punch([captured.Source], new(400, 4), None);
@@ -130,6 +131,27 @@ static class Program
             Check(resources.TrySend() && !resources.TrySend(), "shared token bucket bounds bursts across peers");
         }
         using (resources.Acquire()) Check(true, "disposing a lease returns the global socket slot");
+        using (var occupied = new System.Net.Sockets.Socket(System.Net.Sockets.AddressFamily.InterNetwork, System.Net.Sockets.SocketType.Dgram, System.Net.Sockets.ProtocolType.Udp) { ExclusiveAddressUse = true }) {
+            occupied.Bind(new IPEndPoint(IPAddress.Loopback, 0));
+            using (resources.Acquire()) {
+                bool quotaFirst = false;
+                try { await using var rejected = UdpTraversal.Create((IPEndPoint)occupied.LocalEndPoint!, Guid.NewGuid(), Guid.NewGuid(), 1, 2, Key(), resources); }
+                catch (IOException) { quotaFirst = true; }
+                Check(quotaFirst, "factory rejects quota before attempting to bind an occupied candidate port");
+            }
+            bool bindFailed = false;
+            try { await using var rejected = UdpTraversal.Create((IPEndPoint)occupied.LocalEndPoint!, Guid.NewGuid(), Guid.NewGuid(), 1, 2, Key(), resources); }
+            catch (System.Net.Sockets.SocketException) { bindFailed = true; }
+            using (resources.Acquire()) Check(bindFailed, "failed factory bind returns the reserved resource quota");
+        }
+        var completion = new TraversalControlRound(new TraversalResources(8, 10000, 256));
+        for (int i = 0; i < 96; i++) if (!completion.TrySend(96, false)) throw new Exception("search budget ended early");
+        Check(!completion.TrySend(96, false), "search cannot consume the 24 completion reservations");
+        for (int i = 0; i < 24; i++) if (!completion.TrySend(96, true)) throw new Exception("completion reserve unavailable");
+        Check(completion.Packets == 120 && !completion.TrySend(96, true), "checks and completion share one 120-packet limit");
+        var bytes = new TraversalControlRound(new TraversalResources());
+        for (int i = 0; i < 4; i++) if (!bytes.TrySend(16384, true)) throw new Exception("byte budget ended early");
+        Check(bytes.Bytes == 65536 && !bytes.TrySend(1, true), "round byte cap remains bounded independently of packet count");
         using (resources.Acquire()) {
             var rejectedPort = replayLab.Add("192.0.2.3", "eim", "eif", 42111);
             try { await using var overflow = Session(rejectedPort, Guid.NewGuid(), 1, Key(), resources); } catch (IOException) { }
@@ -145,6 +167,8 @@ static class Program
     static async Task Main(string[] args)
     {
         if (args.Length > 1 && args[0] == "--observe") { await ObserveOnly(args[1..]); return; }
+        if (args.Length == 2 && args[0] == "--managed") { await ManagedUdp(args[1]); return; }
+        if (args.Length == 2 && args[0] == "--managed-smoke") { await ManagedUdp(args[1], 1); return; }
         await RealLoopback(); await Classification();
         await Model("eim", "apdf", "eim", "apdf", true);
         await Model("eim", "eif", "apdm", "apdf", true, true);
@@ -153,6 +177,8 @@ static class Program
         await Model("apdm", "apdf", "apdm", "apdf", false);
         await Model("eim", "eif", "eim", "eif", false, stunOnly: true);
         await Model("eim", "eif", "eim", "eif", false, maximumPayload: 1200);
+        await Model("eim", "eif", "eim", "eif", false, maximumPayload: 1343);
+        await Model("eim", "eif", "eim", "eif", true, maximumPayload: 1344);
         await AuthenticationAndLimits();
         Console.WriteLine($"{checks} traversal checks passed. Loopback/model only; no public probes, drivers, mapping rules or live configuration changes.");
     }

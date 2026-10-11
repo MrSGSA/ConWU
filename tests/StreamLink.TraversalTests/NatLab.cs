@@ -53,6 +53,9 @@ sealed class NatLab
     }
     public sealed class Port(NatLab lab, IPAddress external, string mapping, string filtering, int seed, bool stunOnly, int maximumPayload) : ITraversalSocket
     {
+        // This model drops above its configured maximum; it never fragments.
+        // It is NOT evidence of real NIC or NAT DF behavior.
+        public bool DontFragment => true;
         internal readonly Channel<TraversalDatagram> Incoming = Channel.CreateUnbounded<TraversalDatagram>();
         internal readonly Dictionary<string, Binding> Bindings = [];
         internal readonly string Mapping = mapping, Filtering = filtering;

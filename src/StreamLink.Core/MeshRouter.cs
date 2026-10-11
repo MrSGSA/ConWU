@@ -10,7 +10,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
 // One adapter and one local UDP socket per node. The authenticated source slot
 // selects a peer; a member can only deliver packets to this node's own address.
 // There is deliberately no route for forwarding another member's packets.
-public sealed class MeshRouter : IAsyncDisposable
+public sealed partial class MeshRouter : IAsyncDisposable
 {
     sealed class Peer(MeshMember member, MeshLink link)
     {
@@ -22,6 +22,7 @@ public sealed class MeshRouter : IAsyncDisposable
         public readonly Queue<IPEndPoint> Retired = [];
         public string Name = "", Detail = "等待对端上线";
         public long Sent, Received, Dropped;
+        public ManagedPeer? Managed;
     }
     readonly object gate = new();
     readonly MeshProfile profile;
@@ -34,6 +35,7 @@ public sealed class MeshRouter : IAsyncDisposable
     int disposed;
     public IPEndPoint LocalEndpoint => (IPEndPoint)socket.LocalEndPoint!;
     public Task Completion { get; }
+    public Guid BootId { get; } = Guid.NewGuid();
     public MeshRouter(MeshProfile profile, IPacketAdapter adapter)
     {
         this.profile = profile; this.adapter = adapter; local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
@@ -52,7 +54,7 @@ public sealed class MeshRouter : IAsyncDisposable
         MeshIdentity.ValidateDirectory(directory, profile.Pair.Network, profile.OwnerKey, profile.Directory?.Revision ?? 0);
         if (!directory.Members.Contains(profile.Self)) throw new MeshRevokedException();
         lock (gate) {
-            foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { peers[slot].Link.Dispose(); peers.Remove(slot); }
+            foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { CloseManaged(peers[slot]); peers[slot].Link.Dispose(); peers.Remove(slot); }
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
                 byte[] shared = MeshIdentity.SharedKey(profile, member);
@@ -65,6 +67,7 @@ public sealed class MeshRouter : IAsyncDisposable
     {
         if (candidate != null && !IPAddress.IsLoopback(candidate.Address)) throw new ArgumentException("数据接口仅允许本机 udp2raw");
         lock (gate) if (peers.TryGetValue(slot, out var peer)) {
+            if (peer.Managed != null) return; // negotiated paths cannot fall back to legacy auto-promotion
             bool changed = !Equals(peer.Candidate, candidate);
             peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
             if (changed && candidate != null && !candidate.Equals(peer.Active)) {
@@ -72,10 +75,10 @@ public sealed class MeshRouter : IAsyncDisposable
             }
         }
     }
-    static bool Healthy(Peer peer) => peer.Link.Connected && peer.Active != null && peer.ActiveReceived != 0 && Stopwatch.GetElapsedTime(peer.ActiveReceived).TotalSeconds < 12;
+    static bool Healthy(Peer peer) => peer.Managed != null ? ManagedHealthy(peer) : peer.Link.Connected && peer.Active != null && peer.ActiveReceived != 0 && Stopwatch.GetElapsedTime(peer.ActiveReceived).TotalSeconds < 12;
     public bool UsesPath(int slot, IPEndPoint? endpoint)
     {
-        lock (gate) return endpoint != null && peers.TryGetValue(slot, out var peer) && Healthy(peer) && endpoint.Equals(peer.Active);
+        lock (gate) return endpoint != null && peers.TryGetValue(slot, out var peer) && peer.Managed == null && Healthy(peer) && endpoint.Equals(peer.Active);
     }
     void Challenge(Peer peer, IPEndPoint endpoint)
     {
@@ -91,7 +94,7 @@ public sealed class MeshRouter : IAsyncDisposable
     }
     public MeshPeerStatus[] Status()
     {
-        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Link.RttMs, Healthy(p) ? "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
+        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Link.RttMs, Healthy(p) ? p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect ? "UDP 直连 · 质量待验证" : "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
     {
@@ -106,7 +109,8 @@ public sealed class MeshRouter : IAsyncDisposable
             int count = adapter.Read(buffer); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peers.TryGetValue(slot, out var peer)) {
-                if (Healthy(peer) && Send(peer.Link.Data(packet), peer.Active)) peer.Sent += count; else peer.Dropped++;
+                bool delivered = Healthy(peer) && (peer.Managed != null ? SendManaged(peer.Link.Data(packet), peer.Managed.Active) : Send(peer.Link.Data(packet), peer.Active));
+                if (delivered) peer.Sent += count; else peer.Dropped++;
             }
         }
     }
@@ -119,6 +123,7 @@ public sealed class MeshRouter : IAsyncDisposable
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (received.ReceivedBytes < MeshLink.Overhead || !IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
             lock (gate) if (peers.TryGetValue(buffer[5], out var peer)) {
+                if (peer.Managed != null) continue; // data arrives through its registered resource only
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
@@ -138,8 +143,15 @@ public sealed class MeshRouter : IAsyncDisposable
     }
     async Task Heartbeat()
     {
+        long nextLegacy = 0; int cursor = 0;
         while (!stop.IsCancellationRequested) {
-            lock (gate) foreach (var peer in peers.Values) {
+            long now = Environment.TickCount64;
+            lock (gate) {
+            var order = peers.Values.ToArray();
+            for (int i = 0; i < order.Length; i++) {
+                var peer = order[(i + cursor) % order.Length];
+                if (peer.Managed != null) { TickManaged(peer, now); continue; }
+                if (now < nextLegacy) continue;
                 if (Healthy(peer)) Send(peer.Link.Ping(), peer.Active);
                 else {
                     byte[] hello = peer.Link.Hello(); Send(hello, peer.Candidate);
@@ -147,14 +159,19 @@ public sealed class MeshRouter : IAsyncDisposable
                 }
                 if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) { Send(peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate); }
             }
-            await Task.Delay(1500, stop.Token);
+            cursor = order.Length == 0 ? 0 : (cursor + 1) % order.Length;
+            }
+            if (now >= nextLegacy) nextLegacy = now + 1500;
+            await Task.Delay(100, stop.Token);
         }
     }
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         stop.Cancel();
+        Task[] pathPumps;
+        lock (gate) { foreach (var peer in peers.Values) CloseManaged(peer); pathPumps = managedPumps.ToArray(); }
         try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (OperationCanceledException) { }
-        finally { lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
+        finally { await Task.WhenAll(pathPumps); lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
     }
 }
