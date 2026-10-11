@@ -38,13 +38,10 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     // must use the remaining interval instead of allocating another eight seconds.
     public TimeSpan RemainingRound => Volatile.Read(ref startTimestamp) is var stamp && stamp != 0
         ? TimeSpan.FromMilliseconds(TraversalLimits.SoRoundMs) - Stopwatch.GetElapsedTime(stamp) : TimeSpan.Zero;
-    public bool Exited {
-        get {
-            if (Volatile.Read(ref childExited) != 0 || process == null) return true;
-            try { return process.HasExited; }
-            catch (InvalidOperationException) when (Volatile.Read(ref childExited) != 0) { return true; }
-        }
-    }
+    // Read on every datagram (sometimes several times). ChildJob enables exit
+    // notifications, and Launch checks HasExited once after registering ours.
+    // Keep kernel process queries on startup/teardown, off the packet hot path.
+    public bool Exited => Volatile.Read(ref childExited) != 0 || process == null;
     public int ProcessId => childId;
     public event Action? ProcessExited;
 

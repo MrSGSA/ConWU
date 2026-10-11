@@ -78,6 +78,11 @@ static class CaptureBrokerPoc
                     }
                     await owners[0].DisposeAsync(); leases[0].Dispose();
                     Check(!owners[0].Closed.IsCompleted && !leases[0].Closed, "retiring original owner cannot close live worker references");
+                    var exitClock = Stopwatch.StartNew();
+                    using (var child = Process.GetProcessById(paths[0].ProcessId)) { child.Kill(); await child.WaitForExitAsync(token); }
+                    await Until(() => paths[0].Failed, "exit notification invalidates path without querying the process per packet");
+                    double exitDetectedMs = exitClock.Elapsed.TotalMilliseconds;
+                    Check(exitDetectedMs < 250, "worker exit is detected within the 250 ms engineering target in this local case");
                     await paths[0].DisposeAsync(); await routers[1].DisposeAsync();
                     await Until(() => owners[0].Status.Sessions == 1, "one exited worker releases only its tuple");
                     Check(!paths[2].Failed && owners[0].Status.Sessions == 1 && !leases[0].Closed, "other active peer retains source capture and helper");
@@ -88,7 +93,7 @@ static class CaptureBrokerPoc
                     foreach (var lease in leases) lease.Dispose();
                     await Task.WhenAll(owners.Select(o => o.Closed));
                     Check(owners.All(o => o.Status is { Closed: true, Sessions: 0, Failure: "" }) && leases.All(l => l.Closed), "capture I/O joins before the final source reference is released");
-                    rows.Add(new { round, elapsedMs = timer.ElapsedMilliseconds, owners = owners.Select(o => o.Status).ToArray(), wirePackets = wire.Count });
+                    rows.Add(new { round, elapsedMs = timer.ElapsedMilliseconds, exitDetectedMs, owners = owners.Select(o => o.Status).ToArray(), wirePackets = wire.Count });
                     Console.WriteLine($"Broker {round}/{rounds} passed");
                 } finally {
                     foreach (var router in routers) await router.DisposeAsync(); foreach (var path in paths) await path.DisposeAsync();
