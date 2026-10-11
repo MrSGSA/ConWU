@@ -14,7 +14,7 @@
 | M6 质量/效率 | 选路、降级后恢复、双向健康及队列观测已接产品；新增受管 TCP/UDP 共用实际外层字节 pacing/成员公平队列；兼容入口 pacing、完整管线队列、AutoQuality 和完整指标待完成 | pacing 正式 Runner113通过，22正确性检查通过但性能Gate失败：50Mbps下单peer49.530、七peer48.876；非公网/八真机；此前双机质量负例保留 | 默认兼容入口不变；pacing默认0关闭、UDP降级独立许可、AutoQuality拒绝启用；现用部署未替换 |
 | M7 映射/IPv6 | PCP/NAT-PMP TCP/UDP、同 socket UDP IPv6 已接入；新增 ABI 2/broker-only 原生 FakeTCP IPv6、源所有权和正式 Runner；网关主动通知待完成 | 原生 IPv6 30轮690检查、Runner43、拒绝10组、基线65、UDP54、协议10项通过；真实TCP helper/C++/HTTPS，raw与IP适配器受控；公网/WinDivert/Wintun/无分片Gate仍待实测 | 映射、UDP及FakeTCP IPv6均默认关闭；须服务/双端/后端对应能力及物理地址；UDP另需独立许可；现用部署未替换 |
 | M8 安全/恢复 | 随各模块实现；升级候选与原Active所有者链；新增watch 403后下一预算轮询验证签名撤销 | 10月12日正式工厂/Runner/C++本地集成：360.13秒双端HTTPS中断，692包持续；STUN查询超时后持续；签名撤销5.28秒退出，10检查通过；watch34、基线65通过。raw/IP模拟，真实Wintun/网关/系统生命周期Gate待完成 | 撤销修复无需开关；已有发布包尚未重打；保留既有密码不变量 |
-| M9 包/真机/回滚 | 已生成0.5.0自包含开发候选、源码包、校验清单/状态/回滚说明；安装前清单检查加固 | 51隔离Windows检查及打包回归通过；本机/Akane实际候选EXE只读核验281文件；未做真实安装/冷启动/回滚/八真机Gate | 发布级别NotPassed；已放入Akane独立工作目录，原服务Running且注册路径未变 |
+| M9 包/真机/回滚 | 已刷新0.5.0自包含候选至f648059，包含新撤销/计账/预测观察；摘要必须绑定源码，旧包独立归档 | 10月12日完整打包回归通过；本机/Akane新包实际EXE只读核验281文件、ZIP哈希一致；未做真实安装/冷启动/回滚/八真机Gate | 51.75MiB开发候选，发布级别NotPassed；Akane新独立目录，原0.3.2服务Running且注册路径未变 |
 
 ## 本轮边界
 
@@ -77,3 +77,5 @@ ABI 2 原生 FakeTCP IPv6、捕获/校验和、双栈协商与受控 30 轮：[M
 原生SYN/HTTP/心跳全机计账、正式提名接线及受控负载：[M3 原生计账](m3-native-wire-budget-20261012.md)。
 
 条件预测、单调新鲜度、短窗口公网来源观察与仍待完成的产品协商：[M5 预测与短窗](m5-prediction-short-observer-20261012.md)。
+
+摘要源码绑定、完整重建、最新候选哈希与 Akane 只读校验：[M9 候选刷新](m9-candidate-refresh-20261012.md)。

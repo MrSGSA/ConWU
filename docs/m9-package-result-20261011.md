@@ -2,6 +2,8 @@
 
 源码 commit：`65e8310`。后续文档提交不改变该包的来源。发布等级为 **development-candidate / NotPassed**，不是完整 M0—M9 验收通过版。
 
+此记录为历史候选。原同名 ZIP、源码 ZIP、摘要和 preflight 已归档至 `artifacts/releases/history-65e8310/`，下文原文件名对应该归档；原 stage 和 Akane 目录保留。当前同名发布 ZIP 已由 [10 月 12 日刷新候选](m9-candidate-refresh-20261012.md) 替代，请按源码 commit/哈希区分。
+
 ## 本地产物
 
 - `artifacts/releases/StreamLink-0.5.0-win-x64-preview.zip`：54,251,821 字节，51.74 MiB。

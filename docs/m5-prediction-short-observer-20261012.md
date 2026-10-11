@@ -42,6 +42,8 @@ TCP 正式工厂把现有原生 SYN 观察转为预测资格报告，保存在�
 
 Local 验证入口和打包回归已加入预测模型、观察协议测试；本轮未重新执行整个 Local 验证或生成新的发布包。
 
+随后已完成同日候选重建，见 [M9 刷新记录](m9-candidate-refresh-20261012.md)；那次打包仍不是完整发布 Gate。
+
 ## Windows 物理出口到公网的短窗补测
 
 `m5-observer-public-20261012-020256.json` 使用 Thinkbook 物理源地址、已有 WinDivert 和服务器限时 Linux 观察进程。一次两目标短窗，共提交四个原生 SYN：已知普通 TCP 可达的目标取得 `SynObserved`，原高位对照目标 `NotObserved`。
