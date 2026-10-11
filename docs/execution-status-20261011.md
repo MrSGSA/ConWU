@@ -10,7 +10,7 @@
 | M2 原生 SO | 状态机及原生路径接入 Router；8 秒期限贯穿原生、认证与提名 | 既有模型/协议/双 Windows Router 记录；本次增两 Windows 各 1 轮真实 Wintun 功能贯通、各 10 个完整内层包，握手窗口 RST 0；公网 SO 超时、嵌套负载不达标 | 否，须显式受管候选 |
 | M3 协商/预算/正式接线 | 正式 Runner、两轻量/一原生、共享 broker/池、HTTP 共桶；新增每 pair 60 秒机会窗、每方法两轮、清理后立即换方法和兼容主动入口计账；兼容资源/原生包总账及完整迁移待完成 | 本次机会窗32、正式基线55、兼容44检查通过；排队也消耗原期限；仅 FakeTCP 首轮故障后第二轮8.647秒成功，4检查；此前30轮记录保留，均非公网/八真机证明 | 新模式有实验设置，默认兼容入口；现用部署未升级 |
 | M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网正例 Gate 待完成 | 既有本地记录；本次真实 Wintun 拒绝 1260 MTU 旧隧道负例；公网两次测试未得到认证包，未进入负载 | 仅显式实验开关，标记质量待验证 |
-| M5 观察/条件增强 | TCP 同源 SYN 观察协议、成员认证票据、Linux 有界捕获、正式后台诊断与设置已接入；预测/概率增强未完成 | 本地193检查、最终 Linux 回环195检查、Runner55回归；Windows真实物理出口单轮6 SYN，两公网端口均未观察到；不推断 NAT/QoS，公网正例未通过 | TCP 映射诊断默认关闭，需受管 TCP + 服务器能力；现用部署未替换 |
+| M5 观察/条件增强 | TCP 同源 SYN 观察协议、成员认证票据、Linux 有界捕获、正式后台诊断与设置已接入；预测/概率增强未完成 | 本地193、Linux回环195、Runner55记录保留；10月12日物理WinDivert→公网已知可达端口取得SynObserved，实际公网源端口不同于同资源TCP STUN；另一高位端口仍未观察到；SO/业务/完整NAT分类均未验证 | TCP 映射诊断默认关闭，需受管 TCP + 服务器能力；现用部署未替换 |
 | M6 质量/效率 | 选路、降级后恢复、双向健康及队列观测已接产品；新增受管 TCP/UDP 共用实际外层字节 pacing/成员公平队列；兼容入口 pacing、完整管线队列、AutoQuality 和完整指标待完成 | pacing 正式 Runner113通过，22正确性检查通过但性能Gate失败：50Mbps下单peer49.530、七peer48.876；非公网/八真机；此前双机质量负例保留 | 默认兼容入口不变；pacing默认0关闭、UDP降级独立许可、AutoQuality拒绝启用；现用部署未替换 |
 | M7 映射/IPv6 | PCP/NAT-PMP TCP/UDP、同 socket UDP IPv6 已接入；新增 ABI 2/broker-only 原生 FakeTCP IPv6、源所有权和正式 Runner；网关主动通知待完成 | 原生 IPv6 30轮690检查、Runner43、拒绝10组、基线65、UDP54、协议10项通过；真实TCP helper/C++/HTTPS，raw与IP适配器受控；公网/WinDivert/Wintun/无分片Gate仍待实测 | 映射、UDP及FakeTCP IPv6均默认关闭；须服务/双端/后端对应能力及物理地址；UDP另需独立许可；现用部署未替换 |
 | M8 安全/恢复 | 随各模块实现；新增升级候选与原 Active 的所有者链及延迟释放 | 本次局部验证升级激活失败、旧路径持续、成功退役和 Runner 退出；其余生命周期 Gate 未完成 | 保留既有不变量 |
@@ -57,6 +57,8 @@ UDP 降级后的后台升级、混合版本能力、冷却与旧资源保留：[
 前台方法切换、共同机会窗、原生第二轮恢复与排队期限：[M3/M6 调度改进](m3-pair-opportunity-20261011.md)。
 
 TCP 同源观察、成员票据、Linux 捕获及公网负例：[M5 观察接线](m5-tcp-syn-observer-20261011.md)。
+
+已知可达目标端口的真实公网 SYN 观察与同资源映射差异：[M5 公网补测](m5-public-observer-followup-20261012.md)。
 
 PCP/NAT-PMP 生命周期、TCP 后备入口及映射失效保留监听：[M7 Provider 接入](m7-port-control-20261011.md)。
 

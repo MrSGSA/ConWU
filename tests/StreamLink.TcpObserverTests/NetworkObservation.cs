@@ -12,10 +12,16 @@ static class NetworkObservation
     sealed record Config(string Service, string Pin);
     public static async Task Serve(string[] args)
     {
-        if (args.Length != 3) throw new ArgumentException("--serve-syn local-public-ip config-output");
+        if (args.Length is not (3 or 5)) throw new ArgumentException("--serve-syn local-public-ip config-output [port-a port-b]");
         var address = IPAddress.Parse(args[1]);
         if (!NetworkInterface.GetAllNetworkInterfaces().Any(n => n.GetIPProperties().UnicastAddresses.Any(a => a.Address.Equals(address)))) throw new ArgumentException("Observer address must belong to a local interface");
-        TcpObserverPoint[] points = [new("wan-a", new IPEndPoint(address, 47221).ToString()), new("wan-b", new IPEndPoint(address, 47222).ToString())];
+        int firstPort = args.Length == 5 ? int.Parse(args[3]) : 47221;
+        int secondPort = args.Length == 5 ? int.Parse(args[4]) : 47222;
+        if (firstPort is < 1024 or > 65535 || secondPort is < 1024 or > 65535 || firstPort == secondPort) throw new ArgumentException("Two distinct observation ports in 1024..65535 required");
+        // Passive header observation only: this does not bind either TCP port or
+        // change the listener/firewall. A known reachable port is a useful
+        // control when an unused high port produces no public observations.
+        TcpObserverPoint[] points = [new("wan-a", new IPEndPoint(address, firstPort).ToString()), new("wan-b", new IPEndPoint(address, secondPort).ToString())];
         var observer = new TcpSynObserver(points); await using var capture = new LinuxSynCapture(observer, points);
         using var rsa = RSA.Create(2048); var req = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
         var san = new SubjectAlternativeNameBuilder(); san.AddIpAddress(IPAddress.Loopback); req.CertificateExtensions.Add(san.Build());
