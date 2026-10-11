@@ -9,6 +9,8 @@ if (args is ["--managed", var binary, "--output", var reportPath])
     return await ManagedProtocolPoc.Run(Path.GetFullPath(binary), Path.GetFullPath(reportPath));
 if (args is ["--network", var networkConfig]) return await NetworkPoc.Run(networkConfig);
 if (args is ["--reject-attach", var nativeBinary, "--output", var negativeOutput]) return await AttachRejectionPoc.Run(Path.GetFullPath(nativeBinary), Path.GetFullPath(negativeOutput));
+if (args is ["--so-protocol", var soBinary, "--output", var soOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(soBinary), Path.GetFullPath(soOutput), true);
+if (args is ["--so-matrix", var matrixBinary, "--output", var matrixOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(matrixBinary), Path.GetFullPath(matrixOutput), true, true);
 
 // A separate process attempts a conflicting bind with SO_REUSEADDR. This is
 // deliberately loopback-only and targets only a socket owned by this test run.

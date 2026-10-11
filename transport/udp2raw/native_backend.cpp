@@ -4,6 +4,7 @@
 #include "misc.h"
 #include "native_backend.h"
 #include "native_attach.h"
+#include "native_so.h"
 #include <atomic>
 #include <thread>
 #include "windivert.h"
@@ -93,7 +94,10 @@ void capture() {
         int received = recv(test_socket, packet, sizeof(packet), 0);
         if (received == SOCKET_ERROR) {
             const auto error = WSAGetLastError();
-            if (error == WSAETIMEDOUT) continue;
+            // A test peer may not have bound its UDP carriage yet (SO starts
+            // both directions). ICMP port-unreachable models a dropped packet,
+            // not a WinDivert receive failure. Production branch is unchanged.
+            if (error == WSAETIMEDOUT || error == WSAECONNRESET) continue;
             if (!stopping.load()) reader_error.store(error);
             ev_async_send(g_default_loop, &async_watcher);
             break;
@@ -269,6 +273,7 @@ void native_drain_packets(conn_info_t *client) {
         pthread_mutex_unlock(&queue_mutex);
         g_packet_buf_len = length;
         g_packet_buf_cnt = 1;
+        if (native_so_receive()) continue;
         if (client) client_on_raw_recv(*client);
         else server_on_raw_recv_multi();
         assert(g_packet_buf_cnt == 0);

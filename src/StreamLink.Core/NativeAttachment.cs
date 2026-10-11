@@ -35,7 +35,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
 
-    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server)
+    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen)
     {
         if (peer.AddressFamily != AddressFamily.InterNetwork || peer.Equals(lease.Reflector) || peer.Equals(lease.Local))
             throw new ArgumentException("Native peer and helper must be distinct IPv4 tuples");
@@ -52,7 +52,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             reference.AttachId.TryWriteBytes(identity.AsSpan(16)); lease.Id.TryWriteBytes(identity.AsSpan(32));
             generation.TryWriteBytes(identity.AsSpan(48));
             Endpoint(identity, 64, lease.Local); Endpoint(identity, 70, lease.Reflector); Endpoint(identity, 76, peer);
-            identity[82] = (byte)(server ? 2 : 1); identity[83] = 1; // legacy HTTP data profile
+            identity[82] = (byte)(server ? 2 : 1); identity[83] = (byte)(simultaneousOpen ? 2 : 1); // same HTTP data profile
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(84), 10000);
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(88), 1); // immutable capture descriptor
         } catch { reference.Dispose(); job?.Dispose(); throw; }
@@ -67,9 +67,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public static async Task<NativeAttachment> Launch(TcpEndpointLease lease, Guid generation,
         string executable, IEnumerable<string> arguments, IPEndPoint peer, bool server,
         string? logPath, CancellationToken token, IDictionary<string, string>? environment = null,
-        IEnumerable<string>? secrets = null)
+        IEnumerable<string>? secrets = null, bool simultaneousOpen = false)
     {
-        var owner = new NativeAttachment(lease, generation, peer, server);
+        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen);
         try {
             owner.process = owner.job.Start(executable, arguments.Concat(["--managed-pipe", owner.PipeName]), logPath, environment, secrets);
             owner.process.Exited += (_, _) => { owner.reference.Dispose(); owner.ProcessExited?.Invoke(); };

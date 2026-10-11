@@ -5,6 +5,7 @@
 #include "fd_manager.h"
 #include "native_backend.h"
 #include "native_attach.h"
+#include "native_so.h"
 #include <memory>
 
 int server_on_timer_multi(conn_info_t &);
@@ -25,6 +26,7 @@ void raw_ready(struct ev_loop *, ev_async *, int) {
 }
 
 void tick(struct ev_loop *, ev_timer *, int) {
+    native_so_server_tick();
     conn_manager.clear_inactive();
     for (auto &entry : conn_manager.mp) {
         auto &connection = *entry.second;

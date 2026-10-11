@@ -9,6 +9,7 @@
 #ifdef UDP2RAW_NATIVE
 #include "native_backend.h"
 #include "native_attach.h"
+#include "native_so.h"
 #endif
 
 #ifdef UDP2RAW_MP
@@ -25,6 +26,9 @@ extern int pcap_captured_full_len;
 
 int client_on_timer(conn_info_t &conn_info)  // for client. called when a timer is ready in epoll
 {
+#ifdef UDP2RAW_NATIVE
+    if (!native_so_client_gate(conn_info)) return 0;
+#endif
     packet_info_t &send_info = conn_info.raw_info.send_info;
     packet_info_t &recv_info = conn_info.raw_info.recv_info;
     raw_info_t &raw_info = conn_info.raw_info;
@@ -880,6 +884,9 @@ int client_event_loop() {
     ev_async_start(loop, &async_watcher);
 
     init_raw_socket();  // must be put after dev detection
+#ifdef UDP2RAW_NATIVE
+    if (native_attachment_so()) init_filter(source_port);
+#endif
 #endif
 
     // set_timer(epollfd,timer_fd);

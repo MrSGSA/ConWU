@@ -13,7 +13,7 @@ set(SOURCES
   ${U}/encrypt.cpp ${U}/log.cpp ${U}/my_ev.cpp
   ${U}/lib/md5.cpp ${U}/lib/pbkdf2-sha1.cpp ${U}/lib/pbkdf2-sha256.cpp
   ${U}/lib/aes_faster_c/aes.cpp ${U}/lib/aes_faster_c/wrapper.cpp
-  ${U}/native_backend.cpp ${U}/native_server.cpp ${U}/native_attach.cpp)
+  ${U}/native_backend.cpp ${U}/native_server.cpp ${U}/native_attach.cpp ${U}/native_so.cpp)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/git_version.h"
   "const char *gitversion = \"c4995ea+streamlink-native-experimental\";\n")
 function(native_target name)
@@ -31,6 +31,10 @@ native_target(udp2raw-native)
 native_target(udp2raw-protocol-test)
 target_compile_definitions(udp2raw-protocol-test PRIVATE UDP2RAW_TEST_IO)
 enable_testing()
+add_executable(native-so-state-test tests/native_so_state_test.cpp)
+target_include_directories(native-so-state-test PRIVATE ${U})
+target_link_options(native-so-state-test PRIVATE -static)
+add_test(NAME native-so-state COMMAND native-so-state-test)
 add_library(streamlink-tun SHARED transport/tun/adapter.cpp)
 set_target_properties(streamlink-tun PROPERTIES PREFIX "")
 target_include_directories(streamlink-tun PRIVATE third-party/wintun)
