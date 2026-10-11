@@ -47,6 +47,11 @@ public sealed class MeshRunner
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
         using var discovery = services.Discovery(mesh);
+        var requestBudget = new MeshRequestBudget();
+        Task<IMeshCandidateFactory?>? gatheringFactory = null;
+        IMeshCandidateFactory? factory = null;
+        MeshTraversalManager? traversal = null;
+        MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
@@ -67,16 +72,25 @@ public sealed class MeshRunner
             if (lastWarning == 0 || Environment.TickCount64 - lastWarning >= 30000) { log("协调服务暂不可用，已有直连继续运行：" + ex.Message); lastWarning = Environment.TickCount64; }
         }
         try {
+            gatheringFactory = services.Candidates(profile, folder, log, stop);
             timeline.Mark("原生网络开始启动");
             report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口"));
             opening = services.Adapter(mesh);
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
+                if (gatheringFactory?.IsCompleted == true) {
+                    try { factory = await gatheringFactory; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("新增打洞能力暂不可用：" + ex.Message); }
+                    gatheringFactory = null;
+                }
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
                     try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId); } catch { adapter.Dispose(); throw; }
                     services.Record(folder, rule); quality = services.QualityServer(mesh.LocalIp, QualityKey, stop);
                     timeline.Mark("原生虚拟网卡就绪");
+                }
+                if (traversal == null && router != null && factory != null && discovery is IMeshTraversalDiscovery controlDiscovery) {
+                    traversal = new(mesh, router, controlDiscovery, factory, requestBudget, log, stop);
+                    traversal.Receive(pendingControl); pendingControl = []; lastPublish = 0;
                 }
                 if (router?.Completion.IsCompleted == true) await router.Completion;
                 if (quality?.IsCompleted == true) { await quality; throw new IOException("质量服务停止"); }
@@ -135,31 +149,32 @@ public sealed class MeshRunner
                                     revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
                                 } catch (Exception ex) when (ex is CryptographicException or FormatException) { log("已拒绝无效成员公告"); }
                             }
+                            if (traversal != null) traversal.Receive(snapshot.Traversal); else pendingControl = snapshot.Traversal ?? [];
                         }
                     } catch (Exception ex) when (!stop.IsCancellationRequested && ex is not MeshRevokedException) {
                         Warning(ex); nextRead = now + Math.Min(30000, 2500L << Math.Min(++readFailures, 4));
                     }
                     reading = null;
                 }
-                if (saving == null && mesh.IsOwner && mesh.Directory is {} directory && savedDirectory < directory.Revision && now >= nextSave) {
+                if (saving == null && mesh.IsOwner && mesh.Directory is {} directory && savedDirectory < directory.Revision && now >= nextSave && (traversal == null || requestBudget.Take())) {
                     savingRevision = directory.Revision; saving = discovery.SaveDirectory(directory, stop); nextSave = now + 5000;
                 }
                 var statuses = router?.Status() ?? [];
                 bool allConnected = statuses.Length > 0 && statuses.All(p => p.Connected);
-                if (reading == null && now >= nextRead) {
+                if (reading == null && now >= nextRead && (traversal == null || requestBudget.Take(priority: true))) {
                     bool watching = discovery is IMeshChangeDiscovery { SupportsLongPolling: true };
                     reading = watching ? ((IMeshChangeDiscovery)discovery).WaitForChanges(stop) : discovery.Read(stop);
-                    // Even a busy event feed cannot issue more requests than the
-                    // former disconnected polling schedule. Idle waits hold 25s.
-                    nextRead = now + (watching ? 2500 : allConnected ? 5000 : 2500);
+                    // Negotiated traversal uses the shared request bucket, so
+                    // Ready/Start need not wait 2.5s. Idle waits still hold 25s.
+                    nextRead = now + (watching && traversal != null ? 100 : watching ? 2500 : allConnected ? 5000 : 2500);
                 }
                 string candidate = Candidate();
-                if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000))) {
+                if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
-                    publishing = discovery.Publish(new(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName), stop);
+                    publishing = discovery.Publish(new(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities), stop);
                 }
-                // 8 members * (24 reads + <=24 writes)/minute, plus <=12 directory
-                // writes by the owner, stays below the server's 512/minute budget.
+                // Negotiated mode shares 40 requests/minute across these HTTP
+                // operations and traversal states. Legacy keeps its old cadence.
                 if (router == null) { await Task.Delay(100, stop); continue; }
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                 string remoteAddresses = string.Join(',', members.Select(m => MeshIdentity.Address(mesh.Pair.Network, m.Slot)));
@@ -167,7 +182,12 @@ public sealed class MeshRunner
                     services.Firewall(rule, mesh.LocalIp, remoteAddresses); firewallMembers = remoteAddresses;
                 }
                 foreach (int slot in clients.Keys.Where(s => !members.Any(m => m.Slot == s)).ToArray()) { clients[slot].Dispose(); clients.Remove(slot); announcements.Remove(slot); }
+                traversal?.Tick(announcements, candidate);
                 foreach (var member in members) {
+                    if (traversal?.Owns(member.Slot) == true) {
+                        if (clients.Remove(member.Slot, out var obsolete)) obsolete.Dispose();
+                        continue;
+                    }
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
                     if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router, ep => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel)), log);
@@ -182,6 +202,8 @@ public sealed class MeshRunner
             }
         } finally {
             cancellation.Cancel();
+            if (gatheringFactory != null) try { await gatheringFactory; } catch { }
+            if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { log("打洞调度退出：" + ex.Message); }
             if (probe != null) { try { mapping = await probe; } catch { } }
             if (opening != null) { try { (await opening).Dispose(); } catch { } }
             foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if (ex is not OperationCanceledException) log("退出任务：" + ex.Message); } }

@@ -1,0 +1,124 @@
+using System.Buffers.Binary;
+using System.Collections.Concurrent;
+using System.Diagnostics;
+using System.Net;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
+using StreamLink.Core;
+using StreamLink.Discovery;
+using StreamLink.EndpointPoc;
+using StreamLink.Service;
+
+if (args.Length != 6 || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json");
+string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
+string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
+Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20)); var token = deadline.Token;
+var rows = new List<object>(); int checks = 0;
+void Check(bool b, string why) { if (!b) throw new Exception(why); checks++; Console.WriteLine("PASS " + why); }
+using var rsa = RSA.Create(2048); var request = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+var san = new SubjectAlternativeNameBuilder(); san.AddIpAddress(IPAddress.Loopback); request.CertificateExtensions.Add(san.Build());
+using var generated = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddHours(1));
+using var certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx), null);
+var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders();
+builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0, l => l.UseHttps(certificate)));
+await using var app = builder.Build(); Directory.CreateDirectory(Path.Combine(root, "registry")); var online = new MeshRegistry(Path.Combine(root, "registry"));
+bool controlOffline = false;
+app.Use(async (context, next) => { if (controlOffline) { context.Response.StatusCode = 503; return; } await next(); });
+app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest r) => online.Watch(c, network, r));
+app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch r) => online.Traversal(c, network, r));
+app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => online.Read(c, network));
+app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory d) => online.Directory(c, network, d));
+app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope e) => online.Publish(c, network, slot, e));
+await app.StartAsync(token);
+string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
+try {
+    await AdmissionTests.Run(binary, root, Check, token);
+    foreach (var kind in new[] { TraversalProfile.UdpDirect, TraversalProfile.FakeTcpHttpSo }) for (int round = 1; round <= rounds; round++) {
+        var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
+        await using var reflector = new Reflector { Silent = false }; await using var proxy = new RawProtocolProxy(0, 0); proxy.Begin();
+        var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
+        var factories = new[] { new Factory(a, kind, binary, root, reflector, proxy), new Factory(b, kind, binary, root, reflector, proxy) };
+        using var runningStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var logs = new ConcurrentQueue<string>(); int legacyCalls = 0;
+        MeshRuntimeServices Services(int i) => new(
+            mesh => new MeshDiscoveryClient(mesh), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
+            async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); },
+            _ => { Interlocked.Increment(ref legacyCalls); throw new IOException("no explicit entry in this fixture"); },
+            (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "sessions")) {
+                Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
+            };
+        var runners = new[] { new MeshRunner(new() { Mesh = a, TraversalMode = "tcp-udp" }, s => logs.Enqueue("A " + s), s => states[0] = s, _ => { }, _ => { }, Services(0)),
+            new MeshRunner(new() { Mesh = b, TraversalMode = "tcp-udp" }, s => logs.Enqueue("B " + s), s => states[1] = s, _ => { }, _ => { }, Services(1)) };
+        var clock = Stopwatch.StartNew(); var tasks = runners.Select(r => r.Run(runningStop.Token)).ToArray();
+        try {
+            while (!states.All(s => s?.Connected == true)) {
+                foreach (var task in tasks) if (task.IsCompleted) await task;
+                if (clock.ElapsedMilliseconds > 25000) throw new TimeoutException(string.Join('\n', logs));
+                await Task.Delay(25, token);
+            }
+            long selectedMs = clock.ElapsedMilliseconds;
+            Check(legacyCalls == 0 && factories.All(f => f.Gathers == 1 && f.Prepared == 1), $"{kind} round {round}: production MeshRunner automatically negotiates and owns one actual endpoint per peer");
+            if (round == 1) { controlOffline = true; await Task.Delay(9000, token); }
+            adapters[0].Outgoing.Add(Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(Packet(b.LocalIp, a.LocalIp));
+            var data = Stopwatch.StartNew();
+            while (adapters.Any(x => x.Incoming.Count != 1)) { if (data.ElapsedMilliseconds > 1800) throw new TimeoutException("actual Runner business data missing"); await Task.Delay(10, token); }
+            Check(states.All(s => s?.Connected == true), "full-MTU encrypted bidirectional business survives the original Attempt deadline and control outage");
+            rows.Add(new { kind, round, selectedMs, automaticRunner = true, realHttps = true, realSocket = true, nativeTestBackend = kind == TraversalProfile.FakeTcpHttpSo, realNat = false, wintun = false });
+        } finally {
+            controlOffline = false; runningStop.Cancel();
+            foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(8)); } catch (OperationCanceledException) { }
+            Check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed), "Runner shutdown closes the final endpoint references and adapter");
+        }
+    }
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices" }, new JsonSerializerOptions { WriteIndented = true }));
+} catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() }, new JsonSerializerOptions { WriteIndented = true })); throw; }
+finally { await app.StopAsync(); }
+
+static byte[] Packet(string from, string to) {
+    byte[] p = new byte[1280]; p[0] = 0x45; p[8] = 64; p[9] = 17; BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(2), 1280);
+    IPAddress.Parse(from).GetAddressBytes().CopyTo(p, 12); IPAddress.Parse(to).GetAddressBytes().CopyTo(p, 16);
+    uint sum = 0; for (int i = 0; i < 20; i += 2) sum += BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(i)); while (sum > 65535) sum = (sum & 65535) + (sum >> 16);
+    BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(10), (ushort)~sum); return p;
+}
+sealed class Adapter : IPacketAdapter {
+    public readonly BlockingCollection<byte[]> Outgoing = new(); public readonly ConcurrentQueue<byte[]> Incoming = new(); public bool Disposed;
+    public int Read(byte[] buffer) { if (!Outgoing.TryTake(out var packet, 30)) return 0; packet.CopyTo(buffer, 0); return packet.Length; }
+    public bool Write(byte[] p) { Incoming.Enqueue(p); return true; }
+    public void Dispose() { Disposed = true; Outgoing.Dispose(); }
+}
+sealed class Factory(MeshProfile mesh, TraversalProfile kind, string binary, string folder, Reflector reflector, RawProtocolProxy proxy) : IMeshCandidateFactory {
+    readonly Guid generation = Guid.NewGuid(); readonly TraversalResources budget = new();
+    readonly MeshProfile local = mesh; readonly string exe = binary, root = folder; readonly RawProtocolProxy wire = proxy;
+    public int Gathers, Prepared; public TcpEndpointLease? Tcp; public UdpTraversal? Udp;
+    public bool Closed => (Tcp?.Closed ?? true) && (Udp?.Closed ?? true);
+    public TraversalProfile[] Profiles => [kind];
+    public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token) {
+        Gathers++; IPEndPoint endpoint;
+        if (kind == TraversalProfile.UdpDirect) {
+            byte[] shared = MeshIdentity.SharedKey(local, peer);
+            try { Udp = UdpTraversal.Create(new(IPAddress.Loopback, 0), generation, attempt, local.Self.Slot, peer.Slot, shared, budget); } finally { CryptographicOperations.ZeroMemory(shared); }
+            endpoint = Udp.Local;
+        } else {
+            Tcp = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, token);
+            using var query = Tcp.AcquireAttempt(generation); endpoint = (await query.Observe(token)).Public;
+        }
+        long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        return new Resource(this, peer, new(Guid.NewGuid(), 1, endpoint.ToString(), null, now, now + 120, CandidatePurpose.Host));
+    }
+    sealed class Resource(Factory owner, MeshMember peer, MeshTraversalCandidate candidate) : IMeshCandidateResource {
+        bool transferred;
+        public MeshTraversalCandidate Candidate => candidate;
+        public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext context, IPEndPoint remote, CancellationToken token) {
+            owner.Prepared++;
+            if (owner.Udp != null) { var result = owner.Udp.PreparePath(context, owner.generation, remote); transferred = true; return result; }
+            byte[] shared = MeshIdentity.SharedKey(owner.local, peer);
+            try {
+                return await NativeDatagramPath.Prepare(owner.exe, owner.root, owner.Tcp!, owner.generation, context, remote, shared, token, owner.budget,
+                    new Dictionary<string,string> { ["STREAMLINK_TEST_BIND"] = "0", ["STREAMLINK_TEST_PEER"] = (context.ProtocolClient ? owner.wire.ClientPort : owner.wire.ServerPort).ToString(), ["STREAMLINK_TEST_HELLO"] = owner.wire.RegistrationToken });
+            } finally { CryptographicOperations.ZeroMemory(shared); }
+        }
+        public async ValueTask DisposeAsync() { owner.Tcp?.Dispose(); if (!transferred && owner.Udp != null) await owner.Udp.DisposeAsync(); }
+    }
+}

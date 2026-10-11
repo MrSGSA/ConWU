@@ -84,6 +84,22 @@ await using (var reflector = new Reflector { Silent = true }) {
     Rejected(() => attempt.RetainPath(generation), "Failed stream cannot be retained as a path");
 }
 string output = Path.GetFullPath(args[1]); Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+await using (var reflector = new Reflector()) {
+    var held = new List<TcpEndpointLease>(); var kept = new List<TcpEndpointLease.Reference>(); Guid generation = Guid.NewGuid();
+    try {
+        for (int i = 0; i < TraversalLimits.TcpResources; i++) {
+            var owner = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, deadline.Token);
+            held.Add(owner); kept.Add(owner.AcquireAttempt(generation)); owner.Dispose();
+        }
+        bool full = false;
+        try { using var ninth = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, deadline.Token); }
+        catch (IOException) { full = true; }
+        Check(full && held.All(p => !p.Closed), "All eight retained TCP endpoints count toward the machine quota after owner retirement");
+        kept[0].Dispose(); Check(held[0].Closed, "Last reference releases exactly one TCP quota entry");
+        using var replacement = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, deadline.Token);
+        Check(!replacement.Closed, "New endpoint can use the released machine slot");
+    } finally { foreach (var p in kept) p.Dispose(); foreach (var p in held) p.Dispose(); }
+}
 var report = new { scope = "Windows loopback kernel-TCP resource lifecycle only; NOT WinDivert/FakeTCP coexistence or NAT success", rounds = rows.Count, checks,
     nativeRawAttached = false, captureOwnershipTested = false, rstLeakageTested = false, natClassified = false, publicNetworkUsed = false, rows };
 await File.WriteAllTextAsync(output, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));

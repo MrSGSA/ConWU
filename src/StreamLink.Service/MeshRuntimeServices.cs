@@ -2,6 +2,7 @@ using System.Net;
 using StreamLink.Core;
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshConnectionTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshRunnerTraversalTests")]
 
 namespace StreamLink.Service;
 
@@ -19,6 +20,8 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
+    public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
+        (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
     public static MeshRuntimeServices Default => new(
         mesh => new MeshDiscoveryClient(mesh),
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),

@@ -27,6 +27,7 @@ try {
  Invoke-Check 'protocol-profile' 'py' @('-3','tests\protocol_loopback.py','--output',(Join-Path $OutputDirectory 'protocol.json'))
  Invoke-Check 'mesh-watch' 'dotnet' @('run','--project','tests\StreamLink.MeshWatchTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'watch.json'))
  Invoke-Check 'mesh-traversal-control' 'dotnet' @('run','--project','tests\StreamLink.MeshTraversalTests','-c','Release','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--output',(Join-Path $OutputDirectory 'traversal-control.json'))
+ Invoke-Check 'mesh-runner-traversal' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','30','--output',(Join-Path $OutputDirectory 'runner-traversal.json'))
  Invoke-Check 'mesh-nomination-model' 'dotnet' @('run','--project','tests\StreamLink.NominationTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'nomination-model.json'))
  Invoke-Check 'mesh-connections' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release')
  Invoke-Check 'mesh-regression' 'dotnet' @('run','--project','tests\StreamLink.MeshTests','-c','Release')
@@ -37,7 +38,7 @@ try {
  $hashes=@('out\native\udp2raw-native.exe','out\native\udp2raw-protocol-test.exe') | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object {
    [pscustomobject]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}
  }
- $status=if($results.Count -eq 15 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
+ $status=if($results.Count -eq 16 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
  [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
    gate='Local only: no driver, no NAT, no release claim';remainingGates=@('M1 controlled two-Windows 30 rounds and WAN','M2 SO + business','M3 product integration','M4 Wintun UDP_DIRECT','M5-M9')} |
    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json')

@@ -11,6 +11,8 @@ namespace StreamLink.Core;
 // authenticated coordinator may decide to retain a path; this class does not.
 public sealed class TcpEndpointLease : IDisposable
 {
+    static readonly TraversalResources sockets = new(TraversalLimits.TcpResources);
+    readonly IDisposable quota;
     readonly object gate = new();
     readonly Socket socket;
     readonly NetworkStream stream;
@@ -26,8 +28,9 @@ public sealed class TcpEndpointLease : IDisposable
     public bool Closed { get { lock (gate) return disposed; } }
     public bool QueryUsable { get { lock (gate) return !faulted && !disposed; } }
     public int ReferenceCount { get { lock (gate) return references; } }
-    TcpEndpointLease(Socket socket, IPEndPoint reflector, Guid generation)
+    TcpEndpointLease(Socket socket, IPEndPoint reflector, Guid generation, IDisposable quota)
     {
+        this.quota = quota;
         this.socket = socket; stream = new(socket, false);
         local = (IPEndPoint)socket.LocalEndPoint!; this.reflector = new(reflector.Address, reflector.Port); NetworkGeneration = generation;
     }
@@ -35,11 +38,12 @@ public sealed class TcpEndpointLease : IDisposable
     {
         if (local.AddressFamily != AddressFamily.InterNetwork || reflector.AddressFamily != AddressFamily.InterNetwork || generation == Guid.Empty)
             throw new ArgumentException("Explicit IPv4 endpoints and a network generation are required");
-        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
+        var quota = sockets.Acquire(); Socket? socket = null;
         try {
+            socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
             socket.Bind(local); await socket.ConnectAsync(reflector, token);
-            return new(socket, reflector, generation);
-        } catch { socket.Dispose(); throw; }
+            return new(socket, reflector, generation, quota);
+        } catch { socket?.Dispose(); quota.Dispose(); throw; }
     }
     public Reference AcquireAttempt(Guid expectedGeneration)
     {
@@ -76,7 +80,7 @@ public sealed class TcpEndpointLease : IDisposable
             if (--references != 0) return;
             disposed = true;
             // This closes the helper TCP flow, not a transferred raw session.
-            stream.Dispose(); socket.Dispose(); io.Dispose();
+            try { stream.Dispose(); socket.Dispose(); io.Dispose(); } finally { quota.Dispose(); }
         }
     }
     public void Dispose()

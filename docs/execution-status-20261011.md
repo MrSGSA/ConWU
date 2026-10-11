@@ -8,8 +8,8 @@
 | M0 契约与证据 | 最薄 DTO/失败码/统一参数已加入；完整事件接线继续 | Local 入口与独立产物 | 无新增能力 |
 | M1 native/Lease 共存 | Core Lease + ABI 1 单 peer 授权、捕获、撤销及 NativeDatagramPath 已实现；共享多 peer broker 未完成 | 两真实 Windows 经旧虚拟接口各 30 轮完整原生 SO/Router；RST 0、helper 未截流；受控 NAT/WAN Gate 待完成 | 否 |
 | M2 原生 SO | 状态机及原生路径接入 Router；8 秒期限贯穿原生、认证与提名 | 630 模型；180 轮 C++ 回环故障矩阵；另 30 轮 C++/Router 与两 Windows 各 30 轮 WinDivert/Router；真实 Wintun/WAN 待完成 | 否，须显式受管候选 |
-| M3 协商/预算/正式接线 | 认证 Offer/Ready/Start 控制 API 与 Attempt 已连接实际 native/Router；长轮询接入 Runner；端点收集、完整 Runner 自动调度、native broker 和全机准入待完成 | 新增 30 轮真实 HTTPS/C++/Router、240 检查；既有 Prepared、watch、Router、协议与提名回归 | 开发版自动协商 watch；现用服务未升级，新承载未默认启用 |
-| M4 UDP_DIRECT/PMTU | 获胜 socket 接入实际 Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Runner 自动协商、Wintun 与公网 PMTU Gate 待完成 | 30 真实回环 socket 对 + 60 NAT 模型对，实际 Router 双向 1280B；迁移/配额/发送压力补测 | 否，须显式受管候选 |
+| M3 协商/预算/正式接线 | 正式 Runner 已接收集器、Actor、自动协商、两轻量/一原生准入、HTTP 共用请求桶；broker、兼容资源/原生包总账和完整迁移待完成 | Runner 经真实 HTTPS 各 30 轮 TCP/UDP；准入与完整流程补测 20 检查；TCP 配额/生命周期 247 检查；旧连接 44 检查 | 新模式有实验设置，默认兼容入口；现用部署未升级 |
+| M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网 PMTU Gate 待完成 | 既有 30 真实回环 socket 对 + 60 NAT 模型对；另 Runner 自动建链 UDP 30/30，双向 1280B与清理 | 仅显式实验开关，标记质量待验证 |
 | M5 观察/条件增强 | 未完成 | 未执行 | 否 |
 | M6 质量/效率 | PreferFakeTcp 保护与有界 UDP 队列已接入新 Router；完整选路、pacing/指标待完成 | 健康 FakeTCP 拒绝 UDP 抢占；瞬态压力不重传/不销毁路径 | 保留既有 FakeTCP |
 | M7 映射/IPv6 | 未完成 | 未执行 | 否 |
@@ -39,3 +39,5 @@ M3 本次实现与测试边界：[准备与长轮询](m3-preparation-watch-20261
 原生 SO/HTTP 到受管 Router 的实际接入及两 Windows 验证：[原生路径记录](m3-native-router-20261011.md)。
 
 签名协调消息与实际 Attempt 接线：[HTTPS 协商记录](m3-control-coordination-20261011.md)。
+
+正式启动流程与收集器的实验接入：[Runner 接线与验收边界](m3-runner-traversal-20261011.md)。
