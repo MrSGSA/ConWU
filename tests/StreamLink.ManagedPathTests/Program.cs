@@ -13,9 +13,10 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+await PolicyTests.Run(Check);
 var a = MeshIdentity.Create("https://example.com/", "", "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
 var aa = new Adapter(); var ab = new Adapter();
-await using var ra = new MeshRouter(a, aa); await using var rb = new MeshRouter(b, ab);
+await using var ra = new MeshRouter(a, aa, selection: new(AllowUdpFallback: true)); await using var rb = new MeshRouter(b, ab, selection: new(AllowUdpFallback: true));
 TraversalAttemptContext Context() => new(a.Pair.Network, a.Self.Device, ra.BootId, b.Self.Device, rb.BootId, Guid.NewGuid(),
     Guid.NewGuid(), 1, Guid.NewGuid(), 1, TraversalProfile.FakeTcpHttpSo, true, true, Guid.NewGuid());
 TraversalAttemptContext Reverse(TraversalAttemptContext c) => c with { LocalNodeId = c.RemoteNodeId, LocalBootId = c.RemoteBootId,
@@ -43,16 +44,17 @@ Check(first.A.References == 1 && first.B.References == 1 && !first.A.Closed && !
 await Data(first.A);
 // Rejected registrations retain caller ownership. Actual tuple uniqueness is
 // checked across existing paths rather than trusting different logical IDs.
-foreach (string reason in new[] { "tuple", "revision", "boot", "capability", "quality" }) {
+foreach (string reason in new[] { "tuple", "revision", "boot", "capability", "quality", "mtu" }) {
     var c = Context(); if (reason == "quality") c = c with { Profile = TraversalProfile.UdpDirect };
     using var candidate = new Resource { Peer = first.B.Local }; var reference = candidate.Retain(c);
     if (reason == "tuple") reference.Identity = reference.Identity with { ActualLocal = first.RA.Identity.ActualLocal, ActualRemote = first.RA.Identity.ActualRemote };
     if (reason == "boot") c = c with { LocalBootId = Guid.NewGuid() };
+    if (reason == "mtu") reference.Identity = reference.Identity with { Qualification = PathQualification.Authenticated };
     bool refused = false;
     try { ra.RegisterPath(2, reference, c, reason == "revision" ? 1 : 2, TimeSpan.FromSeconds(5), reason == "capability" ? 0 : 1); }
     catch (IOException ex) { refused = reason switch {
         "tuple" => ex.Message.Contains("四元组"), "revision" => ex.Message.Contains("版本已过期"),
-        "quality" => ex.Message.Contains("策略"), _ => ex.Message.Contains("成员身份") }; }
+        "quality" => ex.Message.Contains("策略"), "mtu" => ex.Message.Contains("包长"), _ => ex.Message.Contains("成员身份") }; }
     Check(refused && candidate.References == 2 && !candidate.Closed, "registration rejects " + reason + " without stealing caller ownership");
     await reference.DisposeAsync();
 }

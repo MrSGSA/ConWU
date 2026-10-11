@@ -52,8 +52,8 @@ public sealed partial class MainWindow
         }
         foreach (var peer in peers) if (memberLabels.TryGetValue(peer.Slot, out var labels)) {
             labels.Name.Text = peer.Name + "  ·  " + peer.Ip;
-            labels.State.Text = (peer.Connected ? "● 已直连" : "○ " + peer.Detail) + (peer.Connected && peer.RttMs is { } rtt ? $"   {rtt:F1} ms" : "");
-            labels.State.ForeColor = peer.Connected ? Color.FromArgb(29, 139, 102) : Design.Muted;
+            labels.State.Text = (peer.Connected ? peer.Degraded ? "● UDP 降级直连" : "● 已直连" : "○ " + peer.Detail) + (peer.Connected && peer.RttMs is { } rtt ? $"   {rtt:F1} ms" : "");
+            labels.State.ForeColor = peer.Degraded ? Color.FromArgb(153, 102, 0) : peer.Connected ? Color.FromArgb(29, 139, 102) : Design.Muted;
         }
         var choices = peers.Where(p => p.Connected).Select(p => new PeerChoice(p.Slot, p.Name + " · " + p.Ip)).ToArray();
         if (!qualityPeer.Items.Cast<PeerChoice>().SequenceEqual(choices)) {

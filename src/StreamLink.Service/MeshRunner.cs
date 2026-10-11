@@ -40,7 +40,7 @@ public sealed class MeshRunner
     }
     public async Task Run(CancellationToken token)
     {
-        mesh.Validate();
+        profile.Validate(); mesh.Validate();
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
@@ -84,11 +84,11 @@ public sealed class MeshRunner
                 }
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
-                    try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId); } catch { adapter.Dispose(); throw; }
+                    try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
                     services.Record(folder, rule); quality = services.QualityServer(mesh.LocalIp, QualityKey, stop);
                     timeline.Mark("原生虚拟网卡就绪");
                 }
-                if (traversal == null && router != null && factory != null && discovery is IMeshTraversalDiscovery controlDiscovery) {
+                if (traversal == null && router != null && factory != null && factory.Profiles.Any(router.Selection.Allows) && discovery is IMeshTraversalDiscovery controlDiscovery) {
                     traversal = new(mesh, router, controlDiscovery, factory, requestBudget, log, stop);
                     traversal.Receive(pendingControl); pendingControl = []; lastPublish = 0;
                 }
@@ -195,7 +195,9 @@ public sealed class MeshRunner
                 }
                 if (now >= nextReport) {
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);
-                    report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs, $"{count}/{statuses.Length} 台设备直连 · 原生组网 · 业务不经中继", first?.Name ?? "", statuses));
+                    int degraded = statuses.Count(p => p.Degraded);
+                    report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
+                        $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses));
                     nextReport = now + 1000;
                 }
                 await Task.Delay(100, stop);

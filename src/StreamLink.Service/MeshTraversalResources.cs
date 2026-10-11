@@ -46,6 +46,7 @@ internal sealed class MeshCandidateFactory(DeviceProfile profile, string executa
     public TraversalProfile[] Profiles => profiles;
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
+        profile.Selection().Validate();
         if (profile.TraversalMode == "legacy") return null;
         var supported = new List<TraversalProfile>();
         bool broker = false;
@@ -66,7 +67,7 @@ internal sealed class MeshCandidateFactory(DeviceProfile profile, string executa
                     supported.Add(TraversalProfile.FakeTcpHttpSo);
             } finally { if (!process.HasExited) { process.Kill(); await process.WaitForExitAsync(); } }
         } catch (Exception ex) when (!token.IsCancellationRequested) { log("原生双主动暂未启用：" + ex.GetType().Name); }
-        if (profile.TraversalMode == "tcp-udp") supported.Add(TraversalProfile.UdpDirect);
+        if (profile.TraversalMode == "tcp-udp" && profile.Selection().Allows(TraversalProfile.UdpDirect)) supported.Add(TraversalProfile.UdpDirect);
         return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null)

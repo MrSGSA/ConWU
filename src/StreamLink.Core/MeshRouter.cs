@@ -5,7 +5,10 @@ using System.Diagnostics;
 
 namespace StreamLink.Core;
 
-public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0);
+public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0)
+{
+    public bool Degraded { get; init; }
+}
 
 // One adapter and one local UDP socket per node. The authenticated source slot
 // selects a peer; a member can only deliver packets to this node's own address.
@@ -36,9 +39,15 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public IPEndPoint LocalEndpoint => (IPEndPoint)socket.LocalEndPoint!;
     public Task Completion { get; }
     public Guid BootId { get; }
-    public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null)
+    public PathSelection Selection { get; }
+    public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null, PathSelection? selection = null)
     {
         if (bootId == Guid.Empty) { socket.Dispose(); throw new ArgumentException("Router 启动代次无效", nameof(bootId)); }
+        Selection = selection ?? new();
+        try {
+            Selection.Validate();
+            if (Selection.Policy == PathPolicy.FakeTcpOnly && profile.Pair.Mode != "faketcp") throw new FormatException("仅 FakeTCP 不能接入 UDP 兼容网络");
+        } catch { socket.Dispose(); throw; }
         BootId = bootId ?? Guid.NewGuid();
         this.profile = profile; this.adapter = adapter; local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
         socket.Bind(new IPEndPoint(IPAddress.Loopback, 0)); socket.SendBufferSize = socket.ReceiveBufferSize = 1 << 20; socket.SendTimeout = 100;
@@ -96,7 +105,12 @@ public sealed partial class MeshRouter : IAsyncDisposable
     }
     public MeshPeerStatus[] Status()
     {
-        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, Healthy(p) ? p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect ? "UDP 直连 · 质量待验证" : "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
+        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => {
+            bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
+            return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
+                p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
+                p.Sent, p.Received, p.Dropped) { Degraded = degraded };
+        }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
     {

@@ -5,24 +5,35 @@ namespace StreamLink;
 public sealed class SettingsWindow : Form
 {
     readonly DeviceProfile profile;
-    readonly ComboBox preference = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 240 };
-    readonly ComboBox traversal = new() { DropDownStyle = ComboBoxStyle.DropDownList, Width = 330 };
+    readonly ComboBox preference = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
+    readonly ComboBox traversal = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
+    readonly ComboBox selection = new() { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top };
+    readonly CheckBox udpFallback = new() { AutoSize = true, Text = "TCP 不可用时允许 UDP 降级直连（需启用实验 TCP + UDP）" };
     readonly TextBox tcp = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     readonly TextBox udp = new() { Multiline = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
     readonly TextBox manual = new() { Dock = DockStyle.Fill, PlaceholderText = "留空自动探测；也可填写 Lucky 公网 IPv4:端口" };
     readonly NumericUpDown source = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true)
     {
+        SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
-        Text = "连接偏好与 STUN"; Size = new(740, 700); StartPosition = FormStartPosition.CenterParent; Font = new("Microsoft YaHei UI", 9); AutoScaleMode = AutoScaleMode.Dpi;
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(18), ColumnCount = 1, RowCount = 12 }; Controls.Add(layout);
+        Text = "连接偏好与 STUN"; Size = new(740, 780); StartPosition = FormStartPosition.CenterParent; Font = new("Microsoft YaHei UI", 9);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(18), ColumnCount = 1, RowCount = 14 }; Controls.Add(layout);
+        layout.ColumnStyles.Add(new(SizeType.Percent, 100));
         preference.Items.AddRange(["自动选择可用入口", "优先本机提供入口", "优先对端提供入口"]); preference.SelectedIndex = profile.Preference == "local" ? 1 : profile.Preference == "peer" ? 2 : 0;
         layout.Controls.Add(preference); layout.Controls.Add(new Label { AutoSize = true, Text = "偏好决定谁提供入口，与应用流量方向无关；直连成功后记忆。" });
         traversal.Items.AddRange(["兼容入口（默认）", "原生 TCP 双主动（实验）", "原生 TCP + UDP 备用（实验）"]);
         traversal.SelectedIndex = profile.TraversalMode == "tcp" ? 1 : profile.TraversalMode == "tcp-udp" ? 2 : 0;
         layout.Controls.Add(traversal); layout.Controls.Add(new Label { AutoSize = true, Text = "实验打洞需新版协调服务及双方启用。保留有效 FakeTCP；UDP 直连质量需另测。" });
+        selection.Items.AddRange(["优先 FakeTCP（推荐）", "仅 FakeTCP（不使用 UDP 降级）"]);
+        selection.SelectedIndex = profile.PathSelection == "faketcp-only" ? 1 : 0;
+        selection.Enabled = supportsSelection;
+        udpFallback.Checked = profile.AllowUdpFallback; udpFallback.Enabled = supportsSelection && selection.SelectedIndex == 0;
+        if (!supportsSelection) udpFallback.Text = "当前后台不支持选路设置，请先更新后台组件。";
+        selection.SelectedIndexChanged += (_, _) => udpFallback.Enabled = supportsSelection && selection.SelectedIndex == 0;
+        layout.Controls.Add(selection); layout.Controls.Add(udpFallback);
         var ports = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill }; source.Value = profile.SourcePort; listen.Value = profile.ListenPort;
         ports.Controls.AddRange([new Label { Text = "探测源端口", AutoSize = true }, source, new Label { Text = "本机传输端口", AutoSize = true }, listen]); layout.Controls.Add(ports);
         manual.Text = profile.ManualEndpoint; layout.Controls.Add(manual);
@@ -36,8 +47,9 @@ public sealed class SettingsWindow : Form
         void Lists() { DeviceProfile.ValidateServers(Lines(tcp)); DeviceProfile.ValidateServers(Lines(udp)); }
         import.Click += (_, _) => { using var dialog = new OpenFileDialog { Filter = "STUN 列表|*.json" }; if (dialog.ShowDialog(this) != DialogResult.OK) return; try { var data = JsonSerializer.Deserialize<StunLists>(File.ReadAllText(dialog.FileName))!; DeviceProfile.ValidateServers(data.Tcp); DeviceProfile.ValidateServers(data.Udp); tcp.Lines = data.Tcp; udp.Lines = data.Udp; } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         export.Click += (_, _) => { try { Lists(); using var dialog = new SaveFileDialog { Filter = "STUN 列表|*.json", FileName = "streamlink-stun.json" }; if (dialog.ShowDialog(this) == DialogResult.OK) File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(new StunLists(Lines(tcp), Lines(udp)), new JsonSerializerOptions { WriteIndented = true })); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
-        save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
-        for (int i = 0; i < 12; i++) layout.RowStyles.Add(new RowStyle(i == 7 || i == 9 ? SizeType.Percent : SizeType.AutoSize, i == 7 || i == 9 ? 50 : 0));
+        save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.PathSelection = selection.SelectedIndex == 1 ? "faketcp-only" : "prefer-faketcp"; profile.AllowUdpFallback = udpFallback.Checked; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
+        for (int i = 0; i < 14; i++) layout.RowStyles.Add(new RowStyle(i == 9 || i == 11 ? SizeType.Percent : SizeType.AutoSize, i == 9 || i == 11 ? 50 : 0));
+        AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
     }
     sealed record StunLists(string[] Tcp, string[] Udp);
 }

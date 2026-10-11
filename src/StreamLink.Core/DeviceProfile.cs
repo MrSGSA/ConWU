@@ -23,6 +23,12 @@ public sealed class DeviceProfile
     // Staged rollout: existing installations retain the verified explicit path.
     // New traversal is opt-in until the independent Windows/WAN gates pass.
     public string TraversalMode { get; set; } = "legacy";
+    public string PathSelection { get; set; } = "prefer-faketcp";
+    public bool AllowUdpFallback { get; set; }
+    public PathSelection Selection() => new(PathSelection switch {
+        "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
+        "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")
+    }, AllowUdpFallback);
     public string LogLevel { get; set; } = "info";
     public string LogDirectory { get; set; } = "";
     public void Validate()
@@ -33,6 +39,9 @@ public sealed class DeviceProfile
         if (DeviceName is null || DeviceName.Length is < 1 or > 64 || DeviceName.Any(char.IsControl)) throw new FormatException("设备名称需为 1–64 个可见字符");
         if (TransportMode is not ("faketcp" or "udp") || LogLevel is not ("off" or "error" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
         if (TraversalMode is not ("legacy" or "tcp" or "tcp-udp")) throw new FormatException("打洞试验模式无效");
+        Selection().Validate();
+        if (PathSelection == "faketcp-only" && (TransportMode == "udp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))
+            throw new FormatException("仅 FakeTCP 与 UDP 网络不兼容，请使用 FakeTCP 网络或更改选路策略");
         if (LogDirectory is null || LogDirectory.Length > 240 || (LogDirectory.Length > 0 && (!Path.IsPathFullyQualified(LogDirectory) || LogDirectory.StartsWith(@"\\")))) throw new FormatException("日志目录需为本机绝对路径");
         if (ManualEndpoint.Length > 0) Invitation.Create(ManualEndpoint, "faketcp", "").Validate();
         Mesh?.Validate();

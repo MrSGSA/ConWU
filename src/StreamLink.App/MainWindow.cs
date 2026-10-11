@@ -124,11 +124,11 @@ public sealed partial class MainWindow : Form
     void UpdateStatus()
     {
         var s = last?.Status; var p = last?.Profile;
-        if (networkState != null) { networkState.Text = s?.State ?? (p?.Pair != null || p?.Mesh != null ? "已配对，网络未启动" : "尚未配对"); networkState.ForeColor = s?.Connected == true ? Color.FromArgb(29, 139, 102) : Design.Ink; }
+        if (networkState != null) { networkState.Text = s?.State ?? (p?.Pair != null || p?.Mesh != null ? "已配对，网络未启动" : "尚未配对"); networkState.ForeColor = s?.Degraded == true ? Color.FromArgb(153, 102, 0) : s?.Connected == true ? Color.FromArgb(29, 139, 102) : Design.Ink; }
         if (addresses != null) addresses.Text = p?.Pair != null ? $"本机 10.129.129.{p.Slot}    ·    对端 10.129.129.{3-p.Slot}" + (s?.RttMs is { } rtt ? $"    ·    {rtt:F1} ms" : "") : "配对成功后显示成员虚拟 IP";
         if (localDevice != null) localDevice.Text = "●  " + (p?.DeviceName ?? Environment.MachineName) + "  ·  本机";
         if (peerDevice != null) peerDevice.Text = "●  " + (s?.PeerName is { Length: > 0 } name ? name : "另一台设备") + (s?.Connected == true ? "  ·  已直连" : "  ·  等待连接");
-        if (quality != null) quality.Text = last?.Quality is { Length: > 0 } q ? q : s?.Detail ?? "业务数据由设备间直接传输。";
+        if (quality != null) quality.Text = (s?.Degraded == true ? s.Detail + "\n" : "") + (last?.Quality is { Length: > 0 } q ? "最近一次测速：" + q : s?.Degraded == true ? "请按实际用途验证负载质量。" : s?.Detail ?? "业务数据由设备间直接传输。");
         if (p?.Mesh is { } mesh && addresses != null) addresses.Text = "本机 " + mesh.LocalIp + "    ·    " + (mesh.IsOwner ? "网络创建者" : "网络成员") + "    ·    原生 IPv4 组网";
         UpdateMembers();
         modeLabel.Text = backend.IsService ? "服务模式 · 关闭界面后继续连接" : preferences.Tray && preferences.CloseToTray ? "前台模式 · 关闭窗口后驻留托盘，退出程序时断开" : "前台模式 · 退出程序时断开，可在设置中安装开机服务";
@@ -145,7 +145,7 @@ public sealed partial class MainWindow : Form
         if (reject != null) reject.Visible = owner && room != null && roomState?.Candidate.Length > 0;
         if (approvalRow != null) approvalRow.Visible = owner && room != null && roomState?.Candidate.Length > 0;
         if (pairText != null) pairText.Visible = pairText.Text.Length > 0;
-        tray.Text = "StreamLink · " + (s?.Connected == true ? "已直连" : "等待连接");
+        tray.Text = "StreamLink · " + (s?.Degraded == true ? "含 UDP 降级直连" : s?.Connected == true ? "已直连" : "等待连接");
     }
     void ShowLogs()
     {

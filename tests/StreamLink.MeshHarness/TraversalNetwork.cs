@@ -22,8 +22,8 @@ static class TraversalNetwork
             using var coordination = JsonDocument.Parse(File.ReadAllText(args[2]));
             var a = MeshIdentity.Create(coordination.RootElement.GetProperty("url").GetString()!, coordination.RootElement.GetProperty("pin").GetString()!, "faketcp");
             var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-Thinkbook", TraversalMode = "tcp-udp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
-            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-Akane", TraversalMode = "tcp-udp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
+            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-Thinkbook", TraversalMode = "tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
+            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-Akane", TraversalMode = "tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
             File.WriteAllText(Path.Combine(root, "local.private.json"), JsonSerializer.Serialize(local));
             File.WriteAllText(Path.Combine(root, "remote.private.json"), JsonSerializer.Serialize(remote));
             Console.WriteLine(JsonSerializer.Serialize(new { localVirtualIp = a.LocalIp, peerVirtualIp = b.LocalIp, localPort = local.SourcePort, peerPort = remote.SourcePort })); return;

@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 public sealed record ControlRequest(string Command, DeviceProfile? Profile = null, string Invite = "", string Service = "", string Pin = "", int Mbps = 50, string Mode = "faketcp", int PeerSlot = 0);
-public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile, SessionStatus? Status, string Invite, string[] Logs, string Quality = "", string Version = "0.2.0");
+public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile, SessionStatus? Status, string Invite, string[] Logs, string Quality = "", string Version = "0.2.0", int PathSelectionVersion = 0);
 public static class ServiceProtocol
 {
     public const string PipeName = "StreamLink-Control-v2";

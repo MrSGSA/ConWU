@@ -106,7 +106,7 @@ try {
         await using var udpB = UdpTraversal.Create(new(IPAddress.Loopback, 0), generation, attemptId, 2, 1, shared, new());
         CryptographicOperations.ZeroMemory(shared);
         var adapterA = new Adapter(); var adapterB = new Adapter();
-        await using var routerA = new MeshRouter(a, adapterA, ca.BootId); await using var routerB = new MeshRouter(b, adapterB, cb.BootId);
+        await using var routerA = new MeshRouter(a, adapterA, ca.BootId, new(AllowUdpFallback: true)); await using var routerB = new MeshRouter(b, adapterB, cb.BootId, new(AllowUdpFallback: true));
         await using var leader = MeshTraversalAttempt.Offer(a, b.Self, ca, cb, TraversalProfile.UdpDirect,
             Candidate(udpA.Local.ToString()) with { Purpose = CandidatePurpose.UdpDirect }, 1, () => ++seqA, attemptId);
         await using var follower = MeshTraversalAttempt.Answer(b, a.Self, cb, ca, leader.Outbound!,

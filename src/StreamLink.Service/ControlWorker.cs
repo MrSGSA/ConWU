@@ -73,7 +73,7 @@ public sealed class ControlWorker : BackgroundService
     }
     ControlReply Reply(string error = "")
     {
-        lock (sync) return new(error.Length == 0, error, profile, status, profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3));
+        lock (sync) return new(error.Length == 0, error, profile, status, profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1);
     }
     public async Task<ControlReply> Handle(ControlRequest request)
     {
@@ -87,6 +87,7 @@ public sealed class ControlWorker : BackgroundService
                 case "mesh-create":
                 case "mesh-join":
                     var mesh = request.Command == "mesh-create" ? MeshIdentity.Create(request.Service, request.Pin, request.Mode) : MeshIdentity.Import(request.Invite);
+                    if (profile.Selection().Policy == PathPolicy.FakeTcpOnly && mesh.Pair.Mode != "faketcp") throw new IOException("仅 FakeTCP 策略不能创建或加入 UDP 网络，请先更改选路策略");
                     await End(); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.Slot = 1; profile.LastEntry = 0; store.Save(profile); } break;
                 case "mesh-invite":
                     lock (sync) {
@@ -102,6 +103,7 @@ public sealed class ControlWorker : BackgroundService
                 case "create":
                 case "join":
                     var pair = request.Command == "create" ? Pairing.Create(request.Service, request.Pin, request.Mode) : Pairing.Import(request.Invite);
+                    if (profile.Selection().Policy == PathPolicy.FakeTcpOnly && pair.Mode != "faketcp") throw new IOException("仅 FakeTCP 策略不能创建或加入 UDP 网络，请先更改选路策略");
                     await End(); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Mesh = null; profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; store.Save(profile); } break;
                 case "save":
                     var updated = request.Profile ?? throw new FormatException("配置为空"); updated.Validate();

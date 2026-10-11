@@ -13,8 +13,8 @@ static class Program
         ApplicationConfiguration.Initialize();
         if(args.Length == 1 && (args[0] == "--install" || args[0] == "--uninstall")) { try { (args[0] == "--install" ? ServiceInstaller.Install() : ServiceInstaller.Uninstall()).GetAwaiter().GetResult(); } catch(Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"install-error.log"),ex.ToString()); Environment.ExitCode=1; } return; }
         if(args.Length>=2 && args[0]=="--preview") {
-            using var preview=new MainWindow(true); preview.StartPosition=FormStartPosition.Manual; preview.Location=new Point(-30000,-30000); preview.ShowInTaskbar=false; preview.Show(); Application.DoEvents(); preview.PerformLayout();
-            if(args.Length>2) { preview.PreviewPage(args[2]); Application.DoEvents(); preview.PerformLayout(); }
+            using Form preview=args.Length>2 && args[2]=="connection" ? new SettingsWindow(new()) : new MainWindow(true); preview.StartPosition=FormStartPosition.Manual; preview.Location=new Point(-30000,-30000); preview.ShowInTaskbar=false; preview.Show(); Application.DoEvents(); preview.PerformLayout();
+            if(args.Length>2 && preview is MainWindow mainPreview) { mainPreview.PreviewPage(args[2]); Application.DoEvents(); preview.PerformLayout(); }
             using var bitmap=new Bitmap(preview.Width,preview.Height);
             preview.DrawToBitmap(bitmap,new Rectangle(0,0,bitmap.Width,bitmap.Height));
             bitmap.Save(Path.GetFullPath(args[1]),System.Drawing.Imaging.ImageFormat.Png);

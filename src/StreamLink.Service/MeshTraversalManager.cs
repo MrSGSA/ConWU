@@ -52,7 +52,9 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         IMeshCandidateFactory factory, MeshRequestBudget budget, Action<string> log, CancellationToken token)
     {
         this.mesh = mesh; this.router = router; this.discovery = discovery; this.factory = factory; this.budget = budget; this.log = log; this.token = token;
-        Capabilities = new(1, factory.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, factory.Profiles);
+        var allowed = factory.Profiles.Where(router.Selection.Allows).Distinct().ToArray();
+        Capabilities = new(1, allowed.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, allowed);
+        MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
     {

@@ -38,7 +38,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, PathPolicy policy = PathPolicy.PreferFakeTcp)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -55,9 +55,8 @@ public sealed partial class MeshRouter
             var managed = peer.Managed ?? new();
             if (managed.Candidate != null || managed.Paths.Count >= 2) throw new IOException("等待上一候选及退役引用收敛");
             if (nominationRevision <= managed.LastRevision || managed.Paths.ContainsKey(identity.PathId)) throw new IOException("候选提名版本已过期");
-            if (identity.Profile == TraversalProfile.UdpDirect && (policy == PathPolicy.FakeTcpOnly ||
-                policy == PathPolicy.PreferFakeTcp && ManagedHealthy(peer) && managed.Active!.Identity.Profile != TraversalProfile.UdpDirect))
-                throw new IOException("当前策略保留健康 FakeTCP 路径");
+            if (identity.Qualification < PathQualification.MtuQualified) throw new IOException("候选尚未通过实际包长验证");
+            if (Selection.Reject(identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer)) is {} reason) throw new IOException(reason);
             if (identity.Profile != TraversalProfile.UdpDirect && peers.Values.Where(p => p.Managed != null).SelectMany(p => p.Managed!.Paths.Values).Any(p =>
                 !p.Closing && p.Identity.Profile != TraversalProfile.UdpDirect && p.Identity.ActualLocal.Equals(identity.ActualLocal) && p.Identity.ActualRemote.Equals(identity.ActualRemote)))
                 throw new IOException("同一 TCP 四元组已由另一握手或 Active 占用");
@@ -94,7 +93,11 @@ public sealed partial class MeshRouter
     }
     void NominationReplies(Peer peer, ManagedPath path, byte[][] replies)
     {
+        bool wasCancelled = path.Nomination.Stage == NominationStage.Cancelled;
         ReconcileManaged(peer, path, Environment.TickCount64); // switch BEFORE Commit proves it
+        // Replace a now-forbidden Commit, but preserve an existing cancellation
+        // notice: Tick has already consumed its retransmission interval.
+        if (!wasCancelled && path.Nomination.Stage == NominationStage.Cancelled) replies = path.Nomination.Tick();
         foreach (byte[] reply in replies) {
             byte[]? encoded = peer.Link.Control(reply);
             if (encoded != null) ControlManaged(peer, path, encoded, reply[4] >= 3);
@@ -149,6 +152,11 @@ public sealed partial class MeshRouter
             return;
         }
         if (path.Nomination.SwitchRequested && !path.Switched && ReferenceEquals(managed.Candidate, path)) {
+            // A formerly silent FakeTCP can recover while UDP is negotiating.
+            // Recheck at the actual switch, not only at registration time.
+            if (Selection.Reject(path.Identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer)) is {} reason) {
+                path.Failure = reason; path.Nomination.Cancel(); ReconcileManaged(peer, path, now); return;
+            }
             path.Previous = managed.Active;
             if (path.Previous != null) path.Previous.Retired = true;
             managed.Active = path; path.Switched = true;

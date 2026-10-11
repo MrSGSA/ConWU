@@ -18,7 +18,11 @@ static class Program
         Pairing saved;
         using (var worker = new ControlWorker()) {
             worker.StartLocal();
-            Check(!(await worker.Handle(new("status"))).Profile!.Enabled, "Fresh foreground backend unexpectedly enabled");
+            var initial = await worker.Handle(new("status"));
+            Check(!initial.Profile!.Enabled, "Fresh foreground backend unexpectedly enabled");
+            Check(initial.PathSelectionVersion == 1, "Backend must advertise implemented policy capability independently of release number");
+            var legacy = JsonSerializer.Deserialize<ControlReply>("{\"Ok\":true,\"Version\":\"0.4.1\"}")!;
+            Check(legacy.PathSelectionVersion == 0, "Old same-version backend must not imply support for new policy fields");
             Check(!(await worker.Handle(new("start"))).Ok, "Unpaired start accepted");
             var reply = await worker.Handle(new("create", Service: "https://example.com/", Mode: "udp"));
             Check(reply.Ok && reply.Profile!.Pair!.Mode == "udp" && !reply.Profile.Enabled, "Create must persist without starting network");
@@ -40,6 +44,22 @@ static class Program
             Check(reply.Profile!.Pair == saved && reply.Profile.DeviceName == "Lifecycle test" && !reply.Profile.Enabled, "Persistence/lease release failed");
             reply = await worker.Handle(new("mesh-create", Service: "https://example.com/", Mode: "faketcp"));
             Check(reply.Ok && reply.Profile!.Mesh!.IsOwner && reply.Profile.Pair == null && !reply.Profile.Enabled, "Native creation must persist without changing live network");
+            var selected = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(reply.Profile))!;
+            selected.TransportMode = "faketcp"; selected.PathSelection = "faketcp-only"; selected.AllowUdpFallback = true;
+            var applied = await worker.Handle(new("save", selected));
+            Check(applied.Ok && applied.Profile!.Selection().Policy == PathPolicy.FakeTcpOnly && !applied.Profile.Enabled, "Control backend persists policy while leaving an idle network stopped");
+            var unsupported = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!; unsupported.PathSelection = "auto-quality";
+            Check(!(await worker.Handle(new("save", unsupported))).Ok && (await worker.Handle(new("status"))).Profile!.PathSelection == "faketcp-only", "Rejected AutoQuality cannot overwrite the valid saved policy");
+            var udpNetwork = MeshIdentity.Create("https://example.com/", "", "udp");
+            string meshInvite = MeshIdentity.Export(MeshIdentity.Issue(udpNetwork)), pairInvite = Pairing.Create("https://example.com/", "", "udp").Invite();
+            byte[] beforeRejected = File.ReadAllBytes(Path.Combine(ProfileStore.Root, "profile.dpapi"));
+            foreach (string command in new[] { "create", "join", "mesh-create", "mesh-join" }) {
+                var rejected = await worker.Handle(new(command, Invite: command.StartsWith("mesh") ? meshInvite : pairInvite, Service: "https://example.com/", Mode: "udp"));
+                Check(!rejected.Ok && rejected.Profile!.Mesh!.Pair.Network == selected.Mesh!.Pair.Network && beforeRejected.SequenceEqual(File.ReadAllBytes(Path.Combine(ProfileStore.Root, "profile.dpapi"))),
+                    command + ": incompatible UDP request cannot replace identity or stored configuration before policy validation");
+            }
+            using (var oldSettings = new SettingsWindow(selected, supportsSelection: false))
+                Check(!Field<ComboBox>(oldSettings, "selection").Enabled && !Field<CheckBox>(oldSettings, "udpFallback").Enabled, "UI disables unsupported settings on old backend");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

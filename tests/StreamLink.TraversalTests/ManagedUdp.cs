@@ -19,7 +19,7 @@ static partial class Program
                     var a = MeshIdentity.Create("https://example.com/", "", "udp");
                     var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
                     var leftAdapter = new RoutedAdapter(); var rightAdapter = new RoutedAdapter();
-                    await using var ra = new MeshRouter(a, leftAdapter); await using var rb = new MeshRouter(b, rightAdapter);
+                    await using var ra = new MeshRouter(a, leftAdapter, selection: new(AllowUdpFallback: true)); await using var rb = new MeshRouter(b, rightAdapter, selection: new(AllowUdpFallback: true));
                     await using var reflector = new Reflector(IPAddress.Loopback);
                     var generationA = Guid.NewGuid(); var generationB = Guid.NewGuid(); var attempt = Guid.NewGuid();
                     ITraversalSocket left, right; IPEndPoint server;
