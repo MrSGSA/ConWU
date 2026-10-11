@@ -25,6 +25,9 @@ public sealed class DeviceProfile
     public string TraversalMode { get; set; } = "legacy";
     public string PathSelection { get; set; } = "prefer-faketcp";
     public bool AllowUdpFallback { get; set; }
+    // Diagnostics only, off by default. Requires a separately configured raw
+    // SYN observer on the authenticated coordinator; never promotes a path.
+    public bool TcpSynObservation { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")

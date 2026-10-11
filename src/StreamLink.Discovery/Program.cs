@@ -52,12 +52,30 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
 }
 var pairRooms = new PairRooms();
 var meshRegistry = new MeshRegistry(root);
+TcpSynObserver? synObserver = null;
+LinuxSynCapture? synCapture = null;
+// Explicit deployment configuration only. Every IP must be assigned to this
+// host, not a CDN hostname, destination selected by a client, or translated VIP.
+string? observerConfig = Environment.GetEnvironmentVariable("STREAMLINK_TCP_OBSERVER_POINTS");
+if (!string.IsNullOrWhiteSpace(observerConfig)) {
+    try {
+        var points = JsonSerializer.Deserialize<TcpObserverPoint[]>(observerConfig) ?? throw new FormatException();
+        TcpObserverProtocol.ValidatePoints(points);
+        var localAddresses = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().SelectMany(n => n.GetIPProperties().UnicastAddresses).Select(a => a.Address).ToHashSet();
+        if (points.Any(p => !localAddresses.Contains(TcpObserverProtocol.Endpoint(p.Endpoint).Address))) throw new FormatException("观察地址不在本机接口上");
+        synObserver = new(points); synCapture = new(synObserver, points);
+    } catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException or System.Net.Sockets.SocketException or PlatformNotSupportedException) {
+        synObserver = null; // A missing raw capability must not take down discovery.
+        Console.Error.WriteLine("TCP observer disabled: " + ex.GetType().Name);
+    }
+}
+app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, TcpObserverRequest request) => meshRegistry.TcpObservation(c, network, request, synObserver)).RequireRateLimiting("mesh");
 app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => meshRegistry.Read(c, network)).RequireRateLimiting("mesh");
 app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest request) => meshRegistry.Watch(c, network, request)).RequireRateLimiting("mesh");
 app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch input) => meshRegistry.Traversal(c, network, input)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, meshWatch = 1, meshTraversal = 1, maxMembers = MeshIdentity.MaxMembers, relay = false }));
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false }));
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
 app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");
@@ -68,5 +86,5 @@ app.MapPost("/v2/pair/{room}/approve", (HttpContext c, string room, PairRoomAppr
 app.MapDelete("/v2/pair/{room}", (HttpContext c, string room) => pairRooms.Exchange(c, room, true, close: true)).RequireRateLimiting("pair-room");
 app.MapGet("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot) => Exchange(c, network, slot, null)).RequireRateLimiting("metadata");
 app.MapPut("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot, Envelope envelope) => Exchange(c, network, slot, envelope)).RequireRateLimiting("metadata");
-app.Run();
+try { app.Run(); } finally { if (synCapture != null) await synCapture.DisposeAsync(); }
 sealed record Registration(string AuthHash, string One, string Two);

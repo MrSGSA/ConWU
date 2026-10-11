@@ -23,17 +23,20 @@ internal interface IMeshCandidateFactory
 // Below the service's 48/minute, burst 8; eight devices stay under 512/minute.
 internal sealed class MeshRequestBudget
 {
+    readonly object gate = new();
     double tokens = 6;
     long last = Stopwatch.GetTimestamp();
     public bool Take(bool priority = false)
     {
+        lock (gate) {
         long now = Stopwatch.GetTimestamp(); tokens = Math.Min(6, tokens + Stopwatch.GetElapsedTime(last, now).TotalSeconds * (40d / 60)); last = now;
         if (tokens < (priority ? 1 : 3)) return false;
         tokens--; return true;
+        }
     }
 }
 
-internal sealed class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
+internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
     TraversalProfile[] profiles, bool captureBroker = false) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly Guid generation = Guid.NewGuid();
@@ -106,6 +109,7 @@ internal sealed class MeshCandidateFactory(DeviceProfile profile, string executa
                     mapped = (await udp.Observe(target, deadline.Token)).Mapped;
                 } else if (captureBroker) {
                     pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;
+                    ObserveInBackground(pooled.Owner);
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);
                     tcp = await TcpEndpointLease.Open(local, target, generation, connect.Token);
@@ -148,5 +152,5 @@ internal sealed class MeshCandidateFactory(DeviceProfile profile, string executa
             if (udp != null && !prepared) await udp.DisposeAsync(); // Prepared owns original UDP reference after transfer.
         }
     }
-    public async ValueTask DisposeAsync() { if (pool != null) await pool.DisposeAsync(); }
+    public async ValueTask DisposeAsync() { try { await StopObservation(); } finally { if (pool != null) await pool.DisposeAsync(); } }
 }

@@ -52,7 +52,7 @@ public interface IMeshDiscovery : IDisposable
     Task Publish(MeshAnnouncement announcement, CancellationToken token);
     Task<MeshSnapshot?> Read(CancellationToken token);
 }
-public sealed class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDiscovery, IMeshTraversalDiscovery
+public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDiscovery, IMeshTraversalDiscovery, ITcpObservationControl
 {
     readonly MeshProfile profile;
     readonly HttpClient http;

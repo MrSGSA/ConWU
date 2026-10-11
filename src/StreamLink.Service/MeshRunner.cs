@@ -81,6 +81,8 @@ public sealed class MeshRunner
                 if (gatheringFactory?.IsCompleted == true) {
                     try { factory = await gatheringFactory; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("新增打洞能力暂不可用：" + ex.Message); }
                     gatheringFactory = null;
+                    if (factory is MeshCandidateFactory ownedFactory && discovery is ITcpObservationControl observationControl)
+                        ownedFactory.ConfigureObservation(observationControl, requestBudget, log);
                 }
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
