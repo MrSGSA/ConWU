@@ -2,6 +2,8 @@
 
 本文记录 `63d09a2` 的阶段状态。后续 UDP_DIRECT 接线与共享控制资源见 [UDP 网关接线记录](m7-udp-gateway-20261011.md)；本文原始验证产物保持不变。
 
+10 月 12 日补充：[单播通知与复核](m7-gateway-notifications-20261012.md) 已接入共享控制 socket 的唯一接收者；PCP MAP/ANNOUNCE、NAT-PMP 单播提示不再只等待下一次续租。组播仍待完成，以下关于异步通知的描述是本页早期状态。
+
 从 `63f04d5` 继续。本次完成 IPv4 网关 Provider、TCP 后备入口和生命周期回归，**M7 仍为部分完成**。尚无真实 PCP/NAT-PMP 路由器到双 Windows 业务的正例；UDP_DIRECT 接线和原生 IPv6 也未完成。现用服务、Lucky、驱动和网卡配置未改动。
 
 ## 产品行为

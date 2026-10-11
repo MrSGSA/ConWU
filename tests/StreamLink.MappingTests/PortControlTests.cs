@@ -8,13 +8,13 @@ using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.EndpointPoc;
 
-static class PortControlTests
+static partial class PortControlTests
 {
     public static async Task Run(Action<bool, string> check)
     {
         var rows = new List<object>(); var clock = Stopwatch.StartNew(); int passed = 0;
         void Check(bool ok, string why) { check(ok, why); passed++; Console.WriteLine("PASS " + why); }
-        using var overall = new CancellationTokenSource(TimeSpan.FromSeconds(90)); var ct = overall.Token;
+        using var overall = new CancellationTokenSource(TimeSpan.FromSeconds(120)); var ct = overall.Token;
         for (int round = 0; round < 30; round++) {
             byte[] nonce = RandomNumberGenerator.GetBytes(12);
             foreach (var protocol in new[] { PortMappingProtocol.Tcp, PortMappingProtocol.Udp }) {
@@ -136,6 +136,7 @@ static class PortControlTests
             Check(server.Deletes == 1 && helper.Active == 0, "product disposal joins renewal/keepalive before releasing the helper and exact PCP lease");
             rows.Add(new { scope = "production TcpMapping + real loopback helper and gateway datagrams", hasNative = false, hasRealNat = false, actualPort = mapping.PublicEndpoint.Port, cleanup = true });
         }
+        await Notifications(Check, rows, ct);
         string output = Environment.GetEnvironmentVariable("STREAMLINK_MAPPING_REPORT") ?? "artifacts/m7-port-control-20261011.json";
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));
@@ -159,6 +160,11 @@ static class PortControlTests
         public IPAddress ExternalAddress = IPAddress.Parse("1.1.1.1");
         public byte[] FirstNonce = [];
         public int Creates, Deletes;
+        public uint Lifetime = 8;
+        public readonly ConcurrentDictionary<(byte, ushort), ushort> AssignedPorts = [];
+        public readonly ConcurrentDictionary<(byte, ushort), byte[]> LastMaps = [];
+        public readonly ConcurrentDictionary<(byte, ushort), IPEndPoint> Clients = [];
+        public uint Epoch => Reboot ? 0 : (uint)(100 + clock.Elapsed.TotalSeconds);
         public PortControlRoute Route { get; }
         public Server() { Route = new("loopback-fixture", IPAddress.Loopback, (IPEndPoint)socket.Client.LocalEndPoint!, Guid.NewGuid().ToString()); run = Run(); }
         async Task Run()
@@ -166,14 +172,15 @@ static class PortControlTests
             try {
                 while (true) {
                     var packet = await socket.ReceiveAsync(stop.Token); byte[] p = packet.Buffer; Requests.Enqueue(p);
-                    uint epoch = Reboot ? 0 : (uint)(100 + clock.Elapsed.TotalSeconds); byte[] response;
+                    uint epoch = Epoch; byte[] response;
                     if (p[0] == 2 && Pmp) { response = new byte[8]; response[3] = 1; BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(4), epoch); }
                     else if (p[0] == 2) {
+                        var key = (p[36], BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(40))); LastMaps[key] = p; Clients[key] = packet.RemoteEndPoint;
                         if (FirstNonce.Length == 0) FirstNonce = p.AsSpan(24, 12).ToArray();
                         bool deleting = BinaryPrimitives.ReadUInt32BigEndian(p.AsSpan(4)) == 0;
                         if (deleting) Deletes++; else Creates++;
                         if (DropCreates && !deleting) continue;
-                        response = PcpReply(p, epoch, deleting ? 0u : 8u, (ushort)(ChangePortOnRenew && Creates > 1 ? 45001 : 45000), ExternalAddress, Error);
+                        response = PcpReply(p, epoch, deleting ? 0u : Lifetime, AssignedPorts.GetValueOrDefault(key, (ushort)(ChangePortOnRenew && Creates > 1 ? 45001 : 45000)), ExternalAddress, Error);
                         if (PoisonFirst && Creates == 1 && !deleting) {
                             using var foreign = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)); await foreign.SendAsync(response, packet.RemoteEndPoint, stop.Token);
                             await socket.SendAsync(new byte[1200], packet.RemoteEndPoint, stop.Token);
@@ -183,14 +190,20 @@ static class PortControlTests
                     } else if (p[1] == 0) {
                         response = new byte[12]; response[1] = 128; BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(4), epoch); ExternalAddress.GetAddressBytes().CopyTo(response, 8);
                     } else {
+                        var key = (p[1] == 2 ? (byte)6 : (byte)17, BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(4))); LastMaps[key] = p; Clients[key] = packet.RemoteEndPoint;
                         Creates++; response = new byte[16]; response[1] = (byte)(p[1] | 128);
                         BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(4), epoch); p.AsSpan(4, 2).CopyTo(response.AsSpan(8));
-                        BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(10), 45000); BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(12), 8);
+                        BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(10), AssignedPorts.GetValueOrDefault(key, (ushort)45000)); BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(12), Lifetime);
                         if (BinaryPrimitives.ReadUInt32BigEndian(p.AsSpan(8)) == 0) Deletes++;
                     }
                     await socket.SendAsync(response, packet.RemoteEndPoint, stop.Token);
                 }
             } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        }
+        public async Task Notify(byte[] bytes, IPEndPoint client, bool foreign = false)
+        {
+            if (foreign) { using var other = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)); await other.SendAsync(bytes, client, stop.Token); }
+            else await socket.SendAsync(bytes, client, stop.Token);
         }
         public async ValueTask DisposeAsync() { stop.Cancel(); await run; socket.Dispose(); stop.Dispose(); }
     }

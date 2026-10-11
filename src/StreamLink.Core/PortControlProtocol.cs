@@ -13,6 +13,17 @@ internal static class PortControlProtocol
 {
     static ushort U16(ReadOnlySpan<byte> b, int o) => BinaryPrimitives.ReadUInt16BigEndian(b[o..]);
     static uint U32(ReadOnlySpan<byte> b, int o) => BinaryPrimitives.ReadUInt32BigEndian(b[o..]);
+    public static uint? PcpAnnounceEpoch(ReadOnlySpan<byte> b)
+    {
+        // RFC 6887 14.1: lifetime/reserved fields are ignored on reception.
+        if (b.Length is < 24 or > 1100 || b.Length % 4 != 0 || b[0] != 2 || b[1] != 0x80 || b[3] != 0) return null;
+        for (int at = 24; at < b.Length;) {
+            int next = at + 4 + ((U16(b, at + 2) + 3) & ~3);
+            if (next > b.Length) return null;
+            at = next;
+        }
+        return U32(b, 8);
+    }
     public static byte[] Pcp(IPAddress local, ushort port, PortMappingProtocol protocol, ReadOnlySpan<byte> nonce,
         uint lifetime, IPEndPoint suggested)
     {

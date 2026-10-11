@@ -66,6 +66,19 @@ static class UdpGatewayTests
         check(pa.TrySend(data) && (await received).Span.SequenceEqual(data), "ending the original Attempt owner leaves the exact winning socket carrying 1344-byte datagrams");
         check(!a.Closed && !b.Closed && gateway.Deletes == deleted && a.GatewaySnapshot!.Mapping.State == "Granted",
             "gateway maintenance belongs to retained paths, not the disposed Attempt reference");
+        var identityA = a.SocketId; var identityB = b.SocketId;
+        gateway.PauseResponses = true; await gateway.NotifyRestart();
+        await Wait(() => a.GatewaySnapshot!.Mapping.State == "GatewayRevalidating" && b.GatewaySnapshot!.Mapping.State == "GatewayRevalidating", token);
+        received = pb.Receive(token).AsTask();
+        check(pa.TrySend(data) && (await received.WaitAsync(TimeSpan.FromSeconds(2), token)).Span.SequenceEqual(data),
+            "authenticated winner still sends full payload while gateway notifications withdraw mapping candidates");
+        received = pa.Receive(token).AsTask();
+        check(pb.TrySend(data) && (await received.WaitAsync(TimeSpan.FromSeconds(2), token)).Span.SequenceEqual(data),
+            "reverse business also survives metadata revalidation on the same retained socket");
+        gateway.PauseResponses = false;
+        await Wait(() => a.GatewaySnapshot!.Mapping.State == "Granted" && b.GatewaySnapshot!.Mapping.State == "Granted", token);
+        check(a.SocketId == identityA && b.SocketId == identityB && !a.Closed && !b.Closed && gateway.Deletes == deleted,
+            "revalidated mapping keeps both socket identities and does not delete live path resources");
         await pa.DisposeAsync(); await pb.DisposeAsync();
         check(a.Closed && b.Closed && gateway.Deletes == deleted + 2, "final path release joins gateway maintenance and deletes only its mappings before releasing data ports");
     }
@@ -205,14 +218,22 @@ static class UdpGatewayTests
         readonly UdpClient udp = new(new IPEndPoint(IPAddress.Loopback, 0)); readonly CancellationTokenSource stop = new(); readonly Task run;
         readonly Stopwatch clock = Stopwatch.StartNew(); readonly Dictionary<string, int> grants = [];
         public readonly ConcurrentQueue<PortControlLease> Leases = []; public readonly ConcurrentQueue<string> ControlSources = [];
-        public uint Lifetime = 60; public bool ChangePort, DropRenewals, Pmp; public int Deletes;
+        public uint Lifetime = 60; public bool ChangePort, DropRenewals, Pmp, PauseResponses; public int Deletes;
+        long restartedAt;
+        uint Epoch => Volatile.Read(ref restartedAt) is var at && at != 0 ? (uint)Stopwatch.GetElapsedTime(at).TotalSeconds : (uint)(100 + clock.Elapsed.TotalSeconds);
         public PortControlRoute Route { get; }
         public Gateway() { Route = new("gateway-fixture", IPAddress.Loopback, (IPEndPoint)udp.Client.LocalEndPoint!, Guid.NewGuid().ToString()); run = Run(); }
         public async Task<PortControlLease> Map(int port, CancellationToken token, TraversalResources? budget = null)
         { var lease = await PortControlLease.Open(Route, port, port, PortMappingProtocol.Udp, () => true, token, budget); Leases.Enqueue(lease); return lease; }
+        public async Task NotifyRestart()
+        {
+            Interlocked.Exchange(ref restartedAt, Stopwatch.GetTimestamp());
+            byte[] announce = new byte[24]; announce[0] = 2; announce[1] = 0x80;
+            await udp.SendAsync(announce, IPEndPoint.Parse(ControlSources.Last()), stop.Token);
+        }
         async Task Run() { try { while (true) {
             var p = await udp.ReceiveAsync(stop.Token); byte[] b = p.Buffer; ControlSources.Enqueue(p.RemoteEndPoint.ToString());
-            uint epoch = (uint)(100 + clock.Elapsed.TotalSeconds);
+            uint epoch = Epoch;
             if (Pmp) {
                 byte[] answer;
                 if (b.Length == 60 && b[0] == 2) { answer = new byte[8]; answer[3] = 1; }
@@ -229,10 +250,11 @@ static class UdpGatewayTests
             if (b.Length != 60 || b[0] != 2 || b[1] != 1) continue;
             string nonce = Convert.ToHexString(b.AsSpan(24, 12));
             bool remove = BinaryPrimitives.ReadUInt32BigEndian(b.AsSpan(4)) == 0; bool renewal = grants.ContainsKey(nonce);
+            if (!remove && PauseResponses) continue;
             if (remove) Interlocked.Increment(ref Deletes); else { if (renewal && DropRenewals) continue; grants[nonce] = grants.GetValueOrDefault(nonce) + 1; }
             byte[] response = b.ToArray(); response[1] = 0x81; response.AsSpan(12, 12).Clear();
             BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(4), remove ? 0 : Lifetime);
-            BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(8), (uint)(100 + clock.Elapsed.TotalSeconds));
+            BinaryPrimitives.WriteUInt32BigEndian(response.AsSpan(8), epoch);
             int assigned = BinaryPrimitives.ReadUInt16BigEndian(b.AsSpan(40)); if (ChangePort && renewal && !remove) assigned = assigned == 65535 ? 65534 : assigned + 1;
             BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(42), (ushort)assigned); IPAddress.Loopback.MapToIPv6().GetAddressBytes().CopyTo(response, 44);
             await udp.SendAsync(response, p.RemoteEndPoint, stop.Token);

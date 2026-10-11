@@ -8,12 +8,17 @@ namespace StreamLink.Core;
 
 public sealed record PortControlSnapshot(Guid Id, PortControlKind Provider, string Gateway, string Local,
     string? External, PortMappingProtocol Protocol, uint Lifetime, uint Epoch, string Ownership, string State,
-    string RouteGeneration, double RemainingSeconds, string Cleanup);
+    string RouteGeneration, double RemainingSeconds, string Cleanup)
+{
+    public long Notifications { get; init; }
+    public long Revalidations { get; init; }
+    public string NotificationMode { get; init; } = "";
+}
 
 // One shared connected UDP control socket per source/gateway/generation. Data
 // ownership remains with its existing owner. Only an exact PCP nonce grants an
 // explicit deletion capability; NAT-PMP mappings always expire naturally.
-public sealed class PortControlLease : IAsyncDisposable
+public sealed partial class PortControlLease : IAsyncDisposable
 {
     readonly PortControlRoute route;
     readonly ushort internalPort, requestedPort;
@@ -41,7 +46,8 @@ public sealed class PortControlLease : IAsyncDisposable
     public event Action<PortControlSnapshot>? Changed;
     public PortControlSnapshot Snapshot { get { lock (sync) return new(id, kind, route.Gateway.ToString(), new IPEndPoint(route.Local, internalPort).ToString(),
         external?.ToString(), protocol, lifetime, epoch, !confirmed ? "Unconfirmed" : kind == PortControlKind.Pcp ? "PcpNonce" : "LocalGrantNoDelete", state,
-        route.Generation, confirmed ? Math.Max(0, lifetime - Stopwatch.GetElapsedTime(grantedAt).TotalSeconds) : 0, cleanupState); } }
+        route.Generation, confirmed ? Math.Max(0, lifetime - Stopwatch.GetElapsedTime(grantedAt).TotalSeconds) : 0, cleanupState)
+        { Notifications = notifications, Revalidations = revalidations, NotificationMode = "UnicastOnly" }; } }
     public IPEndPoint External { get { lock (sync) return external == null ? throw new IOException("网关未返回映射") : new(external.Address, external.Port); } }
     public bool Valid { get { lock (sync) return confirmed && state == "Granted" && Stopwatch.GetElapsedTime(grantedAt).TotalSeconds < lifetime; } }
 
@@ -50,15 +56,16 @@ public sealed class PortControlLease : IAsyncDisposable
         public int References;
         public readonly SemaphoreSlim Serial = new(1);
         public readonly Socket Socket;
+        public readonly PortControlChannel Channel;
         public readonly TraversalResources Budget;
         readonly IDisposable quota;
         public GatewayAccount(PortControlRoute route, TraversalResources resources)
         {
             Budget = resources; quota = resources.Acquire(); Socket? opened = null;
-            try { opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway); Socket = opened; }
+            try { opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway); Socket = opened; Channel = new(Socket); }
             catch { opened?.Dispose(); quota.Dispose(); Serial.Dispose(); throw; }
         }
-        public void Dispose() { Socket.Dispose(); quota.Dispose(); Serial.Dispose(); }
+        public void Dispose() { Channel.Dispose(); Socket.Dispose(); quota.Dispose(); Serial.Dispose(); }
     }
     static readonly object accountsGate = new();
     static readonly Dictionary<string, GatewayAccount> accounts = [];
@@ -76,14 +83,20 @@ public sealed class PortControlLease : IAsyncDisposable
             try {
                 if (!accounts.TryGetValue(accountKey, out account!)) accounts.Add(accountKey, account = new(route, resources));
                 if (!ReferenceEquals(account.Budget, resources)) throw new IOException("共享网关控制资源必须使用同一全机账本");
+                account.Channel.Subscribe(id, ObserveNotification);
                 account.References++;
-            } catch { claims.Remove(claim); throw; }
+            } catch {
+                claims.Remove(claim);
+                if (accounts.TryGetValue(accountKey, out var unused) && unused.References == 0) { accounts.Remove(accountKey); unused.Dispose(); }
+                throw;
+            }
         }
     }
     void ReleaseAccount()
     {
         lock (accountsGate) {
             claims.Remove(claim);
+            account.Channel.Unsubscribe(id);
             if (--account.References == 0) { accounts.Remove(accountKey); account.Dispose(); }
         }
     }
@@ -143,7 +156,7 @@ public sealed class PortControlLease : IAsyncDisposable
         }
         epoch = value; epochAt = now;
     }
-    void Accept(PortControlReply reply)
+    void Accept(PortControlReply reply, bool revalidated = false)
     {
         if (!currentRoute()) throw new IOException("网关或接口代次已变化，丢弃迟到租约");
         CheckError(reply);
@@ -153,7 +166,10 @@ public sealed class PortControlLease : IAsyncDisposable
             // Store a successful grant before checking epoch, so cancellation or
             // a reboot response can still clean up this exact nonce safely.
             external = reply.External; lifetime = reply.Lifetime; grantedAt = Stopwatch.GetTimestamp(); confirmed = true;
-            TrackEpoch(reply.Epoch); state = "Granted";
+            // PCP MAP replies and updates have identical wire form: this proves
+            // the matching resource, not a cryptographically fresh transaction.
+            if (revalidated) epochAt = 0;
+            TrackEpoch(reply.Epoch); state = noticePending ? "GatewayRevalidating" : "Granted";
         }
         Changed?.Invoke(Snapshot);
     }
@@ -163,25 +179,17 @@ public sealed class PortControlLease : IAsyncDisposable
         await account.Serial.WaitAsync(token);
         try {
             double interval = PortControlTiming.InitialRetry(protocolKind, Random.Shared.NextDouble());
-            byte[] response = new byte[1101];
             for (int retry = 0; retry < attempts; retry++) {
                 token.ThrowIfCancellationRequested();
                 if (!currentRoute()) throw new IOException("默认网关或源接口已变化，原租约失效");
                 while (!budget.TrySend(request.Length, maintenance: true)) await Task.Delay(25, token);
                 if (protocolKind == PortControlKind.Pcp && request.Length == 60 && request[4..8].Any(b => b != 0)) sawPcpRequest = true;
+                using var pending = account.Channel.Expect(request, protocolKind, externalIp);
                 await account.Socket.SendAsync(request, SocketFlags.None, token);
                 using var wait = CancellationTokenSource.CreateLinkedTokenSource(token);
                 wait.CancelAfter(oneWait ?? TimeSpan.FromSeconds(interval));
-                try {
-                    while (true) {
-                        int length;
-                        try { length = await account.Socket.ReceiveAsync(response, SocketFlags.None, wait.Token); }
-                        catch (SocketException ex) when (ex.SocketErrorCode == SocketError.MessageSize) { continue; }
-                        var parsed = protocolKind == PortControlKind.Pcp ? PortControlProtocol.ParsePcp(response.AsSpan(0, length), request) :
-                            PortControlProtocol.ParsePmp(response.AsSpan(0, length), request, externalIp);
-                        if (parsed != null) return parsed;
-                    }
-                } catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
+                try { return await pending.Result.WaitAsync(wait.Token); }
+                catch (OperationCanceledException) when (!token.IsCancellationRequested) { }
                 interval = PortControlTiming.NextRetry(protocolKind, interval, Random.Shared.NextDouble());
             }
             throw new TimeoutException(protocolKind + " 本轮没有匹配响应");
@@ -203,8 +211,8 @@ public sealed class PortControlLease : IAsyncDisposable
             try {
                 while (true) {
                     await Task.Delay(1000, token);
-                    if (currentRoute()) continue;
-                    lock (sync) state = "RouteChanged";
+                    if (currentRoute() && account.Channel.Failure == null) continue;
+                    lock (sync) state = account.Channel.Failure == null ? "RouteChanged" : "GatewayReceiverFailed";
                     Changed?.Invoke(Snapshot); linked.Cancel(); return;
                 }
             } catch (OperationCanceledException) when (token.IsCancellationRequested) { }
@@ -215,9 +223,10 @@ public sealed class PortControlLease : IAsyncDisposable
             while (true) {
                 int retry = 1;
                 while (true) {
+                    if (await RevalidateNotification(token)) break;
                     double fraction = kind == PortControlKind.Pcp ? PortControlTiming.PcpRenewFraction(retry, Random.Shared.NextDouble()) : .5;
                     double due = lifetime * fraction, elapsed = Stopwatch.GetElapsedTime(grantedAt).TotalSeconds;
-                    if (due > elapsed) await Task.Delay(TimeSpan.FromSeconds(Math.Min(due - elapsed, 86400)), token);
+                    if (due > elapsed && await noticeWake.WaitAsync(TimeSpan.FromSeconds(Math.Min(due - elapsed, 86400)), token)) continue;
                     elapsed = Stopwatch.GetElapsedTime(grantedAt).TotalSeconds;
                     if (elapsed < due) continue; // Long granted lifetimes use cancellable daily slices.
                     if (elapsed >= lifetime) throw new IOException("网关租约已到期");
@@ -245,6 +254,7 @@ public sealed class PortControlLease : IAsyncDisposable
             if (ex is PortControlException error) lock (accountsGate) if (unavailableUntil.Count < 128)
                 unavailableUntil[route.Generation] = Environment.TickCount64 + Math.Max(4L, error.RetrySeconds) * 1000;
             lock (sync) if (state == "Granted") state = currentRoute() ? "ExpiredOrRenewalFailed" : "RouteChanged";
+            lock (sync) if (state == "GatewayRevalidating") state = currentRoute() ? "GatewayRevalidationFailed" : "RouteChanged";
             Changed?.Invoke(Snapshot); throw;
         } finally { linked.Cancel(); await routeWatch; }
     }
@@ -266,7 +276,7 @@ public sealed class PortControlLease : IAsyncDisposable
             }
         } finally {
             lock (sync) state = "Closed";
-            ReleaseAccount(); operation.Release(); stop.Dispose();
+            ReleaseAccount(); operation.Release(); stop.Dispose(); noticeWake.Dispose();
         }
     }
 }
