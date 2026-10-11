@@ -90,7 +90,8 @@ if (args.Length == 1)
     }
     finally { foreach (string file in new[] { "host.toml", "guest.toml" }) File.Delete(Path.Combine(folder, file)); Directory.Delete(folder); }
 }
-Console.WriteLine($"PASS {checks}: streaming discovery, cleanup, descriptor validation, deduplication, fallback, cancellation and optional bundled configuration validation. No live mapping/adapter changes.");
+await PortControlTests.Run(Check);
+Console.WriteLine($"PASS {checks}: streaming UPnP discovery and bounded PCP/NAT-PMP wire protocols, ownership, renewal, epoch, cancellation, product TCP mapping. Loopback only; no live router/adapter changes.");
 
 sealed class Gateway : IAsyncDisposable
 {

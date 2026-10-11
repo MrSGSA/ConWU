@@ -4,24 +4,50 @@ namespace StreamLink.Core;
 
 public sealed class TcpMapping : IMapping
 {
-    readonly Upnp router;
-    readonly RouterMapping rule;
+    readonly Upnp? router;
+    readonly RouterMapping? rule;
+    readonly PortControlLease? gateway;
     readonly Action<string> log;
     readonly int sourcePort;
+    readonly object lifecycle = new();
+    readonly CancellationTokenSource stopping = new();
+    Task maintenance = Task.CompletedTask;
+    bool disposed, maintaining;
     TcpBinding binding;
     string[] servers = Stun.TcpServers;
     public string StunServer { get; private set; } = "";
     public IPAddress LocalAddress { get; }
     public IPEndPoint PublicEndpoint { get; private set; }
-    public string RouterAddress => router.Service.ControlUrl.Host;
+    public string RouterAddress => gateway?.Snapshot.Gateway ?? router!.Service.ControlUrl.Host;
+    public bool IsValid => !Volatile.Read(ref disposed) && (gateway?.Valid ?? true);
+    public PortControlSnapshot? GatewayLease => gateway?.Snapshot;
+    public StunResult? HelperObservation { get; private set; }
     public event Action<IPEndPoint>? Changed;
     TcpMapping(Upnp router, RouterMapping rule, TcpBinding binding, StunResult result, Action<string> log)
     {
         this.router = router; this.rule = rule; this.binding = binding; this.log = log;
         LocalAddress = result.Local.Address; sourcePort = result.Local.Port; PublicEndpoint = result.Public;
+        HelperObservation = result;
+    }
+    internal TcpMapping(PortControlLease gateway, TcpBinding binding, StunResult result, Action<string> log)
+    {
+        this.gateway = gateway; this.binding = binding; this.log = log; LocalAddress = result.Local.Address; sourcePort = result.Local.Port;
+        HelperObservation = result; PublicEndpoint = GatewayCandidate(gateway);
+        gateway.Changed += _ => {
+            if (!gateway.Valid) return;
+            var endpoint = GatewayCandidate(gateway);
+            if (!endpoint.Equals(PublicEndpoint)) { PublicEndpoint = endpoint; Changed?.Invoke(endpoint); }
+        };
+    }
+    internal static IPEndPoint GatewayCandidate(PortControlLease lease)
+    {
+        var endpoint = lease.External;
+        if (!lease.Valid || !PortControlRoute.GlobalV4(endpoint.Address))
+            throw new IOException("网关只返回内层或无效地址；未把 STUN 的外层端点拼接到该映射，需独立验证外层映射链");
+        return endpoint;
     }
 
-    public static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null)
+    public static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false)
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
@@ -53,14 +79,54 @@ public sealed class TcpMapping : IMapping
                     router.Dispose(); if (token.IsCancellationRequested) throw;
                 }
             }
+            if (portControl) {
+                log("原有 UPnP 入口不可用，后台尝试本地网关 PCP；仅在明确版本响应后尝试 NAT-PMP");
+                using var mappedStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+                var creating = PortControlLease.Create(result.Local.Address, targetPort, sourcePort, PortMappingProtocol.Tcp, mappedStop.Token);
+                PortControlLease? lease = null;
+                try {
+                    // Keep the exact helper alive during protocol retransmission;
+                    // candidate selection elsewhere never waits for this task.
+                    while (!creating.IsCompleted) {
+                        await Task.WhenAny(creating, Task.Delay(10000, token));
+                        token.ThrowIfCancellationRequested();
+                        if (!creating.IsCompleted) result = await binding.Pulse(token);
+                    }
+                    lease = await creating;
+                    var mapping = new TcpMapping(lease, binding, result, log) { servers = servers ?? Stun.TcpServers, StunServer = result.Server };
+                    log($"{lease.Snapshot.Provider} 返回实际候选 {mapping.PublicEndpoint} → {targetPort}；仍需对端认证检查");
+                    return mapping;
+                } catch {
+                    mappedStop.Cancel();
+                    try { lease ??= await creating; } catch { }
+                    if (lease != null) await lease.DisposeAsync();
+                    throw;
+                }
+            }
             if (last == null) throw new IOException("未发现可用 UPnP 网关。自动映射不可用；可使用已有 Lucky 端点或手动转发。");
             throw new IOException("自动映射失败：" + last?.Message, last);
         }
         catch { binding.Dispose(); throw; }
     }
 
-    public async Task Maintain(CancellationToken token)
+    public Task Maintain(CancellationToken token)
     {
+        lock (lifecycle) {
+            ObjectDisposedException.ThrowIf(disposed, this);
+            if (maintaining) throw new InvalidOperationException("映射只能维护一次");
+            maintaining = true; return maintenance = MaintainCore(token);
+        }
+    }
+    async Task MaintainCore(CancellationToken token)
+    {
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stopping.Token); token = linked.Token;
+        if (gateway != null) {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var leaseTask = gateway.Maintain(stop.Token); var helperTask = MaintainHelper(stop.Token);
+            try { await await Task.WhenAny(leaseTask, helperTask); }
+            finally { stop.Cancel(); try { await Task.WhenAll(leaseTask, helperTask); } catch { } }
+            return;
+        }
         int tick = 0;
         while (true)
         {
@@ -80,14 +146,36 @@ public sealed class TcpMapping : IMapping
                 log("公网映射已变化，发布更新后的端点");
                 Changed?.Invoke(PublicEndpoint);
             }
-            if (++tick % 6 == 0) await router.Add(rule, token);
+            if (++tick % 6 == 0) await router!.Add(rule!, token);
+        }
+    }
+    async Task MaintainHelper(CancellationToken token)
+    {
+        bool connected = true;
+        while (true) {
+            await Task.Delay(10000, token);
+            try {
+                if (connected) HelperObservation = await binding.Pulse(token);
+                else {
+                    (binding, var result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, servers.OrderByDescending(s => s == StunServer));
+                    HelperObservation = result; StunServer = result.Server; connected = true;
+                }
+            } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or System.Net.Sockets.SocketException or OperationCanceledException) {
+                binding.Dispose(); HelperObservation = null; connected = false;
+                log("STUN 辅助观察暂不可用；保留仍有效的网关显式入口，稍后重试观察");
+            }
+            // A helper's outer mapping is a different observation. It cannot
+            // overwrite the actual external port returned for the listening Q.
         }
     }
     public async ValueTask DisposeAsync()
     {
+        lock (lifecycle) { if (disposed) return; disposed = true; }
+        stopping.Cancel(); try { await maintenance; } catch { }
         binding.Dispose();
-        try { await router.RemoveOwned(rule, CancellationToken.None); log("已移除本软件的路由器租约"); }
+        if (gateway != null) { try { await gateway.DisposeAsync(); log("端口控制资源已回收；网关清理状态：" + gateway.Snapshot.Cleanup); } finally { stopping.Dispose(); } return; }
+        try { await router!.RemoveOwned(rule!, CancellationToken.None); log("已移除本软件的路由器租约"); }
         catch (Exception ex) { log("租约删除未确认，将按租期到期：" + ex.Message); }
-        router.Dispose();
+        router!.Dispose(); stopping.Dispose();
     }
 }

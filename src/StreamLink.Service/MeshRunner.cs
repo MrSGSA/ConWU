@@ -57,6 +57,7 @@ public sealed class MeshRunner
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
         IMeshTransport? server = null;
+        IPAddress? serverAddress = null;
         var clients = new Dictionary<int, MeshPeerTransports>();
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
@@ -66,7 +67,7 @@ public sealed class MeshRunner
         string publishedEndpoint = "\0", publishingEndpoint = "";
         string firewallMembers = "";
         var timeline = new ConnectionTimeline(log);
-        string Candidate() => server != null && !server.Exited ? mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
+        string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
         void Warning(Exception ex)
         {
             if (lastWarning == 0 || Environment.TickCount64 - lastWarning >= 30000) { log("协调服务暂不可用，已有直连继续运行：" + ex.Message); lastWarning = Environment.TickCount64; }
@@ -103,7 +104,11 @@ public sealed class MeshRunner
                 }
                 if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) probe = services.Probe(profile, log, stop);
                 if (probe?.IsCompleted == true) {
-                    try { mapping = await probe; maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪"); }
+                    try {
+                        mapping = await probe;
+                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress)) { server.Dispose(); server = null; }
+                        maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
+                    }
                     catch (Exception ex) when (!stop.IsCancellationRequested) { log("入口暂不可用，可使用其他成员入口：" + ex.Message); nextProbe = now + Math.Min(45000, 5000L << Math.Min(probeFailures++, 4)); }
                     finally { probe = null; }
                 }
@@ -112,14 +117,19 @@ public sealed class MeshRunner
                 }
                 if (maintain?.IsCompleted == true) {
                     try { await maintain; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("重新建立映射：" + ex.Message); }
-                    server?.Dispose(); server = null; releasing = mapping!.DisposeAsync().AsTask(); mapping = null; maintain = null; nextProbe = now + 1000;
+                    // FakeTCP's listening process owns established peer sessions
+                    // independently of candidate publication/lease renewal. Keep
+                    // it until process failure, a source-address change or stop.
+                    // Legacy raw UDP still has a helper-specific shared bind.
+                    if (mesh.Pair.Mode == "udp") { server?.Dispose(); server = null; }
+                    releasing = mapping!.DisposeAsync().AsTask(); mapping = null; maintain = null; nextProbe = now + 1000;
                 }
                 if (server?.Exited == true) {
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
                 if (router != null && server == null && (mapping != null || profile.ManualEndpoint.Length > 0) && now >= nextServer) {
-                    try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel)); serverStarted = now; }
+                    try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel)); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter

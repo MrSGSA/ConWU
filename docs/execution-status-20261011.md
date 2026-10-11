@@ -12,7 +12,7 @@
 | M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网正例 Gate 待完成 | 既有本地记录；本次真实 Wintun 拒绝 1260 MTU 旧隧道负例；公网两次测试未得到认证包，未进入负载 | 仅显式实验开关，标记质量待验证 |
 | M5 观察/条件增强 | TCP 同源 SYN 观察协议、成员认证票据、Linux 有界捕获、正式后台诊断与设置已接入；预测/概率增强未完成 | 本地193检查、最终 Linux 回环195检查、Runner55回归；Windows真实物理出口单轮6 SYN，两公网端口均未观察到；不推断 NAT/QoS，公网正例未通过 | TCP 映射诊断默认关闭，需受管 TCP + 服务器能力；现用部署未替换 |
 | M6 质量/效率 | 两种策略、UDP 降级与后台恢复 FakeTCP 已接产品；能力协商、驻留/冷却、失败保留旧 Actor/socket；有界队列、双向 RTT、热路径优化和排队观测；AutoQuality、pacing/完整指标待完成 | 本次升级15、Router52、Runner基线54检查通过；双向各1174个合成MTU包、未重复交付；真实HTTPS/原生测试后端，非公网NAT；前轮双机反向质量失败仍保留 | 默认兼容入口不变；实验 UDP 降级须明确启用，双方新能力才升级；AutoQuality 拒绝启用；现用部署未替换 |
-| M7 映射/IPv6 | 未完成 | 未执行 | 否 |
+| M7 映射/IPv6 | PCP/NAT-PMP IPv4 Provider、协议生命周期、TCP 后备入口与设置已接入；UDP_DIRECT 租约、异步网关通知、IPv6 全链待完成 | 本次映射276检查（30轮仅编码/nonce，9组真实OS回环场景）、Mesh连接46、旧Runner19、正式Runner55；实际网关/native公网正例未执行 | 否，TCP后备映射须显式打开；保留UPnP优先，现用部署未替换 |
 | M8 安全/恢复 | 随各模块实现；新增升级候选与原 Active 的所有者链及延迟释放 | 本次局部验证升级激活失败、旧路径持续、成功退役和 Runner 退出；其余生命周期 Gate 未完成 | 保留既有不变量 |
 | M9 包/真机/回滚 | 未完成 | 未执行 | 未部署 |
 
@@ -57,3 +57,5 @@ UDP 降级后的后台升级、混合版本能力、冷却与旧资源保留：[
 前台方法切换、共同机会窗、原生第二轮恢复与排队期限：[M3/M6 调度改进](m3-pair-opportunity-20261011.md)。
 
 TCP 同源观察、成员票据、Linux 捕获及公网负例：[M5 观察接线](m5-tcp-syn-observer-20261011.md)。
+
+PCP/NAT-PMP 生命周期、TCP 后备入口及映射失效保留监听：[M7 Provider 接入](m7-port-control-20261011.md)。

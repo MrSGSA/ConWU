@@ -28,6 +28,7 @@ public sealed class DeviceProfile
     // Diagnostics only, off by default. Requires a separately configured raw
     // SYN observer on the authenticated coordinator; never promotes a path.
     public bool TcpSynObservation { get; set; }
+    public bool PortControlMapping { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")

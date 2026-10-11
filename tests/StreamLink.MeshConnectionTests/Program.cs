@@ -122,8 +122,13 @@ static class Program
             await Until(() => transports.OfType<ForwardingTransport>().LastOrDefault(t => !t.Exited)?.Packets > 0 && status?.Connected == true, "restarted transport is authenticated without recreating the adapter");
             Check(adapterCount == 1 && !adapter.Disposed, "mapping and per-peer recovery retain one adapter");
             mapping.ReleaseGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            var retainedServer = transports.OfType<StubTransport>().Single(t => !t.Disposed);
             mapping.Failed.SetException(new IOException("simulated mapping failure"));
             await Until(() => mapping.Removing, "failed TCP mapping starts asynchronous lease cleanup");
+            Check(!retainedServer.Disposed, "candidate lease failure preserves the listening FakeTCP process and its accepted sessions");
+            long beforeWithdrawal = discovery.Published.Last().Revision;
+            await Until(() => discovery.Published.Any(p => p.Revision > beforeWithdrawal && p.Endpoint.Length == 0),
+                "expired mapping is withdrawn even while the listening process remains", 4000);
             var latest = transports.OfType<ForwardingTransport>().Single(t => !t.Disposed); latest.Exited = true;
             await Until(() => transports.OfType<ForwardingTransport>().Count() == 3, "slow lease deletion does not block another outbound recovery", 1500);
             Check(probes == 1, "replacement mapping waits for old owned lease cleanup to avoid deleting the new lease");
@@ -155,6 +160,7 @@ static class Program
     sealed class Mapping : IMapping
     {
         public IPAddress LocalAddress => IPAddress.Loopback;
+        public bool IsValid => !Disposed && !Failed.Task.IsCompleted;
         public IPEndPoint PublicEndpoint { get; private set; } = new(IPAddress.Loopback, 43001);
         public event Action<IPEndPoint>? Changed; public bool Disposed;
         public readonly TaskCompletionSource Failed = new(TaskCreationOptions.RunContinuationsAsynchronously);

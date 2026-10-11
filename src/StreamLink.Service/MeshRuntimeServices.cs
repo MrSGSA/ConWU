@@ -28,7 +28,7 @@ internal sealed record MeshRuntimeServices(
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
         async (profile, log, token) => profile.Mesh!.Pair.Mode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)
-            : await TcpMapping.Create(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device),
+            : await TcpMapping.Create(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
         r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel),
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },

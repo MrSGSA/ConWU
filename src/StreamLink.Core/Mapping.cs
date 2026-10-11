@@ -5,6 +5,7 @@ namespace StreamLink.Core;
 
 public interface IMapping : IAsyncDisposable
 {
+    bool IsValid => true;
     IPAddress LocalAddress { get; }
     IPEndPoint PublicEndpoint { get; }
     event Action<IPEndPoint>? Changed;

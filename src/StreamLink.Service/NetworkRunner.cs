@@ -29,7 +29,7 @@ public sealed class NetworkRunner
         bool remembered = false;
         var timeline = new ConnectionTimeline(log);
         timeline.Mark("开始连接协商");
-        string Candidate() => mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint;
+        string Candidate() => mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint;
         NodeAnnouncement Own() => new(profile.Device, profile.Slot, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), Candidate(), profile.Preference, profile.LastEntry, profile.Slot == 1 ? selected : 0, session?.IsConnected == true, profile.DeviceName);
         Task<IMapping> Probe() => services.Probe(profile, log, mappingStop.Token);
         try
