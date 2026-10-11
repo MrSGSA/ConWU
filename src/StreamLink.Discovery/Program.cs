@@ -53,9 +53,10 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
 var pairRooms = new PairRooms();
 var meshRegistry = new MeshRegistry(root);
 app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => meshRegistry.Read(c, network)).RequireRateLimiting("mesh");
+app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest request) => meshRegistry.Watch(c, network, request)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, maxMembers = MeshIdentity.MaxMembers, relay = false }));
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, meshWatch = 1, maxMembers = MeshIdentity.MaxMembers, relay = false }));
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
 app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");

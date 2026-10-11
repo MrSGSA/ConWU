@@ -98,6 +98,7 @@ static class Program
         using var stop = new CancellationTokenSource(); Task running = runner.Run(stop.Token);
         try {
             await Until(() => discovery.Reads > 0 && discovery.Published.Count > 0, "coordination starts while adapter and local TCP mapping are still pending");
+            Check(discovery.Watches > 0, "production MeshRunner selects the change-feed interface when supported");
             Check(!opening.Task.IsCompleted && !mapped.Task.IsCompleted, "slow adapter and mapping were not implicitly awaited");
             opening.SetResult(adapter);
             await Until(() => status?.Connected == true, "peer entry connects while the local mapping probe remains blocked");
@@ -162,9 +163,11 @@ static class Program
         public Task Maintain(CancellationToken token) => Failed.Task.WaitAsync(token);
         public async ValueTask DisposeAsync() { Removing = true; if (ReleaseGate != null) await ReleaseGate.Task; Disposed = true; }
     }
-    sealed class Discovery(MeshProfile owner, MeshProfile guest, string endpoint) : IMeshDiscovery
+    sealed class Discovery(MeshProfile owner, MeshProfile guest, string endpoint) : IMeshDiscovery, IMeshChangeDiscovery
     {
-        public int Reads, WaitingReads; public bool Disposed;
+        public int Reads, WaitingReads, Watches; public bool Disposed;
+        public bool SupportsLongPolling => true;
+        public Task<MeshSnapshot?> WaitForChanges(CancellationToken token) { Interlocked.Increment(ref Watches); return Read(token); }
         public TaskCompletionSource? BlockReads;
         public readonly ConcurrentQueue<MeshAnnouncement> Published = [];
         public Task SaveDirectory(MeshDirectory directory, CancellationToken token) => Task.CompletedTask;

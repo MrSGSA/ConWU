@@ -5,7 +5,7 @@ using System.Text.RegularExpressions;
 using StreamLink.Core;
 
 namespace StreamLink.Discovery;
-public sealed class MeshRegistry
+public sealed partial class MeshRegistry
 {
     public sealed record Registration(string AuthHash, MeshDirectory Directory);
     readonly object gate = new();
@@ -23,6 +23,7 @@ public sealed class MeshRegistry
         lock (gate) {
             if (networks.TryGetValue(network, out var prior)) {
                 if (!Equal(auth, prior.AuthHash)) return Results.Unauthorized();
+                if (!TakeRequest(network, 1)) return Results.StatusCode(429);
                 if (directory.OwnerKey != prior.Directory.OwnerKey || directory.Revision < prior.Directory.Revision || directory.NextSlot < prior.Directory.NextSlot) return Results.Conflict();
                 if (directory.Revision == prior.Directory.Revision) return directory.Signature == prior.Directory.Signature ? Results.NoContent() : Results.Conflict();
                 if (directory.Members.Any(m => m.Slot < prior.Directory.NextSlot && !prior.Directory.Members.Contains(m))) return Results.Conflict();
@@ -35,6 +36,7 @@ public sealed class MeshRegistry
             }
             foreach (var key in nodes.Keys.Where(k => k.StartsWith(network + "/", StringComparison.Ordinal)).ToArray())
                 if (!directory.Members.Any(m => m.Slot == nodes[key].Envelope.Slot && m.Device == nodes[key].Envelope.Device)) nodes.Remove(key);
+            Changed(network, "directory", 0);
             return Results.NoContent();
         }
     }
@@ -45,9 +47,10 @@ public sealed class MeshRegistry
             if (!Equal(Auth(context), registration.AuthHash)) return Results.Unauthorized();
             var member = registration.Directory.Members.FirstOrDefault(m => m.Slot == slot); if (member == null) return Results.StatusCode(403);
             try { MeshMetadata.ValidateEnvelope(network, member, envelope); } catch { return Results.BadRequest(); }
+            if (!TakeRequest(network, slot)) return Results.StatusCode(429);
             string key = network + "/" + slot;
             if (nodes.TryGetValue(key, out var old) && envelope.Revision <= old.Envelope.Revision) return Results.Conflict();
-            nodes[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); return Results.NoContent();
+            nodes[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); Changed(network, "announcement", slot); return Results.NoContent();
         }
     }
     public IResult Read(HttpContext context, string network)

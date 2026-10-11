@@ -146,7 +146,13 @@ public sealed class MeshRunner
                 }
                 var statuses = router?.Status() ?? [];
                 bool allConnected = statuses.Length > 0 && statuses.All(p => p.Connected);
-                if (reading == null && now >= nextRead) { reading = discovery.Read(stop); nextRead = now + (allConnected ? 5000 : 2500); }
+                if (reading == null && now >= nextRead) {
+                    bool watching = discovery is IMeshChangeDiscovery { SupportsLongPolling: true };
+                    reading = watching ? ((IMeshChangeDiscovery)discovery).WaitForChanges(stop) : discovery.Read(stop);
+                    // Even a busy event feed cannot issue more requests than the
+                    // former disconnected polling schedule. Idle waits hold 25s.
+                    nextRead = now + (watching ? 2500 : allConnected ? 5000 : 2500);
+                }
                 string candidate = Candidate();
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000))) {
                     publishingEndpoint = candidate; lastPublish = now;
