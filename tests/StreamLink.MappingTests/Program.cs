@@ -9,8 +9,9 @@ int checks = 0;
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; }
 string Descriptor(string control = "/control") => $"<root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>{control}</controlURL></service></serviceList></device></root>";
 
-// All discovery and description traffic stays on loopback. No multicast query,
-// port mapping, adapter, driver, profile or firewall mutation takes place.
+// All discovery and description traffic stays on loopback. Multicast notice
+// tests use an isolated port, loopback interface and TTL=0; no live gateway,
+// adapter, driver, profile or firewall mutation takes place.
 await using (var gateway = new Gateway())
 {
     gateway.Documents["/good.xml"] = Descriptor();

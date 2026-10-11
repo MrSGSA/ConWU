@@ -64,11 +64,52 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     double byteTokens = TraversalLimits.ControlBytesPerSecond, searchTokens = burst, maintenanceTokens = burst;
     long tick = Stopwatch.GetTimestamp();
     int sockets;
+    readonly HashSet<OptionalSocket> optionalSockets = [];
     public IDisposable Acquire()
     {
+        while (true) {
+            OptionalSocket victim;
+            lock (gate) {
+                if (sockets < maximumSockets) { sockets++; return new Lease(this); }
+                victim = optionalSockets.FirstOrDefault() ?? throw new IOException("打洞资源已满，请等待其他尝试结束");
+                optionalSockets.Remove(victim);
+            }
+            // Join the optional receiver and close its socket BEFORE returning
+            // the quota. Never invoke resource teardown while holding gate.
+            victim.Dispose();
+        }
+    }
+    internal OptionalSocket? TryOpenOptional(Func<IDisposable> open)
+    {
+        OptionalSocket result;
         lock (gate) {
-            if (sockets >= maximumSockets) throw new IOException("打洞资源已满，请等待其他尝试结束");
-            sockets++; return new Lease(this);
+            if (sockets >= maximumSockets) return null;
+            sockets++; result = new(this); optionalSockets.Add(result);
+        }
+        try { result.Open(open); return result; }
+        catch { result.Dispose(); throw; }
+    }
+    // Only for auxiliary receive resources; open/Dispose must not acquire more
+    // resources from this ledger. Required Active/Candidate sockets can revoke
+    // it, whereas optional resources cannot evict each other.
+    internal sealed class OptionalSocket(TraversalResources owner) : IDisposable
+    {
+        readonly object sync = new();
+        IDisposable? resource;
+        bool disposed;
+        int active;
+        public bool IsActive => Volatile.Read(ref active) != 0;
+        internal void Open(Func<IDisposable> open)
+        {
+            lock (sync) { if (disposed) return; resource = open(); Volatile.Write(ref active, 1); }
+        }
+        public void Dispose()
+        {
+            lock (sync) {
+                if (disposed) return; disposed = true; Volatile.Write(ref active, 0);
+                try { resource?.Dispose(); }
+                finally { resource = null; lock (owner.gate) { owner.optionalSockets.Remove(this); owner.sockets--; } }
+            }
         }
     }
     public bool TrySend(int bytes = 128, bool maintenance = false)

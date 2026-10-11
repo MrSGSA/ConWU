@@ -33,6 +33,7 @@ public sealed class TcpMapping : IMapping
     {
         this.gateway = gateway; this.binding = binding; this.log = log; LocalAddress = result.Local.Address; sourcePort = result.Local.Port;
         HelperObservation = result; PublicEndpoint = GatewayCandidate(gateway);
+        log($"网关通知模式 {gateway.Snapshot.NotificationMode}，降级原因 {gateway.Snapshot.NotificationReason}");
         gateway.Changed += _ => {
             if (!gateway.Valid) return;
             var endpoint = GatewayCandidate(gateway);

@@ -80,8 +80,10 @@ static partial class PortControlTests
             Check(server.Requests.Count == sent, "server error lifetime suppresses immediate gateway retry");
         }
         await using (var server = new Server { DropCreates = true }) {
-            using var cancel = new CancellationTokenSource(200);
-            try { await using var lease = await PortControlLease.Open(server.Route, 41083, 40005, PortMappingProtocol.Tcp, () => true, cancel.Token); } catch (OperationCanceledException) { }
+            using var cancel = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var creating = PortControlLease.Open(server.Route, 41083, 40005, PortMappingProtocol.Tcp, () => true, cancel.Token);
+            await server.CreateObserved.Task.WaitAsync(TimeSpan.FromSeconds(3), ct); cancel.Cancel();
+            try { await using var lease = await creating; } catch (OperationCanceledException) { }
             Check(server.Creates == 1 && server.Deletes == 1 && server.Requests.All(p => p[0] == 2), "canceled/ambiguous PCP create cleans up only its nonce and does not assume NAT-PMP support");
         }
         await using (var server = new Server()) {
@@ -137,6 +139,7 @@ static partial class PortControlTests
             rows.Add(new { scope = "production TcpMapping + real loopback helper and gateway datagrams", hasNative = false, hasRealNat = false, actualPort = mapping.PublicEndpoint.Port, cleanup = true });
         }
         await Notifications(Check, rows, ct);
+        await MulticastNotifications(Check, rows, ct);
         string output = Environment.GetEnvironmentVariable("STREAMLINK_MAPPING_REPORT") ?? "artifacts/m7-port-control-20261011.json";
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));
@@ -160,6 +163,7 @@ static partial class PortControlTests
         public IPAddress ExternalAddress = IPAddress.Parse("1.1.1.1");
         public byte[] FirstNonce = [];
         public int Creates, Deletes;
+        public readonly TaskCompletionSource CreateObserved = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public uint Lifetime = 8;
         public readonly ConcurrentDictionary<(byte, ushort), ushort> AssignedPorts = [];
         public readonly ConcurrentDictionary<(byte, ushort), byte[]> LastMaps = [];
@@ -178,7 +182,7 @@ static partial class PortControlTests
                         var key = (p[36], BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(40))); LastMaps[key] = p; Clients[key] = packet.RemoteEndPoint;
                         if (FirstNonce.Length == 0) FirstNonce = p.AsSpan(24, 12).ToArray();
                         bool deleting = BinaryPrimitives.ReadUInt32BigEndian(p.AsSpan(4)) == 0;
-                        if (deleting) Deletes++; else Creates++;
+                        if (deleting) Deletes++; else { Creates++; CreateObserved.TrySetResult(); }
                         if (DropCreates && !deleting) continue;
                         response = PcpReply(p, epoch, deleting ? 0u : Lifetime, AssignedPorts.GetValueOrDefault(key, (ushort)(ChangePortOnRenew && Creates > 1 ? 45001 : 45000)), ExternalAddress, Error);
                         if (PoisonFirst && Creates == 1 && !deleting) {
@@ -204,6 +208,12 @@ static partial class PortControlTests
         {
             if (foreign) { using var other = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)); await other.SendAsync(bytes, client, stop.Token); }
             else await socket.SendAsync(bytes, client, stop.Token);
+        }
+        public async Task Multicast(byte[] bytes, int port)
+        {
+            socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, IPAddress.Loopback.GetAddressBytes());
+            socket.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 0);
+            await socket.SendAsync(bytes, new IPEndPoint(PortControlMulticast.Group, port), stop.Token);
         }
         public async ValueTask DisposeAsync() { stop.Cancel(); await run; socket.Dispose(); stop.Dispose(); }
     }

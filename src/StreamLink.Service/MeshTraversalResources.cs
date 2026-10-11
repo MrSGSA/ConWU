@@ -198,6 +198,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                         lifetime = Math.Min(120, Math.Floor(snapshot.RemainingSeconds)); observation = snapshot.Gateway;
                         if (lifetime <= TraversalLimits.UdpRoundMs / 1000 + 2) throw new IOException("UDP 网关租期不足以准备和检查候选");
                         diagnostic?.Invoke($"UDP 显式候选 {mapped}，socket={udp.SocketId:N}；仍需同 socket 双向认证与 MTU 检查");
+                        diagnostic?.Invoke($"网关通知模式 {snapshot.NotificationMode}，降级原因 {snapshot.NotificationReason}");
                     } else mapped = (await udp.Observe(target, deadline.Token)).Mapped;
                 } else if (captureBroker) {
                     pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;

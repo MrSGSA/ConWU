@@ -6,6 +6,15 @@ namespace StreamLink.Core;
 
 public sealed record PortControlRoute(string InterfaceId, IPAddress Local, IPEndPoint Gateway, string Generation)
 {
+    // Nonstandard ports are only used by isolated tests, never configuration.
+    internal int NotificationPort { get; init; } = 5350;
+    internal int NotificationInterface()
+    {
+        var nic = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n => n.Id == InterfaceId && n.OperationalStatus == OperationalStatus.Up);
+        if (nic == null) return 0;
+        var properties = nic.GetIPProperties();
+        return properties.UnicastAddresses.Any(a => a.Address.Equals(Local)) ? properties.GetIPv4Properties()?.Index ?? 0 : 0;
+    }
     public static PortControlRoute[] Discover(IPAddress source)
     {
         var routes = new List<PortControlRoute>();

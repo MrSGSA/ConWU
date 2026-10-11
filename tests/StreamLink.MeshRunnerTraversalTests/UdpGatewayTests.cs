@@ -2,6 +2,7 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using StreamLink.Core;
@@ -22,14 +23,18 @@ static class UdpGatewayTests
         => UdpTraversal.Create(new(IPAddress.Loopback, 0), generation, attempt, local, remote, key, budget);
     static async Task SharedBudget(Action<bool, string> check, CancellationToken token)
     {
-        await using var gateway = new Gateway(); await using var reflector = new Reflector();
+        await using var gateway = new Gateway(multicast: true); await using var reflector = new Reflector();
         var budget = new TraversalResources(8); var sockets = new List<UdpTraversal>(); byte[] key = RandomNumberGenerator.GetBytes(32);
         try {
-            for (int i = 0; i < 7; i++) sockets.Add(Socket(budget, Guid.NewGuid(), 1, i + 2, key, Guid.NewGuid()));
-            foreach (var socket in sockets) socket.AttachGateway(await gateway.Map(socket.Local.Port, token, budget));
+            for (int i = 0; i < 7; i++) {
+                var socket = Socket(budget, Guid.NewGuid(), 1, i + 2, key, Guid.NewGuid()); sockets.Add(socket);
+                socket.AttachGateway(await gateway.Map(socket.Local.Port, token, budget));
+                if (i == 0) check(socket.GatewaySnapshot!.Mapping.NotificationMode == "UnicastAndMulticast", "first mapped UDP data socket can use an optional multicast receiver");
+            }
             check(gateway.ControlSources.Distinct().Count() == 1 && gateway.Leases.Count == 7, "seven mapped UDP sockets share one serial control socket within the eight-socket machine budget");
             bool full = false; try { using var excess = budget.Acquire(); } catch (IOException) { full = true; }
             check(full, "all active data sockets and the shared gateway control owner consume the global quota");
+            check(sockets.All(s => s.GatewaySnapshot!.Mapping.NotificationReason == "ResourcePreempted"), "seventh real UDP socket preempts optional multicast without sacrificing seven peers or exceeding eight slots");
             int controls = gateway.ControlSources.Count; bool ledger = false;
             try { await using var foreign = await PortControlLease.Open(gateway.Route, 41079, 41079, PortMappingProtocol.Udp, () => true, token, new TraversalResources()); }
             catch (IOException) { ledger = true; }
@@ -48,7 +53,7 @@ static class UdpGatewayTests
     }
     static async Task RetainedWinner(Action<bool, string> check, CancellationToken token)
     {
-        await using var gateway = new Gateway(); var budget = new TraversalResources(8);
+        await using var gateway = new Gateway(multicast: true); var budget = new TraversalResources(8);
         byte[] key = RandomNumberGenerator.GetBytes(32); var attempt = Guid.NewGuid(); var ga = Guid.NewGuid(); var gb = Guid.NewGuid();
         await using var a = Socket(budget, attempt, 1, 2, key, ga); await using var b = Socket(budget, attempt, 2, 1, key, gb); CryptographicOperations.ZeroMemory(key);
         var wrong = await PortControlLease.Open(gateway.Route, a.Local.Port, a.Local.Port, PortMappingProtocol.Tcp, () => true, token, budget);
@@ -67,7 +72,8 @@ static class UdpGatewayTests
         check(!a.Closed && !b.Closed && gateway.Deletes == deleted && a.GatewaySnapshot!.Mapping.State == "Granted",
             "gateway maintenance belongs to retained paths, not the disposed Attempt reference");
         var identityA = a.SocketId; var identityB = b.SocketId;
-        gateway.PauseResponses = true; await gateway.NotifyRestart();
+        check(a.GatewaySnapshot!.Mapping.NotificationMode == "UnicastAndMulticast" && b.GatewaySnapshot!.Mapping.NotificationMode == "UnicastAndMulticast", "retained real winning sockets own the shared multicast subscription");
+        gateway.PauseResponses = true; await gateway.NotifyRestart(multicast: true);
         await Wait(() => a.GatewaySnapshot!.Mapping.State == "GatewayRevalidating" && b.GatewaySnapshot!.Mapping.State == "GatewayRevalidating", token);
         received = pb.Receive(token).AsTask();
         check(pa.TrySend(data) && (await received.WaitAsync(TimeSpan.FromSeconds(2), token)).Span.SequenceEqual(data),
@@ -222,14 +228,26 @@ static class UdpGatewayTests
         long restartedAt;
         uint Epoch => Volatile.Read(ref restartedAt) is var at && at != 0 ? (uint)Stopwatch.GetElapsedTime(at).TotalSeconds : (uint)(100 + clock.Elapsed.TotalSeconds);
         public PortControlRoute Route { get; }
-        public Gateway() { Route = new("gateway-fixture", IPAddress.Loopback, (IPEndPoint)udp.Client.LocalEndPoint!, Guid.NewGuid().ToString()); run = Run(); }
+        public Gateway(bool multicast = false) {
+            Route = new("gateway-fixture", IPAddress.Loopback, (IPEndPoint)udp.Client.LocalEndPoint!, Guid.NewGuid().ToString());
+            if (multicast) {
+                using var free = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+                var nic = NetworkInterface.GetAllNetworkInterfaces().Single(n => n.NetworkInterfaceType == NetworkInterfaceType.Loopback);
+                Route = Route with { InterfaceId = nic.Id, NotificationPort = ((IPEndPoint)free.Client.LocalEndPoint!).Port };
+            }
+            run = Run();
+        }
         public async Task<PortControlLease> Map(int port, CancellationToken token, TraversalResources? budget = null)
         { var lease = await PortControlLease.Open(Route, port, port, PortMappingProtocol.Udp, () => true, token, budget); Leases.Enqueue(lease); return lease; }
-        public async Task NotifyRestart()
+        public async Task NotifyRestart(bool multicast = false)
         {
             Interlocked.Exchange(ref restartedAt, Stopwatch.GetTimestamp());
             byte[] announce = new byte[24]; announce[0] = 2; announce[1] = 0x80;
-            await udp.SendAsync(announce, IPEndPoint.Parse(ControlSources.Last()), stop.Token);
+            if (multicast) {
+                udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, IPAddress.Loopback.GetAddressBytes());
+                udp.Client.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 0);
+                await udp.SendAsync(announce, new IPEndPoint(PortControlMulticast.Group, Route.NotificationPort), stop.Token);
+            } else await udp.SendAsync(announce, IPEndPoint.Parse(ControlSources.Last()), stop.Token);
         }
         async Task Run() { try { while (true) {
             var p = await udp.ReceiveAsync(stop.Token); byte[] b = p.Buffer; ControlSources.Enqueue(p.RemoteEndPoint.ToString());

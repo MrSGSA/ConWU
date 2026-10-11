@@ -9,12 +9,14 @@ public sealed partial class PortControlLease
     long notifications, revalidations, lastRevalidation, notificationDue;
     bool noticePending;
 
-    // Connected UDP has already restricted the source to the exact gateway.
+    // Connected UDP or the multicast demultiplexer has checked the source.
     // A hint only wakes renewal. MAP updates and replies are wire-identical;
     // a matching update may satisfy that renewal, but never authenticates a
     // business path. Notifications cannot destroy an existing data path.
     void ObserveNotification(ReadOnlyMemory<byte> packet)
     {
+        try { if (!currentRoute()) return; }
+        catch (System.Net.NetworkInformation.NetworkInformationException) { return; }
         lock (sync) {
             if (disposed || !confirmed || state != "Granted") return;
             long now = Stopwatch.GetTimestamp(); bool reboot = false, changed = false;

@@ -27,6 +27,13 @@ internal sealed class PortControlChannel : IDisposable
         }
     }
     public void Unsubscribe(Guid id) { lock (gate) subscribers.Remove(id); }
+    public void MulticastNotification(ReadOnlyMemory<byte> packet)
+    {
+        Action<ReadOnlyMemory<byte>>[] listeners;
+        lock (gate) { if (disposed) return; listeners = subscribers.Values.ToArray(); }
+        // Never feed multicast into the solicited-response matcher.
+        foreach (var listener in listeners) listener(packet);
+    }
     public Pending Expect(byte[] request, PortControlKind kind, IPAddress? external)
     {
         lock (gate) {

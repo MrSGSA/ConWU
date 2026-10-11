@@ -13,6 +13,7 @@ public sealed record PortControlSnapshot(Guid Id, PortControlKind Provider, stri
     public long Notifications { get; init; }
     public long Revalidations { get; init; }
     public string NotificationMode { get; init; } = "";
+    public string NotificationReason { get; init; } = "";
 }
 
 // One shared connected UDP control socket per source/gateway/generation. Data
@@ -44,10 +45,12 @@ public sealed partial class PortControlLease : IAsyncDisposable
     Task maintenance = Task.CompletedTask;
     const uint RequestedLifetime = 180;
     public event Action<PortControlSnapshot>? Changed;
-    public PortControlSnapshot Snapshot { get { lock (sync) return new(id, kind, route.Gateway.ToString(), new IPEndPoint(route.Local, internalPort).ToString(),
+    public PortControlSnapshot Snapshot { get { lock (sync) {
+        string notificationReason = account.Multicast.Reason;
+        return new(id, kind, route.Gateway.ToString(), new IPEndPoint(route.Local, internalPort).ToString(),
         external?.ToString(), protocol, lifetime, epoch, !confirmed ? "Unconfirmed" : kind == PortControlKind.Pcp ? "PcpNonce" : "LocalGrantNoDelete", state,
         route.Generation, confirmed ? Math.Max(0, lifetime - Stopwatch.GetElapsedTime(grantedAt).TotalSeconds) : 0, cleanupState)
-        { Notifications = notifications, Revalidations = revalidations, NotificationMode = "UnicastOnly" }; } }
+        { Notifications = notifications, Revalidations = revalidations, NotificationMode = notificationReason.Length == 0 ? "UnicastAndMulticast" : "UnicastOnly", NotificationReason = notificationReason }; } } }
     public IPEndPoint External { get { lock (sync) return external == null ? throw new IOException("网关未返回映射") : new(external.Address, external.Port); } }
     public bool Valid { get { lock (sync) return confirmed && state == "Granted" && Stopwatch.GetElapsedTime(grantedAt).TotalSeconds < lifetime; } }
 
@@ -57,15 +60,20 @@ public sealed partial class PortControlLease : IAsyncDisposable
         public readonly SemaphoreSlim Serial = new(1);
         public readonly Socket Socket;
         public readonly PortControlChannel Channel;
+        public readonly PortControlMulticast.Subscription Multicast;
         public readonly TraversalResources Budget;
         readonly IDisposable quota;
         public GatewayAccount(PortControlRoute route, TraversalResources resources)
         {
             Budget = resources; quota = resources.Acquire(); Socket? opened = null;
-            try { opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway); Socket = opened; Channel = new(Socket); }
-            catch { opened?.Dispose(); quota.Dispose(); Serial.Dispose(); throw; }
+            PortControlChannel? channel = null;
+            try {
+                opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway);
+                Socket = opened; Channel = channel = new(Socket);
+                Multicast = PortControlMulticast.Subscribe(route, resources, Channel.MulticastNotification);
+            } catch { channel?.Dispose(); opened?.Dispose(); quota.Dispose(); Serial.Dispose(); throw; }
         }
-        public void Dispose() { Channel.Dispose(); Socket.Dispose(); quota.Dispose(); Serial.Dispose(); }
+        public void Dispose() { Multicast.Dispose(); Channel.Dispose(); Socket.Dispose(); quota.Dispose(); Serial.Dispose(); }
     }
     static readonly object accountsGate = new();
     static readonly Dictionary<string, GatewayAccount> accounts = [];
