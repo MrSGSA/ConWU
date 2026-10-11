@@ -6,6 +6,14 @@ try {
     if($ReleaseVersion -notmatch '^\d+\.\d+\.\d+$') {throw 'ReleaseVersion must be a three-part numeric version'}
     $commit=(& git rev-parse HEAD).Trim()
     if($LASTEXITCODE -ne 0 -or @(& git status --porcelain).Count -ne 0) {throw 'Commit the exact candidate source before packaging; working tree must be clean'}
+    $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")
+    if(Test-Path -LiteralPath $verification) {
+        $summary=Get-Content -LiteralPath $verification -Raw | ConvertFrom-Json
+        if($summary.sourceCommit -ne $commit -or $summary.version -ne "$releaseVersion-preview" -or
+            $summary.releaseLevel -ne 'development-candidate' -or $summary.releaseGate -ne 'NotPassed') {
+            throw 'Verification summary does not match this exact candidate source/version/release level'
+        }
+    }
     $nativePath=[IO.Path]::GetFullPath((Join-Path $root $NativeBinary))
     if($nativePath -ne [IO.Path]::GetFullPath((Join-Path $root 'out/native/udp2raw-native.exe'))) {throw 'Only the production native build output can be packaged'}
     $receipt=Join-Path $root "out/package-build-$releaseVersion.json"
@@ -143,7 +151,6 @@ try {
     Copy-Item .\docs\execution-status-20261011.md $stage\开发验收状态.md
     Copy-Item .\docs\StreamLink-Codex-Execution-Plan-20261011.md $stage\开发验收规格.md
     Copy-Item -LiteralPath $receipt -Destination $stage\构建来源.json
-    $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")
     if(Test-Path $verification) {Copy-Item $verification $stage\验证摘要.json}
     $preview=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--preview',(Join-Path $root 'artifacts\desktop-preview.png')) -WindowStyle Hidden -PassThru -Wait
     if($preview.ExitCode -ne 0) {throw 'Desktop preview failed'}
