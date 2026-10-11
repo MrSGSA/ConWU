@@ -20,16 +20,23 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     readonly NamedPipeServerStream pipe;
     readonly byte[] identity;
     readonly CancellationTokenSource stopping = new();
+    readonly SemaphoreSlim control = new(1, 1);
     Process? process;
     Task heartbeat = Task.CompletedTask;
-    int disposed;
+    int disposed, childExited, childId;
     uint request = 1;
     public Guid AttachId => reference.AttachId;
     public Guid LeaseId { get; }
     public bool Armed { get; private set; }
     public bool Started { get; private set; }
-    public bool Exited => process == null || process.HasExited;
-    public int ProcessId => process?.Id ?? 0;
+    public bool Exited {
+        get {
+            if (Volatile.Read(ref childExited) != 0 || process == null) return true;
+            try { return process.HasExited; }
+            catch (InvalidOperationException) when (Volatile.Read(ref childExited) != 0) { return true; }
+        }
+    }
+    public int ProcessId => childId;
     public event Action? ProcessExited;
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -67,25 +74,38 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public static async Task<NativeAttachment> Launch(TcpEndpointLease lease, Guid generation,
         string executable, IEnumerable<string> arguments, IPEndPoint peer, bool server,
         string? logPath, CancellationToken token, IDictionary<string, string>? environment = null,
-        IEnumerable<string>? secrets = null, bool simultaneousOpen = false)
+        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true)
     {
         var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen);
         try {
             owner.process = owner.job.Start(executable, arguments.Concat(["--managed-pipe", owner.PipeName]), logPath, environment, secrets);
-            owner.process.Exited += (_, _) => { owner.reference.Dispose(); owner.ProcessExited?.Invoke(); };
+            owner.childId = owner.process.Id;
+            owner.process.Exited += (_, _) => { Volatile.Write(ref owner.childExited, 1); owner.reference.Dispose(); owner.ProcessExited?.Invoke(); };
             if (owner.process.HasExited) { owner.reference.Dispose(); throw new IOException("Native process exited before Attach"); }
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(8000);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(20000);
             await owner.pipe.WaitForConnectionAsync(deadline.Token);
             if (!GetNamedPipeClientProcessId(owner.pipe.SafePipeHandle, out uint pid) || pid != owner.process.Id)
                 throw new IOException("AttachUnauthorized: pipe client is not the launched process");
             await owner.Exchange(1, 2, deadline.Token); owner.Armed = true;
-            await owner.Exchange(3, 7, deadline.Token); owner.Started = true;
+            if (startImmediately) await owner.Start(deadline.Token);
             owner.heartbeat = owner.KeepControlAlive();
             return owner;
         } catch { await owner.DisposeAsync(); throw; }
     }
+    // Prepare (Launch with startImmediately=false) establishes capture ownership
+    // only. The pair coordinator calls Start after both peers report Ready.
+    public async Task Start(CancellationToken token)
+    {
+        if (!Armed) throw new InvalidOperationException("CaptureNotReady");
+        try { await Exchange(3, 7, token); }
+        catch { pipe.Dispose(); throw; } // ambiguous control reply cannot be reused
+    }
     async Task Exchange(ushort type, ushort expected, CancellationToken token)
     {
+        await control.WaitAsync(token);
+        try {
+        ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0 && type != 4, this);
+        if (type == 3 && Started) return; // duplicate Start reuses this attachment
         byte[] message = (byte[])identity.Clone();
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), type);
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(12), request++);
@@ -93,6 +113,8 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         byte[] reply = new byte[Size]; await pipe.ReadExactlyAsync(reply, token);
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), expected);
         if (!reply.AsSpan().SequenceEqual(message)) throw new IOException("AttachStale: ABI/identity/tuple/request mismatch");
+        if (type == 3) Started = true;
+        } finally { control.Release(); }
     }
     async Task KeepControlAlive()
     {
@@ -116,7 +138,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         stopping.Cancel();
         try {
             await heartbeat;
-            if (Started && process is { HasExited: false } && pipe.IsConnected) {
+            if (Armed && process is { HasExited: false } && pipe.IsConnected) {
                 try { using var timeout = new CancellationTokenSource(3000); await Exchange(4, 5, timeout.Token); }
                 catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
             }
@@ -127,7 +149,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             var child = process;
             if (child != null) {
                 try { if (!child.HasExited) { child.Kill(); await child.WaitForExitAsync(); } }
-                finally { if (child.HasExited) reference.Dispose(); }
+                finally { if (child.HasExited) { Volatile.Write(ref childExited, 1); reference.Dispose(); } }
             } else reference.Dispose();
             job.Dispose(); stopping.Dispose();
         }

@@ -13,7 +13,7 @@ static class ManagedProtocolPoc
         using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         s.Bind(new IPEndPoint(IPAddress.Loopback, 0)); return ((IPEndPoint)s.LocalEndPoint!).Port;
     }
-    public static async Task<int> Run(string binary, string output, bool simultaneousOpen = false, bool matrix = false)
+    public static async Task<int> Run(string binary, string output, bool simultaneousOpen = false, bool matrix = false, bool prepared = false)
     {
         int rounds = matrix ? 180 : 30;
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(matrix ? 450 : 110));
@@ -47,15 +47,28 @@ static class ManagedProtocolPoc
                 var cArgs = new[] { "-c", "-l", $"127.0.0.1:{appPort}", "-r", serverLease.Local.ToString() }.Concat(Common());
                 Dictionary<string, string> Env(int local, int remote) => new() { ["STREAMLINK_TEST_BIND"] = local.ToString(), ["STREAMLINK_TEST_PEER"] = remote.ToString() };
                 async Task<NativeAttachment> Server() => await NativeAttachment.Launch(serverLease, generation, binary, sArgs, clientLease.Local, true,
-                    Path.Combine(directory, $"{round}-server.log"), deadline.Token, Env(sWire, proxy.ServerPort), [key], simultaneousOpen);
+                    Path.Combine(directory, $"{round}-server.log"), deadline.Token, Env(sWire, proxy.ServerPort), [key], simultaneousOpen, !prepared);
                 async Task<NativeAttachment> Client() => await NativeAttachment.Launch(clientLease, generation, binary, cArgs, serverLease.Local, false,
-                    Path.Combine(directory, $"{round}-client.log"), deadline.Token, Env(cWire, proxy.ClientPort), [key], simultaneousOpen);
+                    Path.Combine(directory, $"{round}-client.log"), deadline.Token, Env(cWire, proxy.ClientPort), [key], simultaneousOpen, !prepared);
+                if (prepared && round == 1) {
+                    await using var abandoned = await Server();
+                    await Task.Delay(2200, deadline.Token); // includes a Prepared heartbeat
+                    Check(abandoned.Armed && !abandoned.Started && !abandoned.Exited && proxy.Snapshot().Length == 0, "Prepared owner stays alive without emitting SYN");
+                    await abandoned.DisposeAsync();
+                    Check(abandoned.Exited && !serverLease.Closed, "Prepared revoke releases capture but not the helper owner");
+                }
                 await using var firstChild = mechanism == 5 ? await Client() : await Server();
                 if (mechanism is 4 or 5) await Task.Delay(500, deadline.Token);
                 await using var secondChild = mechanism == 5 ? await Server() : await Client();
                 var s = mechanism == 5 ? secondChild : firstChild;
                 var c = mechanism == 5 ? firstChild : secondChild;
                 proxy.Begin();
+                if (prepared) {
+                    Check(c.Armed && s.Armed && !c.Started && !s.Started && proxy.Snapshot().Length == 0, "Both peers Ready before any raw traffic");
+                    await Task.WhenAll(c.Start(deadline.Token), s.Start(deadline.Token));
+                    await Task.WhenAll(c.Start(deadline.Token), s.Start(deadline.Token));
+                    Check(!c.Exited && !s.Exited, "Duplicate Start is idempotent on the same attachment");
+                }
                 Check(c.Armed && c.Started && s.Armed && s.Started, "Both native control sessions armed and started");
                 Check(c.AttachId != s.AttachId, "Each attachment has independent identity");
                 bool refused = false; try { using var forbidden = clientLease.AcquireNativeAttachment(generation); } catch (InvalidOperationException) { refused = true; }
@@ -107,7 +120,7 @@ static class ManagedProtocolPoc
         } finally { deadline.Cancel(); await echoTask; }
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new {
             scope = "Real C#/native child IPC and serialized C++ raw protocol over loopback-only test backend",
-            rounds = rows.Count, checks, simultaneousOpen, nativeControlAttached = true, noSecondBind = true, driverLoaded = false,
+            rounds = rows.Count, checks, simultaneousOpen, prepared, nativeControlAttached = true, noSecondBind = true, driverLoaded = false,
             wireRstVerified = false, windowsLanVerified = false, wanVerified = false, rows
         }, new JsonSerializerOptions { WriteIndented = true }));
         Console.WriteLine($"PASS managed native protocol {rows.Count} rounds / {checks} checks. NOT WinDivert/LAN/WAN."); return 0;

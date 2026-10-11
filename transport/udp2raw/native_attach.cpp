@@ -73,7 +73,7 @@ void monitor() {
         last_request++;
         unsigned type = read16(message+6);
         if (type == 3 && !started.load()) { start_tick.store(GetTickCount64()); started.store(true); reply(7,message); }
-        else if (type == 6 && started.load()) { reply(6,message); }
+        else if (type == 6) { reply(6,message); } // also keeps a Prepared owner alive
         else if (type == 4) {
             { std::lock_guard<std::mutex> lock(native_injection_mutex); started.store(false); }
             native_capture_shutdown();
@@ -139,7 +139,9 @@ void native_attachment_armed() {
     reply(2,authorization);
     // Parent must validate Armed then send Start; even server replies are gated.
     std::thread(monitor).detach();
-    ULONGLONG deadline=GetTickCount64()+8000;
+    // Resource preparation precedes the separate 8-second SO attempt. Bounded
+    // wait permits peer Ready coordination; heartbeats cannot extend it forever.
+    ULONGLONG deadline=GetTickCount64()+30000;
     while (!started.load()) { if (GetTickCount64()>=deadline) reject("Start timeout"); Sleep(2); }
 }
 bool native_attachment_packet(const char *bytes,int length) {
