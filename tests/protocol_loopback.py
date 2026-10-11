@@ -19,6 +19,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 EXE = ROOT / "out/native/udp2raw-protocol-test.exe"
+HTTP_SEQUENCE_PROFILE = {}
 
 
 def udp_socket():
@@ -71,6 +72,10 @@ class Tunnel:
         self.sockets = []
         self.thread = None
         self.http_seen = False
+        # Bounded metadata only: freeze the existing handshake wire profile
+        # before adding simultaneous-open. Never record keys or data payloads.
+        self.wire = []
+        self.wire_lock = threading.Lock()
         self.stun_seen = False
         self.mode = None
         self.held = None
@@ -130,6 +135,15 @@ class Tunnel:
                 destination = self.server_wire if sock is self.proxy_c else self.client_wire
                 output = self.proxy_s if sock is self.proxy_c else self.proxy_c
                 payload = tcp_payload(packet)
+                if len(packet) >= 40 and packet[9] == 6:
+                    ihl = (packet[0] & 15) * 4
+                    if ihl >= 20 and len(packet) >= ihl + 20:
+                        _, _, seq, ack = struct.unpack_from("!HHII", packet, ihl)
+                        with self.wire_lock:
+                            if len(self.wire) < 512:
+                                self.wire.append(dict(side="client" if sock is self.proxy_c else "server",
+                                    at=time.monotonic(), flags=packet[ihl + 13], seq=seq, ack=ack,
+                                    payload_bytes=len(payload), http=payload.startswith(b"GET / HTTP/1.1\r\n")))
                 if payload[:2] == b'\x00\x17' and payload[4:8] == b'\x21\x12\xa4\x42':
                     self.stun_seen = True
                 if b"Host: test.ustc.edu.cn\r\n" in payload:
@@ -202,6 +216,34 @@ class Tunnel:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_existing_http_handshake_sequence_profile(self):
+        with Tunnel() as tunnel:
+            tunnel.ready()
+            with tunnel.wire_lock:
+                wire = list(tunnel.wire)
+            syn = next(p for p in wire if p["side"] == "client" and p["flags"] & 0x12 == 2)
+            syn_ack = next(p for p in wire if p["side"] == "server" and p["flags"] & 0x12 == 0x12)
+            self.assertEqual(syn["payload_bytes"], 0)
+            self.assertEqual(syn_ack["ack"], (syn["seq"] + 1) & 0xffffffff)
+            profiles = {}
+            for side in ("client", "server"):
+                packets = [p for p in wire if p["side"] == side and p["payload_bytes"]]
+                index = next(i for i, p in enumerate(packets) if p["http"])
+                http, bare = packets[index:index + 2]
+                self.assertFalse(bare["http"])
+                self.assertEqual(http["flags"] & 0x1a, 0x18)
+                self.assertEqual(bare["flags"] & 0x12, 0x10)
+                # This overlap is intentional baseline compatibility, NOT a
+                # claim that these packets form a standard TCP byte stream.
+                self.assertEqual(http["seq"], bare["seq"])
+                self.assertEqual(http["ack"], bare["ack"])
+                self.assertNotEqual(http["payload_bytes"], bare["payload_bytes"])
+                profiles[side] = dict(http_flags=http["flags"], bare_flags=bare["flags"],
+                    http_bytes=http["payload_bytes"], bare_bytes=bare["payload_bytes"],
+                    sequence_delta=0, ack_delta=0,
+                    observed_gap_ms=round((bare["at"] - http["at"]) * 1000, 3))
+            HTTP_SEQUENCE_PROFILE.update(profiles)
+
     def test_udp_stun_shape_keeps_datagram_semantics(self):
         with Tunnel(http=False, raw_mode="udp", udp_shape=True) as tunnel:
             tunnel.ready()
@@ -312,5 +354,5 @@ if __name__ == "__main__":
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps({"test_kind": "loopback protocol, no driver, no WAN", "tests": result.testsRun,
         "failures": len(result.failures), "errors": len(result.errors), "elapsed_seconds": time.monotonic() - start,
-        "passed": result.wasSuccessful()}, indent=2), encoding="utf-8")
+        "passed": result.wasSuccessful(), "http_handshake_profile": HTTP_SEQUENCE_PROFILE}, indent=2), encoding="utf-8")
     raise SystemExit(0 if result.wasSuccessful() else 1)

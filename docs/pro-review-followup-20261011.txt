@@ -1,0 +1,136 @@
+PRO 评审落实：源码核查与 PoC-1 前置实验
+2026-10-11；基于 036b4e5；本次没有升级运行中的产品或公网协调服务。
+
+输入与决策
+已读取用户指定的 From Pro/StreamLink-PRO技术评审材料-20261011.txt，
+SHA-256 与项目内原评审材料相同；具体改进意见来自用户粘贴的 PRO 回复。
+采纳的主顺序是：端点资源连续性 → 原生双主动握手 → C# UDP_DIRECT。
+只前置最薄的候选、Attempt 与日志契约，不先实现大而全的协调框架。
+
+一、核查后确认的关键点
+1. HTTP 前导的序号重叠确实存在于本地 Windows 分支。
+   connection.cpp 的 send_fake_http 和 send_bare 均直接 send_raw0；
+   后者没有在握手路径推进数据序号，send_safer 才调用 after_send_raw0。
+   network.cpp 的 seq-mode 3 还会按 ACK/窗口条件调整 seq。
+   新增真实 C++ 回环报文检查，客户端与服务端均观察到：
+     HTTP：flags 0x18，payload 180 字节；
+     紧随的 bare 握手：flags 0x10，payload 48 字节；
+     二者 seq 和 ack 均相同。
+   这被记录为当前兼容基线，不作为标准 TCP 字节流的正确性声明。没有
+   “顺手修正”序号、HTTP Host、外层加密或业务重传语义。
+   本轮观察到发送间隔约 44.6/46.1 ms；源码请求等待约 32 ms，Windows
+   调度和观测也会影响间隔，因此回归不要求精确 32 ms。
+
+2. 端口资源缺口仍然成立。
+   现用 TcpBinding 允许 ReuseAddress，且使用 Linger(true, 0)；原生客户端
+   --source-port 会再调用 try_to_list_and_bind2。直接在现版本强行共享
+   同一端口不是已验证的安全接入方式。
+   native_backend 的客户端过滤目前是固定对端 IP/端口、相同优先级，
+   init_filter 仅按本地端口判断是否复用捕获。动态候选扩展必须检查完整
+   本地/远端集合和代次，不能只保留“端口没变就不用重开”的假定。
+   现有 P→Q 候选继续只代表待验证的显式入站入口，不升级为双主动能力。
+
+3. MeshLink 已有部分所需不变量，未发现材料所担心的简单“每路径另建序号”。
+   MeshRouter 每成员持有一个 MeshLink，新旧回环传输共用它；发送计数
+   和重放窗口属于成员会话，不属于每个传输。MeshLink 的锁串行分配序号。
+   重建对象生成新随机 epoch；有界退役历史满时也轮换本机 epoch/派生密钥，
+   之后才清零计数。现有测试覆盖乱序、重复、七十次重启及旧会话拒绝。
+   这是源码核查和限定测试，不是独立密码审计。新增 UDP_DIRECT/原生候选
+   时仍必须共用正确会话，并补 Attempt/候选版本/能力的绑定。
+
+4. UDP 的 1400 字节确为检查 payload；当前 Socket 未设置 DontFragment。
+   因此成功收到它不能当作未分片 PMTU 证据。UDP_DIRECT 的 1280 字节
+   内层包加 64 字节 MeshLink 是 1344 字节 UDP payload，IPv4+UDP 总计
+   1372 字节（不含其他新增封装）。需明确1400是余量测试还是路径硬门槛。
+   原生 FakeTCP 的封装长度另计。此项在正式 UDP 接入前解决，未改默认。
+
+5. 概率预算的提醒成立，但它不是现有代码已经宣称的能力。
+   N=8、M=120、R=65536 时，1-exp(-NM/R) 约为 1.454%；这是理想端口
+   命中估算，不是联网成功率。现代码没有概率扫描，八 socket 是全机预算，
+   也不能把每轮 120 包都当作独立猜测。增强策略必须有单独预算和准入条件。
+
+二、本轮实现了什么
+A. tests/protocol_loopback.py 增加有界报文元数据观测及 HTTP 序号回归。
+   记录角色、flags、seq/ack 关系、长度、时间，不记录密钥或业务明文。
+   使用已有 udp2raw-protocol-test.exe 的真实 C++ 协议/事件循环，底层
+   原始报文通过 localhost UDP 搬运；不加载 WinDivert。
+
+B. 新增 tests/StreamLink.EndpointPoc，完全独立于产品默认启动流程。
+   TcpEndpointLease 原型实际持有 ExclusiveAddressUse 的内核 TCP socket、
+   一条持续的 STUN 反射连接、随机 LeaseId 和 NetworkGeneration。
+   它把资源所有者、Attempt 引用和路径引用分开：
+   - 获胜方先 RetainPath，再结束 Attempt；所有者退役后拒绝新 Attempt。
+   - 已有路径仍能在原连接继续查询；没有关闭重绑或创建第二条 STUN 流。
+   - I/O 排队和执行期间也持有引用，防止取消同时关掉唯一接收者。
+   - 同一流上的查询串行，避免多个调用争抢 TCP 收包。
+   - STUN 部分事务超时/取消后标记该流不可复用，避免把迟到回复算进新事务。
+   - 最后一个持有者释放后关闭资源；重复 Dispose 不重复释放。
+
+   RetainPath 只是本地资源操作，不提供认证/提名证明。生产协调器将来
+   必须在双向路径认证后才调用；本测试没有借此伪造“已直连”。
+   这里采用独占绑定，现用 TcpBinding 行为未被替换；WinDivert 是否能
+   与这个独占的内核辅助端点可靠共存，仍需下一个实验验证。
+
+三、实际运行结果
+1. Windows loopback 资源测试：30 轮，244 条断言全部通过。
+   每轮用真实 TcpListener 反射，另起一个 dotnet 子进程尝试 ReuseAddress
+   绑定相同本地端点；抢占被拒绝，原流继续工作。
+   一次初始观测后，保留路径引用，结束 Attempt 和所有者，再并发提出
+   三次查询；实际串行复用一个 TCP 连接，四次事务的端点完全一致。
+   覆盖错误代次、取消后保留路径被拒绝、在途 I/O 取消及最后资源释放。
+   每轮约 138–186 ms，是本地测试成本，不是公网打洞时间。
+2. 原生协议回归：10/10 通过，包括新增 HTTP 序号检查及既有丢包不阻塞、
+   乱序、重复、篡改、错误密钥与 UDP 边界检查。
+3. MeshLink/组网相关既有回归：40/40 通过。
+4. TCP/路径恢复既有回归：43/43 通过，包括同路径挑战、旧路径晚到报文、
+   协调请求挂起和元数据过期不销毁已证明路径。
+
+证据：
+  artifacts/endpoint-lease-local-20261011.json
+  artifacts/protocol-review-20261011.json
+  被测 C++ 协议测试二进制 SHA-256：
+  64F728B42B5285F6B577CE1BD1702029F3F42D7B125F36122914A21BC8253AA6
+本轮没有重建/修改原生生产协议；未替换现用服务、网卡、路由和路由器映射。
+本机测试只访问回环，不使用公共 STUN，不发公网 SYN，不安装或重载驱动。
+
+复现（开发环境 .NET 10 / Python 3）：
+  dotnet run --project tests/StreamLink.EndpointPoc -c Release -- --output artifacts/endpoint-lease-local.json
+  py -3 tests/protocol_loopback.py --output artifacts/protocol-review.json
+  dotnet run --project tests/StreamLink.MeshTests -c Release
+  dotnet run --project tests/StreamLink.MeshConnectionTests -c Release
+Python 命令需要先有 out/native/udp2raw-protocol-test.exe，可用既有 Build.ps1
+生成。EndpointPoc 不调用现有 StreamLink 服务，也不需要管理员来安装驱动。
+
+四、这还不是 PoC-1 完成
+尚未连接原生 raw 工作进程，没有验证 WinDivert 捕获归属、内核 RST 泄漏、
+注入报文是否被其他过滤器二次处理、公网映射一致性或 NAT 行为。
+输出中明确 nativeRawAttached/captureOwnershipTested/rstLeakageTested/
+natClassified/publicNetworkUsed 都为 false；30/30 不称为公网成功率。
+资源关闭已验证；Windows 正常 TCP TIME_WAIT 不等同泄漏，本测试不声称
+关闭后所有端口都能立即以任意规则重绑。
+
+五、下一步的最小原生接入
+1. 由 Lease 持续持有辅助 STUN 的本地 IP:P；原生只使用其授权的源端点，
+   不再次 bind P。需要受限的父子进程控制协议与代次/退出通知，不能仅靠
+   一个可任意设置的“跳过绑定”环境变量绕过所有权校验。
+2. 捕获准备、回报实际 local/remote tuple 和代次后才允许第一 SYN。
+   排除 STUN tuple；新旧捕获范围不重叠。只对拥有的 FakeTCP tuple 处理
+   内核 RST，禁止全局屏蔽。注入与更低优先级过滤器的交互需真实观测。
+3. 在测试对端先用既有单主动握手认证通信，固定资源观测公网变化；按
+   协议、连接目标与时间记录，不能用四次 UDP 观测推导 TCP 类型。
+4. 捕获 STUN 与 FakeTCP 两种流，证明辅助流没有被截走、业务流无额外
+   内核 RST/SYN+ACK；再做实例争用、进程退出、取消和旧包迟到实验。
+5. 这条共存路线若不可行，转入原生 EndpointOwner 自有反射流程；不通过
+   反复关闭重绑或扩大捕获范围获得表面成功。
+
+通过后再进入双主动 SYN 状态机，最后接 C# UDP_DIRECT。控制层的能力、
+共同提名、请求配额与等待者上限随实验接入；单纯的两端同时发 SYN 不够。
+队列/pacing/吞吐扩展保留为后续议题，本阶段优先投入端点和握手。
+
+公开材料复核：
+WinDivert NETWORK 层无 PID，且同优先级重叠过滤次序不确定：
+https://reqrypt.org/windivert-doc.html
+Windows 的 ReuseAddress / ExclusiveAddressUse 区别：
+https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
+TCP simultaneous open 与状态机：
+https://www.rfc-editor.org/rfc/rfc9293.html
