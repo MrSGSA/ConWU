@@ -15,6 +15,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
+        & dotnet run --project tests/StreamLink.TraversalTests -c Release
+        if($LASTEXITCODE -ne 0) {throw 'Traversal foundation regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe
         if($LASTEXITCODE -ne 0) {throw 'Native multi-client protocol regression failed'}
         if($IncludeLegacy) { & dotnet run --project tests/StreamLink.MappingTests -c Release -- (Join-Path $EasyTierDirectory 'easytier-core.exe') } else { & dotnet run --project tests/StreamLink.MappingTests -c Release }

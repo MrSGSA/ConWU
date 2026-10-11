@@ -1,0 +1,133 @@
+StreamLink 打洞优化：源码核对与第一批实现
+2026-10-11；基于 0.4 原生多机开发分支；成员上限继续为 8。
+
+结论
+PRO 提供的普通 UDP、真实来源学习、条件预测和有限概率打洞方向适用，但
+StreamLink 不能直接采用“先 UDP，失败再换 TCP/中继”的通用产品默认值。
+本项目先前的 QoS 体验来自 FakeTCP + HTTP；提高 UDP 可达性和改善 UDP
+吞吐是两项独立验收。业务中继继续禁止，控制服务器仅交换认证信息和端点。
+不会因为纯 UDP 更快握手，就自动替换已经有效的 FakeTCP 业务路径。
+
+已从源码确认的缺口
+1. src/StreamLink.Core/Mapping.cs：UdpMapping 必须发现 UPnP，并将 UDP
+   socket Connect 到单个 STUN 地址。没有 UPnP 会拒绝建立本机 UDP 入口。
+   这属于“STUN + 显式端口映射”，不是一般的双向 UDP 打洞实现。
+2. transport/udp2raw/client.cpp：未指定 --source-port 时自行选择源端口。
+   MeshTransport.cs 没有指定它。因此即使先用另一个 socket 打洞，现有
+   udp2raw client 也不会自动继承获胜映射。
+3. native_backend.cpp：客户端 WinDivert 过滤器固定远端 IP 和端口；
+   client.cpp 握手/数据处理也校验固定远端。只修改上层候选地址不足以
+   支持握手中学习真实来源。MeshRouter 的 Active 是本机回环返回地址，
+   不等于学习了公网 prflx 候选。
+4. TcpMapping.cs：持续 TCP STUN，申请 UPnP 将探测源端口转到 FakeTCP
+   监听端口。它不是 TCP simultaneous open。此路线上已有成功经验，应保留。
+5. MeshAnnouncement 目前每设备只公告一个 IPv4 Endpoint；MeshRunner
+   大约每 5 秒循环读写一次公告。它还没有协商双方都已准备好的打洞轮次。
+   不能在发出普通公告后直接启动 3 秒窗口，假定另一端已经拿到候选。
+6. 原生 udp2raw 当前仅实现 IPv4。先发现 IPv6 地址不会自动获得可用的
+   IPv6 FakeTCP 传输，必须连同原生收发与包解析一起实现和验证。
+
+第一批已实现（未接入默认运行路径）
+NatObservations.cs：保存 socket 标识、出口代次、协议、本地端点、反射
+目标、公网观察值和时间。只有同一 socket/协议/代次、60 秒内且目标拓扑
+足够的观测才给出 observed-eim / observed-adm / observed-apdm。
+这不是绝对 NAT 标签。没有 RFC 5780 的 CHANGE-REQUEST 等完整测试，
+Filtering 始终为 unknown；不同 socket、TCP/UDP 混合、过期、映射漂移、
+多公网 IP 和不足的目标拓扑都不会强行分类。
+
+UdpTraversal.cs：
+- 独占、未 Connect 的 UDP socket；STUN、检查、后续负载复用同一绑定。
+- STUN 同时校验事务 ID 与响应来源；无关/格式错误报文不终止有效事务。
+- 双方经认证控制通道提供本轮随机 AttemptId 和共享密钥。HKDF 派生检查
+  密钥，HMAC 校验身份、轮次、随机挑战和完整 1400 字节检查包。
+- 对有效请求的真实来源建立有上限的候选并触发反向检查；回复必须匹配
+  本机向该来源发送的随机挑战，才选择该路径。不能仅收一个包就报直连。
+- 全机共享默认最多 8 个 socket、每秒 60 个控制包、突发 8 包；每轮默认
+  6 秒、最多 120 包、8 个候选。这些是本项目实验预算，不是 ICE 定时器。
+- 获胜后保持同一个 socket 和收包循环；取消/退出释放资源。成功握手后
+  剩余短窗口仍答复对端检查，避免某一端先结束导致另一端等不到确认。
+- 暴露 SendPayload/ReceivePayload 用于后续传输适配；这层不负责负载
+  加密，调用者必须使用 MeshLink 或其他已验证的数据认证/加密协议。
+- 这不是完整 ICE：尚无多候选双端提名、路径质量评分、长期保活/迁移或
+  自动重启。两端同一候选的回环/模型测试不能代替这些产品集成步骤。
+
+默认服务目前仍调用原 TcpMapping/UdpMapping/MeshTransport，新模块不会
+在用户机器后台启动公共 STUN 探测、预测端口或扫描。本轮没有更换 0.4
+候选 ZIP、现用 0.3.2 服务、Cloudflare、路由器或公网协调服务。
+
+实际验证
+tests/StreamLink.TraversalTests：66 项检查通过。
+- 真实 Windows 回环 UDP socket 向三个反射端点查询，忽略错误事务和
+  错误来源；双向 1400 字节检查后保留同一 socket。
+- 获胜 socket 双向承载真实 MeshLink 加密帧：1280 字节负载，1344 字节
+  加密帧；双方解密核对内容。它没有经过公网、Wintun 或 udp2raw。
+- NAT 行为模型：EIM+APDF 对 EIM+APDF 成功；EIM+EIF/ADF 对 APDM+APDF
+  成功并从实际来源学习变化的端口。初始公网端口不保留本地端口时，也不会
+  仅因此被当作 APDM。
+- EIM+APDF 对 APDM+APDF、双 APDM+APDF 在仅常规检查时如实失败。
+- 只放行 STUN、限制大报文、错误密钥、旧轮次重放均不误报成功。
+- 校验发包和全局 socket 预算、取消、拒绝资源后的关闭及端口重新绑定。
+模型是可控的映射/过滤模拟，不是基于标签声称某台实际路由器已被验证。
+尚无校园网直连成功率、首次连接 p50/p95、公网吞吐或恢复耗时结果。
+
+本机少量真实出口观测（与模型分开）
+2026-10-11 在本机 Ethernet 出口，对现有列表中 4 个不同 IP 的 STUN
+服务器做了一轮查询：4 次响应、0 次失败；本地 socket/端口相同，公网
+IP 相同，但 4 个公网端口不同。相邻端口差为 +6193、+774、+387，未见
+固定步长。这个样本不能证明端口完全随机，也不能保证下一轮相同。
+由于缺少同一个目标 IP 上两个有效端口的观测，仍不区分 ADM/APDM；
+过滤行为仍 unknown。本轮未执行 CHANGE-REQUEST、端口预测或概率扫描。
+这项证据支持先实现真实来源学习，不支持直接假定公网端口每次加一。
+原始观测仅保存在本地 artifacts/traversal-observation-20261011.json，
+未提交仓库；其中包含本机及公网地址。
+
+复现（默认只使用回环和进程内模型）
+  dotnet run --project tests/StreamLink.TraversalTests -c Release
+可选的开发者观测入口，只有显式执行才访问给定服务器：
+  dotnet run --project tests/StreamLink.TraversalTests -c Release -- --observe 主机1:端口 主机2:端口 主机2:另一端口
+它保留同一 UDP socket，最多查询 4 项，输出观测 JSON。结果可能包含
+公网端点，不应未经处理上传日志。服务器不响应时报告超时，不判定 UDP
+全封或 NAT4。公网列表未必提供足够的 IP/端口拓扑，更不等同完整过滤测试。
+
+下一批集成顺序
+1. 协调层和候选生命周期（中等工作量）
+   扩展 MeshDiscovery.cs/MeshRegistry.cs/MeshRunner.cs，交换带类型、协议、
+   代次和过期时间的候选以及双方准备状态。高频协商使用独立、有配额的
+   控制更新机制，避免依赖 5 秒公告轮询；不新增业务转发。用成功入口缓存
+   排序，但须重新认证和验证路径，不能把上次成功当成本次已连接。
+2. UDP 同 socket 接入真实 udp2raw 数据面（中到大工作量）
+   新增明确的 UDP 收发适配边界，让 udp2raw 的 UDP 载荷通过获胜 socket
+   收发，或把打洞器放入拥有实际端口的原生后端。涉及 MeshTransport.cs、
+   native_backend.cpp、client.cpp 和相关包收发接口。不能关掉获胜 socket
+   再指望另一个进程重新 bind 后映射不变，也不能用测试专用后端冒充生产。
+   两个同时使用同一 Windows UDP 端口的 socket 不是“同 socket”。
+   先完成正常 UDP 的无 UPnP 双向业务，再检验其 QoS；默认 FakeTCP 保持。
+3. TCP 与 FakeTCP 的独立优化（中到大工作量）
+   保留可达入口优先/严格端主动连接的现有路径；另外建立 Windows socket
+   复用、同时打开、RST/TIME_WAIT 和取消的专项实验。真实 TCP connect
+   成功不等于可直接换成 udp2raw FakeTCP：需解决内核连接、序列号和状态
+   接管；若最终采用真实 TCP 传输，则必须明确仍有 TCP 队头阻塞。
+   若采用 FakeTCP 双主动 SYN，应独立修改其状态机并测试中间设备支持。
+4. 条件增强（常规路径接通后再加）
+   小范围、有置信度的端口规律探测；一端端点稳定时的有限多 socket；
+   双可预测 NAT 的协调轮次。均受全机预算约束，并记录发包/映射成本。
+   不对随机双 APDM+APDF 套用一端稳定的生日概率。关闭 socket 也不代表
+   外层 NAT 马上删除映射，压力测试要考虑实际回收时间。
+5. IPv6/PCP/NAT-PMP 可作为候选扩展，但须验证数据后端支持和最终双向
+   可达性；内层路由器返回成功不能代表外层 CGNAT 入站可达。
+
+产品排序
+默认 QoS 模式优先保留实测有效的 FakeTCP+HTTP 入口；UDP 增强先作为
+明确标注的实验能力。路径成功必须经过认证、大报文双向数据验证，然后
+单独评估吞吐/丢包。不实施业务中继，不把最终无法直连隐藏成“已组网”。
+IPv6 或标准 TCP 是否作为后续替代承载，不能只由 NAT 标签决定。
+
+依据（已核对原文，未照搬第三方实现）
+RFC 8445，候选、prflx 和触发检查：https://www.rfc-editor.org/rfc/rfc8445.html
+RFC 4787，映射与过滤分别描述：https://www.rfc-editor.org/rfc/rfc4787.html
+RFC 5780，观测局限及测试顺序：https://www.rfc-editor.org/rfc/rfc5780.html
+RFC 5128，预测与失败条件：https://www.rfc-editor.org/rfc/rfc5128.html
+RFC 6544 附录 B，TCP 本地端点复用：https://www.rfc-editor.org/rfc/rfc6544.html#appendix-B
+Windows 端口复用差异：https://learn.microsoft.com/en-us/windows/win32/winsock/using-so-reuseaddr-and-so-exclusiveaddruse
+Tailscale 的稳定端/严格端分析：https://tailscale.com/blog/how-nat-traversal-works
+EasyTier P2P 优化与 NAT4E：https://easytier.cn/guide/network/p2p-optimize.html

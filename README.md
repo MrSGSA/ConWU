@@ -4,6 +4,8 @@
 
 **当前开发分支为 0.4.0 原生多机预览版，本地候选尚未完成公网验收。** 使用官方 Wintun 驱动和自主组网层，默认包不含 EasyTier；每网络最多 8 台设备，提供独立成员凭据、逐设备连接状态及按钮动效。两台现用设备仍保留 0.3.2，公网协调服务尚未升级。详见 [0.4 使用、验证与回退说明](docs/native-mesh-0.4.txt)。GUI 仍需管理员权限。
 
+打洞基础模块正在独立开发：同 socket UDP 检查、认证后学习真实来源和观测诊断已通过回环及 NAT 模型验证，尚未接入默认 udp2raw 路径；没有新增业务中继。参见 [打洞源码核对、验证与集成顺序](docs/traversal-foundation-20261011.txt)。
+
 ## 下载与使用
 
 - [v0.3.2-preview Release](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.2-preview)：现有双机版本。0.4 候选由本分支构建，尚未替换 GitHub Release。私有仓库下载需要登录有权限的 GitHub 账号；[0.3.1](https://github.com/MrSGSA/StreamLink/releases/tag/v0.3.1-preview) 保留用于回退。
@@ -43,6 +45,7 @@ dotnet run --project tests/StreamLink.WindowsTests -c Release
 dotnet run --project tests/StreamLink.ConnectionTests -c Release
 dotnet run --project tests/StreamLink.MappingTests -c Release
 dotnet run --project tests/StreamLink.MeshTests -c Release
+dotnet run --project tests/StreamLink.TraversalTests -c Release
 dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe
 .\scripts\Test-Coordination.ps1
 .\scripts\Package.ps1
