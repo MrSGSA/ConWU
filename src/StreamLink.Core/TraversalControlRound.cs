@@ -4,6 +4,7 @@ namespace StreamLink.Core;
 // reference does not grant another 120 packets or another byte allowance.
 public sealed class TraversalControlRound(TraversalResources machine, int maximumPackets = TraversalLimits.RoundPackets)
 {
+    internal TraversalResources Machine => machine;
     readonly object gate = new();
     int packets, bytes;
     public int Packets { get { lock (gate) return packets; } }

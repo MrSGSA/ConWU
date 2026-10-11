@@ -16,8 +16,12 @@ public sealed class NativeAttemptGroup
     public bool Claimed { get { lock (gate) return claimed; } }
     internal Task Rejected => rejected.Task;
     public TimeSpan Remaining { get { lock (gate) return started == 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(TraversalLimits.SoRoundMs) - Stopwatch.GetElapsedTime(started); } }
-    public NativeAttemptGroup(TraversalResources machine, Func<bool> claimFirstProbe)
-    { ControlRound = new(machine); this.claimFirstProbe = claimFirstProbe ?? throw new ArgumentNullException(nameof(claimFirstProbe)); }
+    public NativeAttemptGroup(TraversalResources machine, Func<bool> claimFirstProbe, long roundStartedAt = 0, TraversalControlRound? controlRound = null)
+    {
+        if (roundStartedAt < 0 || roundStartedAt > Stopwatch.GetTimestamp()) throw new ArgumentOutOfRangeException(nameof(roundStartedAt));
+        if (controlRound != null && !ReferenceEquals(controlRound.Machine, machine)) throw new ArgumentException("Round belongs to another machine budget");
+        started = roundStartedAt; ControlRound = controlRound ?? new(machine); this.claimFirstProbe = claimFirstProbe ?? throw new ArgumentNullException(nameof(claimFirstProbe));
+    }
     internal long Join(long timestamp)
     {
         lock (gate) {

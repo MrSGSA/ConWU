@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Diagnostics;
 
 namespace StreamLink.Core;
 
@@ -9,13 +10,13 @@ public interface IPreparedMeshPath : IAsyncDisposable
     TimeSpan RemainingAttemptTime { get; }
     Task<IMeshDatagramPath> Activate(CancellationToken token);
 }
-public enum MeshAttemptPhase { Offering, Preparing, Ready, Starting, Selected, Cancelled }
+public enum MeshAttemptPhase { Offering, Preparing, Ready, Starting, Selected, Cancelled, Reserving, AwaitMeasure, Measuring, AwaitMeasured, AwaitReady }
 
 // Production peer handshake. The runner owns gathering/admission; this object
 // binds an authenticated Offer/Ready/Start to one prepared local resource and
 // transfers the winning reference to the actual Router. HTTPS Selected is only
 // reconciliation evidence; promotion always requires the in-path nomination.
-public sealed class MeshTraversalAttempt : IAsyncDisposable
+public sealed partial class MeshTraversalAttempt : IAsyncDisposable
 {
     readonly object gate = new();
     readonly MeshProfile local;
@@ -25,7 +26,15 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
     readonly bool leader;
     readonly long revision;
     readonly Func<long> nextSequence;
-    readonly MeshTraversalCandidate localCandidate;
+    MeshTraversalCandidate localCandidate;
+    readonly MeshTraversalCandidate localReservation;
+    MeshTraversalCandidate? remoteReservation;
+    bool remotePrepared;
+    long predictionBegan;
+    public bool Predicting => localReservation.Prediction != null;
+    public long PredictionBegan { get { lock (gate) return predictionBegan; } }
+    public TimeSpan PredictionRemaining { get { lock (gate) return predictionBegan == 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(TraversalLimits.SoRoundMs) - Stopwatch.GetElapsedTime(predictionBegan); } }
+    public MeshTraversalCandidate? RemoteCandidate { get { lock (gate) return remoteCandidate; } }
     readonly CancellationTokenSource stop = new();
     MeshTraversalCandidate? remoteCandidate;
     IPreparedMeshPath? prepared;
@@ -48,7 +57,7 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
         MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence)
     {
         this.local = local; this.peer = peer; this.localBoot = localBoot; this.remoteBoot = remoteBoot; this.profile = profile;
-        localCandidate = candidate; this.attempt = attempt; this.nonce = nonce; this.revision = revision; nextSequence = sequence;
+        localReservation = localCandidate = candidate; this.attempt = attempt; this.nonce = nonce; this.revision = revision; nextSequence = sequence;
         leader = local.Self.Slot < peer.Slot;
     }
     static void Membership(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs, TraversalProfile profile)
@@ -80,6 +89,7 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
     }
     static void RequireFamily(MeshTraversalCandidate candidate, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs, TraversalProfile profile)
     {
+        if (candidate.Prediction != null && (mine.TcpPrediction != 1 || theirs.TcpPrediction != 1)) throw new CryptographicException("双方尚未协商 TCP 预测能力");
         if (System.Net.IPEndPoint.Parse(candidate.Endpoint).AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
             (profile == TraversalProfile.UdpDirect ? mine.UdpIpv6 != 1 || theirs.UdpIpv6 != 1 : mine.FakeTcpIpv6 != 1 || theirs.FakeTcpIpv6 != 1))
             throw new CryptographicException("双方尚未协商该承载的原生 IPv6 能力");
@@ -88,10 +98,13 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
         MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence)
     {
         ValidateOffer(local, peer, mine, theirs, offer);
+        RequireFamily(candidate, mine, theirs, offer.Profile);
+        if ((candidate.Prediction != null) != (offer.Candidate!.Prediction != null)) throw new CryptographicException("不能把预约替换为普通候选");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, offer.Profile, candidate, offer.AttemptId, offer.ValidationNonce, offer.NominationRevision, sequence);
         try {
-            result.remoteCandidate = offer.Candidate; result.remoteSequence = offer.Sequence; result.phase = MeshAttemptPhase.Preparing;
-            _ = result.Message(MeshTraversalStage.Ready); // validate the candidate pair, but do NOT publish Ready
+            result.remoteReservation = result.remoteCandidate = offer.Candidate; result.remoteSequence = offer.Sequence;
+            result.phase = result.Predicting ? MeshAttemptPhase.Reserving : MeshAttemptPhase.Preparing;
+            _ = result.Message(result.Predicting ? MeshTraversalStage.Reserved : MeshTraversalStage.Ready); // validate but do not publish before resource readiness
             return result;
         } catch { result.stop.Dispose(); throw; }
     }
@@ -113,10 +126,11 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
                 message.NominatorSlot != Math.Min(local.Self.Slot, peer.Slot)) throw new CryptographicException("消息不属于当前授权候选对");
             if (message.Sequence <= remoteSequence) return false;
             if (message.Stage == MeshTraversalStage.Cancel) { remoteSequence = message.Sequence; CancelLocked(); return true; }
+            if (Predicting && ReceivePrediction(message)) { remoteSequence = message.Sequence; return true; }
             if (message.PeerCandidate != localCandidate || message.Candidate == null || remoteCandidate != null && message.Candidate != remoteCandidate)
                 throw new CryptographicException("同一候选版本的地址或观察内容发生变化");
             if (leader && message.Stage == MeshTraversalStage.Ready && phase == MeshAttemptPhase.Offering) {
-                remoteCandidate = message.Candidate; phase = MeshAttemptPhase.Preparing; remoteSequence = message.Sequence; return true;
+                remoteCandidate = message.Candidate; remotePrepared = true; phase = MeshAttemptPhase.Preparing; remoteSequence = message.Sequence; return true;
             }
             if (!leader && message.Stage == MeshTraversalStage.Start && phase == MeshAttemptPhase.Ready) {
                 phase = MeshAttemptPhase.Starting; remoteSequence = message.Sequence; return true;
@@ -135,8 +149,9 @@ public sealed class MeshTraversalAttempt : IAsyncDisposable
                 !PathNomination.ContextDigest(Context).AsSpan().SequenceEqual(PathNomination.ContextDigest(path.Context)))
                 throw new IOException("捕获或接收资源未就绪，不能发布 Ready/Start");
             // Validate/sign before taking ownership; caller keeps it on failure.
-            var next = Message(leader ? MeshTraversalStage.Start : MeshTraversalStage.Ready);
-            prepared = path; outbound = next; phase = leader ? MeshAttemptPhase.Starting : MeshAttemptPhase.Ready;
+            if (Predicting && (predictionBegan == 0 || PredictionRemaining <= TimeSpan.Zero)) throw new IOException("预测整轮期限已结束");
+            var next = leader && !remotePrepared ? outbound : Message(leader ? MeshTraversalStage.Start : MeshTraversalStage.Ready);
+            prepared = path; outbound = next; phase = leader ? remotePrepared ? MeshAttemptPhase.Starting : MeshAttemptPhase.AwaitReady : MeshAttemptPhase.Ready;
         }
     }
     // Caller dispatches the leader's Start message before invoking this method.

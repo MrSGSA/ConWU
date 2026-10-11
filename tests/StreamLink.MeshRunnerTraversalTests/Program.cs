@@ -22,11 +22,12 @@ bool nativeIpv6Only = args.Length == 7 && args[6] == "--native-ipv6-only";
 bool lifecycleOnly = args.Length == 7 && args[6] == "--lifecycle-only";
 bool wireOnly = args.Length == 7 && args[6] == "--wire-only";
 bool predictionOnly = args.Length == 7 && args[6] == "--prediction-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only|--native-ipv6-only|--egress-only|--lifecycle-only|--wire-only|--prediction-only]");
+bool predictionRunnerOnly = args.Length == 7 && args[6] == "--prediction-runner-only";
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--prediction-runner-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
-using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20)); var token = deadline.Token;
+using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(predictionRunnerOnly ? Math.Max(1200, rounds * 75 + 60) : 1200)); var token = deadline.Token;
 var rows = new List<object>(); int checks = 0;
 void Check(bool b, string why) { if (!b) throw new Exception(why); checks++; Console.WriteLine("PASS " + why); }
 using var rsa = RSA.Create(2048); var request = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -45,10 +46,17 @@ app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, Mesh
 app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => online.Read(c, network));
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory d) => online.Directory(c, network, d));
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope e) => online.Publish(c, network, slot, e));
+var predictionObserver = new TcpSynObserver(PredictionRunnerTests.Points); predictionObserver.SetAvailable(true);
+app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, TcpObserverRequest r) => online.TcpObservation(c, network, r, predictionObserver));
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (predictionOnly) rows.Add(await PredictionQualificationTests.Run(binary, root, Check, token));
+    if (predictionRunnerOnly) {
+        await PredictionRunnerTests.Admission(binary, root, Check, token);
+        for (int round = 0; round < rounds; round++) rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-round-" + round), url, pin, predictionObserver, Check, token, round % 2));
+        rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-mismatch"), url, pin, predictionObserver, Check, token, changedStableMapping: true));
+    }
+    else if (predictionOnly) rows.Add(await PredictionQualificationTests.Run(binary, root, Check, token));
     else if (wireOnly) {
         rows.Add(await WireBudgetTests.Run(Check, token));
         await SharedBrokerRunner.Run(binary, root, url, pin, Check, token);
@@ -115,7 +123,7 @@ try {
     }
     }
     }
-    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = predictionOnly ? "formal candidate factory and TcpShapeProbe, real loopback TCP helper; controlled observer API and raw I/O; no MeshRunner/native worker, Wintun, public NAT or real multiple devices" : lifecycleOnly ? "production TCP factory/Runner/native; real HTTPS connection abort for 360 seconds, TCP helper query outage, signed revocation; memory raw/IP adapters, no physical driver, WAN, Wintun or gateway lease" : egressOnly ? "production paced native and UDP factories/Runner; real timer, native, TCP helpers, UDP, HTTPS; memory raw/IP adapters, no physical driver or WAN" : nativeIpv6Only
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = predictionRunnerOnly ? "formal Runner/factory/actor, signed HTTPS observer/coordination, real TCP helpers and C++ protocol; controlled NAT/raw/IP and synthetic qualified training fixtures, no WinDivert/Wintun/public NAT" : predictionOnly ? "formal candidate factory and TcpShapeProbe, real loopback TCP helper; controlled observer API and raw I/O; no MeshRunner/native worker, Wintun, public NAT or real multiple devices" : lifecycleOnly ? "production TCP factory/Runner/native; real HTTPS connection abort for 360 seconds, TCP helper query outage, signed revocation; memory raw/IP adapters, no physical driver, WAN, Wintun or gateway lease" : egressOnly ? "production paced native and UDP factories/Runner; real timer, native, TCP helpers, UDP, HTTPS; memory raw/IP adapters, no physical driver or WAN" : nativeIpv6Only
         ? "production FakeTCP IPv6 factory/Runner, actual native workers/helpers/HTTPS; pure WinDivert filter evaluation; memory raw and IP adapters, not physical WinDivert/Wintun or WAN"
         : ipv6Only
         ? "production UDP gathering/Runner over real IPv6/IPv4 loopback sockets and HTTPS; memory IP adapters; not Internet IPv6, native FakeTCP IPv6, wire fragmentation capture or Wintun"

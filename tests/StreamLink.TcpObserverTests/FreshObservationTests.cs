@@ -19,24 +19,28 @@ static class FreshObservationTests
         for (int i = 0; i < 30; i++) {
             var profile = MeshIdentity.Create(url, pin, "faketcp"); using var control = new MeshDiscoveryClient(profile);
             await control.SaveDirectory(profile.Directory!, token);
+            var cached = i % 2 == 0 ? await control.TcpObservation("catalog", Guid.Empty, null, token) : null;
             int charged = 0, before = io.Sent; long start = Stopwatch.GetTimestamp();
-            var observations = await TcpShapeProbe.RunFresh(owner, control, () => { charged++; return true; }, _ => { }, token, budget, destinations: 2);
+            var observations = await TcpShapeProbe.RunFresh(owner, control, () => { charged++; return true; }, _ => { }, token, budget, destinations: 2, preparedCatalog: cached);
             double maxAgeMs = observations.Max(o => Stopwatch.GetElapsedTime(o.LocalProbeStartedAt).TotalMilliseconds);
-            check(charged == 3 && io.Sent - before == 4 && observations.Length == 2 && observations.All(o => o.State == "SynObserved" &&
+            check(charged == (cached == null ? 3 : 2) && io.Sent - before == 4 && observations.Length == 2 && observations.All(o => o.State == "SynObserved" &&
                 o.Mapped == lease.Local.ToString() && o.ResourceId == lease.Id && o.LocalProbeStartedAt > 0 && o.TcpHandshakeVerified == "NotTested") && maxAgeMs < 2000,
                 $"fresh round {i + 1}: final two-target observations arrive within local freshness limit using the retained source");
             check(owner.Status.Sessions == 0 && helper.Accepted == 1, "short observation releases tuple reservations without rebinding the helper");
-            rounds.Add(new { round = i + 1, elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds, maxAgeMs, charged, sent = io.Sent - before });
+            rounds.Add(new { round = i + 1, elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds, maxAgeMs, charged, catalogRequestsBeforeWindow = cached == null ? 0 : 1, sent = io.Sent - before });
         }
-        foreach (string fault in new[] { "legacy-catalog", "wrong-window", "nonfinal-read", "slow-register", "slow-read" }) {
+        foreach (string fault in new[] { "legacy-catalog", "wrong-window", "nonfinal-read", "slow-register", "slow-read", "cached-epoch", "cached-legacy" }) {
             var profile = MeshIdentity.Create(url, pin, "faketcp"); using var client = new MeshDiscoveryClient(profile);
             await client.SaveDirectory(profile.Directory!, token);
             int packets = io.Sent, refs = lease.ReferenceCount; bool rejected = false;
-            try { await TcpShapeProbe.RunFresh(owner, new FaultControl(client, fault), () => true, _ => { }, token, budget); }
+            TcpObserverReply? cached = fault.StartsWith("cached-") ? await client.TcpObservation("catalog", Guid.Empty, null, token) : null;
+            if (fault == "cached-epoch") cached = cached! with { Epoch = Guid.NewGuid() };
+            if (fault == "cached-legacy") cached = cached! with { FreshWindowMs = 0 };
+            try { await TcpShapeProbe.RunFresh(owner, new FaultControl(client, fault), () => true, _ => { }, token, budget, preparedCatalog: cached); }
             catch (Exception ex) when (ex is IOException or OperationCanceledException) { rejected = true; }
             check(rejected && owner.Status.Sessions == 0 && lease.ReferenceCount == refs,
                 "short observation rejects " + fault + " and returns no usable anchor or leaked reference");
-            if (fault is "legacy-catalog" or "wrong-window" or "slow-register")
+            if (fault is "legacy-catalog" or "wrong-window" or "slow-register" or "cached-epoch" or "cached-legacy")
                 check(io.Sent == packets, "invalid or stale short-window registration emits no SYN");
         }
         // Direct observer injection covers a conflicting source and late arrivals

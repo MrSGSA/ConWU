@@ -11,30 +11,49 @@ namespace StreamLink.Service;
 internal interface IMeshCandidateResource : IAsyncDisposable
 {
     MeshTraversalCandidate Candidate { get; }
+    bool PredictionReady => false;
+    bool PredictionControlReady(int requests) => false;
+    Task<MeshTraversalCandidate> MeasurePrediction(long started, CancellationToken token) => throw new NotSupportedException();
+    void FinishPrediction(PredictionOutcome outcome) { }
     Task<IPreparedMeshPath> Prepare(TraversalAttemptContext context, IPEndPoint remote, CancellationToken token);
+    Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext context, MeshTraversalCandidate remote, CancellationToken token) => Prepare(context, IPEndPoint.Parse(remote.Endpoint), token);
 }
 internal interface IMeshCandidateFactory
 {
     TraversalProfile[] Profiles { get; }
     bool SupportsUdpIpv6 => false;
     bool SupportsFakeTcpIpv6 => false;
+    bool SupportsTcpPrediction => false;
     EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
         bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => Gather(peer, profile, attempt, token);
+    Task<IMeshCandidateResource> GatherCoordinated(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, CancellationToken token) =>
+        GatherForPeer(peer, profile, attempt, allowIpv6, remote == null ? null : IPEndPoint.Parse(remote.Endpoint), round, token);
 }
 
 // One request budget for all discovery operations of this running device.
 // Below the service's 48/minute, burst 8; eight devices stay under 512/minute.
-internal sealed class MeshRequestBudget
+internal sealed class MeshRequestBudget(int burst = 6)
 {
     readonly object gate = new();
-    double tokens = 6;
+    readonly int capacity = burst is >= 6 and <= 8 ? burst : throw new ArgumentOutOfRangeException(nameof(burst));
+    double tokens = burst;
     long last = Stopwatch.GetTimestamp();
+    int backgroundHolds;
+    void Refill() { long now = Stopwatch.GetTimestamp(); tokens = Math.Min(capacity, tokens + Stopwatch.GetElapsedTime(last, now).TotalSeconds * (40d / 60)); last = now; }
+    public bool Available(int requests) { lock (gate) { Refill(); return requests <= capacity && tokens >= requests; } }
+    public IDisposable HoldBackground() { lock (gate) { backgroundHolds++; return new BackgroundHold(this); } }
+    sealed class BackgroundHold(MeshRequestBudget owner) : IDisposable {
+        MeshRequestBudget? held = owner;
+        public void Dispose() { var budget = Interlocked.Exchange(ref held, null); if (budget != null) lock (budget.gate) budget.backgroundHolds--; }
+    }
     public bool Take(bool priority = false)
     {
         lock (gate) {
-        long now = Stopwatch.GetTimestamp(); tokens = Math.Min(6, tokens + Stopwatch.GetElapsedTime(last, now).TotalSeconds * (40d / 60)); last = now;
+        Refill();
+        if (!priority && backgroundHolds > 0) return false;
         if (tokens < (priority ? 1 : 3)) return false;
         tokens--; return true;
         }
@@ -64,6 +83,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
+    public bool SupportsTcpPrediction => options.TcpPortPrediction && options.TcpPortCalibration && options.TcpSynObservation && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();

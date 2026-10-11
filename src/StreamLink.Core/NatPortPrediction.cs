@@ -44,6 +44,9 @@ public sealed class NatPortPrediction
     int failed;
     Pending? pending;
     public PortPredictionAssessment Assessment { get; }
+    public PortPredictionScope Scope => scope;
+    public string PublicAddress => publicAddress;
+    public bool StableModel => rule.Kind is "stable-observed-port" or "preserved-local-port";
     sealed record Pending(PortForecast Forecast, Func<bool> ResourceAlive, long Began, TimeSpan Life) { public bool Consumed; }
     sealed record Rule(string Kind, int Step = 0, int Width = 1, int Offset = 0, int[]? Blocks = null)
     {

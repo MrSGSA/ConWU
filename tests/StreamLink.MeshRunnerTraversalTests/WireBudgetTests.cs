@@ -34,6 +34,16 @@ static class WireBudgetTests
         var byteRound = new TraversalControlRound(new TraversalResources(8, 10000, 256)); var byteBudget = new NativeWireBudget(byteRound); byteBudget.Start(Stopwatch.GetTimestamp());
         for (int i = 0; i < 4; i++) if (!byteBudget.Admit(NativeWireKind.Handshake, 16384)) throw new Exception("byte allowance missing");
         check(byteRound.Bytes == 65536 && !byteBudget.Admit(NativeWireKind.Completion, 40), "whole outer IP bytes, rather than only MeshLink payload, enforce the round byte ceiling");
+        var predictionMachine = new TraversalResources(8, 10000, 256);
+        var predictionRound = new TraversalControlRound(predictionMachine);
+        predictionRound.TrySend(60, false); predictionRound.TrySend(60, false);
+        long measuredAt = Stopwatch.GetTimestamp() - Stopwatch.Frequency;
+        var predictionGroup = new NativeAttemptGroup(predictionMachine, () => true, measuredAt, predictionRound);
+        var predictionWire = new NativeWireBudget(predictionRound, predictionGroup); predictionWire.Start(Stopwatch.GetTimestamp());
+        check(predictionWire.Admit(NativeWireKind.Handshake, 60) && predictionRound.Packets == 3 && predictionRound.Bytes == 180 && predictionGroup.Remaining.TotalSeconds < 7,
+            "fresh observations and native SYN share the already-started deadline and same actual round allowance");
+        bool foreign = false; try { _ = new NativeAttemptGroup(new(), () => true, controlRound: predictionRound); } catch (ArgumentException) { foreign = true; }
+        check(foreign, "a prediction round cannot be reassigned to a separate machine budget");
 
         await using var reflector = new Reflector();
         Guid generation = Guid.NewGuid();

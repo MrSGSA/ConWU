@@ -22,13 +22,14 @@ public static class TcpShapeProbe
     // strategy. Caller retains the lease after return; this does not publish a
     // candidate, certify mapping stability or authorize another TCP tuple.
     public static Task<TcpShapeObservation[]> RunFresh(TcpCaptureOwner owner, ITcpObservationControl control,
-        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources = null, int destinations = 1)
+        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources = null, int destinations = 1, TcpObserverReply? preparedCatalog = null, TraversalControlRound? controlRound = null)
     {
         if (destinations is < 1 or > 2) throw new ArgumentOutOfRangeException(nameof(destinations));
-        return RunCore(owner, control, takeRequest, checkRoute, token, resources, destinations);
+        if (controlRound != null && !ReferenceEquals(controlRound.Machine, resources ?? TraversalResources.Shared)) throw new ArgumentException("Probe round belongs to another machine budget");
+        return RunCore(owner, control, takeRequest, checkRoute, token, resources, destinations, preparedCatalog: preparedCatalog, controlRound: controlRound);
     }
     static async Task<TcpShapeObservation[]> RunCore(TcpCaptureOwner owner, ITcpObservationControl control,
-        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations, bool? calibration = null, Action? registrationConfirmed = null)
+        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations, bool? calibration = null, Action? registrationConfirmed = null, TcpObserverReply? preparedCatalog = null, TraversalControlRound? controlRound = null)
     {
         bool fresh = freshDestinations != 0;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(20000);
@@ -39,7 +40,7 @@ public static class TcpShapeProbe
             while (!takeRequest()) await Task.Delay(100, token);
             return await control.TcpObservation(op, ticket, probes, token);
         }
-        var catalog = await Request("catalog", Guid.Empty);
+        var catalog = preparedCatalog ?? await Request("catalog", Guid.Empty);
         if (catalog.Version != 1 || catalog.Epoch == Guid.Empty || catalog.Points is null) throw new IOException("观察服务能力无效");
         if (fresh && catalog.FreshWindowMs != TcpObserverProtocol.FreshWindowMs) throw new IOException("观察服务不支持短窗口；不能使用旧观察代替新鲜端点");
         TcpObserverProtocol.ValidatePoints(catalog.Points);
@@ -81,7 +82,7 @@ public static class TcpShapeProbe
                 bool CanSend() => fresh ? Stopwatch.GetElapsedTime(registering).TotalMilliseconds < windowMs :
                     Stopwatch.GetElapsedTime(began).TotalSeconds < 3 && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() < opened.Expires;
                 if (!CanSend()) break;
-                while (!(resources ?? TraversalResources.Shared).TrySend(packet.Length, maintenance: true)) await Task.Delay(25, token);
+                while (!(controlRound?.TrySend(packet.Length, completion: false) ?? (resources ?? TraversalResources.Shared).TrySend(packet.Length, maintenance: true))) await Task.Delay(25, token);
                 if (!CanSend()) break;
                 probeStarted.TryAdd(specs[i].ProbeId, Stopwatch.GetTimestamp());
                 if (!session.Send(packet)) throw new IOException("观察原生端点已退出");

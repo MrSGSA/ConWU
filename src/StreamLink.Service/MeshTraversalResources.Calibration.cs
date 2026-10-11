@@ -15,7 +15,8 @@ internal sealed partial class MeshCandidateFactory
     long calibrationRegistered, calibrationInterrupted;
     internal TimeSpan? CalibrationIntervalForTest { get; init; }
     internal Task CalibrationCompletion => calibrationTask;
-    internal NatPortPrediction? CalibratedTcpModel { get; private set; }
+    NatPortPrediction? calibratedTcpModel;
+    internal NatPortPrediction? CalibratedTcpModel { get => Volatile.Read(ref calibratedTcpModel); private set => Volatile.Write(ref calibratedTcpModel, value); }
     // Called with existing Router status, not an extra path/throughput probe.
     internal void SetCalibrationBusy(bool value) => Volatile.Write(ref calibrationBusy, value ? 1 : 0);
     internal void UpdateCalibrationStatus(MeshPeerStatus[] statuses, bool ready)
@@ -28,7 +29,7 @@ internal sealed partial class MeshCandidateFactory
     // interrupted collections never produce or retest a qualified model.
     void StartCalibration(IPAddress source, IPEndPoint reflector, int peerSlot)
     {
-        if (calibrationStarted || !options.TcpSynObservation || observer == null || observationBudget == null || observationStop.IsCancellationRequested ||
+        if (calibrationStarted || CalibratedTcpModel != null || !options.TcpSynObservation || observer == null || observationBudget == null || observationStop.IsCancellationRequested ||
             peerSlot == calibrationPeerSlot && Volatile.Read(ref calibrationBusy) != 0) return;
         calibrationStarted = true;
         Volatile.Write(ref calibrationPeerSlot, peerSlot);
@@ -101,11 +102,12 @@ internal sealed partial class MeshCandidateFactory
                     Directory.CreateDirectory(root);
                     await File.WriteAllTextAsync(Path.Combine(root, "tcp-port-calibration.json"), JsonSerializer.Serialize(new {
                         state, reason, windows, raw, qualification, candidateEnabled = false,
+                        predictionRequested = options.TcpPortPrediction, predictionEligible = SupportsTcpPrediction && CalibratedTcpModel != null,
                         backgroundEvidence = "observed extra native SYN destination, NOT confirmed allocation count",
                         scope = "actual independent local sources; no peer handshake or reachability proof"
                     }, new JsonSerializerOptions { WriteIndented = true }));
                 } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { observationLog?.Invoke("TCP 校准记录保存失败：" + ex.GetType().Name); }
-                observationLog?.Invoke($"TCP 端口校准结束：{state}；已记录 {windows.Count} 个独立窗口，预测路径保持关闭");
+                observationLog?.Invoke($"TCP 端口校准结束：{state}；已记录 {windows.Count} 个独立窗口；可进入预测协商={SupportsTcpPrediction && CalibratedTcpModel != null}，校准本身未建立路径");
                 if (state == "BusinessPathAvailable") lock (observationGate) { calibrationInterrupted = Stopwatch.GetTimestamp(); calibrationStarted = false; }
             }
         });

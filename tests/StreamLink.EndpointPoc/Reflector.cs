@@ -13,6 +13,7 @@ sealed class Reflector : IAsyncDisposable
     readonly Task accepting;
     public int Accepted, Active, Requests;
     public bool Silent;
+    public Func<IPEndPoint, IPEndPoint>? MapForTest { get; init; }
     public IPEndPoint Endpoint => (IPEndPoint)listener.LocalEndpoint;
     public Reflector(IPEndPoint? endpoint = null) { listener = new(endpoint ?? new(IPAddress.Loopback, 0)); listener.Start(); accepting = Accept(); }
     async Task Accept()
@@ -31,10 +32,11 @@ sealed class Reflector : IAsyncDisposable
                 while (!stop.IsCancellationRequested) {
                     byte[] request = new byte[20]; await stream.ReadExactlyAsync(request, stop.Token);
                     Interlocked.Increment(ref Requests); if (Silent) continue;
-                    byte[] address = remote.Address.GetAddressBytes();
+                    var mapped = MapForTest?.Invoke(remote) ?? remote;
+                    byte[] address = mapped.Address.GetAddressBytes();
                     byte[] response = new byte[28 + address.Length]; request.CopyTo(response, 0);
                     response[0] = 1; response[1] = 1; response[3] = (byte)(8 + address.Length); response[21] = 0x20; response[23] = (byte)(4 + address.Length); response[25] = address.Length == 16 ? (byte)2 : (byte)1;
-                    BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(26), (ushort)(remote.Port ^ 0x2112));
+                    BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(26), (ushort)(mapped.Port ^ 0x2112));
                     for (int i = 0; i < address.Length; i++) response[28 + i] = (byte)(address[i] ^ request[4 + i]);
                     await stream.WriteAsync(response, stop.Token);
                 }

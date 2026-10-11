@@ -47,7 +47,7 @@ public sealed class MeshRunner
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
         using var discovery = services.Discovery(mesh);
-        var requestBudget = new MeshRequestBudget();
+        var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
         IMeshCandidateFactory? factory = null;
         MeshTraversalManager? traversal = null;
@@ -222,7 +222,9 @@ public sealed class MeshRunner
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) { Egress = egress });
                     nextReport = now + 1000;
                 }
-                await Task.Delay(100, stop);
+                // Only the bounded, fresh-observation exchange needs this
+                // cadence. Idle and established paths retain the normal tick.
+                await Task.Delay(traversal?.FreshPredictionInProgress == true ? 25 : 100, stop);
             }
         } finally {
             cancellation.Cancel();

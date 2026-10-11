@@ -28,6 +28,7 @@ MeshTraversalCandidate Candidate(string endpoint = "192.0.2.1:40000") => new(Gui
 using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(220)); var token = deadline.Token;
 var rows = new List<object>();
 try {
+    await PredictionTests.Run(Check);
     var registry = new MeshRegistry(root);
     {
         var (a, b) = Pair(); var ca = Caps(); var cb = Caps(); long seqA = 0, seqB = 0;

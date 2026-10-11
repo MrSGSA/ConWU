@@ -22,9 +22,11 @@ static class Program
             Check(!initial.Profile!.Enabled, "Fresh foreground backend unexpectedly enabled");
             Check(initial.PathSelectionVersion == 1, "Backend must advertise implemented policy capability independently of release number");
             Check(initial.TcpCalibrationVersion == 1 && !initial.Profile.TcpPortCalibration, "Calibration capability is explicit and new profiles remain opted out");
+            Check(initial.TcpPredictionVersion == 1 && !initial.Profile.TcpPortPrediction, "Conditional TCP prediction is separately advertised and default off");
             var legacy = JsonSerializer.Deserialize<ControlReply>("{\"Ok\":true,\"Version\":\"0.4.1\"}")!;
             Check(legacy.PathSelectionVersion == 0, "Old same-version backend must not imply support for new policy fields");
             Check(legacy.TcpCalibrationVersion == 0, "Old backend JSON does not imply support for calibration");
+            Check(legacy.TcpPredictionVersion == 0, "Old backend JSON does not imply support for predicted paths");
             Check(!(await worker.Handle(new("start"))).Ok, "Unpaired start accepted");
             var reply = await worker.Handle(new("create", Service: "https://example.com/", Mode: "udp"));
             Check(reply.Ok && reply.Profile!.Pair!.Mode == "udp" && !reply.Profile.Enabled, "Create must persist without starting network");
@@ -66,9 +68,14 @@ static class Program
             calibrationProfile.TraversalMode = "tcp"; calibrationProfile.TcpSynObservation = true;
             using (var calibrationSettings = new SettingsWindow(calibrationProfile)) {
                 var box = Field<CheckBox>(calibrationSettings, "tcpCalibration");
+                var predicted = Field<CheckBox>(calibrationSettings, "tcpPrediction");
+                Check(!predicted.Enabled && !predicted.Checked, "Prediction requires explicit calibration, not just observer capability");
                 Check(box.Enabled && !box.Checked, "Calibration requires both managed TCP and observer; default remains unchecked");
                 box.Checked = true; calibrationSettings.Result.Validate();
                 Check(calibrationSettings.Result.TcpPortCalibration, "Explicit calibration opt-in is stored in the editable profile");
+                Check(predicted.Enabled && !predicted.Checked, "Calibration alone never opts into actual predicted attempts");
+                predicted.Checked = true; calibrationSettings.Result.Validate();
+                Check(calibrationSettings.Result.TcpPortPrediction, "Explicit prediction opt-in survives profile validation");
                 string? screenshot = Environment.GetEnvironmentVariable("STREAMLINK_TEST_SCREENSHOT");
                 if (!string.IsNullOrEmpty(screenshot)) {
                     calibrationSettings.StartPosition = FormStartPosition.Manual; calibrationSettings.Location = new(-30000, -30000); calibrationSettings.ShowInTaskbar = false;
@@ -77,12 +84,15 @@ static class Program
                 }
                 Field<CheckBox>(calibrationSettings, "tcpObservation").Checked = false;
                 Check(!box.Enabled && !box.Checked && !calibrationSettings.Result.TcpPortCalibration, "Disabling the observer removes dependent calibration opt-in");
+                Check(!predicted.Enabled && !predicted.Checked && !calibrationSettings.Result.TcpPortPrediction, "Disabling an observation dependency also clears actual prediction opt-in");
                 Field<CheckBox>(calibrationSettings, "tcpObservation").Checked = true; box.Checked = true;
                 Field<ComboBox>(calibrationSettings, "traversal").SelectedIndex = 0;
                 Check(!box.Enabled && !calibrationSettings.Result.TcpPortCalibration, "Returning to compatible mode cannot retain an invisible calibration option");
             }
             using (var oldCalibration = new SettingsWindow(calibrationProfile, supportsCalibration: false))
                 Check(!Field<CheckBox>(oldCalibration, "tcpCalibration").Enabled, "New frontend cannot enable calibration on an old backend");
+            using (var oldPrediction = new SettingsWindow(calibrationProfile, supportsPrediction: false))
+                Check(!Field<CheckBox>(oldPrediction, "tcpPrediction").Enabled, "New frontend cannot enable predicted paths on a backend without capability");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

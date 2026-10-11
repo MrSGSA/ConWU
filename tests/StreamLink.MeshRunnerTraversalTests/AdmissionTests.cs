@@ -9,6 +9,14 @@ static class AdmissionTests
         var budget = new MeshRequestBudget();
         for (int i = 0; i < 4; i++) check(budget.Take(), "ordinary discovery uses its shared request allowance");
         check(!budget.Take() && budget.Take(true) && budget.Take(true) && !budget.Take(true), "ordinary HTTP preserves two completion tokens and cannot bypass the common burst");
+        var predictionBudget = new MeshRequestBudget(8);
+        using (var hold = predictionBudget.HoldBackground()) {
+            check(predictionBudget.Available(8) && !predictionBudget.Take(), "prediction admission pauses ordinary refreshes without consuming its shared allowance");
+            for (int i = 0; i < 8; i++) check(predictionBudget.Take(true), "critical requests consume real shared tokens");
+            check(!predictionBudget.Take(true) && !predictionBudget.Available(8), "critical admission never manufactures extra HTTP burst capacity");
+        }
+        check(!predictionBudget.Take(true), "ending a prediction hold does not refund already sent requests");
+        using (var cancelledHold = new MeshRequestBudget(8).HoldBackground()) cancelledHold.Dispose(); // idempotent cancellation cleanup
         var mesh = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var peers = new List<MeshProfile>(); for (int i = 0; i < 7; i++) peers.Add(MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))));
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);

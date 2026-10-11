@@ -31,6 +31,7 @@ public sealed class DeviceProfile
     // Independent-source calibration only; does not enable predicted paths.
     // Opt-in and requires the ordinary authenticated observer feature as well.
     public bool TcpPortCalibration { get; set; }
+    public bool TcpPortPrediction { get; set; }
     // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
     // rounds. It does not enable UDP itself or bypass path-quality selection.
     public bool PortControlMapping { get; set; }
@@ -56,6 +57,7 @@ public sealed class DeviceProfile
         if (TransportMode is not ("faketcp" or "udp") || LogLevel is not ("off" or "error" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
         if (TraversalMode is not ("legacy" or "tcp" or "tcp-udp")) throw new FormatException("打洞试验模式无效");
         if (TcpPortCalibration && (!TcpSynObservation || TraversalMode == "legacy")) throw new FormatException("TCP 端口校准需同时开启受管打洞和 TCP 观察诊断");
+        if (TcpPortPrediction && !TcpPortCalibration) throw new FormatException("实验 TCP 预测需启用独立端口校准");
         if (ManagedEgressMbps is < 0 or > 10000) throw new FormatException("实验链路出口上限需为 0–10000 Mbps（0 为关闭）");
         Selection().Validate();
         if (PathSelection == "faketcp-only" && (TransportMode == "udp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))

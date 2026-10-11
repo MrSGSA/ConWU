@@ -20,6 +20,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         public Task<IMeshCandidateResource>? Gathering;
         public IMeshCandidateResource? Resource;
         public Task<IPreparedMeshPath>? Preparing;
+        public Task<MeshTraversalCandidate>? Measuring;
         public MeshTraversalAttempt? Actor;
         public MeshTraversalMessage? Offer;
         public MeshTraversalCandidate? RemoteCandidate;
@@ -64,7 +65,10 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         window.Begin(TraversalProfile.LegacyExplicit, Environment.TickCount64);
     public string? WaitingDetail(int slot) => opportunities.TryGetValue(slot, out var window) && !window.Open && !window.Connected
         ? $"本轮未找到直连（NoDirectPathWithinBudget），{Math.Max(0, (window.RetryAt - Environment.TickCount64 + 999) / 1000)} 秒后后台重试" : null;
-    public bool HasPendingControl => outbox.Count > 0 || entries.Values.Any(e => e.Closing == null && e.Actor?.Outbound is {} m && m.MessageId != e.Acknowledged);
+    public bool HasPendingControl => outbox.Count > 0 || entries.Values.Any(e => e.Closing == null &&
+        (e.Actor?.Outbound is {} m && m.MessageId != e.Acknowledged || e.Actor is { Predicting: true } a && a.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Cancelled)));
+    public bool FreshPredictionInProgress => entries.Values.Any(e => e.Closing == null && e.Actor is { Predicting: true, PredictionBegan: > 0 } a &&
+        a.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Cancelled));
     public MeshTraversalManager(MeshProfile mesh, MeshRouter router, IMeshTraversalDiscovery discovery,
         IMeshCandidateFactory factory, MeshRequestBudget budget, Action<string> log, CancellationToken token)
     {
@@ -72,7 +76,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         var allowed = factory.Profiles.Where(router.Selection.Allows).Distinct().ToArray();
         Capabilities = new(1, allowed.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, allowed, BackgroundUpgrade: 1,
             UdpIpv6: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpIpv6 ? 1 : 0,
-            FakeTcpIpv6: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsFakeTcpIpv6 ? 1 : 0);
+            FakeTcpIpv6: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsFakeTcpIpv6 ? 1 : 0,
+            TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -152,15 +157,19 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 continue;
             }
             try {
-                if (!members.Contains(e.Peer)) { Fail(e, "成员已撤销"); continue; }
-                if (e.Actor?.Phase != MeshAttemptPhase.Selected && (now >= e.Deadline ||
-                    Remote(slot) is {} current && current.BootId != e.Remote.BootId)) { Fail(e, "本轮超时或对端已重启"); continue; }
+                if (!members.Contains(e.Peer)) { Fail(e, "成员已撤销", PredictionOutcome.Cancelled); continue; }
+                if (e.Actor?.Phase != MeshAttemptPhase.Selected && Remote(slot) is {} current && current.BootId != e.Remote.BootId) { Fail(e, "对端已重启", PredictionOutcome.Cancelled); continue; }
+                if (e.Actor?.Phase != MeshAttemptPhase.Selected && now >= e.Deadline) { Fail(e, "本轮超时"); continue; }
                 if (e.Gathering?.IsCompleted == true) {
                     e.Resource = e.Gathering.GetAwaiter().GetResult(); e.Gathering = null;
                     e.Actor = e.Offer == null
                         ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt)
                         : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence));
                 }
+                if (e.Actor?.Phase == MeshAttemptPhase.Reserving && e.Resource!.PredictionControlReady(8)) e.Actor.Reserved(e.Resource.PredictionReady);
+                if (e.Measuring?.IsCompleted == true) { e.Actor!.Measured(e.Measuring.GetAwaiter().GetResult()); e.Measuring = null; }
+                if (e.Actor is { Predicting: true, PredictionBegan: > 0 } predicting && predicting.Phase != MeshAttemptPhase.Selected && predicting.PredictionRemaining <= TimeSpan.Zero)
+                    throw new IOException("预测整轮8秒期限已结束");
                 if (e.Preparing?.IsCompleted == true) {
                     var path = e.Preparing.GetAwaiter().GetResult(); RequireRoundTime(e); e.Actor!.Prepared(path); e.Preparing = null;
                 }
@@ -168,13 +177,13 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 e.Actor?.ObserveRouter();
                 if (e.Actor?.Phase == MeshAttemptPhase.Cancelled) { Fail(e, "路径验证失败"); continue; }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected && !Healthy(slot)) { Fail(e, "已选路径失效，重新收集端点"); continue; }
-                if (e.Actor?.Phase == MeshAttemptPhase.Selected) failures[slot] = 0;
+                if (e.Actor?.Phase == MeshAttemptPhase.Selected) { failures[slot] = 0; e.Resource?.FinishPrediction(PredictionOutcome.PathAuthenticated); }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected && e.Previous != null && e.Retiring == null &&
                     !router.Paths(slot).Any(p => p.AttemptId == e.Previous.Attempt)) {
                     e.Retiring = Close(e.Previous); e.Previous = null;
                 }
                 BeginPreparation(e);
-            } catch (Exception ex) { Fail(e, ex.Message); }
+            } catch (Exception ex) { Fail(e, ex.Message + $"；阶段={e.Actor?.Phase}"); }
         }
         foreach (int slot in owned.Where(s => !entries.ContainsKey(s)).ToArray())
             if (router.ReleaseTraversalReservation(slot)) owned.Remove(slot);
@@ -196,7 +205,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                         // attempt even if the old Cancel was coalesced in transit.
                         // Keep the Offer queued until all losing resources close.
                         MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
-                        Fail(e, "对端已开始下一候选，先释放上一轮资源"); continue;
+                        Fail(e, "对端已开始下一候选，先释放上一轮资源", PredictionOutcome.Cancelled); continue;
                     }
                     if (m.AttemptId != e.Attempt && m.Stage == MeshTraversalStage.Offer && e.Actor?.Phase == MeshAttemptPhase.Selected) {
                         MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
@@ -205,12 +214,12 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                     }
                     else if (m.AttemptId == e.Attempt && e.Actor != null) {
                         bool changed = e.Actor.Receive(m);
-                        if (changed && m.Stage == MeshTraversalStage.Ready) e.RemoteCandidate = m.Candidate;
+                        if (changed) e.RemoteCandidate = e.Actor.RemoteCandidate;
                         BeginPreparation(e);
                         if (e.Actor.Phase == MeshAttemptPhase.Starting && e.Actor.Context.ProtocolClient == false && e.Activating == null) {
                             RequireRoundTime(e); e.Activating = e.Actor.ActivateAndRegister(router, e.Stop.Token);
                         }
-                        if (e.Actor.Phase == MeshAttemptPhase.Cancelled) Fail(e, "对端取消本轮");
+                        if (e.Actor.Phase == MeshAttemptPhase.Cancelled) Fail(e, "对端取消本轮", PredictionOutcome.Cancelled);
                     }
                 } else if (m.Stage == MeshTraversalStage.Offer) {
                     MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
@@ -250,6 +259,9 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 MeshAttemptPhase.Starting => "正在验证直连路径",
                 MeshAttemptPhase.Selected => "已验证直连",
                 MeshAttemptPhase.Cancelled => "本轮未找到直连，等待重试",
+                MeshAttemptPhase.Reserving or MeshAttemptPhase.AwaitMeasure => "正在预约预测源端点",
+                MeshAttemptPhase.Measuring or MeshAttemptPhase.AwaitMeasured => "正在交换新鲜 TCP 观察",
+                MeshAttemptPhase.AwaitReady => "等待对端预测资源就绪",
                 _ => "正在探测可用端点"
             });
     }
@@ -274,8 +286,10 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 : discovery.SupportsFakeTcpIpv6 && remote.FakeTcpIpv6 == 1 && Capabilities.FakeTcpIpv6 == 1;
             if (endpoint?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !allow6)
                 throw new IOException("协调服务不支持 IPv6 候选");
-            e.Gathering = factory.GatherForPeer(peer, kind, attempt, allow6, endpoint,
-                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), e.Stop.Token);
+            bool prediction = !e.Upgrade && discovery.SupportsTcpPrediction && Capabilities.TcpPrediction == 1 && remote.TcpPrediction == 1;
+            if (offer?.Candidate?.Prediction != null && !prediction) throw new IOException("协调服务或双方未授权预测扩展");
+            e.Gathering = factory.GatherCoordinated(peer, kind, attempt, allow6, offer?.Candidate,
+                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, e.Stop.Token);
         }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
         log($"设备 {peer.Slot} " + (e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +
@@ -283,15 +297,22 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
     }
     void BeginPreparation(Entry e)
     {
+        if (e.Closing == null && e.Actor?.Phase == MeshAttemptPhase.Measuring && e.Measuring == null)
+            e.Measuring = e.Resource!.MeasurePrediction(e.Actor.PredictionBegan, e.Stop.Token);
         if (e.Closing == null && e.Actor?.Phase == MeshAttemptPhase.Preparing && e.Preparing == null) {
+            e.RemoteCandidate = e.Actor.RemoteCandidate;
             // Kept independently from the inbox so admission/async preparation
             // cannot discard the authenticated endpoint when consuming Ready.
             if (e.RemoteCandidate?.Id != e.Actor.Context.RemoteCandidateId) throw new IOException("缺少本轮已认证远端候选");
-            RequireRoundTime(e); e.Preparing = e.Resource!.Prepare(e.Actor.Context, IPEndPoint.Parse(e.RemoteCandidate.Endpoint), e.Stop.Token);
+            RequireRoundTime(e); e.Preparing = e.Resource!.PrepareCandidate(e.Actor.Context, e.RemoteCandidate, e.Stop.Token);
         }
     }
     static void RequireRoundTime(Entry e)
     {
+        if (e.Actor is { Predicting: true, PredictionBegan: > 0 } predicting) {
+            if (predicting.PredictionRemaining <= TimeSpan.Zero || e.Deadline <= Environment.TickCount64) throw new IOException("预测共享期限已结束");
+            return;
+        }
         if (e.Deadline - Environment.TickCount64 < MeshPairOpportunity.RoundMs(e.Profile))
             throw new IOException("机会窗剩余时间不足以完成新的握手轮次");
     }
@@ -312,6 +333,9 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                     if (outbox.GetValueOrDefault(m.ToSlot)?.MessageId == m.MessageId) outbox.Remove(m.ToSlot);
                     if (entries.TryGetValue(m.ToSlot, out var e) && e.Actor?.Outbound?.MessageId == m.MessageId) {
                         e.Acknowledged = m.MessageId;
+                        if (e.Closing == null && m.Stage == MeshTraversalStage.Measure && e.Actor.Phase == MeshAttemptPhase.AwaitMeasure) {
+                            e.Actor.BeginMeasurement(); BeginPreparation(e);
+                        }
                         if (e.Closing == null && m.Stage == MeshTraversalStage.Start && e.Activating == null) {
                             try { RequireRoundTime(e); e.Activating = e.Actor.ActivateAndRegister(router, e.Stop.Token); }
                             catch (Exception ex) { Fail(e, ex.Message); }
@@ -324,15 +348,17 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             sending = null;
         }
         if (sending != null || now < nextSend || !discovery.SupportsTraversal) return;
-        foreach (var e in entries.Values) if (e.Actor?.Outbound is {} m && m.MessageId != e.Acknowledged) Queue(m);
+        foreach (var e in entries.Values) if (e.Actor?.Outbound is {} m && m.MessageId != e.Acknowledged &&
+            (m.Stage != MeshTraversalStage.Measure || e.Resource!.PredictionControlReady(8))) Queue(m);
         foreach (int slot in outbox.Where(p => p.Value.Expires <= DateTimeOffset.UtcNow.ToUnixTimeSeconds() || mesh.Directory?.Members.Any(m => m.Slot == p.Key) != true).Select(p => p.Key).ToArray()) outbox.Remove(slot);
         batch = outbox.Values.OrderBy(m => m.Stage is MeshTraversalStage.Start or MeshTraversalStage.Cancel ? 0 : 1).Take(7).ToArray();
         if (batch.Length > 0 && budget.Take(priority: true)) sending = discovery.PublishTraversal(batch, token);
     }
     void Queue(MeshTraversalMessage m) { if (!outbox.TryGetValue(m.ToSlot, out var old) || m.Sequence > old.Sequence) outbox[m.ToSlot] = m; }
-    void Fail(Entry e, string reason)
+    void Fail(Entry e, string reason, PredictionOutcome predictionOutcome = PredictionOutcome.Failed)
     {
         if (e.Closing != null) return;
+        e.Resource?.FinishPrediction(predictionOutcome);
         e.Actor?.Cancel(); e.Stop.Cancel();
         if (e.Actor?.Outbound is {} cancel) Queue(cancel);
         int count = failures[e.Peer.Slot] = failures.GetValueOrDefault(e.Peer.Slot) + 1;
@@ -346,6 +372,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         e.Stop.Cancel();
         try {
             if (e.Gathering != null) try { e.Resource = await e.Gathering; } catch { }
+            if (e.Measuring != null) try { await e.Measuring; } catch { }
             if (e.Preparing != null) try { await (await e.Preparing).DisposeAsync(); } catch { }
             if (e.Activating != null) try { await e.Activating; } catch { }
             try { if (e.Retiring != null) await e.Retiring; }

@@ -1,12 +1,14 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Diagnostics;
+using System.Runtime.Versioning;
 
 namespace StreamLink.Core;
 
 // Prepared adapter for one authenticated remote IPv4/port window. This is NOT
 // a NAT strategy: the caller must negotiate the exact guesses and establish
 // the stable-side precondition. It cannot turn arbitrary forecasts into peers.
+[SupportedOSPlatform("windows")]
 public sealed class NativePortWindow : IPreparedMeshPath
 {
     readonly object gate = new();
@@ -23,12 +25,12 @@ public sealed class NativePortWindow : IPreparedMeshPath
     public TraversalControlRound ControlRound => group.ControlRound;
     public bool Claimed => group.Claimed;
     public IReadOnlyList<NativePathDiagnostics> Diagnostics => paths.Select(p => p.Diagnostics).ToArray();
-    NativePortWindow(TraversalAttemptContext context, TraversalResources resources, Func<bool> claim)
-    { Context = context; group = new(resources, claim); }
+    NativePortWindow(TraversalAttemptContext context, TraversalResources resources, Func<bool> claim, long roundStartedAt, TraversalControlRound? controlRound)
+    { Context = context; group = new(resources, claim, roundStartedAt, controlRound); }
 
     public static async Task<NativePortWindow> Prepare(string executable, string root, TcpCaptureOwner owner,
         TraversalAttemptContext context, IReadOnlyList<IPEndPoint> authorizedEndpoints, byte[] sharedKey,
-        Func<bool> claimFirstProbe, CancellationToken token, TraversalResources? resources = null)
+        Func<bool> claimFirstProbe, CancellationToken token, TraversalResources? resources = null, long roundStartedAt = 0, TraversalControlRound? controlRound = null)
     {
         // Snapshot mutable endpoints before any asynchronous work. A caller
         // cannot change the authorization or introduce a second IP afterwards.
@@ -38,7 +40,7 @@ public sealed class NativePortWindow : IPreparedMeshPath
             peers.Select(p => p!.Address).Distinct().Count() != 1 || peers.Distinct().Count() != peers.Length ||
             owner.Lease.Local.AddressFamily != AddressFamily.InterNetwork || context.Profile != TraversalProfile.FakeTcpHttpSo)
             throw new ArgumentException("One authorized IPv4 address and one to eight distinct ports are required");
-        var result = new NativePortWindow(context, resources ?? TraversalResources.Shared, claimFirstProbe);
+        var result = new NativePortWindow(context, resources ?? TraversalResources.Shared, claimFirstProbe, roundStartedAt, controlRound);
         using var preparing = CancellationTokenSource.CreateLinkedTokenSource(token);
         async Task<NativeDatagramPath> PrepareOne(IPEndPoint peer) {
             try {
@@ -72,7 +74,9 @@ public sealed class NativePortWindow : IPreparedMeshPath
     async Task<IMeshDatagramPath> ActivateCore(CancellationToken token)
     {
         using var attempts = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
-        group.Join(Stopwatch.GetTimestamp()); attempts.CancelAfter(RemainingAttemptTime);
+        group.Join(Stopwatch.GetTimestamp());
+        if (RemainingAttemptTime <= TimeSpan.Zero) throw new IOException("PredictionRoundExpired");
+        attempts.CancelAfter(RemainingAttemptTime);
         var pending = paths.Select(p => p.Activate(attempts.Token)).ToList();
         var all = pending.ToArray(); NativeDatagramPath? winner = null;
         try {
