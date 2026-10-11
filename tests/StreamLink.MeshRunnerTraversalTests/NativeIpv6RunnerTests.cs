@@ -39,7 +39,7 @@ static class NativeIpv6RunnerTests
         var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only", FakeTcpIpv6 = true, TcpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0 }).ToArray();
         var wire = new Wire(mode == "ipv6-unreachable"); var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select((p, i) => new Inspect(new MeshCandidateFactory(p, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true,
-            diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0) {
+            diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0, wireControl: true) {
             Ipv6AvailableForTest = () => true,
             ResolveTarget = (_, family, _) => Task.FromResult(family == AddressFamily.InterNetworkV6 ? v6.Endpoint : v4.Endpoint),
             OpenCaptureForTest = (local, _) => wire.Open(local),
@@ -72,6 +72,7 @@ static class NativeIpv6RunnerTests
             while (adapters.Any(x => x.Incoming.Count == 0)) await Task.Delay(20, token);
             check(adapters[0].Incoming.Single().SequenceEqual(Packet(b.LocalIp, a.LocalIp)) && adapters[1].Incoming.Single().SequenceEqual(Packet(a.LocalIp, b.LocalIp)), mode + ": authenticated MeshLink transports full inner IPv4 through actual native workers in both directions");
             check(wire.Packets > 0 && wire.MaximumBytes >= 1392, mode + ": native serialized packet length is measured separately from UDP framing");
+            check(factories.All(f => f.Transports.Single().WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 }), mode + ": formal factory enables native wire accounting and only selected business bypasses control limits");
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
         } finally {
             running.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
@@ -79,11 +80,13 @@ static class NativeIpv6RunnerTests
         check(wire.Endpoints.Values.All(io => io.Closed) && adapters.All(ad => ad.Disposed), mode + ": shutdown joins actual capture/worker owners before resource release");
         if (paced) check(factories.All(f => f.Egress?.QueuedBytes == 0), mode + ": pacing closes without retaining a worker or queued packet");
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, wire.Packets, wire.MaximumBytes,
-            paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
+            paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(),
+            wireControl = factories.Select(f => f.Transports.Select(p => p.WireControl)).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
     }
     internal sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
+        public readonly ConcurrentQueue<NativeDatagramPath> Transports = [];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
         public EgressStats? Egress => inner.Egress;
         public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile p, Guid a, CancellationToken t) => GatherForPeer(peer, p, a, false, null, 1, t);
@@ -96,7 +99,7 @@ static class NativeIpv6RunnerTests
         }
         sealed class Prepared(IPreparedMeshPath inner, Inspect owner) : IPreparedMeshPath {
             public TraversalAttemptContext Context => inner.Context; public bool Armed => inner.Armed; public TimeSpan RemainingAttemptTime => inner.RemainingAttemptTime;
-            public async Task<IMeshDatagramPath> Activate(CancellationToken t) { var p = await inner.Activate(t); owner.Paths.Enqueue(p.Identity); return p; }
+            public async Task<IMeshDatagramPath> Activate(CancellationToken t) { var p = await inner.Activate(t); owner.Paths.Enqueue(p.Identity); if (p is NativeDatagramPath native) owner.Transports.Enqueue(native); return p; }
             public ValueTask DisposeAsync() => inner.DisposeAsync();
         }
         public ValueTask DisposeAsync() => inner.DisposeAsync();

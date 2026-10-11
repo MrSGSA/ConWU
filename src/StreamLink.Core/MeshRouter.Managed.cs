@@ -72,7 +72,9 @@ public sealed partial class MeshRouter
     {
         lock (gate) return peers.TryGetValue(slot, out var peer) && peer.Managed is {} managed ? managed.Paths.Values.Select(p =>
             new MeshPathStatus(p.Identity.PathId, p.Identity.LeaseId, p.Identity.AttemptId, p.Identity.Profile, p.Nomination.Stage,
-                p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs)).ToArray() : [];
+                p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs) {
+                    WireControl = (p.Transport as IWireControlPath)?.WireControl
+                }).ToArray() : [];
     }
     public void CancelPath(int slot, Guid path)
     {
@@ -86,11 +88,13 @@ public sealed partial class MeshRouter
     static bool SendManaged(byte[]? packet, ManagedPath? path) => packet != null && path != null && !path.Closing && !path.Transport.Failed && path.Transport.TrySend(packet);
     void ControlManaged(Peer peer, ManagedPath path, byte[] packet, bool completion)
     {
-        if (!path.Budget.TrySend(packet.Length, completion)) return;
-        // Counts every admitted control send, including an enqueue failure; not
-        // an account of native SYNs/kernel ACKs, which remain to be integrated.
+        if (path.Transport is not IWireControlPath { CountsWireControl: true } && !path.Budget.TrySend(packet.Length, completion)) return;
+        // Wire-aware native paths charge the actual IP frame at injection.
+        // Other adapters retain their existing control-datagram accounting.
         SendManaged(packet, path);
     }
+    static bool AdmitMaintenance(ManagedPath path, int bytes) => path.Transport is IWireControlPath { CountsWireControl: true }
+        || TraversalResources.Shared.TrySend(bytes, maintenance: true);
     void NominationReplies(Peer peer, ManagedPath path, byte[][] replies)
     {
         bool wasCancelled = path.Nomination.Stage == NominationStage.Cancelled;
@@ -114,7 +118,7 @@ public sealed partial class MeshRouter
                     if (!message.Authenticated) { peer.Dropped++; continue; }
                     if (message.Reply != null) {
                         if (ReferenceEquals(peer.Managed!.Candidate, path)) ControlManaged(peer, path, message.Reply, true);
-                        else if (TraversalResources.Shared.TrySend(message.Reply.Length, maintenance: true)) SendManaged(message.Reply, path);
+                        else if (AdmitMaintenance(path, message.Reply.Length)) SendManaged(message.Reply, path);
                     }
                     if (packet.Span[4] != 1) path.LastReceive = Stopwatch.GetTimestamp();
                     if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out long sent) && Stopwatch.GetElapsedTime(sent).TotalSeconds < 12) {
@@ -162,6 +166,7 @@ public sealed partial class MeshRouter
             managed.Active = path; path.Switched = true;
         }
         if (path.Switched && path.Nomination.PeerAdopted && path.ProofAt == 0) {
+            if (path.Transport is IWireControlPath wire) wire.SelectWireBudget();
             path.ProofAt = now;
             // The authenticated nomination itself proved a round trip on this
             // actual resource. Duplicate final messages cannot keep refreshing it.
@@ -196,7 +201,7 @@ public sealed partial class MeshRouter
                 path.LastPing = now;
                 long nonce = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
                 byte[]? ping = peer.Link.ProbePath(nonce);
-                if (ping != null && TraversalResources.Shared.TrySend(ping.Length, maintenance: true) && SendManaged(ping, path)) {
+                if (ping != null && AdmitMaintenance(path, ping.Length) && SendManaged(ping, path)) {
                     if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value).Key);
                     path.PendingRoundTrips[nonce] = Stopwatch.GetTimestamp();
                 }

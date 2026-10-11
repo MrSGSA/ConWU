@@ -8,7 +8,7 @@
 | M0 契约与证据 | 最薄 DTO/失败码/统一参数已加入；UDP 与 native 验证失败关联资源和阶段；完整事件接线继续 | Local 入口与独立产物；原生取消/无对端负例 14 检查 | 无新增能力 |
 | M1 native/Lease 共存 | 唯一源端点捕获 broker、授权数据管道、独立 peer worker、源端点池已接入正式实验收集器 | broker 内存原始报文 30 轮/570 检查；三 Runner 共享源全互连；两 Windows 真实 broker/Wintun 单轮功能通过、窗口 RST 0，嵌套 50 Mbps 负载未达标；受控 NAT/WAN Gate 待完成 | 仅实验 TCP 模式且 capability 匹配；旧默认不变 |
 | M2 原生 SO | 状态机及原生路径接入 Router；8 秒期限贯穿原生、认证与提名 | 既有模型/协议/双 Windows Router 记录；本次增两 Windows 各 1 轮真实 Wintun 功能贯通、各 10 个完整内层包，握手窗口 RST 0；公网 SO 超时、嵌套负载不达标 | 否，须显式受管候选 |
-| M3 协商/预算/正式接线 | 正式 Runner、两轻量/一原生、共享 broker/池、HTTP 共桶；新增每 pair 60 秒机会窗、每方法两轮、清理后立即换方法和兼容主动入口计账；兼容资源/原生包总账及完整迁移待完成 | 本次机会窗32、正式基线55、兼容44检查通过；排队也消耗原期限；仅 FakeTCP 首轮故障后第二轮8.647秒成功，4检查；此前30轮记录保留，均非公网/八真机证明 | 新模式有实验设置，默认兼容入口；现用部署未升级 |
+| M3 协商/预算/正式接线 | 正式 Runner、共享 broker/池、HTTP 共桶与每pair机会窗已接；新增受管原生SYN/HTTP/bare/心跳在实际注入前共用全机控制预算，提名后业务免于控制限额；kernel与兼容实例总账、完整迁移仍待完成 | 10月12日原生计账72、paced Runner117、Router52、授权拒绝13组、协议10项通过；本机50Mbps两方向各20秒约49.96Mbps且报告丢失0；均非公网/八真机证明，详见计账记录 | 匹配wireControl能力的实验TCP自动使用；默认兼容入口，现用部署未升级 |
 | M4 UDP_DIRECT/PMTU | 获胜 socket 经 Prepared/Actor 接入 Runner/Router，引用/唯一接收者/SLP2/1344B/DF/共用预算完成；Wintun 与公网正例 Gate 待完成 | 既有本地记录；本次真实 Wintun 拒绝 1260 MTU 旧隧道负例；公网两次测试未得到认证包，未进入负载 | 仅显式实验开关，标记质量待验证 |
 | M5 观察/条件增强 | TCP 同源 SYN 观察协议、成员认证票据、Linux 有界捕获、正式后台诊断与设置已接入；预测/概率增强未完成 | 本地193、Linux回环195、Runner55记录保留；10月12日物理WinDivert→公网已知可达端口取得SynObserved，实际公网源端口不同于同资源TCP STUN；另一高位端口仍未观察到；SO/业务/完整NAT分类均未验证 | TCP 映射诊断默认关闭，需受管 TCP + 服务器能力；现用部署未替换 |
 | M6 质量/效率 | 选路、降级后恢复、双向健康及队列观测已接产品；新增受管 TCP/UDP 共用实际外层字节 pacing/成员公平队列；兼容入口 pacing、完整管线队列、AutoQuality 和完整指标待完成 | pacing 正式 Runner113通过，22正确性检查通过但性能Gate失败：50Mbps下单peer49.530、七peer48.876；非公网/八真机；此前双机质量负例保留 | 默认兼容入口不变；pacing默认0关闭、UDP降级独立许可、AutoQuality拒绝启用；现用部署未替换 |
@@ -73,3 +73,5 @@ ABI 2 原生 FakeTCP IPv6、捕获/校验和、双栈协商与受控 30 轮：[M
 安装前路径/哈希检查及来源收据：[M9 打包准备](m9-candidate-packaging-20261011.md)；候选 hash、体积及 Akane 只读验证：[M9 产物](m9-package-result-20261011.md)。
 
 协调中断六分钟、反射查询失效、签名撤销正式修复：[M8 生命周期](m8-control-lifecycle-20261012.md)。
+
+原生SYN/HTTP/心跳全机计账、正式提名接线及受控负载：[M3 原生计账](m3-native-wire-budget-20261012.md)。

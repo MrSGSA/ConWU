@@ -169,7 +169,12 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         readonly IPEndPoint peer;
         readonly EgressPacer.Flow? outbound;
         internal Session(TcpCaptureOwner owner, IPEndPoint peer, string? fairnessKey)
-        { this.owner = owner; this.peer = peer; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, _) => SendNow(packet.Span)); }
+        { this.owner = owner; this.peer = peer; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, kind) => SendNow(packet.Span, (NativeWireKind)(kind ?? NativeWireKind.Handshake))); }
+        NativeWireBudget? wireBudget;
+        internal void ConfigureWireBudget(NativeWireBudget budget)
+        {
+            lock (owner.gate) { if (started || wireBudget != null) throw new InvalidOperationException("Wire budget must be attached once before Start"); wireBudget = budget; }
+        }
         public Guid AttachId { get; } = Guid.NewGuid();
         public Guid CaptureOwnerId => owner.OwnerId;
         public TcpEndpointLease Lease => owner.Lease;
@@ -178,23 +183,27 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         public Task CaptureReady => owner.Ready;
         public void Start() { lock (owner.gate) { if (Failed) throw new IOException("Capture session unavailable"); started = true; } }
         public void Revoke() { lock (owner.gate) { started = false; revoked = true; } }
-        public bool Send(ReadOnlySpan<byte> packet)
+        public bool Send(ReadOnlySpan<byte> packet, NativeWireKind kind = NativeWireKind.Handshake)
         {
             if (!Tuple(packet, out var source, out var target, exactLength: true) || !source.Equals(Lease.Local) || !target.Equals(Peer))
                 throw new IOException("Worker attempted an unauthorized raw tuple");
             lock (owner.gate) if (!started || Failed) return false;
-            if (outbound == null) return SendNow(packet);
+            if (!Enum.IsDefined(kind) || wireBudget == null && kind != NativeWireKind.Handshake) throw new IOException("Unauthorized wire metadata");
             int ip = (packet[0] >> 4) == 6 ? 40 : (packet[0] & 15) * 4;
             int tcp = (packet[ip + 12] >> 4) * 4;
+            if (kind == NativeWireKind.Business && (packet.Length <= ip + tcp || (packet[ip + 13] & 7) != 0))
+                throw new IOException("TCP shape control cannot use the business budget");
+            if (outbound == null) return SendNow(packet, kind);
             // Only actual small TCP shape controls get priority. Encrypted
             // udp2raw payloads cannot be classified by guessed application data.
             bool control = packet.Length <= 256 && (packet.Length == ip + tcp || (packet[ip + 13] & 7) != 0);
-            return outbound.TrySend(packet, packet.Length, priority: control);
+            return outbound.TrySend(packet, packet.Length, context: kind, priority: control);
         }
-        bool SendNow(ReadOnlySpan<byte> packet)
+        bool SendNow(ReadOnlySpan<byte> packet, NativeWireKind kind)
         {
             lock (owner.gate) {
                 if (!started || Failed) return false;
+                if (wireBudget != null && !wireBudget.Admit(kind, packet.Length)) return false;
                 try { bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent; }
                 catch (Exception ex) { owner.failure = "inject-" + ex.GetType().Name; throw; }
             }

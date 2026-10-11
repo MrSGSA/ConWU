@@ -8,6 +8,9 @@
 #include "connection.h"
 #include "encrypt.h"
 #include "fd_manager.h"
+#ifdef UDP2RAW_NATIVE
+#include "native_broker.h"
+#endif
 
 int disable_anti_replay = 0;  // if anti_replay windows is diabled
 
@@ -429,6 +432,9 @@ int recv_handshake(packet_info_t &info,id_t &id1,id_t &id2,id_t &id3)
 
 int send_safer(conn_info_t &conn_info, char type, const char *data, int len)  // safer transfer function with anti-replay,when mutually verification is done.
 {
+#ifdef UDP2RAW_NATIVE
+    native_wire_scope wire_scope(native_wire_classify(type, data, len));
+#endif
     packet_info_t &send_info = conn_info.raw_info.send_info;
     packet_info_t &recv_info = conn_info.raw_info.recv_info;
 

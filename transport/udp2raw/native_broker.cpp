@@ -6,7 +6,8 @@
 
 namespace {
 HANDLE channel=INVALID_HANDLE_VALUE, halt=nullptr;
-bool enabled=false;
+bool enabled=false, wire_metadata=false;
+thread_local native_wire_kind wire_kind=native_wire_kind::handshake;
 // Overlapped I/O allows shutdown to cancel both a blocked receive and a write.
 // A partial/cancelled frame poisons the channel; it must never be reused.
 bool exact(void *buffer,unsigned count,bool write,DWORD timeout) {
@@ -42,8 +43,26 @@ void native_broker_configure(const std::string &control_name,const unsigned char
     if(channel==INVALID_HANDLE_VALUE || !GetNamedPipeServerProcessId(channel,&server) || server!=parent) invalid("parent identity");
     unsigned char hello[144]; memcpy(hello,authorization,size);
     if(!exact(hello,size,true,5000) || !exact(hello,size,false,5000) || memcmp(hello,authorization,size)) invalid("attachment identity");
+    wire_metadata=authorization[93]==1;
     enabled=true;
 }
+native_wire_kind native_wire_classify(char type,const char *data,int length) {
+    if(type=='h') return native_wire_kind::maintenance;
+    // send_data_safer prefixes the local conversation ID before the unchanged
+    // MeshLink frame. Unknown application input never gains business exemption.
+    if(type!='d' || !data || length<9) return native_wire_kind::handshake;
+    data+=4; length-=4;
+    if(length==1344 && !memcmp(data,"SLF1",4) && data[4]==2) return native_wire_kind::completion;
+    if(length<64 || memcmp(data,"SLM4",4)) return native_wire_kind::handshake;
+    switch(static_cast<unsigned char>(data[4])) {
+    case 4: return native_wire_kind::business;
+    case 5: case 6: return native_wire_kind::maintenance;
+    case 2: case 3: case 7: return native_wire_kind::completion;
+    default: return native_wire_kind::handshake;
+    }
+}
+native_wire_scope::native_wire_scope(native_wire_kind kind):previous(wire_kind) { wire_kind=kind; }
+native_wire_scope::~native_wire_scope() { wire_kind=previous; }
 bool native_broker_mode() { return enabled; }
 int native_broker_receive(char *packet,unsigned capacity) {
     unsigned char prefix[4]; if(!exact(prefix,4,false,INFINITE)) return -1;
@@ -54,7 +73,8 @@ int native_broker_receive(char *packet,unsigned capacity) {
 int native_broker_send(const char *packet,unsigned size) {
     if(size<40 || size>65535) return -1;
     std::vector<char> frame(size+4);
-    for(unsigned i=0;i<4;++i) frame[i]=size>>(i*8);
+    unsigned word=size|(wire_metadata ? (static_cast<unsigned>(wire_kind)<<16) : 0);
+    for(unsigned i=0;i<4;++i) frame[i]=word>>(i*8);
     memcpy(frame.data()+4,packet,size);
     return exact(frame.data(),unsigned(frame.size()),true,1000) ? 0 : -1;
 }

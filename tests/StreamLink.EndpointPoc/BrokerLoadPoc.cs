@@ -14,13 +14,14 @@ namespace StreamLink.EndpointPoc;
 static class BrokerLoadPoc
 {
     const int Size = 1280;
-    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output)
+    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output, bool countWireControl = false)
     {
         if (mbps is < 1 or > 60 || seconds is < 3 or > 20 || rounds is < 1 or > 5) throw new ArgumentException("bounded load: 1..60 Mbps, 3..20 seconds, 1..5 rounds");
         string root = Path.Combine(Path.GetDirectoryName(output)!, Path.GetFileNameWithoutExtension(output) + "-logs"); Directory.CreateDirectory(root);
         var rows = new List<object>(); using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(12)); var token = deadline.Token;
         var leases = new List<TcpEndpointLease>(); var owners = new List<TcpCaptureOwner>(); var paths = new List<NativeDatagramPath>();
         var routers = new List<MeshRouter>(); var adapters = new List<Adapter>(); var wire = new Wire();
+        var machineBudgets = Enumerable.Range(0, 3).Select(_ => new TraversalResources()).ToArray();
         var a = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); var c = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));
         b.Directory = c.Directory = a.Directory; var profiles = new[] { a, b, c };
@@ -42,7 +43,7 @@ static class BrokerLoadPoc
                 contexts.Add(context); contexts.Add(reverse);
                 foreach (var side in new[] { (Local: 0, Remote: peer, Context: context), (Local: peer, Remote: 0, Context: reverse) }) {
                     byte[] key = MeshIdentity.SharedKey(profiles[side.Local], profiles[side.Remote].Self);
-                    try { paths.Add(await NativeDatagramPath.Prepare(binary, root, leases[side.Local], generation, side.Context, leases[side.Remote].Local, key, token, new(), captureOwner: owners[side.Local])); }
+                    try { paths.Add(await NativeDatagramPath.Prepare(binary, root, leases[side.Local], generation, side.Context, leases[side.Remote].Local, key, token, machineBudgets[side.Local], captureOwner: owners[side.Local], countWireControl: countWireControl)); }
                     finally { CryptographicOperations.ZeroMemory(key); }
                 }
             }
@@ -109,7 +110,7 @@ static class BrokerLoadPoc
             foreach (var owner in owners) await owner.DisposeAsync(); foreach (var lease in leases) lease.Dispose();
         }
         bool completed = failure.Length == 0 && rows.Count == rounds * 2 && owners.All(o => o.Closed.IsCompletedSuccessfully) && leases.All(l => l.Closed);
-        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure,
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure, countWireControl, wireControl = paths.Select(p => p.WireControl).ToArray(),
             hashes = new { core = Hash(typeof(MeshRouter).Assembly.Location), native = Hash(binary), harness = Hash(typeof(BrokerLoadPoc).Assembly.Location) },
             scope = "One Windows host: real protocol workers/pipes/UDP bridge/MeshRouter; synthetic bounded IP adapters and memory raw I/O; no driver, WAN, QoS or Wintun. Completion is not a quality pass. Delay uses one shared monotonic host clock." }, new JsonSerializerOptions { WriteIndented = true }));
         if (!completed) throw new IOException(failure); return 0;

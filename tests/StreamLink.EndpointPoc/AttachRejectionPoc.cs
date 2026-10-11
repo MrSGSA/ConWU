@@ -14,7 +14,7 @@ static class AttachRejectionPoc
     {
         using var deadline = new CancellationTokenSource(25000);
         var cases = new List<object>();
-        foreach (string scenario in new[] { "wrong-abi", "unknown-capture-mode", "old-attach", "old-generation", "wrong-request", "ipc-close-before-start", "ipv6-no-broker", "ipv6-noncanonical", "ipv6-mapped", "ipv6-wrong-size" }) {
+        foreach (string scenario in new[] { "wrong-abi", "unknown-capture-mode", "wire-without-broker", "wire-unknown-mode", "wire-reserved-bits", "old-attach", "old-generation", "wrong-request", "ipc-close-before-start", "ipv6-no-broker", "ipv6-noncanonical", "ipv6-mapped", "ipv6-wrong-size" }) {
             bool ipv6 = scenario.StartsWith("ipv6-");
             string name = "StreamLink.Attach." + Guid.NewGuid().ToString("N");
             using var pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
@@ -50,15 +50,18 @@ static class AttachRejectionPoc
                 frame[82] = 1; frame[83] = 1;
                 BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(84), 10000); BinaryPrimitives.WriteUInt32LittleEndian(frame.AsSpan(88), 1);
                 if (scenario == "unknown-capture-mode") frame[92] = 2;
+                if (scenario == "wire-without-broker") frame[93] = 1;
+                if (scenario == "wire-unknown-mode") { frame[92] = 1; frame[93] = 2; }
+                if (scenario == "wire-reserved-bits") { frame[92] = frame[93] = 1; frame[94] = 1; }
                 if (ipv6) frame[92] = (byte)(scenario == "ipv6-no-broker" ? 0 : 1);
                 if (scenario == "ipv6-noncanonical") frame[64] = 1;
                 if (scenario == "ipv6-mapped") IPAddress.Parse("::ffff:127.0.0.1").GetAddressBytes().CopyTo(frame, 128);
-                bool rejectInitial = ipv6 || scenario is "wrong-abi" or "unknown-capture-mode";
+                bool rejectInitial = ipv6 || scenario.StartsWith("wire-") || scenario is "wrong-abi" or "unknown-capture-mode";
                 // Header validation can close the pipe before the remaining
                 // invalid bytes are written. Exit code and zero I/O still must pass.
                 try { await pipe.WriteAsync(frame, deadline.Token); }
                 catch (IOException) when (rejectInitial) { }
-                if (!ipv6 && scenario is not ("wrong-abi" or "unknown-capture-mode")) {
+                if (!rejectInitial) {
                     byte[] armed = new byte[96]; await pipe.ReadExactlyAsync(armed, deadline.Token);
                     if (BinaryPrimitives.ReadUInt16LittleEndian(armed.AsSpan(6)) != 2) throw new Exception("Expected Armed");
                     await Task.Delay(100, deadline.Token); quiet = raw.Available == 0;

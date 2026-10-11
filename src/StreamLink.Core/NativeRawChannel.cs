@@ -14,13 +14,15 @@ internal sealed class NativeRawChannel : IAsyncDisposable
 {
     readonly NamedPipeServerStream pipe;
     readonly TcpCaptureOwner.Session session;
+    readonly bool wireMetadata;
     readonly CancellationTokenSource stop = new();
     Task running = Task.CompletedTask;
     public event Action? Faulted;
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
-    public NativeRawChannel(string controlName, TcpCaptureOwner.Session session)
+    public NativeRawChannel(string controlName, TcpCaptureOwner.Session session, bool wireMetadata = false)
     {
         this.session = session;
+        this.wireMetadata = wireMetadata;
         pipe = new("StreamLink.Raw." + controlName[18..], PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance, 131072, 131072);
     }
@@ -50,11 +52,18 @@ internal sealed class NativeRawChannel : IAsyncDisposable
     {
         byte[] length = new byte[4];
         while (true) {
-            await pipe.ReadExactlyAsync(length, stop.Token); int size = BinaryPrimitives.ReadInt32LittleEndian(length);
-            if (size is < 40 or > 65535) throw new IOException("Raw packet frame exceeds bounds");
+            await pipe.ReadExactlyAsync(length, stop.Token); uint word = BinaryPrimitives.ReadUInt32LittleEndian(length);
+            var (size, kind) = DecodeHeader(word, wireMetadata);
             byte[] packet = new byte[size]; await pipe.ReadExactlyAsync(packet, stop.Token);
-            session.Send(packet); // revalidates source and authorized tuple, including after Revoke
+            session.Send(packet, kind); // revalidates tuple and charges at the final injection, including after Revoke
         }
+    }
+    internal static (int Size, NativeWireKind Kind) DecodeHeader(uint word, bool metadata)
+    {
+        int size = (int)(word & 65535); var kind = (NativeWireKind)(word >> 16);
+        if (!Enum.IsDefined(kind) || !metadata && kind != NativeWireKind.Handshake) throw new IOException("Unauthorized raw wire metadata");
+        if (size < 40) throw new IOException("Raw packet frame exceeds bounds");
+        return (size, kind);
     }
     async Task Output()
     {

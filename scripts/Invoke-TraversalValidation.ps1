@@ -32,6 +32,7 @@ try {
  Invoke-Check 'mesh-traversal-control' 'dotnet' @('run','--project','tests\StreamLink.MeshTraversalTests','-c','Release','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--output',(Join-Path $OutputDirectory 'traversal-control.json'))
  Invoke-Check 'mesh-runner-traversal' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','30','--output',(Join-Path $OutputDirectory 'runner-traversal.json'))
  Invoke-Check 'mesh-runner-lifecycle' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--no-build','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','1','--output',(Join-Path $OutputDirectory 'runner-lifecycle.json'),'--lifecycle-only')
+ Invoke-Check 'native-wire-budget' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--no-build','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','1','--output',(Join-Path $OutputDirectory 'wire-budget.json'),'--wire-only')
  Invoke-Check 'mesh-nomination-model' 'dotnet' @('run','--project','tests\StreamLink.NominationTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'nomination-model.json'))
  Invoke-Check 'mesh-connections' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release')
  Invoke-Check 'mesh-regression' 'dotnet' @('run','--project','tests\StreamLink.MeshTests','-c','Release')

@@ -8,6 +8,7 @@ public sealed class TraversalControlRound(TraversalResources machine, int maximu
     int packets, bytes;
     public int Packets { get { lock (gate) return packets; } }
     public int Bytes { get { lock (gate) return bytes; } }
+    public bool TryMaintenance(int length) => machine.TrySend(length, maintenance: true);
     public bool TrySend(int length, bool completion)
     {
         if (length is < 1 or > TraversalLimits.RoundBytes) return false;

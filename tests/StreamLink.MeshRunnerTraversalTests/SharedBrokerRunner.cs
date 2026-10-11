@@ -45,6 +45,12 @@ static class SharedBrokerRunner
                 "each Runner's two peers use one real TCP helper/capture, no legacy or member relay");
             for (int from = 0; from < 3; from++) for (int to = 0; to < 3; to++) if (from != to) adapters[from].Outgoing.Add(Packet(mesh[from].LocalIp, mesh[to].LocalIp));
             await Until(() => adapters.All(a => a.Incoming.Count == 2), "three Runners carry authenticated full-MTU business over every direct pair");
+            check(factories.All(f => f.Paths.Count == 2 && f.Paths.All(p => p.WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 } && p.ControlRound.Packets == p.WireControl.HandshakePackets)),
+                "three Runners charge native shape/HTTP/authentication once per IP frame, with six selected business paths");
+            check(wire.Syns > 0 && wire.Http > 0, "the accounted native handshake actually includes TCP SYN and legacy HTTP prelude packets");
+            await Task.Delay(9000, token);
+            check(factories.All(f => f.Paths.All(p => p.WireControl!.MaintenancePackets > 0 && p.RemainingAttemptTime <= TimeSpan.Zero)),
+                "native keepalives and MeshLink maintenance continue under the machine budget after the round deadline");
             stops[1].Cancel(); try { await tasks[1].WaitAsync(TimeSpan.FromSeconds(8), token); } catch (OperationCanceledException) { }
             int before = adapters[2].Incoming.Count; adapters[0].Outgoing.Add(Packet(a.LocalIp, c.LocalIp));
             await Until(() => adapters[2].Incoming.Count == before + 1, "exiting one Runner leaves the other shared-source pair transporting", 2500);
@@ -62,6 +68,7 @@ static class SharedBrokerRunner
         readonly string executable = binary, folder = root;
         MeshTcpEndpointPool? pool;
         public readonly List<Guid> Leases = [], Owners = []; readonly List<TcpEndpointLease> actual = [];
+        public readonly ConcurrentBag<NativeDatagramPath> Paths = [];
         public bool Closed => actual.All(l => l.Closed);
         public TraversalProfile[] Profiles => [TraversalProfile.FakeTcpHttpSo];
         public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token) {
@@ -76,7 +83,10 @@ static class SharedBrokerRunner
             public MeshTraversalCandidate Candidate => candidate;
             public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext context, IPEndPoint remote, CancellationToken token) {
                 byte[] key = MeshIdentity.SharedKey(owner.profile, peer);
-                try { return await NativeDatagramPath.Prepare(owner.executable, owner.folder, use.Lease, owner.generation, context, remote, key, token, owner.budget, captureOwner: use.Owner); }
+                try {
+                    var path = await NativeDatagramPath.Prepare(owner.executable, owner.folder, use.Lease, owner.generation, context, remote, key, token, owner.budget, captureOwner: use.Owner, countWireControl: true);
+                    owner.Paths.Add(path); return path;
+                }
                 finally { CryptographicOperations.ZeroMemory(key); }
             }
             public ValueTask DisposeAsync() { use.Dispose(); return ValueTask.CompletedTask; }
@@ -84,9 +94,13 @@ static class SharedBrokerRunner
     }
     sealed class Wire {
         readonly ConcurrentDictionary<string, Io> endpoints = new();
+        public int Syns, Http;
         public Io Open(IPEndPoint local) { var io = new Io(this); if (!endpoints.TryAdd(local.ToString(), io)) throw new IOException("Duplicate capture"); return io; }
         public bool Send(ReadOnlySpan<byte> p) {
             int ip = (p[0] & 15) * 4; var target = new IPEndPoint(new IPAddress(p.Slice(16, 4)), BinaryPrimitives.ReadUInt16BigEndian(p[(ip + 2)..]));
+            int payload = ip + (p[ip + 12] >> 4) * 4;
+            if ((p[ip + 13] & 2) != 0) Interlocked.Increment(ref Syns);
+            if (p[payload..].StartsWith("GET "u8) || p[payload..].StartsWith("HTTP/"u8)) Interlocked.Increment(ref Http);
             return endpoints.TryGetValue(target.ToString(), out var io) && io.Packets.Writer.TryWrite(new(p.ToArray(), false));
         }
     }

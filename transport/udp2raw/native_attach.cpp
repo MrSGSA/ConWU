@@ -132,8 +132,8 @@ void native_attach_configure() {
     unsigned char zero[16]{};
     for (int offset: {16,32,48}) if (memcmp(authorization+offset,zero,16)==0) reject("empty identity");
     const bool v6=frame_size==144;
-    if (raw_mode!=mode_faketcp || raw_ip_version!=(v6?AF_INET6:AF_INET) || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || read32(authorization+92)>1) reject("unsupported profile or descriptor");
-    if (v6 && (read32(authorization+64) || read32(authorization+70) || read32(authorization+76) || read32(authorization+92)!=1)) reject("IPv6 requires canonical broker descriptor");
+    if (raw_mode!=mode_faketcp || raw_ip_version!=(v6?AF_INET6:AF_INET) || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || authorization[92]>1 || authorization[93]>authorization[92] || read16(authorization+94)) reject("unsupported profile or descriptor");
+    if (v6 && (read32(authorization+64) || read32(authorization+70) || read32(authorization+76) || authorization[92]!=1)) reject("IPv6 requires canonical broker descriptor");
     local=endpoint(authorization+(v6?96:64),read16(authorization+68));
     helper=endpoint(authorization+(v6?112:70),read16(authorization+74));
     peer=endpoint(authorization+(v6?128:76),read16(authorization+80));
@@ -142,7 +142,7 @@ void native_attach_configure() {
         if (!(remote_addr==peer)) reject("configured peer differs from authorization");
         source_addr=local; force_source_ip=1; source_port=local.get_port(); force_source_port=1;
     } else if (!(local_addr==local)) reject("configured listener differs from authorization");
-    if(read32(authorization+92)==1) native_broker_configure(pipe_name,authorization,frame_size,server);
+    if(authorization[92]==1) native_broker_configure(pipe_name,authorization,frame_size,server);
     mylog(log_info,"managed endpoint authorized; ABI=%u, %s, source=%s\n",read16(authorization+4),native_broker_mode()?"brokered worker":"single peer",local.get_str());
 }
 bool native_attached() { return pipe_handle!=INVALID_HANDLE_VALUE; }

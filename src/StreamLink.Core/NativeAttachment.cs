@@ -18,6 +18,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     readonly IDisposable reference;
     readonly TcpCaptureOwner.Session? brokerSession;
     readonly NativeRawChannel? rawChannel;
+    readonly NativeWireBudget? wireBudget;
     readonly ChildJob job;
     readonly NamedPipeServerStream pipe;
     readonly byte[] identity;
@@ -43,13 +44,17 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     // Keep kernel process queries on startup/teardown, off the packet hot path.
     public bool Exited => Volatile.Read(ref childExited) != 0 || process == null;
     public int ProcessId => childId;
+    public NativeWireStats? WireControl => wireBudget?.Snapshot();
+    public void SelectWireBudget() => wireBudget?.Select();
     public event Action? ProcessExited;
 
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
 
-    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner, string? fairnessKey)
+    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner, string? fairnessKey, NativeWireBudget? wireBudget)
     {
+        if (wireBudget != null && captureOwner == null) throw new ArgumentException("Wire accounting requires a capture owner");
+        this.wireBudget = wireBudget;
         bool v6 = lease.Local.AddressFamily == AddressFamily.InterNetworkV6;
         Size = v6 ? 144 : 96;
         if (peer.AddressFamily != lease.Local.AddressFamily || peer.Equals(lease.Reflector) || peer.Equals(lease.Local) ||
@@ -61,6 +66,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         } else { var owned = lease.AcquireNativeAttachment(generation); reference = owned; AttachId = owned.AttachId; }
         LeaseId = lease.Id;
         try {
+            if (wireBudget != null) brokerSession!.ConfigureWireBudget(wireBudget);
             job = new();
             string name = "StreamLink.Attach." + Guid.NewGuid().ToString("N");
             pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
@@ -77,7 +83,8 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(88), 1); // immutable capture descriptor
             if (brokerSession != null) {
                 identity[92] = 1; // authorized brokered data pipe, not an environment skip-bind flag
-                rawChannel = new(name, brokerSession);
+                identity[93] = (byte)(wireBudget != null ? 1 : 0); // local-only frame category capability
+                rawChannel = new(name, brokerSession, wireBudget != null);
                 rawChannel.Faulted += () => { if (Volatile.Read(ref disposed) == 0 && process is { HasExited: false }) try { process.Kill(); } catch (InvalidOperationException) { } };
             }
         } catch { pipe?.Dispose(); reference.Dispose(); job?.Dispose(); throw; }
@@ -92,9 +99,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public static async Task<NativeAttachment> Launch(TcpEndpointLease lease, Guid generation,
         string executable, IEnumerable<string> arguments, IPEndPoint peer, bool server,
         string? logPath, CancellationToken token, IDictionary<string, string>? environment = null,
-        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null, string? fairnessKey = null)
+        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null, string? fairnessKey = null, NativeWireBudget? wireBudget = null)
     {
-        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner, fairnessKey);
+        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner, fairnessKey, wireBudget);
         try {
             owner.process = owner.job.Start(executable, arguments.Concat(["--managed-pipe", owner.PipeName]), logPath, environment, secrets);
             owner.childId = owner.process.Id;
@@ -138,7 +145,10 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         byte[] message = (byte[])identity.Clone();
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), type);
         BinaryPrimitives.WriteUInt32LittleEndian(message.AsSpan(12), request++);
-        if (type == 3) { brokerSession?.Start(); Interlocked.CompareExchange(ref startTimestamp, Stopwatch.GetTimestamp(), 0); }
+        if (type == 3) {
+            Interlocked.CompareExchange(ref startTimestamp, Stopwatch.GetTimestamp(), 0);
+            wireBudget?.Start(startTimestamp); brokerSession?.Start();
+        }
         await pipe.WriteAsync(message, token);
         byte[] reply = new byte[Size]; await pipe.ReadExactlyAsync(reply, token);
         BinaryPrimitives.WriteUInt16LittleEndian(message.AsSpan(6), expected);

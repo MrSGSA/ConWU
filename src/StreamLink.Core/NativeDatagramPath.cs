@@ -9,12 +9,15 @@ namespace StreamLink.Core;
 
 public sealed record NativePathDiagnostics(Guid AttemptId, Guid LeaseId, Guid AttachId, string Local, string Peer,
     bool CaptureArmed, bool StartAcknowledged, bool NativeExited, int BridgeProbeAttempts,
-    int AuthenticatedProbeReceives, bool PayloadQualified, double RemainingMs);
+    int AuthenticatedProbeReceives, bool PayloadQualified, double RemainingMs)
+{
+    public NativeWireStats? WireControl { get; init; }
+}
 
 public sealed class NativePathVerificationException(string reason, NativePathDiagnostics diagnostic, Exception inner)
     : IOException($"Native 路径验证未完成：{reason}; attempt={diagnostic.AttemptId:N}; lease={diagnostic.LeaseId:N}; attach={diagnostic.AttachId:N}; " +
         $"local={diagnostic.Local}; peer={diagnostic.Peer}; armed={diagnostic.CaptureArmed}; started={diagnostic.StartAcknowledged}; " +
-        $"bridgeProbes={diagnostic.BridgeProbeAttempts}; authenticatedProbes={diagnostic.AuthenticatedProbeReceives}; remainingMs={diagnostic.RemainingMs:F0}", inner)
+        $"bridgeProbes={diagnostic.BridgeProbeAttempts}; authenticatedProbes={diagnostic.AuthenticatedProbeReceives}; remainingMs={diagnostic.RemainingMs:F0}; wireDenied={diagnostic.WireControl?.Denied}", inner)
 {
     public string Reason { get; } = reason;
     public NativePathDiagnostics Diagnostic { get; } = diagnostic;
@@ -24,7 +27,7 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 // uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
-public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath
+public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
     readonly object gate = new();
@@ -44,6 +47,10 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     int failed, qualified, reading, bridgeProbeAttempts, authenticatedProbeReceives;
     bool disposed;
     public TraversalControlRound ControlRound { get; }
+    readonly NativeWireBudget? wireBudget;
+    public bool CountsWireControl => wireBudget != null;
+    public NativeWireStats? WireControl => wireBudget?.Snapshot();
+    public void SelectWireBudget() => wireBudget?.Select();
     public TraversalAttemptContext Context { get; }
     public ValidatedPathIdentity Identity => Volatile.Read(ref qualified) != 0 && native != null
         ? identity with { AttachId = native.AttachId, ActualLocal = Copy(identity.ActualLocal), ActualRemote = Copy(identity.ActualRemote) }
@@ -61,12 +68,12 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public NativePathDiagnostics Diagnostics => new(Context.AttemptId, identity.LeaseId, AttachId,
         identity.ActualLocal.ToString(), identity.ActualRemote.ToString(), native?.Armed == true, Started, native?.Exited != false,
         Volatile.Read(ref bridgeProbeAttempts), Volatile.Read(ref authenticatedProbeReceives), Volatile.Read(ref qualified) != 0,
-        RemainingAttemptTime.TotalMilliseconds);
+        RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl };
     public IPEndPoint BridgeEndpoint => Copy((IPEndPoint)bridge.LocalEndPoint!);
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
     NativeDatagramPath(TcpEndpointLease lease, Guid generation, TraversalAttemptContext context,
-        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources)
+        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources, bool countWireControl)
     {
         if (context.Profile != TraversalProfile.FakeTcpHttpSo || sharedKey.Length != 32 || generation != lease.NetworkGeneration)
             throw new ArgumentException("Native 受管路径需要已协商的 SO profile、成员密钥及当前资源代次");
@@ -74,6 +81,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
         key = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, key, digest, "streamlink-native-path-check-v1"u8);
         identity = new(Guid.NewGuid(), context.AttemptId, lease.Id, null, generation, lease.Local, Copy(peer), context.Profile, PathQualification.MtuQualified);
         ControlRound = new(resources);
+        if (countWireControl) wireBudget = new(ControlRound);
         configuration = Path.Combine(sessionRoot, "managed-raw-" + Guid.NewGuid().ToString("N") + ".conf");
         bridge = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try {
@@ -85,10 +93,10 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public static async Task<NativeDatagramPath> Prepare(string executable, string sessionRoot,
         TcpEndpointLease lease, Guid generation, TraversalAttemptContext context, IPEndPoint peer,
         byte[] sharedKey, CancellationToken token, TraversalResources? resources = null,
-        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null)
+        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false)
     {
         Directory.CreateDirectory(sessionRoot);
-        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared);
+        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl);
         byte[] rawSecret = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, rawSecret, path.digest, "streamlink-native-outer-v1"u8);
         string rawKey = Convert.ToHexString(rawSecret); CryptographicOperations.ZeroMemory(rawSecret);
         try {
@@ -104,7 +112,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await File.WriteAllTextAsync(path.configuration,
                 $"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n", token);
             path.native = await NativeAttachment.Launch(lease, generation, executable, ["--conf-file", path.configuration], peer,
-                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId);
+                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId, wireBudget: path.wireBudget);
             path.native.ProcessExited += path.Fault;
             if (path.native.Exited) throw new IOException("Native exited during preparation");
             path.receiver = path.ReceiveLoop(); path.sender = path.SendLoop();
@@ -162,7 +170,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     async Task SendProbe(byte kind, ReadOnlyMemory<byte> nonce, IPEndPoint target, CancellationToken token)
     {
         // Old/replayed probes cannot keep amplifying after this round's deadline.
-        if (RemainingAttemptTime <= TimeSpan.Zero || !ControlRound.TrySend(ProbeSize, kind == 2)) return;
+        if (RemainingAttemptTime <= TimeSpan.Zero || !CountsWireControl && !ControlRound.TrySend(ProbeSize, kind == 2)) return;
         Interlocked.Increment(ref bridgeProbeAttempts);
         await SendOnce(Probe(kind, nonce.Span), target, token);
     }

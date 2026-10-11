@@ -20,7 +20,8 @@ bool ipv6Only = args.Length == 7 && args[6] == "--ipv6-only";
 bool egressOnly = args.Length == 7 && args[6] == "--egress-only";
 bool nativeIpv6Only = args.Length == 7 && args[6] == "--native-ipv6-only";
 bool lifecycleOnly = args.Length == 7 && args[6] == "--lifecycle-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only|--native-ipv6-only|--egress-only|--lifecycle-only]");
+bool wireOnly = args.Length == 7 && args[6] == "--wire-only";
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only|--ipv6-only|--native-ipv6-only|--egress-only|--lifecycle-only|--wire-only]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -46,7 +47,12 @@ app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (lifecycleOnly) rows.Add(await LifecycleTests.Run(binary, root, url, pin, controlFailure, Check, token));
+    if (wireOnly) {
+        rows.Add(await WireBudgetTests.Run(Check, token));
+        await SharedBrokerRunner.Run(binary, root, url, pin, Check, token);
+        rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token));
+    }
+    else if (lifecycleOnly) rows.Add(await LifecycleTests.Run(binary, root, url, pin, controlFailure, Check, token));
     else {
     if (nativeIpv6Only || egressOnly || args.Length == 6) rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token, egressOnly));
     if (egressOnly) rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token, true));
