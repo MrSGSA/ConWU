@@ -3,13 +3,13 @@ using System.Net;
 using System.Net.Sockets;
 using StreamLink.Core;
 
-namespace StreamLink.EndpointPoc;
+namespace StreamLink.Core;
 
-// Experimental, test-only owner. One exclusive kernel TCP reflection flow.
-// NOT a FakeTCP candidate: no WinDivert capture/injection or NAT classification.
+// One exclusive kernel TCP reflection flow; helper health and ownership differ.
+// Observing a mapped endpoint alone does not validate a FakeTCP candidate.
 // A path reference must be retained BEFORE releasing an attempt. Only a future
 // authenticated coordinator may decide to retain a path; this class does not.
-sealed class TcpEndpointLease : IDisposable
+public sealed class TcpEndpointLease : IDisposable
 {
     readonly object gate = new();
     readonly Socket socket;
@@ -17,15 +17,19 @@ sealed class TcpEndpointLease : IDisposable
     readonly SemaphoreSlim io = new(1);
     int references = 1;
     bool retired, disposed, faulted;
+    Guid attachment;
     public Guid Id { get; } = Guid.NewGuid();
     public Guid NetworkGeneration { get; }
-    public IPEndPoint Local { get; }
-    public IPEndPoint Reflector { get; }
+    readonly IPEndPoint local, reflector;
+    public IPEndPoint Local => new(local.Address, local.Port);
+    public IPEndPoint Reflector => new(reflector.Address, reflector.Port);
     public bool Closed { get { lock (gate) return disposed; } }
+    public bool QueryUsable { get { lock (gate) return !faulted && !disposed; } }
+    public int ReferenceCount { get { lock (gate) return references; } }
     TcpEndpointLease(Socket socket, IPEndPoint reflector, Guid generation)
     {
         this.socket = socket; stream = new(socket, false);
-        Local = (IPEndPoint)socket.LocalEndPoint!; Reflector = reflector; NetworkGeneration = generation;
+        local = (IPEndPoint)socket.LocalEndPoint!; this.reflector = new(reflector.Address, reflector.Port); NetworkGeneration = generation;
     }
     public static async Task<TcpEndpointLease> Open(IPEndPoint local, IPEndPoint reflector, Guid generation, CancellationToken token)
     {
@@ -42,6 +46,28 @@ sealed class TcpEndpointLease : IDisposable
         lock (gate) {
             if (expectedGeneration != NetworkGeneration || retired || faulted || disposed) throw new InvalidOperationException("Lease unavailable for this attempt generation");
             references++; return new(this, false);
+        }
+    }
+    public NativeReference AcquireNativeAttachment(Guid expectedGeneration)
+    {
+        lock (gate) {
+            if (expectedGeneration != NetworkGeneration || retired || disposed || attachment != Guid.Empty)
+                throw new InvalidOperationException("Endpoint is retired, stale, or already has a native capture owner");
+            // QueryUnusable does not close the source resource or a healthy path.
+            attachment = Guid.NewGuid(); references++; return new(this, attachment);
+        }
+    }
+    public sealed class NativeReference : IDisposable
+    {
+        readonly TcpEndpointLease owner;
+        bool released;
+        public Guid AttachId { get; }
+        internal NativeReference(TcpEndpointLease owner, Guid id) { this.owner = owner; AttachId = id; }
+        // Caller must FIRST confirm child exit/Detach. A timeout alone is not proof.
+        public void Dispose()
+        {
+            lock (owner.gate) { if (released) return; released = true; owner.attachment = Guid.Empty; }
+            owner.Release();
         }
     }
     void Release()

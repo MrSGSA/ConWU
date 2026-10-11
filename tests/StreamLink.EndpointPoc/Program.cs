@@ -1,9 +1,14 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Text.Json;
 using StreamLink.EndpointPoc;
+using StreamLink.Core;
+
+if (args is ["--managed", var binary, "--output", var reportPath])
+    return await ManagedProtocolPoc.Run(Path.GetFullPath(binary), Path.GetFullPath(reportPath));
+if (args is ["--network", var networkConfig]) return await NetworkPoc.Run(networkConfig);
+if (args is ["--reject-attach", var nativeBinary, "--output", var negativeOutput]) return await AttachRejectionPoc.Run(Path.GetFullPath(nativeBinary), Path.GetFullPath(negativeOutput));
 
 // A separate process attempts a conflicting bind with SO_REUSEADDR. This is
 // deliberately loopback-only and targets only a socket owned by this test run.
@@ -29,8 +34,10 @@ for (int round = 1; round <= 30; round++) {
     using var attempt = owner.AcquireAttempt(generation);
     var initial = await attempt.Observe(deadline.Token);
     Check(initial.Local.Equals(initial.Public), "Loopback reflection matches the live source endpoint");
-    var start = new ProcessStartInfo("dotnet") { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
-    start.ArgumentList.Add(Assembly.GetExecutingAssembly().Location); start.ArgumentList.Add("--contend");
+    var executable = Environment.ProcessPath!;
+    var start = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    if (Path.GetFileNameWithoutExtension(executable).Equals("dotnet", StringComparison.OrdinalIgnoreCase)) start.ArgumentList.Add(Environment.GetCommandLineArgs()[0]);
+    start.ArgumentList.Add("--contend");
     start.ArgumentList.Add(owner.Local.Address.ToString()); start.ArgumentList.Add(owner.Local.Port.ToString());
     using (var rival = Process.Start(start)!) {
         try { await rival.WaitForExitAsync(deadline.Token); }

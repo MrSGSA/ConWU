@@ -4,6 +4,7 @@
 #include "misc.h"
 #include "fd_manager.h"
 #include "native_backend.h"
+#include "native_attach.h"
 #include <memory>
 
 int server_on_timer_multi(conn_info_t &);
@@ -67,7 +68,7 @@ int server_event_loop() {
         bind_addr.v4 = local_addr.inner.ipv4.sin_addr.s_addr;
     }
     // Reserve the port without making Windows perform the TCP handshake.
-    if (try_to_list_and_bind2(bind_fd, local_addr) != 0) {
+    if (!native_attached() && try_to_list_and_bind2(bind_fd, local_addr) != 0) {
         mylog(log_fatal, "native server port is occupied\n");
         myexit(-1);
     }

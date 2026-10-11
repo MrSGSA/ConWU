@@ -3,6 +3,7 @@
 #include "connection.h"
 #include "misc.h"
 #include "native_backend.h"
+#include "native_attach.h"
 #include <atomic>
 #include <thread>
 #include "windivert.h"
@@ -23,6 +24,9 @@ decltype(&WinDivertSetParam) wd_set;
 decltype(&WinDivertHelperCalcChecksums) wd_checksums;
 std::thread reader;
 std::atomic<bool> stopping{false};
+std::atomic<bool> receiving{false};
+std::string capture_descriptor;
+std::atomic<unsigned long long> suppressed_outbound{0};
 std::atomic<DWORD> reader_error{0};
 std::atomic<unsigned long long> queue_drops{0};
 
@@ -82,6 +86,7 @@ template<class T> void symbol(T &output, const char *name) {
 
 void capture() {
     char packet[huge_buf_len];
+    receiving.store(true);
     while (!stopping.load()) {
         UINT length = 0;
 #ifdef UDP2RAW_TEST_IO
@@ -101,6 +106,9 @@ void capture() {
             ev_async_send(g_default_loop, &async_watcher);
             break;
         }
+        // Managed capture owns exactly the authorized wire tuple. Raw injection
+        // bypasses its own handle; kernel-generated responses must not escape.
+        if (native_attached() && address.Outbound) { ++suppressed_outbound; continue; }
         // Checksums may be omitted by hardware offload. The protocol parser
         // expects a complete packet, so normalize only when flags say necessary.
         if ((!address.IPChecksum || (raw_mode == mode_udp ? !address.UDPChecksum : !address.TCPChecksum)) &&
@@ -143,9 +151,19 @@ int init_raw_socket() {
 
 void init_filter(int port) {
     if (port <= 0 || port > 65535) fail("invalid native filter port");
-    if (filter_port == port && reader.joinable()) return;
+    // Compare the whole capture description, not just the local port. No
+    // overlapping old/new handles: retire the previous capture before reopening.
+    std::string descriptor=std::to_string(port)+"/"+std::to_string(raw_mode)+"/"+std::to_string(program_mode)+
+        "/"+remote_addr.get_str()+"/"+local_addr.get_str()+"/"+std::to_string(bind_addr_used)+"/100/NETWORK/"+
+        (getenv("STREAMLINK_STUN_ENDPOINT") ? getenv("STREAMLINK_STUN_ENDPOINT") : "")+"/"+
+        (getenv("STREAMLINK_ALLOW_DRIVER_INSTALL") ? getenv("STREAMLINK_ALLOW_DRIVER_INSTALL") : "");
+    if (native_attached()) descriptor += native_attachment_filter();
+    if (capture_descriptor == descriptor && reader.joinable()) return;
+    if (native_attached() && !capture_descriptor.empty()) fail("managed capture descriptor is immutable; acquire a new attachment");
     stop_capture();
+    capture_descriptor=descriptor;
     stopping.store(false);
+    receiving.store(false);
     reader_error.store(0);
     pthread_mutex_lock(&queue_mutex);
     my_queue.clear();
@@ -187,6 +205,7 @@ void init_filter(int port) {
             filter += " and (ip.SrcAddr != " + std::string(stun.get_ip()) + " or udp.SrcPort != " + std::to_string(stun.get_port()) + ")";
         }
     }
+    if (native_attached()) filter = native_attachment_filter();
     // The packaged, elevated launcher explicitly opts into the official signed
     // driver's on-demand installation. Standalone developer runs stay read-only.
     const char *install = getenv("STREAMLINK_ALLOW_DRIVER_INSTALL");
@@ -201,9 +220,14 @@ void init_filter(int port) {
     mylog(log_info, "native capture: %s\n", filter.c_str());
 #endif
     reader = std::thread(capture);
+    while (!receiving.load()) Sleep(1);
+    native_attachment_armed();
 }
 
 int send_raw_packet(raw_info_t &, const char *packet, int length) {
+    std::unique_lock<std::mutex> lock(native_injection_mutex, std::defer_lock);
+    if (native_attached()) lock.lock();
+    if (!native_attachment_packet(packet,length)) return -1;
 #ifdef UDP2RAW_TEST_IO
     return send(test_socket, packet, length, 0) == length ? 0 : -1;
 #else
@@ -221,6 +245,8 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     return 0;
 #endif
 }
+
+void native_capture_shutdown() { stop_capture(); }
 
 void native_drain_packets(conn_info_t *client) {
     if (reader_error.load()) {

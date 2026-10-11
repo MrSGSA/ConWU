@@ -4,17 +4,17 @@ using System.Net.Sockets;
 
 namespace StreamLink.EndpointPoc;
 
-// Loopback only. No public listener, relay, or router/firewall manipulation.
+// Default loopback; the explicit two-machine profile binds only its test IP.
 sealed class Reflector : IAsyncDisposable
 {
-    readonly TcpListener listener = new(IPAddress.Loopback, 0);
+    readonly TcpListener listener;
     readonly CancellationTokenSource stop = new();
     readonly List<Task> connections = [];
     readonly Task accepting;
     public int Accepted, Active, Requests;
     public bool Silent;
     public IPEndPoint Endpoint => (IPEndPoint)listener.LocalEndpoint;
-    public Reflector() { listener.Start(); accepting = Accept(); }
+    public Reflector(IPEndPoint? endpoint = null) { listener = new(endpoint ?? new(IPAddress.Loopback, 0)); listener.Start(); accepting = Accept(); }
     async Task Accept()
     {
         while (!stop.IsCancellationRequested) {

@@ -6,6 +6,9 @@
 #include "lib/md5.h"
 #include "encrypt.h"
 #include "fd_manager.h"
+#ifdef UDP2RAW_NATIVE
+#include "native_attach.h"
+#endif
 
 void sigpipe_cb(struct ev_loop *l, ev_signal *w, int revents) {
     mylog(log_info, "got sigpipe, ignored");
@@ -28,7 +31,7 @@ int main(int argc, char *argv[]) {
 #ifdef UDP2RAW_NATIVE
     if (argc == 2 && strcmp(argv[1], "--native-info") == 0) {
         puts("{\"stage\":\"experimental\",\"client\":true,\"server\":true,"
-             "\"ipv4\":true,\"ipv6\":false,\"wireProtocol\":\"udp2raw-http-c4995ea\","
+             "\"ipv4\":true,\"ipv6\":false,\"nativeAbi\":1,\"managedAttach\":\"single-peer-experimental\",\"wireProtocol\":\"udp2raw-http-c4995ea\","
 #ifdef UDP2RAW_TEST_IO
              "\"backend\":\"loopback-test-only\","
 #else
@@ -51,7 +54,13 @@ int main(int argc, char *argv[]) {
     enable_log_color = 0;
 #endif
 
+#ifdef UDP2RAW_NATIVE
+    native_attach_arguments(argc, argv);
+#endif
     pre_process_arg(argc, argv);
+#ifdef UDP2RAW_NATIVE
+    native_attach_configure();
+#endif
 
     ev_signal signal_watcher_sigpipe;
     ev_signal signal_watcher_sigterm;

@@ -8,6 +8,7 @@
 #include "fd_manager.h"
 #ifdef UDP2RAW_NATIVE
 #include "native_backend.h"
+#include "native_attach.h"
 #endif
 
 #ifdef UDP2RAW_MP
@@ -144,7 +145,7 @@ int client_on_timer(conn_info_t &conn_info)  // for client. called when a timer 
             send_info.src_port = source_port;
 #ifdef UDP2RAW_NATIVE
             tmp_addr.set_port(source_port);
-            if (try_to_list_and_bind2(bind_fd, tmp_addr) != 0) {
+            if (!native_attached() && try_to_list_and_bind2(bind_fd, tmp_addr) != 0) {
                 mylog(log_fatal, "cannot reserve the requested native source port\n");
                 myexit(-1);
             }
