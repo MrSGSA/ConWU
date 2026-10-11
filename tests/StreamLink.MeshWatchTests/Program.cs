@@ -27,6 +27,9 @@ try {
     string net = owner.Pair.Network;
     Check(Status(registry.Directory(Context(owner), net, owner.Directory!)) == 204, "register signed eight-member directory");
     var requests = profiles.Select(p => MeshWatch.Create(p, Guid.NewGuid(), Guid.Empty, 0)).ToArray();
+    long issued = requests[0].Expires - 40;
+    Check(MeshWatch.Validate(net, owner.Self, requests[0], issued - 5) && MeshWatch.Validate(net, owner.Self, requests[0], issued + 5) &&
+          !MeshWatch.Validate(net, owner.Self, requests[0], requests[0].Expires), "watch tolerates five-second clock skew while retaining the expiration bound");
     var initial = await Task.WhenAll(profiles.Select((p, i) => registry.Watch(Context(p, all.Token), net, requests[i])));
     Check(initial.All(r => Status(r) == 200 && Body(r).Reset && Body(r).Snapshot.Directory.Members.Length == 8), "eight independent readers bootstrap at one server epoch");
     var feed = Body(initial[0]);

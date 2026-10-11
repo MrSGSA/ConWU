@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net;
 using System.Net.Sockets;
+using System.Text;
 
 namespace StreamLink.EndpointPoc;
 
@@ -12,33 +13,55 @@ sealed class RawProtocolProxy : IAsyncDisposable
     readonly UdpClient server = new(new IPEndPoint(IPAddress.Loopback, 0));
     readonly CancellationTokenSource stop = new();
     readonly TaskCompletionSource ready = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    readonly TaskCompletionSource bothRegistered = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly Task cPump, sPump;
     readonly object gate = new();
     readonly List<Header> headers = [];
     readonly byte dropFlags;
     readonly bool dropClient;
     bool dropped;
+    int clientWire, serverWire;
+    bool began;
+    public string RegistrationToken { get; } = Guid.NewGuid().ToString("N");
     public int ClientPort => ((IPEndPoint)client.Client.LocalEndPoint!).Port;
     public int ServerPort => ((IPEndPoint)server.Client.LocalEndPoint!).Port;
     // Hold initial delivery until both test sockets exist, so the requested
     // crossed-handshake fault actually occurs instead of a fixture ICMP loss.
-    public void Begin() => ready.TrySetResult();
+    public void Begin() { lock (gate) began = true; ready.TrySetResult(); }
+    public void ResetPreparedServer() {
+        lock (gate) {
+            if (began || clientWire != 0 || serverWire == 0) throw new InvalidOperationException("Only an observed, abandoned Prepared server can be reset");
+            serverWire = 0;
+        }
+    }
     public sealed record Header(bool Client, byte Flags, uint Seq, uint Ack, int Payload, bool Dropped, long Tick);
     public RawProtocolProxy(int clientWire, int serverWire, byte dropFlags = 0, bool dropClient = true)
     {
         this.dropFlags = dropFlags; this.dropClient = dropClient;
-        cPump = Pump(client, server, clientWire, serverWire, true); sPump = Pump(server, client, serverWire, clientWire, false);
+        this.clientWire = clientWire; this.serverWire = serverWire;
+        if (clientWire != 0 && serverWire != 0) bothRegistered.TrySetResult();
+        cPump = Pump(client, server, true); sPump = Pump(server, client, false);
     }
-    async Task Pump(UdpClient input, UdpClient output, int expected, int destination, bool fromClient)
+    async Task Pump(UdpClient input, UdpClient output, bool fromClient)
     {
         try {
             while (true) {
                 UdpReceiveResult message;
                 try { message = await input.ReceiveAsync(stop.Token); }
                 catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset) { continue; }
-                await ready.Task.WaitAsync(stop.Token);
                 byte[] p = message.Buffer;
-                if (!IPAddress.IsLoopback(message.RemoteEndPoint.Address) || message.RemoteEndPoint.Port != expected || p.Length < 40 || p[9] != 6) continue;
+                if (!IPAddress.IsLoopback(message.RemoteEndPoint.Address)) continue;
+                if (p.Length == 36 && p.AsSpan(0, 4).SequenceEqual("SLT1"u8) && Encoding.ASCII.GetString(p, 4, 32) == RegistrationToken) {
+                    lock (gate) {
+                        if (fromClient) { if (!began || clientWire == 0) clientWire = message.RemoteEndPoint.Port; }
+                        else { if (!began || serverWire == 0) serverWire = message.RemoteEndPoint.Port; }
+                        if (clientWire != 0 && serverWire != 0) bothRegistered.TrySetResult();
+                    }
+                    continue;
+                }
+                await ready.Task.WaitAsync(stop.Token); await bothRegistered.Task.WaitAsync(stop.Token);
+                int expected, destination; lock (gate) { expected = fromClient ? clientWire : serverWire; destination = fromClient ? serverWire : clientWire; }
+                if (message.RemoteEndPoint.Port != expected || p.Length < 40 || p[9] != 6) continue;
                 int ip = (p[0] & 15) * 4, tcp = (p[ip+12] >> 4) * 4;
                 byte flags = p[ip+13]; int payload = p.Length - ip - tcp; bool lose;
                 lock (gate) {

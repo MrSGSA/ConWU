@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/StreamLink.Core/StreamLink.Core.csproj" />
+    <ProjectReference Include="../../src/StreamLink.Discovery/StreamLink.Discovery.csproj" />
+    <Compile Include="../StreamLink.EndpointPoc/Reflector.cs" Link="Reflector.cs" />
+    <Compile Include="../StreamLink.EndpointPoc/RawProtocolProxy.cs" Link="RawProtocolProxy.cs" />
+  </ItemGroup>
+</Project>

@@ -11,7 +11,7 @@ namespace StreamLink.Core;
 // remains the sole raw capture owner; this class never binds the helper's TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
-public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath
+public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
     readonly object gate = new();
@@ -31,11 +31,12 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     int failed, qualified, reading;
     bool disposed;
     public TraversalControlRound ControlRound { get; }
+    public TraversalAttemptContext Context { get; }
     public ValidatedPathIdentity Identity => Volatile.Read(ref qualified) != 0 && native != null
         ? identity with { AttachId = native.AttachId, ActualLocal = Copy(identity.ActualLocal), ActualRemote = Copy(identity.ActualRemote) }
         : throw new InvalidOperationException("Native 路径尚未完成本轮认证与包长检查");
     public bool Failed => Volatile.Read(ref failed) != 0 || native?.Exited == true;
-    public bool Armed => native?.Armed == true;
+    public bool Armed => !Volatile.Read(ref disposed) && native?.Armed == true && !Failed;
     public bool Started => native?.Started == true;
     public bool Closed { get { lock (gate) return closing?.IsCompleted == true; } }
     public TimeSpan RemainingAttemptTime => native?.RemainingRound ?? TimeSpan.Zero;
@@ -49,7 +50,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     {
         if (context.Profile != TraversalProfile.FakeTcpHttpSo || sharedKey.Length != 32 || generation != lease.NetworkGeneration)
             throw new ArgumentException("Native 受管路径需要已协商的 SO profile、成员密钥及当前资源代次");
-        digest = PathNomination.ContextDigest(context); client = context.ProtocolClient;
+        digest = PathNomination.ContextDigest(context); Context = context; client = context.ProtocolClient;
         key = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, key, digest, "streamlink-native-path-check-v1"u8);
         identity = new(Guid.NewGuid(), context.AttemptId, lease.Id, null, generation, lease.Local, Copy(peer), context.Profile, PathQualification.MtuQualified);
         ControlRound = new(resources);
@@ -100,6 +101,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             return starting ??= Qualify(token);
         }
     }
+    public async Task<IMeshDatagramPath> Activate(CancellationToken token) { await StartAndQualify(token); return this; }
     async Task Qualify(CancellationToken token)
     {
         try {

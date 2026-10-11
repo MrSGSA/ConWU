@@ -128,11 +128,11 @@ void capture() {
 }
 
 #ifdef UDP2RAW_TEST_IO
-int test_port(const char *name) {
+int test_port(const char *name, bool allow_zero=false) {
     const char *value = getenv(name);
     char *end = nullptr;
     long port = value ? strtol(value, &end, 10) : 0;
-    if (!value || !end || *end || port < 1024 || port > 65535)
+    if (!value || !end || *end || (!(allow_zero && port==0) && port < 1024) || port > 65535)
         fail("test transport requires explicit loopback ports");
     return static_cast<int>(port);
 }
@@ -179,16 +179,28 @@ void init_filter(int port) {
     sockaddr_in local{};
     local.sin_family = AF_INET;
     local.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    local.sin_port = htons(test_port("STREAMLINK_TEST_BIND"));
+    local.sin_port = htons(test_port("STREAMLINK_TEST_BIND", true));
     test_peer = local;
     test_peer.sin_port = htons(test_port("STREAMLINK_TEST_PEER"));
     DWORD timeout = 100;
     setsockopt(test_socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
     int size = 4 * 1024 * 1024;
+    int exclusive = 1;
+    setsockopt(test_socket, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, &exclusive, sizeof(exclusive));
     setsockopt(test_socket, SOL_SOCKET, SO_RCVBUF, &size, sizeof(size));
     if (bind(test_socket, reinterpret_cast<sockaddr *>(&local), sizeof(local)) != 0 ||
         connect(test_socket, reinterpret_cast<sockaddr *>(&test_peer), sizeof(test_peer)) != 0)
         fail("test socket setup failed");
+    if (local.sin_port==0) {
+        // Test fixture registration only, not a raw IP/TCP packet. Let the
+        // actual owner allocate its UDP carriage instead of closing/rebinding
+        // a port which another fixture bridge can claim in the meantime.
+        const char *token=getenv("STREAMLINK_TEST_HELLO");
+        if (!token || strlen(token)!=32 || strspn(token,"0123456789abcdef")!=32)
+            fail("ephemeral test transport needs registration token");
+        char hello[36]; memcpy(hello,"SLT1",4); memcpy(hello+4,token,32);
+        if (::send(test_socket,hello,sizeof(hello),0)!=sizeof(hello)) fail("test registration failed");
+    }
 #else
     load_driver_api();
     const std::string protocol = raw_mode == mode_udp ? "udp" : "tcp";

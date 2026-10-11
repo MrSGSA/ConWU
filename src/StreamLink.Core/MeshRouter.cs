@@ -35,9 +35,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
     int disposed;
     public IPEndPoint LocalEndpoint => (IPEndPoint)socket.LocalEndPoint!;
     public Task Completion { get; }
-    public Guid BootId { get; } = Guid.NewGuid();
-    public MeshRouter(MeshProfile profile, IPacketAdapter adapter)
+    public Guid BootId { get; }
+    public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null)
     {
+        if (bootId == Guid.Empty) { socket.Dispose(); throw new ArgumentException("Router 启动代次无效", nameof(bootId)); }
+        BootId = bootId ?? Guid.NewGuid();
         this.profile = profile; this.adapter = adapter; local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
         socket.Bind(new IPEndPoint(IPAddress.Loopback, 0)); socket.SendBufferSize = socket.ReceiveBufferSize = 1 << 20; socket.SendTimeout = 100;
         if (profile.Directory != null) ApplyDirectory(profile.Directory);

@@ -8,11 +8,6 @@ namespace StreamLink.EndpointPoc;
 
 static class ManagedProtocolPoc
 {
-    static int Port()
-    {
-        using var s = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-        s.Bind(new IPEndPoint(IPAddress.Loopback, 0)); return ((IPEndPoint)s.LocalEndPoint!).Port;
-    }
     public static async Task<int> Run(string binary, string output, bool simultaneousOpen = false, bool matrix = false, bool prepared = false)
     {
         int rounds = matrix ? 180 : 30;
@@ -37,7 +32,8 @@ static class ManagedProtocolPoc
                 using var cAttempt = clientLease.AcquireAttempt(generation);
                 using var sAttempt = serverLease.AcquireAttempt(generation);
                 await cAttempt.Observe(deadline.Token); await sAttempt.Observe(deadline.Token);
-                int cWire = Port(), sWire = Port(), appPort = Port();
+                using var appReservation = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+                int cWire = 0, sWire = 0, appPort = ((IPEndPoint)appReservation.Client.LocalEndPoint!).Port;
                 int mechanism = matrix ? (round - 1) / 30 : 0;
                 byte lossFlags = mechanism switch { 1 => 2, 2 => 18, 3 => 16, _ => 0 };
                 await using var proxy = new RawProtocolProxy(cWire, sWire, lossFlags, round % 2 == 0);
@@ -45,17 +41,18 @@ static class ManagedProtocolPoc
                 string[] Common() => ["-k", key, "--raw-mode", "faketcp", "--seq-mode", "3", "--fake-http", "test.ustc.edu.cn", "--log-level", "4"];
                 var sArgs = new[] { "-s", "-l", serverLease.Local.ToString(), "-r", echo.Client.LocalEndPoint!.ToString()! }.Concat(Common());
                 var cArgs = new[] { "-c", "-l", $"127.0.0.1:{appPort}", "-r", serverLease.Local.ToString() }.Concat(Common());
-                Dictionary<string, string> Env(int local, int remote) => new() { ["STREAMLINK_TEST_BIND"] = local.ToString(), ["STREAMLINK_TEST_PEER"] = remote.ToString() };
+                Dictionary<string, string> Env(int local, int remote) => new() { ["STREAMLINK_TEST_BIND"] = local.ToString(), ["STREAMLINK_TEST_PEER"] = remote.ToString(), ["STREAMLINK_TEST_HELLO"] = proxy.RegistrationToken };
                 async Task<NativeAttachment> Server() => await NativeAttachment.Launch(serverLease, generation, binary, sArgs, clientLease.Local, true,
                     Path.Combine(directory, $"{round}-server.log"), deadline.Token, Env(sWire, proxy.ServerPort), [key], simultaneousOpen, !prepared);
-                async Task<NativeAttachment> Client() => await NativeAttachment.Launch(clientLease, generation, binary, cArgs, serverLease.Local, false,
-                    Path.Combine(directory, $"{round}-client.log"), deadline.Token, Env(cWire, proxy.ClientPort), [key], simultaneousOpen, !prepared);
+                async Task<NativeAttachment> Client() { appReservation.Dispose(); return await NativeAttachment.Launch(clientLease, generation, binary, cArgs, serverLease.Local, false,
+                    Path.Combine(directory, $"{round}-client.log"), deadline.Token, Env(cWire, proxy.ClientPort), [key], simultaneousOpen, !prepared); }
                 if (prepared && round == 1) {
                     await using var abandoned = await Server();
                     await Task.Delay(2200, deadline.Token); // includes a Prepared heartbeat
                     Check(abandoned.Armed && !abandoned.Started && !abandoned.Exited && proxy.Snapshot().Length == 0, "Prepared owner stays alive without emitting SYN");
                     await abandoned.DisposeAsync();
                     Check(abandoned.Exited && !serverLease.Closed, "Prepared revoke releases capture but not the helper owner");
+                    proxy.ResetPreparedServer();
                 }
                 await using var firstChild = mechanism == 5 ? await Client() : await Server();
                 if (mechanism is 4 or 5) await Task.Delay(500, deadline.Token);

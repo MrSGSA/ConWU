@@ -17,6 +17,8 @@ public sealed partial class MeshRegistry
         public long Cursor;
         public readonly Queue<MeshChange> Changes = [];
         public readonly Dictionary<int, Account> Accounts = [];
+        public readonly Dictionary<ControlKey, ControlState> Control = [];
+        public readonly Dictionary<Guid, SeenControl> ControlIds = [];
         public TaskCompletionSource Changed = NewSignal();
     }
     static TaskCompletionSource NewSignal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -44,22 +46,25 @@ public sealed partial class MeshRegistry
         if (account.Tokens < 1) return false;
         account.Tokens--; return true;
     }
-    void Changed(string network, string kind, int slot)
+    void Changed(string network, string kind, int slot, int targetSlot = 0)
     {
         var feed = State(network);
-        feed.Changes.Enqueue(new(++feed.Cursor, kind, slot));
+        feed.Changes.Enqueue(new(++feed.Cursor, kind, slot, targetSlot));
         while (feed.Changes.Count > TraversalLimits.EventQueueSize) feed.Changes.Dequeue();
         var signal = feed.Changed; feed.Changed = NewSignal(); signal.TrySetResult();
         if (kind == "directory") {
             var slots = networks[network].Directory.Members.Select(m => m.Slot).ToHashSet();
             foreach (int removed in feed.Accounts.Keys.Where(s => !slots.Contains(s)).ToArray()) feed.Accounts.Remove(removed);
+            foreach (var key in feed.Control.Keys.Where(k => !slots.Contains(k.From) || !slots.Contains(k.To)).ToArray()) feed.Control.Remove(key);
         }
     }
-    MeshSnapshot Snapshot(string network, Registration registration)
+    MeshSnapshot Snapshot(string network, Registration registration, int slot, Guid boot)
     {
         var found = registration.Directory.Members.Select(m => nodes.GetValueOrDefault(network + "/" + m.Slot))
             .Where(n => n.Envelope != null && n.Expires > DateTimeOffset.UtcNow).Select(n => n.Envelope).ToArray();
-        return new(registration.Directory, found);
+        var feed = State(network); PruneControl(feed);
+        var messages = feed.Control.Where(p => p.Key.To == slot && p.Key.ToBoot == boot).Select(p => p.Value.Message).ToArray();
+        return new(registration.Directory, found, messages, MeshTraversal.Version);
     }
     public async Task<IResult> Watch(HttpContext context, string network, MeshWatchRequest request)
     {
@@ -91,14 +96,15 @@ public sealed partial class MeshRegistry
                     if (!registration.Directory.Members.Any(m => m.Slot == request.Slot && m.Device == request.Device)) return Results.StatusCode(403);
                     bool reset = request.ServerEpoch != serverEpoch || request.After > feed.Cursor ||
                         feed.Changes.TryPeek(out var first) && request.After < first.Cursor - 1;
-                    var changes = feed.Changes.Where(c => c.Cursor > request.After && (c.Slot == 0 || c.Slot != request.Slot)).ToArray();
+                    var changes = feed.Changes.Where(c => c.Cursor > request.After &&
+                        (c.TargetSlot != 0 ? c.TargetSlot == request.Slot : c.Slot == 0 || c.Slot != request.Slot)).ToArray();
                     if (reset || elapsed || changes.Length > 0)
-                        response = new(serverEpoch, feed.Cursor, reset, changes, Snapshot(network, registration));
+                        response = new(serverEpoch, feed.Cursor, reset, changes, Snapshot(network, registration, request.Slot, request.BootId));
                     signal = feed.Changed.Task;
                 }
                 if (response != null) {
                     // Coalesce nearby member publications into one bounded reply.
-                    if (!response.Reset && !elapsed && !batched) { batched = true; await Task.Delay(100, context.RequestAborted); continue; }
+                    if (!response.Reset && !elapsed && !batched && !response.Changes.Any(c => c.Kind == "traversal")) { batched = true; await Task.Delay(100, context.RequestAborted); continue; }
                     return Results.Json(response);
                 }
                 TimeSpan remaining = TimeSpan.FromSeconds(TraversalLimits.LongPollHoldSeconds) - watch.Elapsed;

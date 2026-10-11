@@ -37,10 +37,10 @@ static class NativeRouterPoc
                     Guid.NewGuid(), 1, Guid.NewGuid(), 1, TraversalProfile.FakeTcpHttpSo, true, true, Guid.NewGuid());
                 var reverse = context with { LocalNodeId = context.RemoteNodeId, LocalBootId = context.RemoteBootId, RemoteNodeId = context.LocalNodeId,
                     RemoteBootId = context.LocalBootId, LocalCandidateId = context.RemoteCandidateId, RemoteCandidateId = context.LocalCandidateId, ProtocolClient = false, Nominator = false };
-                int aWire = Port(), bWire = Port();
+                int aWire = 0, bWire = 0;
                 byte loss = round switch { 28 => 2, 29 => 18, 30 => 16, _ => 0 };
                 await using var proxy = new RawProtocolProxy(aWire, bWire, loss, round % 2 == 0);
-                Dictionary<string, string> Env(int local, int remote) => new() { ["STREAMLINK_TEST_BIND"] = local.ToString(), ["STREAMLINK_TEST_PEER"] = remote.ToString() };
+                Dictionary<string, string> Env(int local, int remote) => new() { ["STREAMLINK_TEST_BIND"] = local.ToString(), ["STREAMLINK_TEST_PEER"] = remote.ToString(), ["STREAMLINK_TEST_HELLO"] = proxy.RegistrationToken };
                 byte[] aKey = MeshIdentity.SharedKey(a, b.Self), bKey = MeshIdentity.SharedKey(b, a.Self);
                 await using var pa = await NativeDatagramPath.Prepare(binary, Path.Combine(logs, round.ToString()), aLease, generation, context, observedB.Public, aKey,
                     deadline.Token, new(), Env(aWire, proxy.ClientPort));
@@ -98,7 +98,6 @@ static class NativeRouterPoc
             Console.WriteLine($"PASS {checks} checks, 30 native Router rounds. No installed service or driver changes."); return 0;
         } catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() })); throw; }
     }
-    static int Port() { using var s = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)); return ((IPEndPoint)s.Client.LocalEndPoint!).Port; }
     static byte[] Packet(string from, string to) {
         byte[] p = new byte[1280]; p[0] = 0x45; p[8] = 64; p[9] = 17; BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(2), 1280);
         IPAddress.Parse(from).GetAddressBytes().CopyTo(p, 12); IPAddress.Parse(to).GetAddressBytes().CopyTo(p, 16);

@@ -74,7 +74,7 @@ public sealed class MeshRunner
                 long now = Environment.TickCount64;
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
-                    try { router = new(mesh, adapter); } catch { adapter.Dispose(); throw; }
+                    try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId); } catch { adapter.Dispose(); throw; }
                     services.Record(folder, rule); quality = services.QualityServer(mesh.LocalIp, QualityKey, stop);
                     timeline.Mark("原生虚拟网卡就绪");
                 }
