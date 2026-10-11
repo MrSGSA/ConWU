@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Net;
+using System.Security.Cryptography;
 
 namespace StreamLink.Core;
 
@@ -21,6 +22,11 @@ public sealed partial class MeshRouter
         public ManagedPath? Previous;
         public bool Switched, Closing, Retired, PumpFinished;
         public long LastReceive, LastHello, LastPing, ProofAt, ReceiveUntil = long.MaxValue, ReleaseAt = long.MaxValue, CancelledAt;
+        public long LastRoundTrip;
+        public double? RttMs;
+        // A pong on another candidate must not refresh this path. Entries are
+        // random, path-local and bounded, not inferred from any inbound traffic.
+        public readonly Dictionary<long, long> PendingRoundTrips = [];
         public int ControlPackets => Budget.Packets;
         public int ControlBytes => Budget.Bytes;
         public string Failure = "";
@@ -67,7 +73,7 @@ public sealed partial class MeshRouter
     {
         lock (gate) return peers.TryGetValue(slot, out var peer) && peer.Managed is {} managed ? managed.Paths.Values.Select(p =>
             new MeshPathStatus(p.Identity.PathId, p.Identity.LeaseId, p.Identity.AttemptId, p.Identity.Profile, p.Nomination.Stage,
-                p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure)).ToArray() : [];
+                p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs)).ToArray() : [];
     }
     public void CancelPath(int slot, Guid path)
     {
@@ -76,7 +82,8 @@ public sealed partial class MeshRouter
         }
     }
     static bool ManagedHealthy(Peer peer) => peer.Link.Connected && peer.Managed?.Active is {} path &&
-        !path.Closing && !path.Transport.Failed && path.LastReceive != 0 && Stopwatch.GetElapsedTime(path.LastReceive).TotalSeconds < 12;
+        !path.Closing && !path.Transport.Failed && path.LastReceive != 0 && Stopwatch.GetElapsedTime(path.LastReceive).TotalSeconds < 12 && RoundTripFresh(path);
+    static bool RoundTripFresh(ManagedPath path) => path.LastRoundTrip != 0 && Stopwatch.GetElapsedTime(path.LastRoundTrip).TotalSeconds < 12;
     static bool SendManaged(byte[]? packet, ManagedPath? path) => packet != null && path != null && !path.Closing && !path.Transport.Failed && path.Transport.TrySend(packet);
     void ControlManaged(Peer peer, ManagedPath path, byte[] packet, bool completion)
     {
@@ -107,6 +114,9 @@ public sealed partial class MeshRouter
                         else if (TraversalResources.Shared.TrySend(message.Reply.Length, maintenance: true)) SendManaged(message.Reply, path);
                     }
                     if (packet.Span[4] != 1) path.LastReceive = Stopwatch.GetTimestamp();
+                    if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out long sent) && Stopwatch.GetElapsedTime(sent).TotalSeconds < 12) {
+                        path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(sent, path.LastRoundTrip).TotalMilliseconds;
+                    }
                     if (message.Control != null) NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) || path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
@@ -145,6 +155,9 @@ public sealed partial class MeshRouter
         }
         if (path.Switched && path.Nomination.PeerAdopted && path.ProofAt == 0) {
             path.ProofAt = now;
+            // The authenticated nomination itself proved a round trip on this
+            // actual resource. Duplicate final messages cannot keep refreshing it.
+            path.LastRoundTrip = Stopwatch.GetTimestamp();
             if (path.Previous != null) {
                 path.Previous.ReceiveUntil = now + 2000;
                 // Keep the resource (not business reception) long enough to
@@ -173,8 +186,12 @@ public sealed partial class MeshRouter
             }
             if (ReferenceEquals(managed.Active, path) && now - path.LastPing >= 1500) {
                 path.LastPing = now;
-                byte[]? ping = peer.Link.Ping();
-                if (ping != null && TraversalResources.Shared.TrySend(ping.Length, maintenance: true)) SendManaged(ping, path);
+                long nonce = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
+                byte[]? ping = peer.Link.ProbePath(nonce);
+                if (ping != null && TraversalResources.Shared.TrySend(ping.Length, maintenance: true) && SendManaged(ping, path)) {
+                    if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value).Key);
+                    path.PendingRoundTrips[nonce] = Stopwatch.GetTimestamp();
+                }
             }
         }
     }

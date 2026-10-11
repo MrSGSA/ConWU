@@ -96,7 +96,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     }
     public MeshPeerStatus[] Status()
     {
-        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Link.RttMs, Healthy(p) ? p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect ? "UDP 直连 · 质量待验证" : "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
+        lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", Healthy(p), p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, Healthy(p) ? p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect ? "UDP 直连 · 质量待验证" : "P2P 直连" : p.Detail, p.Sent, p.Received, p.Dropped)).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
     {

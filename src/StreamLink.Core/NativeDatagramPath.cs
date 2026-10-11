@@ -7,6 +7,19 @@ using System.Threading.Channels;
 
 namespace StreamLink.Core;
 
+public sealed record NativePathDiagnostics(Guid AttemptId, Guid LeaseId, Guid AttachId, string Local, string Peer,
+    bool CaptureArmed, bool StartAcknowledged, bool NativeExited, int BridgeProbeAttempts,
+    int AuthenticatedProbeReceives, bool PayloadQualified, double RemainingMs);
+
+public sealed class NativePathVerificationException(string reason, NativePathDiagnostics diagnostic, Exception inner)
+    : IOException($"Native 路径验证未完成：{reason}; attempt={diagnostic.AttemptId:N}; lease={diagnostic.LeaseId:N}; attach={diagnostic.AttachId:N}; " +
+        $"local={diagnostic.Local}; peer={diagnostic.Peer}; armed={diagnostic.CaptureArmed}; started={diagnostic.StartAcknowledged}; " +
+        $"bridgeProbes={diagnostic.BridgeProbeAttempts}; authenticatedProbes={diagnostic.AuthenticatedProbeReceives}; remainingMs={diagnostic.RemainingMs:F0}", inner)
+{
+    public string Reason { get; } = reason;
+    public NativePathDiagnostics Diagnostic { get; } = diagnostic;
+}
+
 // One authorized native attachment and one loopback bridge. The native child
 // remains the sole raw capture owner; this class never binds the helper's TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
@@ -28,7 +41,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     NativeAttachment? native;
     Task receiver = Task.CompletedTask, sender = Task.CompletedTask;
     Task? starting, closing;
-    int failed, qualified, reading;
+    int failed, qualified, reading, bridgeProbeAttempts, authenticatedProbeReceives;
     bool disposed;
     public TraversalControlRound ControlRound { get; }
     public TraversalAttemptContext Context { get; }
@@ -42,6 +55,12 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public TimeSpan RemainingAttemptTime => native?.RemainingRound ?? TimeSpan.Zero;
     public Guid AttachId => native?.AttachId ?? Guid.Empty;
     public int ProcessId => native?.ProcessId ?? 0;
+    // Bridge sends are not physical SYN counters. Start acknowledges the worker
+    // command, not the peer handshake; only an authenticated full payload proves it.
+    public NativePathDiagnostics Diagnostics => new(Context.AttemptId, identity.LeaseId, AttachId,
+        identity.ActualLocal.ToString(), identity.ActualRemote.ToString(), native?.Armed == true, Started, native?.Exited != false,
+        Volatile.Read(ref bridgeProbeAttempts), Volatile.Read(ref authenticatedProbeReceives), Volatile.Read(ref qualified) != 0,
+        RemainingAttemptTime.TotalMilliseconds);
     public IPEndPoint BridgeEndpoint => Copy((IPEndPoint)bridge.LocalEndPoint!);
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
@@ -120,6 +139,10 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await proof.Task;
             if (RemainingAttemptTime <= TimeSpan.Zero) throw new TimeoutException("Native round expired after path check");
             Volatile.Write(ref qualified, 1);
+        } catch (Exception ex) when ((ex is OperationCanceledException or TimeoutException) && !token.IsCancellationRequested && !Volatile.Read(ref disposed)) {
+            var diagnostic = Diagnostics;
+            string reason = diagnostic.NativeExited ? "native-exited" : diagnostic.RemainingMs <= 0 ? "round-expired" : "path-pump-stopped";
+            Fault(); throw new NativePathVerificationException(reason, diagnostic, ex);
         } catch { Fault(); throw; }
     }
     byte[] Probe(byte kind, ReadOnlySpan<byte> nonce)
@@ -139,6 +162,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     {
         // Old/replayed probes cannot keep amplifying after this round's deadline.
         if (RemainingAttemptTime <= TimeSpan.Zero || !ControlRound.TrySend(ProbeSize, kind == 2)) return;
+        Interlocked.Increment(ref bridgeProbeAttempts);
         await SendOnce(Probe(kind, nonce.Span), target, token);
     }
     async Task ReceiveLoop()
@@ -157,6 +181,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
                     // per-member, per-attempt authentication. The native raw
                     // receive filter separately remains the authorized exact tuple.
                     if (RemainingAttemptTime <= TimeSpan.Zero) continue;
+                    Interlocked.Increment(ref authenticatedProbeReceives);
                     if (expected == null) { lock (gate) application = Copy(source); }
                     if (buffer[4] == 1) await SendProbe(2, frame.Slice(40, 16), source, stop.Token);
                     else if (frame.Span.Slice(40, 16).SequenceEqual(challenge)) proof.TrySetResult();

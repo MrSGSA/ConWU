@@ -13,4 +13,5 @@ public interface IMeshDatagramPath : IAsyncDisposable
 }
 
 public sealed record MeshPathStatus(Guid PathId, Guid ResourceId, Guid AttemptId, TraversalProfile Profile,
-    NominationStage Stage, bool Active, bool Retired, int ControlPackets, int ControlBytes, string Failure);
+    NominationStage Stage, bool Active, bool Retired, int ControlPackets, int ControlBytes, string Failure,
+    bool BidirectionalFresh = false, double? RoundTripMs = null);

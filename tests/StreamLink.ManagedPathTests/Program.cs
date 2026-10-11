@@ -87,6 +87,25 @@ Check(ra.Paths(2).Length == 1 && rb.Paths(1).Length == 1, "retired and canceled 
 int stable = ab.Incoming.Count;
 aa.Outgoing.Add(Packet(b.LocalIp, a.LocalIp)); await Task.Delay(150);
 Check(ab.Incoming.Count == stable, "managed router does not forward a different member's source packet");
+await Until(() => ra.Paths(2).Single().RoundTripMs != null, "selected path records a nonce-matched same-resource round trip");
+// One direction of authenticated application data and incoming peer pings keep
+// arriving; only replies to our health probes are lost. This used to keep the
+// receiver incorrectly healthy forever through LastReceive alone.
+int arriving = aa.Incoming.Count; long repliesDropped = 0;
+final.B.Filter = packet => { if (packet[4] == 6) { Interlocked.Increment(ref repliesDropped); return false; } return true; };
+using (var feeding = new CancellationTokenSource()) {
+    var reverseTraffic = Task.Run(async () => { try { while (true) { ab.Outgoing.Add(Packet(b.LocalIp, a.LocalIp)); await Task.Delay(200, feeding.Token); } } catch (OperationCanceledException) when (feeding.IsCancellationRequested) { } });
+    try {
+        await Until(() => !ra.Status().Single().Connected, "inbound-only activity cannot hide missing reverse-path proof", 15000);
+        Check(aa.Incoming.Count >= arriving + 10 && repliesDropped >= 3 && rb.Status().Single().Connected,
+            "negative case retained real authenticated reverse traffic and the other router's round trips");
+        Check(!ra.Paths(2).Single().BidirectionalFresh && !final.A.Closed && !final.B.Closed,
+            "stale health is observable without closing an otherwise owned resource in the router");
+        final.B.Filter = null;
+        await Until(() => ra.Status().Single().Connected && ra.Paths(2).Single().BidirectionalFresh,
+            "a fresh authenticated same-path pong restores bidirectional health", 2500);
+    } finally { feeding.Cancel(); await reverseTraffic; final.B.Filter = null; }
+}
 MeshIdentity.Revoke(a, 2); ra.ApplyDirectory(a.Directory!);
 await Until(() => final.A.Closed && ra.Paths(2).Length == 0, "revocation stops the peer pump before releasing its resource");
 await rb.DisposeAsync(); await ra.DisposeAsync();

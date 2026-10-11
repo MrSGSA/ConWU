@@ -13,6 +13,7 @@ if (args is ["--so-protocol", var soBinary, "--output", var soOutput]) return aw
 if (args is ["--so-matrix", var matrixBinary, "--output", var matrixOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(matrixBinary), Path.GetFullPath(matrixOutput), true, true);
 if (args is ["--prepared-so", var preparedBinary, "--output", var preparedOutput]) return await ManagedProtocolPoc.Run(Path.GetFullPath(preparedBinary), Path.GetFullPath(preparedOutput), true, prepared: true);
 if (args is ["--native-router", var routerBinary, "--output", var routerOutput]) return await NativeRouterPoc.Run(Path.GetFullPath(routerBinary), Path.GetFullPath(routerOutput));
+if (args is ["--path-timeout", var timeoutBinary, "--output", var timeoutOutput]) return await NativePathTimeoutPoc.Run(Path.GetFullPath(timeoutBinary), Path.GetFullPath(timeoutOutput));
 if (args is ["--prepare-router-network", var configs]) { NativeRouterNetwork.Prepare(Path.GetFullPath(configs)); return 0; }
 if (args is ["--router-network", var config]) return await NativeRouterNetwork.Run(Path.GetFullPath(config));
 
