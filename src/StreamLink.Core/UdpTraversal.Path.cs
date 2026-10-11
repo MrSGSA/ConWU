@@ -26,16 +26,22 @@ public sealed partial class UdpTraversal
     }
     async Task CloseResource()
     {
-        stop.Cancel(); socket.Dispose();
-        try { await receiving; }
-        finally { lease.Dispose(); CryptographicOperations.ZeroMemory(key); observing.Dispose(); stop.Dispose(); }
+        stop.Cancel();
+        // Hold the data port until the exact gateway lease has been retired, so
+        // another socket cannot acquire it during asynchronous mapping cleanup.
+        try { await CloseGateway(); }
+        finally {
+            socket.Dispose();
+            try { await receiving; }
+            finally { lease.Dispose(); CryptographicOperations.ZeroMemory(key); observing.Dispose(); stop.Dispose(); }
+        }
     }
     public IMeshDatagramPath RetainPath(Guid expectedGeneration, Guid pathId)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0 || resourceClosed, this);
             if (expectedGeneration != generation || pathId == Guid.Empty || pathAttached || payloadReaders != 0 ||
-                selected == null || receiving.IsCompleted || RemainingAttemptTime <= TimeSpan.Zero || !socket.DontFragment)
+                selected == null || receiving.IsCompleted || RemainingAttemptTime <= TimeSpan.Zero || !socket.DontFragment || !GatewayEligible)
                 throw new InvalidOperationException("UDP 路径尚未通过同 socket 无分片检查，或接收者已被占用");
             var identity = new ValidatedPathIdentity(pathId, new Guid(attempt), SocketId, null, generation,
                 new IPEndPoint(Local.Address, Local.Port), new IPEndPoint(selected.Address, selected.Port), TraversalProfile.UdpDirect, PathQualification.MtuQualified);

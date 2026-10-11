@@ -15,7 +15,8 @@ bool upgradeOnly = args.Length == 7 && args[6] == "--upgrade-only";
 bool baselineOnly = args.Length == 7 && args[6] == "--baseline-only";
 bool opportunityOnly = args.Length == 7 && args[6] == "--opportunity-only";
 bool tcpRetryOnly = args.Length == 7 && args[6] == "--tcp-retry-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only]");
+bool gatewayOnly = args.Length == 7 && args[6] == "--gateway-only";
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--upgrade-only|--baseline-only|--opportunity-only|--tcp-retry-only|--gateway-only]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -39,6 +40,8 @@ app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
+    if (gatewayOnly || !baselineOnly && !upgradeOnly && !opportunityOnly && !tcpRetryOnly) rows.Add(await UdpGatewayTests.Run(root, url, pin, Check, token));
+    if (!gatewayOnly) {
     if (!baselineOnly && !upgradeOnly && !tcpRetryOnly) rows.Add(await OpportunityTests.Run(Check, token));
     if (!baselineOnly && !opportunityOnly && !tcpRetryOnly) rows.Add(await UpgradeTests.Run(binary, root, url, pin, Check, token));
     if (tcpRetryOnly || !baselineOnly && !upgradeOnly && !opportunityOnly) rows.Add(await TcpRetryTests.Run(binary, root, url, pin, Check, token));
@@ -87,7 +90,10 @@ try {
         }
     }
     }
-    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = opportunityOnly
+    }
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = gatewayOnly
+        ? "production UDP gathering/Runner with real loopback PCP, STUN, HTTPS, UDP and memory IP adapters; no real NAT, router or Wintun"
+        : opportunityOnly
         ? "production pair scheduler and legacy admission with controlled failing/held resource factories; real timers, no native I/O, WAN, Wintun or real 8 devices"
         : "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices" }, new JsonSerializerOptions { WriteIndented = true }));
 } catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() }, new JsonSerializerOptions { WriteIndented = true })); throw; }

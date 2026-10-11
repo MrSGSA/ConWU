@@ -28,6 +28,8 @@ public sealed class DeviceProfile
     // Diagnostics only, off by default. Requires a separately configured raw
     // SYN observer on the authenticated coordinator; never promotes a path.
     public bool TcpSynObservation { get; set; }
+    // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
+    // rounds. It does not enable UDP itself or bypass path-quality selection.
     public bool PortControlMapping { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,

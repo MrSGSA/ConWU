@@ -17,7 +17,7 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown source = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -43,6 +43,7 @@ public sealed class SettingsWindow : Form
         if (!supportsObserver) tcpObservation.Text = "TCP 映射诊断需更新后台组件。";
         layout.Controls.Add(tcpObservation);
         portControl.Checked = profile.PortControlMapping; portControl.Enabled = supportsPortControl;
+        if (supportsUdpGateway) portControl.Text = "PCP / NAT-PMP 后备映射（实验，需网关支持）";
         if (!supportsPortControl) portControl.Text = "PCP / NAT-PMP 映射需更新后台组件。";
         portControl.CheckedChanged += (_, _) => { if (supportsPortControl) profile.PortControlMapping = portControl.Checked; };
         layout.Controls.Add(portControl);

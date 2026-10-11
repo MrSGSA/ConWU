@@ -136,8 +136,9 @@ static class PortControlTests
             Check(server.Deletes == 1 && helper.Active == 0, "product disposal joins renewal/keepalive before releasing the helper and exact PCP lease");
             rows.Add(new { scope = "production TcpMapping + real loopback helper and gateway datagrams", hasNative = false, hasRealNat = false, actualPort = mapping.PublicEndpoint.Port, cleanup = true });
         }
-        Directory.CreateDirectory("artifacts");
-        await File.WriteAllTextAsync("artifacts/m7-port-control-20261011.json", JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));
+        string output = Environment.GetEnvironmentVariable("STREAMLINK_MAPPING_REPORT") ?? "artifacts/m7-port-control-20261011.json";
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));
     }
     static async Task Wait(Func<bool> condition, CancellationToken token) { while (!condition()) await Task.Delay(20, token); }
     static byte[] PcpReply(byte[] request, uint epoch, uint lifetime, ushort port, IPAddress address, byte error = 0)

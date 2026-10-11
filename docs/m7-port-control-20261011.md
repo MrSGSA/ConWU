@@ -1,5 +1,7 @@
 # M7：PCP / NAT-PMP Provider 与 TCP 入口接入
 
+本文记录 `63d09a2` 的阶段状态。后续 UDP_DIRECT 接线与共享控制资源见 [UDP 网关接线记录](m7-udp-gateway-20261011.md)；本文原始验证产物保持不变。
+
 从 `63f04d5` 继续。本次完成 IPv4 网关 Provider、TCP 后备入口和生命周期回归，**M7 仍为部分完成**。尚无真实 PCP/NAT-PMP 路由器到双 Windows 业务的正例；UDP_DIRECT 接线和原生 IPv6 也未完成。现用服务、Lucky、驱动和网卡配置未改动。
 
 ## 产品行为

@@ -14,7 +14,7 @@ public sealed partial class UdpTraversal
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0 || resourceClosed, this);
             if (preparedAttached || pathAttached || payloadReaders != 0 || started != 0 || receiving.IsCompleted ||
-                context.Profile != TraversalProfile.UdpDirect || context.AttemptId != new Guid(attempt) || generation != expectedGeneration || !ValidEndpoint(remote))
+                context.Profile != TraversalProfile.UdpDirect || context.AttemptId != new Guid(attempt) || generation != expectedGeneration || !ValidEndpoint(remote) || !GatewayEligible)
                 throw new IOException("UDP 准备资源不属于当前轮次，或接收者已被占用");
             var result = new PreparedUdp(this, context, expectedGeneration, new(remote.Address, remote.Port));
             preparedAttached = true; return result;
@@ -28,7 +28,7 @@ public sealed partial class UdpTraversal
         Task? closing;
         bool disposed;
         public TraversalAttemptContext Context => context;
-        public bool Armed { get { lock (owner.gate) return !Volatile.Read(ref disposed) && owner.disposed == 0 && !owner.resourceClosed && !owner.receiving.IsCompleted; } }
+        public bool Armed { get { lock (owner.gate) return !Volatile.Read(ref disposed) && owner.disposed == 0 && !owner.resourceClosed && !owner.receiving.IsCompleted && owner.GatewayEligible; } }
         public TimeSpan RemainingAttemptTime => owner.RemainingAttemptTime;
         public Task<IMeshDatagramPath> Activate(CancellationToken token)
         {
@@ -40,6 +40,7 @@ public sealed partial class UdpTraversal
         async Task<IMeshDatagramPath> Open(CancellationToken token)
         {
             using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
+            if (!Armed) throw new IOException("UDP socket 或网关候选已失效，不能启动旧轮次");
             var result = await owner.Punch([remote], new(DurationMs: TraversalLimits.UdpRoundMs), linked.Token);
             if (!result.Success) throw new IOException($"UDP 连通检查失败：{result.Failure}; socket={owner.SocketId:N}; attempt={context.AttemptId:N}; local={owner.Local}; peer={remote}; sent={result.SentPackets}; authenticated={result.AuthenticatedPackets}; learned={result.LearnedCandidates}; elapsedMs={result.ElapsedMs:F0}");
             linked.Token.ThrowIfCancellationRequested();

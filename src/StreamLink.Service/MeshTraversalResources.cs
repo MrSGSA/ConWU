@@ -37,13 +37,17 @@ internal sealed class MeshRequestBudget
 }
 
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
-    TraversalProfile[] profiles, bool captureBroker = false) : IMeshCandidateFactory, IAsyncDisposable
+    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
     readonly string binary = executable, root = folder;
     MeshTcpEndpointPool? pool;
     readonly object poolGate = new();
+    readonly Dictionary<int, (string Device, bool GatewayNext)> udpMethods = [];
+    internal Action<IPEndPoint, IPAddress?, bool>? RouteCheckForTest { get; init; }
+    internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
+        (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
         (local, helper) => new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper)); } }
     public TraversalProfile[] Profiles => profiles;
@@ -71,10 +75,12 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             } finally { if (!process.HasExited) { process.Kill(); await process.WaitForExitAsync(); } }
         } catch (Exception ex) when (!token.IsCancellationRequested) { log("原生双主动暂未启用：" + ex.GetType().Name); }
         if (profile.TraversalMode == "tcp-udp" && profile.Selection().Allows(TraversalProfile.UdpDirect)) supported.Add(TraversalProfile.UdpDirect);
-        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker);
+        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log);
     }
-    void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null)
+    void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
+        if (RouteCheckForTest != null) { RouteCheckForTest(endpoint, expected, gatewayCandidate); return; }
+        if (gatewayCandidate && !PortControlRoute.GlobalV4(endpoint.Address)) throw new IOException("UDP 网关只返回内层地址，未推断外层 CGN 可达");
         byte[] ip = endpoint.Address.GetAddressBytes();
         if (ip.Length != 4 || ip[0] is 0 or 127 or >= 224 || ip[0] == 169 && ip[1] == 254 || endpoint.Port == 0)
             throw new IOException("候选地址不能用于公网打洞");
@@ -91,22 +97,36 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
     {
         if (!Profiles.Contains(kind)) throw new NotSupportedException();
+        bool useGateway = false;
+        if (kind == TraversalProfile.UdpDirect && options.PortControlMapping) lock (poolGate) {
+            var prior = udpMethods.GetValueOrDefault(peer.Slot);
+            useGateway = prior.Device == peer.Device && prior.GatewayNext;
+            udpMethods[peer.Slot] = (peer.Device, !useGateway);
+        }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
         var servers = kind == TraversalProfile.UdpDirect ? options.UdpStun : options.OrderedTcp();
         Exception? last = null;
         foreach (string name in servers.Take(3)) {
             TcpEndpointLease? tcp = null; UdpTraversal? udp = null;
             MeshTcpEndpointPool.Use? pooled = null;
-            bool transferred = false;
+            bool transferred = false, gatewayTried = false;
             try {
                 var target = await Stun.Resolve(name, deadline.Token); CheckRoute(target);
                 var local = new IPEndPoint(Stun.LocalAddress(target), 0);
-                IPEndPoint mapped;
+                IPEndPoint mapped; string observation = target.ToString(); double lifetime = 120;
                 if (kind == TraversalProfile.UdpDirect) {
                     byte[] shared = MeshIdentity.SharedKey(options.Mesh!, peer);
                     try { udp = UdpTraversal.Create(local, generation, attempt, options.Mesh!.Self.Slot, peer.Slot, shared); }
                     finally { CryptographicOperations.ZeroMemory(shared); }
-                    mapped = (await udp.Observe(target, deadline.Token)).Mapped;
+                    if (useGateway) {
+                        gatewayTried = true;
+                        var mapping = await OpenUdpGateway(udp.Local.Address, udp.Local.Port, deadline.Token);
+                        try { udp.AttachGateway(mapping); } catch { await mapping.DisposeAsync(); throw; }
+                        mapped = mapping.External; var snapshot = mapping.Snapshot;
+                        lifetime = Math.Min(120, Math.Floor(snapshot.RemainingSeconds)); observation = snapshot.Gateway;
+                        if (lifetime <= TraversalLimits.UdpRoundMs / 1000 + 2) throw new IOException("UDP 网关租期不足以准备和检查候选");
+                        diagnostic?.Invoke($"UDP 显式候选 {mapped}，socket={udp.SocketId:N}；仍需同 socket 双向认证与 MTU 检查");
+                    } else mapped = (await udp.Observe(target, deadline.Token)).Mapped;
                 } else if (captureBroker) {
                     pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;
                     ObserveInBackground(pooled.Owner);
@@ -115,9 +135,9 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     tcp = await TcpEndpointLease.Open(local, target, generation, connect.Token);
                     using var reference = tcp.AcquireAttempt(generation); mapped = (await reference.Observe(deadline.Token)).Public;
                 }
-                CheckRoute(mapped);
+                CheckRoute(mapped, gatewayCandidate: useGateway);
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), target.ToString(), now, now + 120,
+                var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), observation, now, now + (long)lifetime,
                     kind == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen);
                 var resource = new Resource(this, peer, candidate, tcp, udp, pooled); transferred = true; return resource;
             } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) { last = ex; }
@@ -125,6 +145,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 if (!transferred) { if (pooled != null) pooled.Dispose(); else tcp?.Dispose(); if (udp != null) await udp.DisposeAsync(); }
             }
             if (deadline.IsCancellationRequested) break;
+            if (gatewayTried) break; // Another STUN server cannot repair this gateway transaction.
             last ??= new IOException("候选观察失败");
         }
         throw new IOException("同端点候选观察未成功", last);
@@ -133,10 +154,17 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         TcpEndpointLease? tcp, UdpTraversal? udp, MeshTcpEndpointPool.Use? pooled) : IMeshCandidateResource
     {
         bool prepared;
-        public MeshTraversalCandidate Candidate => candidate;
+        public MeshTraversalCandidate Candidate {
+            get {
+                if (udp?.GatewaySnapshot != null && !udp.GatewayCandidateCurrent(IPEndPoint.Parse(candidate.Endpoint)))
+                    throw new IOException("UDP 网关候选已变化或失效，拒绝发布旧轮次");
+                return candidate;
+            }
+        }
         public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext context, IPEndPoint remote, CancellationToken token)
         {
             if (prepared) throw new IOException("候选资源已被接入");
+            _ = Candidate;
             owner.CheckRoute(remote, tcp?.Local.Address ?? udp!.Local.Address);
             if (udp != null) { var result = udp.PreparePath(context, owner.generation, remote); prepared = true; return result; }
             byte[] shared = MeshIdentity.SharedKey(owner.options.Mesh!, peer);

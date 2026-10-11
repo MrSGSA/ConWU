@@ -10,7 +10,7 @@ public sealed record PortControlSnapshot(Guid Id, PortControlKind Provider, stri
     string? External, PortMappingProtocol Protocol, uint Lifetime, uint Epoch, string Ownership, string State,
     string RouteGeneration, double RemainingSeconds, string Cleanup);
 
-// One connected UDP control socket, not the data socket. Native/UDP data resource
+// One shared connected UDP control socket per source/gateway/generation. Data
 // ownership remains with its existing owner. Only an exact PCP nonce grants an
 // explicit deletion capability; NAT-PMP mappings always expire naturally.
 public sealed class PortControlLease : IAsyncDisposable
@@ -19,12 +19,11 @@ public sealed class PortControlLease : IAsyncDisposable
     readonly ushort internalPort, requestedPort;
     readonly PortMappingProtocol protocol;
     readonly byte[] nonce = RandomNumberGenerator.GetBytes(12);
-    readonly Socket socket;
     readonly TraversalResources budget;
-    readonly IDisposable quota;
     readonly Func<bool> currentRoute;
     readonly GatewayAccount account;
     readonly string claim;
+    readonly string accountKey;
     readonly object sync = new();
     readonly SemaphoreSlim operation = new(1);
     readonly CancellationTokenSource stop = new();
@@ -46,7 +45,21 @@ public sealed class PortControlLease : IAsyncDisposable
     public IPEndPoint External { get { lock (sync) return external == null ? throw new IOException("网关未返回映射") : new(external.Address, external.Port); } }
     public bool Valid { get { lock (sync) return confirmed && state == "Granted" && Stopwatch.GetElapsedTime(grantedAt).TotalSeconds < lifetime; } }
 
-    sealed class GatewayAccount { public int References; public readonly SemaphoreSlim Serial = new(1); }
+    sealed class GatewayAccount : IDisposable
+    {
+        public int References;
+        public readonly SemaphoreSlim Serial = new(1);
+        public readonly Socket Socket;
+        public readonly TraversalResources Budget;
+        readonly IDisposable quota;
+        public GatewayAccount(PortControlRoute route, TraversalResources resources)
+        {
+            Budget = resources; quota = resources.Acquire(); Socket? opened = null;
+            try { opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway); Socket = opened; }
+            catch { opened?.Dispose(); quota.Dispose(); Serial.Dispose(); throw; }
+        }
+        public void Dispose() { Socket.Dispose(); quota.Dispose(); Serial.Dispose(); }
+    }
     static readonly object accountsGate = new();
     static readonly Dictionary<string, GatewayAccount> accounts = [];
     static readonly HashSet<string> claims = [];
@@ -57,22 +70,21 @@ public sealed class PortControlLease : IAsyncDisposable
     {
         this.route = route; internalPort = port; requestedPort = desired; this.protocol = protocol; currentRoute = current; budget = resources;
         claim = route.Local + "/" + protocol + "/" + port;
+        accountKey = route.Local + "/" + route.Gateway + "/" + route.Generation;
         lock (accountsGate) {
             if (!claims.Add(claim)) throw new IOException("本机端口已有受管网关租约");
-            if (!accounts.TryGetValue(route.Gateway.ToString(), out account!)) accounts.Add(route.Gateway.ToString(), account = new());
-            account.References++;
+            try {
+                if (!accounts.TryGetValue(accountKey, out account!)) accounts.Add(accountKey, account = new(route, resources));
+                if (!ReferenceEquals(account.Budget, resources)) throw new IOException("共享网关控制资源必须使用同一全机账本");
+                account.References++;
+            } catch { claims.Remove(claim); throw; }
         }
-        IDisposable? held = null; Socket? opened = null;
-        try {
-            held = resources.Acquire(); opened = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
-            opened.Bind(new IPEndPoint(route.Local, 0)); opened.Connect(route.Gateway); socket = opened; quota = held;
-        } catch { opened?.Dispose(); held?.Dispose(); ReleaseAccount(); throw; }
     }
     void ReleaseAccount()
     {
         lock (accountsGate) {
             claims.Remove(claim);
-            if (--account.References == 0) { accounts.Remove(route.Gateway.ToString()); account.Serial.Dispose(); }
+            if (--account.References == 0) { accounts.Remove(accountKey); account.Dispose(); }
         }
     }
     public static async Task<PortControlLease> Create(IPAddress local, int internalPort, int suggestedPort,
@@ -157,13 +169,13 @@ public sealed class PortControlLease : IAsyncDisposable
                 if (!currentRoute()) throw new IOException("默认网关或源接口已变化，原租约失效");
                 while (!budget.TrySend(request.Length, maintenance: true)) await Task.Delay(25, token);
                 if (protocolKind == PortControlKind.Pcp && request.Length == 60 && request[4..8].Any(b => b != 0)) sawPcpRequest = true;
-                await socket.SendAsync(request, SocketFlags.None, token);
+                await account.Socket.SendAsync(request, SocketFlags.None, token);
                 using var wait = CancellationTokenSource.CreateLinkedTokenSource(token);
                 wait.CancelAfter(oneWait ?? TimeSpan.FromSeconds(interval));
                 try {
                     while (true) {
                         int length;
-                        try { length = await socket.ReceiveAsync(response, SocketFlags.None, wait.Token); }
+                        try { length = await account.Socket.ReceiveAsync(response, SocketFlags.None, wait.Token); }
                         catch (SocketException ex) when (ex.SocketErrorCode == SocketError.MessageSize) { continue; }
                         var parsed = protocolKind == PortControlKind.Pcp ? PortControlProtocol.ParsePcp(response.AsSpan(0, length), request) :
                             PortControlProtocol.ParsePmp(response.AsSpan(0, length), request, externalIp);
@@ -254,7 +266,7 @@ public sealed class PortControlLease : IAsyncDisposable
             }
         } finally {
             lock (sync) state = "Closed";
-            socket.Dispose(); quota.Dispose(); ReleaseAccount(); operation.Release(); stop.Dispose();
+            ReleaseAccount(); operation.Release(); stop.Dispose();
         }
     }
 }
