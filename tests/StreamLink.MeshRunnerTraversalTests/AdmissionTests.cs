@@ -59,6 +59,7 @@ static class AdmissionTests
             });
             heavy.Tick(nativeAnnouncements, "");
             check(heavyFactory.Visited.Count == 0, "explicit entry gets the initial fast-path window before new endpoint preparation");
+            check(heavy.BeginLegacyAttempt(3), "compatible attempt charges the same per-pair window before opening a process");
             await Task.Delay(15100, token); heavy.Tick(nativeAnnouncements, ""); heavy.Tick(nativeAnnouncements, "");
             check(heavyFactory.Visited.Count == 1, "unverified explicit entry cannot block traversal indefinitely; only one native attempt is admitted");
             heavyStop.Cancel(); await heavy.DisposeAsync();

@@ -10,7 +10,8 @@ internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTr
     long started, nextAttempt;
     int failures;
     string requested = "";
-    public void Update(int slot, string endpoint, string name, string detail)
+    public bool HasPending => pending != null;
+    public void Update(int slot, string endpoint, string name, string detail, Func<bool>? beginAttempt = null, bool keepPending = true)
     {
         long now = Environment.TickCount64;
         if (endpoint.Length > 0 && endpoint != requested) { requested = endpoint; failures = 0; nextAttempt = 0; }
@@ -19,12 +20,13 @@ internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTr
             Close(active); active = pending; pending = null; failures = 0; nextAttempt = 0;
             log($"设备 {slot} 已通过双向验证，使用新的直连路径");
         }
+        if (!keepPending && pending != null) { Close(pending); pending = null; }
         if (pending != null && (pending.Value.Transport.Exited || now - started >= 15000)) {
             Close(pending); pending = null; Retry(now);
             log($"设备 {slot} 新路径暂不可用，保留已有路径");
         }
         if (pending != null && endpoint.Length > 0 && endpoint != pending.Value.Endpoint) { Close(pending); pending = null; nextAttempt = 0; }
-        if (pending == null && endpoint.Length > 0 && endpoint != active?.Endpoint && now >= nextAttempt) {
+        if (pending == null && endpoint.Length > 0 && endpoint != active?.Endpoint && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
             try { pending = (endpoint, create(endpoint)); started = now; }
             catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
         }

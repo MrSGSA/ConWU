@@ -48,6 +48,7 @@ static class UpgradeTests
         try {
             await Until(() => states.All(s => s?.Connected == true && s.Degraded), "Runner falls back to authenticated UDP after the initial native gathering failure", 60000);
             udpAt = watch.ElapsedMilliseconds; carry = true;
+            check(udpAt < 15000, "initial method failure advances to UDP within the same foreground window without a 30-second sleep");
             var udp = factories.Select(f => f.All.Single(x => x.Udp != null).Udp!).ToArray();
             var ids = udp.Select(u => u.SocketId).ToArray();
             check(udp.All(u => !u.Closed), "UDP winning sockets remain owned before background upgrade");
@@ -86,7 +87,7 @@ static class UpgradeTests
         check(factories.All(f => f.All.All(x => x.Closed)) && adapters.All(d => d.Disposed), "Runner shutdown releases upgraded native resources and IP adapters");
         return result;
     }
-    static byte[] Packet(string from, string to, int sequence) {
+    internal static byte[] Packet(string from, string to, int sequence) {
         byte[] p = new byte[1280]; p[0] = 0x45; p[8] = 64; p[9] = 17; BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(2), 1280);
         IPAddress.Parse(from).GetAddressBytes().CopyTo(p, 12); IPAddress.Parse(to).GetAddressBytes().CopyTo(p, 16);
         BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(20), sequence);

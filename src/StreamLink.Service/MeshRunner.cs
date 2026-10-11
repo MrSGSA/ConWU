@@ -186,12 +186,16 @@ public sealed class MeshRunner
                 foreach (var member in members) {
                     if (traversal?.Owns(member.Slot) == true) {
                         if (clients.Remove(member.Slot, out var obsolete)) obsolete.Dispose();
+                        traversal.ObserveLegacyPending(member.Slot, false);
                         continue;
                     }
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
                     if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router, ep => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel)), log);
-                    paths.Update(member.Slot, endpoint, announcement?.Name ?? "", endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发");
+                    paths.Update(member.Slot, endpoint, announcement?.Name ?? "", traversal?.WaitingDetail(member.Slot) ??
+                        (endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发"),
+                        traversal == null ? null : () => traversal.BeginLegacyAttempt(member.Slot), traversal?.KeepLegacyAttempt(member.Slot) ?? true);
+                    traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);
