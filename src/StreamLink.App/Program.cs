@@ -11,6 +11,11 @@ static class Program
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
+        if (args.Length == 2 && args[0] == "--verify-bundle") {
+            try { int files = ServiceInstaller.VerifyBundle(AppContext.BaseDirectory); File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Pass", files, version = DesktopVersion.Release })); }
+            catch (Exception ex) { Environment.ExitCode = 1; File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Fail", error = ex.Message })); }
+            return;
+        }
         if(args.Length == 1 && (args[0] == "--install" || args[0] == "--uninstall")) { try { (args[0] == "--install" ? ServiceInstaller.Install() : ServiceInstaller.Uninstall()).GetAwaiter().GetResult(); } catch(Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"install-error.log"),ex.ToString()); Environment.ExitCode=1; } return; }
         if(args.Length>=2 && args[0]=="--preview") {
             using Form preview=args.Length>2 && args[2]=="connection" ? new SettingsWindow(new()) : new MainWindow(true); preview.StartPosition=FormStartPosition.Manual; preview.Location=new Point(-30000,-30000); preview.ShowInTaskbar=false; preview.Show(); Application.DoEvents(); preview.PerformLayout();

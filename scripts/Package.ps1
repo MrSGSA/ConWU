@@ -1,8 +1,21 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.4.1',[switch]$IncludeLegacy)
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.0',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
+    if($ReleaseVersion -notmatch '^\d+\.\d+\.\d+$') {throw 'ReleaseVersion must be a three-part numeric version'}
+    $commit=(& git rev-parse HEAD).Trim()
+    if($LASTEXITCODE -ne 0 -or @(& git status --porcelain).Count -ne 0) {throw 'Commit the exact candidate source before packaging; working tree must be clean'}
+    $nativePath=[IO.Path]::GetFullPath((Join-Path $root $NativeBinary))
+    if($nativePath -ne [IO.Path]::GetFullPath((Join-Path $root 'out/native/udp2raw-native.exe'))) {throw 'Only the production native build output can be packaged'}
+    $receipt=Join-Path $root "out/package-build-$releaseVersion.json"
+    function Build-Files {
+        $paths=@($nativePath, (Join-Path $root 'out/native/streamlink-tun.dll'))
+        foreach($folder in @("out/app-$releaseVersion","out/service-$releaseVersion")) {
+            $paths += @(Get-ChildItem -LiteralPath (Join-Path $root $folder) -File -Recurse | ForEach-Object FullName)
+        }
+        foreach($path in $paths) { [ordered]@{path=[IO.Path]::GetRelativePath($root,$path);sha256=(Get-FileHash -LiteralPath $path).Hash} }
+    }
     if(-not $SkipBuild) {
         & .\scripts\Build.ps1 -Test
         & dotnet run --project tests/StreamLink.Tests -c Release
@@ -31,6 +44,22 @@ try {
             & dotnet publish (Join-Path 'src' $project) -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false "-p:Version=$releaseVersion" -o $dest
             if($LASTEXITCODE -ne 0) {throw "Publish failed: $project"}
         }
+        [ordered]@{sourceCommit=$commit;version=$releaseVersion;configuration='Release, self-contained win-x64';dotnetSdk=(& dotnet --version).Trim();powershell=$PSVersionTable.PSVersion.ToString();os=[Environment]::OSVersion.VersionString;cmakeCacheSha256=(Get-FileHash -LiteralPath 'out/native/CMakeCache.txt').Hash;compileCommandsSha256=(Get-FileHash -LiteralPath 'out/native/compile_commands.json').Hash;files=@(Build-Files)} | ConvertTo-Json -Depth 6 | Set-Content -Encoding UTF8 -LiteralPath $receipt
+    } else {
+        if(-not(Test-Path -LiteralPath $receipt)) {throw 'SkipBuild requires an existing verified build receipt'}
+        $prior=Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
+        if($prior.sourceCommit -ne $commit -or $prior.version -ne $releaseVersion) {throw 'Published outputs do not match this source/version'}
+        $actual=@(Build-Files)
+        if($actual.Count -ne $prior.files.Count) {throw 'Published file list has changed'}
+        foreach($file in $actual) {
+            $expected=@($prior.files | Where-Object path -eq $file.path)
+            if($expected.Count -ne 1 -or $expected[0].sha256 -ne $file.sha256) {throw "Published file changed: $($file.path)"}
+        }
+    }
+    $nativeInfo = (& $nativePath --native-info | ConvertFrom-Json)
+    if($LASTEXITCODE -ne 0 -or $nativeInfo.backend -ne 'windivert' -or $nativeInfo.wireProtocol -ne 'udp2raw-http-c4995ea') {throw 'Not a production WinDivert FakeTCP/HTTP backend'}
+    foreach($dll in @("out/app-$releaseVersion/StreamLink.dll","out/service-$releaseVersion/StreamLink.Service.dll")) {
+        if([Reflection.AssemblyName]::GetAssemblyName((Join-Path $root $dll)).Version.ToString(3) -ne $releaseVersion) {throw "Published assembly version mismatch: $dll"}
     }
     $downloads=Join-Path $root 'out\downloads'
     New-Item -ItemType Directory -Path $downloads -Force | Out-Null
@@ -51,7 +80,7 @@ try {
     $version=& (Join-Path $EasyTierDirectory 'easytier-core.exe') --version
     if($version -notmatch '2\.6\.4-8428a89d') {throw 'This preview requires the tested EasyTier 2.6.4-8428a89d build'}
     }
-    $stage=Join-Path $root ('out\release-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))
+    $stage=Join-Path $root ('out\release-'+(Get-Date -Format 'yyyyMMdd-HHmmss')+'-'+[Guid]::NewGuid().ToString('N').Substring(0,6))
     $components=Join-Path $stage 'components'; $licenses=Join-Path $stage 'licenses'
     New-Item -ItemType Directory -Path $components,$licenses -Force | Out-Null
     foreach($published in @("out/app-$releaseVersion","out/service-$releaseVersion")) {
@@ -107,6 +136,9 @@ try {
     if(Test-Path $releaseText) {Copy-Item -LiteralPath $releaseText -Destination $stage\版本更新说明.txt}
     Copy-Item .\docs\初版实测报告-20261010.md $stage\历史实测报告-0.2.md
     Copy-Item .\docs\发现服务运维.txt $stage\发现服务运维.txt
+    Copy-Item .\docs\execution-status-20261011.md $stage\开发验收状态.md
+    Copy-Item .\docs\StreamLink-Codex-Execution-Plan-20261011.md $stage\开发验收规格.md
+    Copy-Item -LiteralPath $receipt -Destination $stage\构建来源.json
     $verification=Join-Path $root ("artifacts\release-verification-$releaseVersion.json")
     if(Test-Path $verification) {Copy-Item $verification $stage\验证摘要.json}
     $preview=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--preview',(Join-Path $root 'artifacts\desktop-preview.png')) -WindowStyle Hidden -PassThru -Wait
@@ -115,20 +147,16 @@ try {
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
         [ordered]@{path=[IO.Path]::GetRelativePath($stage,$_.FullName);length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash}
     })
-    [ordered]@{version="$releaseVersion-preview";built=(Get-Date -Format o);architecture='win-x64';networkBackend='native-wintun';meshProtocol=4;easytier=$version;files=$files} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
+    [ordered]@{version="$releaseVersion-preview";built=(Get-Date -Format o);sourceCommit=$commit;sourceDirty=$false;releaseLevel='development-candidate';releaseGate='NotPassed';architecture='win-x64';networkBackend='native-wintun';meshProtocol=4;easytier=$version;native=$nativeInfo;files=$files} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
+    $preflight=Join-Path $root "artifacts/bundle-preflight-$releaseVersion.json"
+    $verify=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--verify-bundle',('"'+$preflight+'"')) -WindowStyle Hidden -PassThru -Wait
+    if($verify.ExitCode -ne 0 -or (Get-Content -LiteralPath $preflight -Raw | ConvertFrom-Json).status -ne 'Pass') {throw 'Packaged executable rejected the actual bundle'}
     $release=Join-Path $root 'artifacts\releases'
     New-Item -ItemType Directory -Path $release -Force | Out-Null
     $zip=Join-Path $release "StreamLink-$releaseVersion-win-x64-preview.zip"
     Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $zip -Force -CompressionLevel Optimal
-    $sourceStage=Join-Path $stage 'source-stage'
-    New-Item -ItemType Directory -Path $sourceStage -Force | Out-Null
-    $sourceFiles=@(& rg --files --hidden -g '!out/**' -g '!artifacts/**' -g '!.git/**' -g '!**/bin/**' -g '!**/obj/**' -g '!**/__pycache__/**' -g '!**/*.private.json' -g '!**/*.pfx' -g '!**/*.pem' -g '!**/*.key' -g '!**/*.dpapi' -g '!**/.env')
-    foreach($relative in $sourceFiles) {
-        $to=Join-Path $sourceStage $relative
-        New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
-        Copy-Item -LiteralPath (Join-Path $root $relative) -Destination $to
-    }
-    Compress-Archive -Path (Join-Path $sourceStage '*') -DestinationPath (Join-Path $release "StreamLink-$releaseVersion-source.zip") -Force -CompressionLevel Optimal
+    & git archive --format=zip "--output=$(Join-Path $release "StreamLink-$releaseVersion-source.zip")" $commit
+    if($LASTEXITCODE -ne 0) {throw 'Committed source archive failed'}
     Get-FileHash -LiteralPath $zip,(Join-Path $release "StreamLink-$releaseVersion-source.zip") | Select-Object Hash,Path | ConvertTo-Json | Set-Content (Join-Path $release "sha256-$releaseVersion.json") -Encoding UTF8
     [ordered]@{stage=$stage;zip=$zip;manifest=(Join-Path $stage 'manifest.json')} | ConvertTo-Json | Set-Content (Join-Path $release 'latest.json') -Encoding UTF8
     Write-Output "Packaged: $zip"

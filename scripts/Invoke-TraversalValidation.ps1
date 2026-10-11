@@ -5,6 +5,7 @@ if(-not $OutputDirectory){$OutputDirectory=Join-Path $root ('artifacts\validatio
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $results=[Collections.Generic.List[object]]::new()
+$completed=$false
 Push-Location $root
 try {
  $commit=(& git rev-parse HEAD).Trim()
@@ -36,11 +37,13 @@ try {
  Invoke-Check 'managed-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'managed-router.json'))
  Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
  Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))
+ Invoke-Check 'egress-correctness' 'dotnet' @('run','--project','tests\StreamLink.EgressTests','-c','Release','--',(Join-Path $OutputDirectory 'egress-correctness.json'),'--correctness-only')
+ $completed=$true
 } finally {
  $hashes=@('out\native\udp2raw-native.exe','out\native\udp2raw-protocol-test.exe') | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object {
    [pscustomobject]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}
  }
- $status=if($results.Count -eq 18 -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
+ $status=if($completed -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
  [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
    gate='Local only: no driver, no NAT, no release claim';remainingGates=@('M1 controlled two-Windows 30 rounds and WAN','M2 SO + business','M3 product integration','M4 Wintun UDP_DIRECT','M5-M9')} |
    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json')

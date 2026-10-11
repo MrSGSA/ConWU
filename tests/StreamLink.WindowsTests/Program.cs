@@ -91,6 +91,20 @@ static class Program
         Manifest("../outside.bin", hash); invalid = false;
         try { Copy(source, destination, manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
         Check(invalid, "Manifest traversal accepted");
+        foreach (string path in new[] { Path.Combine(source, "payload.bin"), "payload.bin:stream", "payload.bin.", "CON.txt", "sub/../payload.bin", "./payload.bin", "sub//payload.bin" }) {
+            Manifest(path, hash); invalid = false;
+            try { Copy(source, destination, manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
+            Check(invalid, "Non-canonical/absolute/alias bundle path accepted: " + path);
+        }
+        File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = typeof(MainWindow).Assembly.GetName().Version!.ToString(3) + "-preview", files = new[] { new { path = "payload.bin", sha256 = hash }, new { path = "PAYLOAD.bin", sha256 = hash } } }));
+        invalid = false; try { Copy(source, destination, manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
+        Check(invalid, "Case-insensitive duplicate bundle path accepted");
+        Manifest("payload.bin", hash); invalid = false;
+        try { Copy(source, Path.Combine(root, "outside"), manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
+        Check(invalid && !Directory.Exists(Path.Combine(root, "outside")), "Unmanaged install destination was mutated");
+        Check(ServiceInstaller.VerifyBundle(source) == 1, "Read-only candidate bundle preflight failed");
+        File.WriteAllBytes(manifest, new byte[] { 0xef, 0xbb, 0xbf }.Concat(File.ReadAllBytes(manifest)).ToArray());
+        Check(ServiceInstaller.VerifyBundle(source) == 1, "UTF-8 BOM from a Windows package writer must remain valid");
         string log = Path.Combine(root, "child.log");
         using (var job = new ChildJob()) {
             using var child = job.Start(Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/c", "echo configuration=SYNTHETIC_TEST_SECRET"], log, secrets: ["SYNTHETIC_TEST_SECRET"]);
