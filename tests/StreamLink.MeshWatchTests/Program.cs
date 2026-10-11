@@ -96,17 +96,19 @@ try {
     using var certificate = X509CertificateLoader.LoadPkcs12(generated.Export(X509ContentType.Pfx), null);
     var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders();
     builder.WebHost.ConfigureKestrel(k => k.Listen(IPAddress.Loopback, 0, l => l.UseHttps(certificate)));
-    await using var app = builder.Build(); bool legacy = false; int watches = 0, reads = 0;
+    await using var app = builder.Build(); bool legacy = false, forbidden = false; int watches = 0, reads = 0;
+    MeshDirectory? readOverride = null;
     var online = new MeshRegistry(root);
     app.MapPost("/v3/mesh/{network}/watch", async (HttpContext c, string network, MeshWatchRequest r) => {
-        Interlocked.Increment(ref watches); return legacy ? Results.NotFound() : await online.Watch(c, network, r);
+        Interlocked.Increment(ref watches); return forbidden ? Results.StatusCode(403) : legacy ? Results.NotFound() : await online.Watch(c, network, r);
     });
-    app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => { Interlocked.Increment(ref reads); return online.Read(c, network); });
+    app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => { Interlocked.Increment(ref reads); return readOverride != null ? Results.Json(new MeshSnapshot(readOverride, [])) : online.Read(c, network); });
     app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory d) => online.Directory(c, network, d));
     app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope e) => online.Publish(c, network, slot, e));
     await app.StartAsync(all.Token);
     string url = app.Urls.Single(); string pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
-    var fresh = MeshIdentity.Create(url, pin, "faketcp"); var friend = Guest(fresh);
+    var fresh = MeshIdentity.Create(url, pin, "faketcp"); var beforeEnrollment = fresh.Directory!;
+    var friend = Guest(fresh); friend.Directory = fresh.Directory;
     using var client = new MeshDiscoveryClient(fresh);
     using var publisher = new MeshDiscoveryClient(friend);
     Check(await client.WaitForChanges(all.Token) == null && client.SupportsLongPolling, "first watch racing network registration keeps capability and normal retry cadence");
@@ -128,6 +130,28 @@ try {
     int attempts = watches;
     await oldServer.WaitForChanges(all.Token);
     Check(watches == attempts && reads >= 2, "fallback is remembered rather than retrying unsupported route every poll");
+    legacy = false;
+    using var membership = new MeshDiscoveryClient(friend);
+    await membership.WaitForChanges(all.Token);
+    int oldReads = reads; forbidden = true;
+    async Task ForbiddenPoll() {
+        bool denied = false; try { await membership.WaitForChanges(all.Token); } catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.Forbidden) { denied = true; }
+        Check(denied && membership.SupportsLongPolling && membership.SupportsTraversal, "403 preserves capabilities and requires signed revocation evidence");
+    }
+    await ForbiddenPoll();
+    Check(reads == oldReads, "failed watch does not hide an additional HTTP request from the Runner budget");
+    Check((await membership.WaitForChanges(all.Token))!.Directory.Members.Contains(friend.Self) && reads == oldReads + 1,
+        "next budgeted poll verifies still-authorized membership without downgrading transport");
+    await ForbiddenPoll(); readOverride = fresh.Directory! with { Members = [fresh.Self] };
+    bool forgedRejected = false; try { await membership.WaitForChanges(all.Token); } catch (CryptographicException) { forgedRejected = true; }
+    Check(forgedRejected, "unsigned membership removal cannot stop a healthy path"); readOverride = null;
+    await ForbiddenPoll(); readOverride = beforeEnrollment;
+    bool rollbackRejected = false; try { await membership.WaitForChanges(all.Token); } catch (CryptographicException) { rollbackRejected = true; }
+    Check(rollbackRejected, "signed older directory cannot revoke a subsequently enrolled member"); readOverride = null;
+    await ForbiddenPoll();
+    MeshIdentity.Revoke(fresh, friend.Self.Slot); await client.SaveDirectory(fresh.Directory!, all.Token);
+    bool revoked = false; try { await membership.WaitForChanges(all.Token); } catch (MeshRevokedException) { revoked = true; }
+    Check(revoked && membership.SupportsLongPolling, "owner-signed removal terminates revoked member even when its watch returns only 403");
     await app.StopAsync(all.Token);
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { checks, eightIsolatedMembers = true, realHttps = true,
         holdSeconds = 25, measuredHoldSeconds = clock.Elapsed.TotalSeconds, realWindowsEndpoints = 1, realEightDevices = false }, new JsonSerializerOptions { WriteIndented = true }));

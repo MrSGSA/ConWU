@@ -61,6 +61,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     Guid serverEpoch;
     long cursor;
     int waiting;
+    bool membershipReadPending;
     public bool SupportsLongPolling { get; private set; } = true;
     public Guid BootId => boot;
     public bool SupportsTraversal { get; private set; }
@@ -88,11 +89,27 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
         if (!SupportsLongPolling) return await Read(token);
         if (Interlocked.Exchange(ref waiting, 1) != 0) throw new InvalidOperationException("每台设备只能保持一个协调等待请求");
         try {
+            if (membershipReadPending) {
+                // A revoked member cannot authenticate another watch. Use its
+                // next budgeted poll for the existing network read endpoint,
+                // not an unaccounted second HTTP request in the failed poll.
+                membershipReadPending = false;
+                var snapshot = await Read(token);
+                if (snapshot != null) {
+                    MeshIdentity.ValidateDirectory(snapshot.Directory, profile.Pair.Network, profile.OwnerKey, profile.Directory?.Revision ?? 0);
+                    if (!snapshot.Directory.Members.Contains(profile.Self)) throw new MeshRevokedException();
+                }
+                return snapshot;
+            }
             var request = MeshWatch.Create(profile, boot, serverEpoch, cursor);
             using var response = await watchHttp.PostAsJsonAsync($"v3/mesh/{profile.Pair.Network}/watch", request, token);
             // Initial registration may race the first watch; retry normally,
             // without disabling watch or invoking failure backoff.
             if (response.StatusCode == HttpStatusCode.PreconditionFailed) return null;
+            // A bare 403 is not authenticated revocation evidence. Keep the
+            // negotiated capabilities and require an owner-signed, non-rollback
+            // directory before stopping an otherwise healthy direct session.
+            if (response.StatusCode == HttpStatusCode.Forbidden) membershipReadPending = true;
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed) {
                 // Only an explicit old-server route response enables fallback.
                 // Auth failures, rate limiting and malformed data are not downgraded.

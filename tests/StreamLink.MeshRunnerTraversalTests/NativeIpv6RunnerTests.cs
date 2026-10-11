@@ -81,7 +81,7 @@ static class NativeIpv6RunnerTests
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, wire.Packets, wire.MaximumBytes,
             paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
     }
-    sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
+    internal sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
@@ -101,7 +101,7 @@ static class NativeIpv6RunnerTests
         }
         public ValueTask DisposeAsync() => inner.DisposeAsync();
     }
-    sealed class Wire(bool dropIpv6)
+    internal sealed class Wire(bool dropIpv6)
     {
         public readonly ConcurrentDictionary<string, Io> Endpoints = []; public int Packets, MaximumBytes;
         public Io Open(IPEndPoint endpoint) { var io = new Io(this); if (!Endpoints.TryAdd(endpoint.ToString(), io)) throw new IOException("duplicate capture"); return io; }
@@ -112,7 +112,7 @@ static class NativeIpv6RunnerTests
             return Endpoints.TryGetValue(target.ToString(), out var io) && io.Packets.Writer.TryWrite(new(p.ToArray(), false));
         }
     }
-    sealed class Io(Wire wire) : IEndpointPacketIo {
+    internal sealed class Io(Wire wire) : IEndpointPacketIo {
         public readonly Channel<EndpointPacket> Packets = Channel.CreateBounded<EndpointPacket>(512); public bool Closed;
         public ValueTask<EndpointPacket> Receive(CancellationToken t) => Packets.Reader.ReadAsync(t);
         public bool Inject(ReadOnlySpan<byte> p) => wire.Send(p);
@@ -130,13 +130,13 @@ static class NativeIpv6RunnerTests
         public Task PublishTraversal(MeshTraversalMessage[] m, CancellationToken t) => inner.PublishTraversal(m, t);
         public void Dispose() => inner.Dispose();
     }
-    static byte[] Packet(string from, string to) {
+    internal static byte[] Packet(string from, string to) {
         byte[] p = new byte[1280]; p[0] = 0x45; p[8] = 64; p[9] = 17; BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(2), 1280);
         IPAddress.Parse(from).GetAddressBytes().CopyTo(p, 12); IPAddress.Parse(to).GetAddressBytes().CopyTo(p, 16);
         uint sum = 0; for (int i = 0; i < 20; i += 2) sum += BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(i)); while (sum > 65535) sum = (sum & 65535) + (sum >> 16);
         BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(10), (ushort)~sum); return p;
     }
-    sealed class Adapter : IPacketAdapter {
+    internal sealed class Adapter : IPacketAdapter {
         public readonly BlockingCollection<byte[]> Outgoing = new(); public readonly ConcurrentQueue<byte[]> Incoming = new(); public bool Disposed;
         public int Read(byte[] p) { if (!Outgoing.TryTake(out var b, 25)) return 0; b.CopyTo(p, 0); return b.Length; }
         public bool Write(byte[] p) { Incoming.Enqueue(p); return true; }
