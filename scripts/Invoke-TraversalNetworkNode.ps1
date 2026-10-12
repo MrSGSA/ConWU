@@ -13,7 +13,7 @@ try {
  }
  [pscustomobject]@{planVersion='1.0';startedUtc=[DateTime]::UtcNow;os=[Environment]::OSVersion.VersionString;kind=$node.Kind;route=$node.Route;durationSeconds=$node.LifetimeSeconds;
   sourcePort=$node.SourcePort;reflectorPort=$node.ReflectorPort;loadMbps=$(if($null -eq $node.MeasureLoad -or $node.MeasureLoad){50}else{0});loadSeconds=$(if($null -eq $node.MeasureLoad -or $node.MeasureLoad){20}else{0});
-  reflectedPortOffset=$node.ReflectedPortOffset;requireLearnedSource=$node.RequireLearnedSource;controlOnlyOverExistingOverlay=$true;binaries=$hashes;
+  reflectedPortOffset=$node.ReflectedPortOffset;requireLearnedSource=$node.RequireLearnedSource;localHelper=$node.LocalHelper;controlOnlyOverExistingOverlay=$true;binaries=$hashes;
   adapters=@(Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed)
  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath ($Output+'.environment.json')
  if($node.Route -eq 'host') {

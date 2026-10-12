@@ -10,7 +10,7 @@ using StreamLink.Service;
 
 sealed record TraversalNode(DeviceProfile Profile, string Local, string Peer, string Kind, string Route, int SourcePort,
     int ReflectorPort, int PeerReflectorPort, int MeasureDelay, int LifetimeSeconds = 100, bool CaptureBroker = false,
-    bool MeasureLoad = true, int ReflectedPortOffset = 0, int PeerSourcePort = 0, bool RequireLearnedSource = false);
+    bool MeasureLoad = true, int ReflectedPortOffset = 0, int PeerSourcePort = 0, bool RequireLearnedSource = false, bool LocalHelper = false);
 
 static class TraversalNetwork
 {
@@ -34,7 +34,8 @@ static class TraversalNetwork
         var c = JsonSerializer.Deserialize<TraversalNode>(File.ReadAllText(file))!; c.Profile.Validate();
         if (c.Kind is not ("tcp" or "udp") || c.Route is not ("host" or "public") || c.LifetimeSeconds is < 30 or > 600) throw new ArgumentException("Invalid isolated test scope");
         if (c.ReflectedPortOffset is < 0 or > 16 || c.ReflectedPortOffset != 0 && (c.Kind != "tcp" || c.Route != "host") ||
-            c.PeerSourcePort is < 0 or > 65535 || c.RequireLearnedSource && (!c.Profile.TcpPeerReflexive || c.Kind != "tcp" || c.Route != "host" || !c.CaptureBroker))
+            c.PeerSourcePort is < 0 or > 65535 || c.LocalHelper && (c.Kind != "tcp" || c.Route != "host") ||
+            c.RequireLearnedSource && (!c.Profile.TcpPeerReflexive || c.Kind != "tcp" || c.Route != "host" || !c.CaptureBroker))
             throw new ArgumentException("Invalid source-learning fixture scope");
         string components = Path.Combine(AppContext.BaseDirectory, "components");
         var mesh = c.Profile.Mesh!; var peer = mesh.Directory!.Members.Single(m => m.Slot != mesh.Self.Slot);
@@ -90,7 +91,7 @@ static class TraversalNetwork
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
             await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = functionalPass && (!c.MeasureLoad || loadPass) ? "Pass" : "Fail", c.Kind, c.Route,
                 functionalStatus = functionalPass ? "Pass" : "Fail", loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
-                learningStatus = !c.RequireLearnedSource ? "NotRequired" : factory?.LearnedSource == true ? "Pass" : "Fail", c.ReflectedPortOffset,
+                learningStatus = !c.RequireLearnedSource ? "NotRequired" : factory?.LearnedSource == true ? "Pass" : "Fail", c.ReflectedPortOffset, c.LocalHelper,
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
                 scope = c.Route == "host" ? "Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; coordination only uses existing overlay",
                 actualWintun = adapterCreated, actualWinDivert = c.Kind == "tcp" && connected > 0, oldOverlayUnderlay = c.Route == "host", connectedMs = connected, fullMtuEchoes = echoes,
@@ -138,7 +139,8 @@ static class TraversalNetwork
         async Task<IMeshCandidateResource> GatherCore(MeshMember peer, TraversalProfile kind, Guid attempt, bool source, CancellationToken token)
         {
             try {
-            var local = new IPEndPoint(IPAddress.Parse(node.Local), node.SourcePort); var remote = new IPEndPoint(IPAddress.Parse(node.Peer), node.PeerReflectorPort);
+            var local = new IPEndPoint(IPAddress.Parse(node.Local), node.SourcePort);
+            var remote = node.LocalHelper ? new(local.Address, node.ReflectorPort) : new IPEndPoint(IPAddress.Parse(node.Peer), node.PeerReflectorPort);
             IPEndPoint observed;
             if (kind == TraversalProfile.FakeTcpHttpSo) {
                 tcp = await TcpEndpointLease.Open(local, remote, generation, token); using var reference = tcp.AcquireAttempt(generation);
@@ -157,7 +159,7 @@ static class TraversalNetwork
             } catch { if (capture != null) await capture.DisposeAsync(); tcp?.Dispose(); if (udp != null) await udp.DisposeAsync(); throw; }
         }
         public void FinishWireCapture() { diagnostics = paths.Select(p => p.Diagnostics).ToArray(); ended = Environment.TickCount64; wire?.Dispose(); }
-        public object Evidence() => new { observations, diagnostics, captureBroker = node.CaptureBroker, capture = capture?.Status,
+        public object Evidence() => new { observations, diagnostics = diagnostics.Length == 0 ? paths.Select(p => p.Diagnostics).ToArray() : diagnostics, captureBroker = node.CaptureBroker, capture = capture?.Status,
             resourceClosed = (tcp?.Closed ?? true) && (udp?.Closed ?? true), wire = wire?.Snapshot(armed, ended == 0 ? Environment.TickCount64 : ended,
                 diagnostics.LastOrDefault(d => d.PayloadQualified) is {} path ? IPEndPoint.Parse(path.Peer).Port : null) };
         public void Dispose() { wire?.Dispose(); }
