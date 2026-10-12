@@ -50,7 +50,7 @@ public sealed partial class UdpTraversal
             catch { references--; pathAttached = false; throw; }
         }
     }
-    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath, IMeshSendDiagnostics
+    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath, IMeshSendDiagnostics,IPathDiagnosticWire
     {
         readonly UdpTraversal owner;
         readonly object gate = new();
@@ -58,6 +58,13 @@ public sealed partial class UdpTraversal
         sealed record PendingSend(byte[] Packet, long At);
         readonly Channel<PendingSend>? sending;
         readonly IQueuedTraversalSocket? sharedQueue;
+        PathDiagnosticAllowance? diagnostic;
+        bool IPathDiagnosticWire.SupportsDiagnosticWire=>sharedQueue?.SupportsDiagnostics==true;
+        void IPathDiagnosticWire.GrantDiagnosticWire(PathDiagnosticAllowance allowance){lock(gate){
+            if(disposed||Failed||sharedQueue?.SupportsDiagnostics!=true||allowance.PathId!=Identity.PathId||!allowance.Active||diagnostic?.Active==true)
+                throw new InvalidOperationException("UDP diagnostic requires a live paced exact path and a bounded window");
+            diagnostic=allowance;
+        }}
         readonly DatagramSendAccounting accounting = new();
         readonly CancellationTokenSource stop = new();
         readonly Task sender;
@@ -111,6 +118,8 @@ public sealed partial class UdpTraversal
         {
             if (packet.Length is < 1 or > ProbeSize || packet.StartsWith("SLP2"u8) || packet.StartsWith("SLG3"u8)) return false;
             lock (gate) {
+                if(packet.Length>=MeshLink.Overhead&&packet[..4].SequenceEqual("SLM4"u8)&&packet[4]==8)
+                    return !disposed&&!Failed&&diagnostic?.Active==true&&sharedQueue?.TrySendDiagnostic(packet,Identity.ActualRemote,diagnostic,stop.Token)==true;
                 if (sharedQueue != null) return !disposed && !Failed && sharedQueue.TrySend(packet, Identity.ActualRemote, stop.Token);
                 accounting.Offer(packet.Length);
                 if (disposed || Failed) { accounting.Reject(packet.Length, false); return false; }

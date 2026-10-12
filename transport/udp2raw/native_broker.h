@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 // Local pipe metadata only. Public TCP bytes and sequence behaviour stay intact.
-enum class native_wire_kind : unsigned { handshake=0, maintenance=1, business=2, completion=3 };
+enum class native_wire_kind : unsigned { handshake=0, maintenance=1, business=2, completion=3, diagnostic=4 };
 native_wire_kind native_wire_classify(char type, const char *data, int length);
 struct native_wire_scope {
     native_wire_kind previous;

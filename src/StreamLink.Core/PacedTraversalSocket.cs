@@ -10,10 +10,14 @@ internal interface IQueuedTraversalSocket
     bool TrySend(ReadOnlySpan<byte> packet, IPEndPoint remote, CancellationToken token);
     DatagramQueueStats SendQueue { get; }
     bool Failed { get; }
+    bool SupportsDiagnostics=>false;
+    bool TrySendDiagnostic(ReadOnlySpan<byte> packet,IPEndPoint remote,PathDiagnosticAllowance allowance,CancellationToken token)=>false;
 }
 
 public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSocket
 {
+    sealed record DiagnosticContext(IPEndPoint Remote,PathDiagnosticAllowance Allowance);
+    bool IQueuedTraversalSocket.SupportsDiagnostics=>true;
     readonly ITraversalSocket inner;
     readonly EgressPacer.Flow flow;
     readonly CancellationTokenSource stop = new();
@@ -32,13 +36,22 @@ public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSoc
     }
     bool SendNow(ReadOnlyMemory<byte> packet, object? context)
     {
-        try { inner.Send(packet, (IPEndPoint)context!, stop.Token).AsTask().GetAwaiter().GetResult(); return true; }
+        try {
+            IPEndPoint remote;
+            if(context is DiagnosticContext diagnostic){
+                int overhead=Local.AddressFamily==AddressFamily.InterNetworkV6?48:28;
+                if(!diagnostic.Allowance.Admit(packet.Length+overhead))return false;
+                remote=diagnostic.Remote;
+            }else remote=(IPEndPoint)context!;
+            inner.Send(packet,remote,stop.Token).AsTask().GetAwaiter().GetResult();return true;
+        }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.NoBufferSpaceAvailable or SocketError.WouldBlock or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { throw; }
         catch (Exception ex) { Volatile.Write(ref fatal, ex); throw; }
     }
     public ValueTask Send(ReadOnlyMemory<byte> packet, IPEndPoint remote, CancellationToken token)
     {
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this); token.ThrowIfCancellationRequested();
+        if(IsDiagnostic(packet.Span))return ValueTask.FromException(new IOException("Diagnostic datagram requires a bounded allowance"));
         if (Volatile.Read(ref fatal) is {} ex) return ValueTask.FromException(ex);
         bool data = packet.Length >= MeshLink.Overhead && packet.Span[..4].SequenceEqual("SLM4"u8) && packet.Span[4] == 4;
         int overhead = Local.AddressFamily == AddressFamily.InterNetworkV6 ? 48 : 28;
@@ -53,9 +66,17 @@ public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSoc
     bool IQueuedTraversalSocket.TrySend(ReadOnlySpan<byte> packet, IPEndPoint remote, CancellationToken token)
     {
         if (Volatile.Read(ref disposed) != 0 || Volatile.Read(ref fatal) != null || token.IsCancellationRequested) return false;
+        if(IsDiagnostic(packet))return false;
         bool data = packet.Length >= MeshLink.Overhead && packet[..4].SequenceEqual("SLM4"u8) && packet[4] == 4;
         int overhead = Local.AddressFamily == AddressFamily.InterNetworkV6 ? 48 : 28;
         return flow.TrySend(packet, packet.Length + overhead, new IPEndPoint(remote.Address, remote.Port), priority: !data, token: token);
+    }
+    static bool IsDiagnostic(ReadOnlySpan<byte> packet)=>packet.Length>=MeshLink.Overhead&&packet[..4].SequenceEqual("SLM4"u8)&&packet[4]==8;
+    bool IQueuedTraversalSocket.TrySendDiagnostic(ReadOnlySpan<byte> packet,IPEndPoint remote,PathDiagnosticAllowance allowance,CancellationToken token)
+    {
+        if(Failed||token.IsCancellationRequested||!IsDiagnostic(packet)||!allowance.Active)return false;
+        int overhead=Local.AddressFamily==AddressFamily.InterNetworkV6?48:28;
+        return flow.TrySend(packet,packet.Length+overhead,new DiagnosticContext(new(remote.Address,remote.Port),allowance),token:token);
     }
     public ValueTask<TraversalDatagram> Receive(CancellationToken token) => inner.Receive(token);
     public void Dispose()

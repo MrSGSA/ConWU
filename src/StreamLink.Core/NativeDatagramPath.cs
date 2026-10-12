@@ -28,7 +28,7 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 // uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
-public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath
+public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath, IPathDiagnosticWire
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
     readonly object gate = new();
@@ -49,6 +49,10 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     bool disposed;
     public TraversalControlRound ControlRound { get; }
     readonly NativeWireBudget? wireBudget;
+    readonly bool diagnosticNative;
+    bool IPathDiagnosticWire.SupportsDiagnosticWire=>diagnosticNative&&CountsWireControl;
+    void IPathDiagnosticWire.GrantDiagnosticWire(PathDiagnosticAllowance allowance)=>
+        (wireBudget??throw new NotSupportedException("Diagnostic requires accounted capture")).GrantDiagnostic(allowance);
     public bool CountsWireControl => wireBudget != null;
     public NativeWireStats? WireControl => wireBudget?.Snapshot();
     public void SelectWireBudget() => wireBudget?.Select();
@@ -75,7 +79,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
     NativeDatagramPath(TcpEndpointLease lease, Guid generation, TraversalAttemptContext context,
-        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources, bool countWireControl, NativeAttemptGroup? group)
+        IPEndPoint peer, ReadOnlySpan<byte> sharedKey, string sessionRoot, TraversalResources resources, bool countWireControl, NativeAttemptGroup? group, bool diagnosticNative)
     {
         if (context.Profile != TraversalProfile.FakeTcpHttpSo || sharedKey.Length != 32 || generation != lease.NetworkGeneration)
             throw new ArgumentException("Native 受管路径需要已协商的 SO profile、成员密钥及当前资源代次");
@@ -83,7 +87,8 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
         key = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, key, digest, "streamlink-native-path-check-v1"u8);
         identity = new(Guid.NewGuid(), context.AttemptId, lease.Id, null, generation, lease.Local, Copy(peer), context.Profile, PathQualification.MtuQualified);
         ControlRound = group?.ControlRound ?? new(resources);
-        if (countWireControl) wireBudget = new(ControlRound, group);
+        this.diagnosticNative=diagnosticNative&&countWireControl;
+        if (countWireControl) wireBudget = new(ControlRound, group,this.diagnosticNative,identity.PathId);
         configuration = Path.Combine(sessionRoot, "managed-raw-" + Guid.NewGuid().ToString("N") + ".conf");
         bridge = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
         try {
@@ -95,12 +100,12 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public static async Task<NativeDatagramPath> Prepare(string executable, string sessionRoot,
         TcpEndpointLease lease, Guid generation, TraversalAttemptContext context, IPEndPoint peer,
         byte[] sharedKey, CancellationToken token, TraversalResources? resources = null,
-        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false, NativeAttemptGroup? group = null, bool peerReflexive = false)
+        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false, NativeAttemptGroup? group = null, bool peerReflexive = false, bool diagnosticNative = false)
     {
         Directory.CreateDirectory(sessionRoot);
         if (group != null && (!countWireControl || captureOwner == null)) throw new ArgumentException("Multi-tuple attempts require broker wire accounting");
         if (peerReflexive && group != null) throw new ArgumentException("Peer source learning cannot overlap a multi-tuple prediction window");
-        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl, group);
+        var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl, group,diagnosticNative);
         byte[] rawSecret = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, rawSecret, path.digest, "streamlink-native-outer-v1"u8);
         string rawKey = Convert.ToHexString(rawSecret); CryptographicOperations.ZeroMemory(rawSecret);
         try {
@@ -226,6 +231,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public bool TrySend(ReadOnlySpan<byte> datagram)
     {
         if (datagram.Length is < MeshLink.Overhead or > ProbeSize || Volatile.Read(ref qualified) == 0 || Failed) return false;
+        if(datagram.StartsWith("SLM4"u8)&&datagram[4]==8&&wireBudget?.DiagnosticActive!=true)return false;
         lock (gate) return !disposed && outgoing.Writer.TryWrite(datagram.ToArray());
     }
     public async ValueTask<ReadOnlyMemory<byte>> Receive(CancellationToken token)

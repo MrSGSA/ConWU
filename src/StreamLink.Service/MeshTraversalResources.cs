@@ -76,11 +76,12 @@ internal sealed class MeshRequestBudget(int burst = 6)
 }
 
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
-    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false) : IMeshCandidateFactory, IAsyncDisposable
+    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false,bool diagnosticNative=false) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
     readonly bool countWireControl = wireControl && captureBroker;
+    readonly bool diagnosticTransport=diagnosticNative&&wireControl&&captureBroker&&profile.ManagedEgressMbps>0;
     readonly string binary = executable, root = folder;
     readonly EgressPacer? pacer = profile.ManagedEgressMbps > 0 ? new(profile.ManagedEgressMbps) : null;
     public EgressStats? Egress => pacer?.Snapshot();
@@ -111,7 +112,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         profile.Selection().Validate();
         if (profile.TraversalMode == "legacy") return null;
         var supported = new List<TraversalProfile>();
-        bool broker = false, ipv6 = false, wireControl = false, peerSource = false;
+        bool broker = false, ipv6 = false, wireControl = false, peerSource = false,diagnosticNative=false;
         try {
             var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             info.ArgumentList.Add("--native-info");
@@ -125,6 +126,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 broker = r.TryGetProperty("captureBroker", out var capture) && capture.GetInt32() == 1;
                 wireControl = broker && r.TryGetProperty("wireControl", out var wire) && wire.GetInt32() == 1;
                 peerSource = wireControl && r.TryGetProperty("tcpPeerReflexive", out var reflexive) && reflexive.GetInt32() == 1;
+                diagnosticNative=wireControl&&r.TryGetProperty("pathDiagnostics",out var diagnostics)&&diagnostics.GetInt32()==1;
                 ipv6 = broker && r.TryGetProperty("ipv6", out var v6) && v6.GetBoolean() && r.TryGetProperty("ipv6Abi", out var abi6) && abi6.GetInt32() == 2 &&
                     r.TryGetProperty("ipv6Attach", out var attach6) && attach6.GetString() == "broker-only";
                 if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == "windivert" &&
@@ -140,7 +142,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         if (profile.ManagedEgressMbps > 0) log($"实验链路共享 {profile.ManagedEgressMbps} Mbps 外层 IP 出口预算；兼容入口、内核反射与 HTTPS 控制流不在此范围");
         if (supported.Contains(TraversalProfile.FakeTcpHttpSo) && !wireControl) log("原生组件未提供线上控制报文计账，当前仅统计上层检查消息");
         if (profile.TcpPeerReflexive && !peerSource) log("TCP 来源学习暂未启用：原生组件需独立声明 IPv4 来源学习及线上计账能力");
-        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl, peerSource);
+        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl, peerSource,diagnosticNative);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
@@ -291,7 +293,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             byte[] shared = MeshIdentity.SharedKey(owner.options.Mesh!, peer);
             try {
                 var result = await NativeDatagramPath.Prepare(owner.binary, owner.root, tcp!, owner.generation, context, remote, shared, token,
-                    captureOwner: pooled?.Owner, countWireControl: owner.countWireControl, peerReflexive: candidate.PeerReflexive);
+                    captureOwner: pooled?.Owner, countWireControl: owner.countWireControl, peerReflexive: candidate.PeerReflexive,diagnosticNative:owner.diagnosticTransport);
                 prepared = true; return result;
             } finally { CryptographicOperations.ZeroMemory(shared); }
         }

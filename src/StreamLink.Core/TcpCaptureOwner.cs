@@ -207,7 +207,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
             if (!Enum.IsDefined(kind) || wireBudget == null && kind != NativeWireKind.Handshake) throw new IOException("Unauthorized wire metadata");
             int ip = (packet[0] >> 4) == 6 ? 40 : (packet[0] & 15) * 4;
             int tcp = (packet[ip + 12] >> 4) * 4;
-            if (kind == NativeWireKind.Business && (packet.Length <= ip + tcp || (packet[ip + 13] & 7) != 0))
+            if (kind is NativeWireKind.Business or NativeWireKind.Diagnostic && (packet.Length <= ip + tcp || (packet[ip + 13] & 7) != 0))
                 throw new IOException("TCP shape control cannot use the business budget");
             lock (owner.gate) {
                 if (!started || Failed) return false;

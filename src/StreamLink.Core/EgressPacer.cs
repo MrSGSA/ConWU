@@ -257,7 +257,7 @@ public sealed class EgressPacer : IDisposable
     }
     // No global timer-resolution changes and no busy spin. Unsupported systems
     // fail opt-in setup explicitly instead of silently using coarse sleeps.
-    sealed class PreciseTimer : WaitHandle
+    internal sealed class PreciseTimer : WaitHandle
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern SafeWaitHandle CreateWaitableTimerExW(nint attributes, string? name, uint flags, uint access);
         [DllImport("kernel32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] static extern bool SetWaitableTimer(SafeWaitHandle timer, in long due, int period, nint callback, nint argument, [MarshalAs(UnmanagedType.Bool)] bool resume);

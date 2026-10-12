@@ -11,7 +11,7 @@ static class WireBudgetTests
     public static async Task<object> Run(Action<bool, string> check, CancellationToken token)
     {
         check(NativeRawChannel.DecodeHeader(1392, false) == (1392, NativeWireKind.Handshake), "legacy raw pipe frame remains canonical without metadata capability");
-        foreach (var invalid in new[] { (Word: 65536u + 80u, Enabled: false), (Word: 4u * 65536 + 80, Enabled: true), (Word: 0xffff0050u, Enabled: true), (Word: 39u, Enabled: true) }) {
+        foreach (var invalid in new[] { (Word: 65536u + 80u, Enabled: false), (Word: 5u * 65536 + 80, Enabled: true), (Word: 0xffff0050u, Enabled: true), (Word: 39u, Enabled: true) }) {
             bool rejected = false; try { NativeRawChannel.DecodeHeader(invalid.Word, invalid.Enabled); } catch (IOException) { rejected = true; }
             check(rejected, "raw pipe rejects unknown/unnegotiated category or undersized frame before allocation: " + invalid.Word);
         }
