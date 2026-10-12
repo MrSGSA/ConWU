@@ -17,4 +17,5 @@ public sealed record MeshPathStatus(Guid PathId, Guid ResourceId, Guid AttemptId
     bool BidirectionalFresh = false, double? RoundTripMs = null)
 {
     public NativeWireStats? WireControl { get; init; }
+    public DatagramQueueStats? SendQueue { get; init; }
 }

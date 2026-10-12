@@ -232,7 +232,9 @@ public sealed class MeshRunner
                     }
                     var egress = factory?.Egress;
                     if (egress != null && now >= nextEgressReport) {
-                        log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，突发上限 {egress.BurstBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" + (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));
+                        log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，突发上限 {egress.BurstBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，当前最老 {egress.OldestQueuedMs:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" +
+                            (egress.Accounting is {} accounting ? $"；在途 {accounting.InFlight.Bytes} B，拒绝 {accounting.CapacityRejected.Packets + accounting.UnavailableRejected.Packets}，队列账本 {(accounting.Conserved ? "一致" : "异常")}" : "") +
+                            (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));
                         nextEgressReport = now + 30000;
                     }
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);

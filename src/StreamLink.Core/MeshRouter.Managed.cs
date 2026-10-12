@@ -73,7 +73,8 @@ public sealed partial class MeshRouter
         lock (gate) return peers.TryGetValue(slot, out var peer) && peer.Managed is {} managed ? managed.Paths.Values.Select(p =>
             new MeshPathStatus(p.Identity.PathId, p.Identity.LeaseId, p.Identity.AttemptId, p.Identity.Profile, p.Nomination.Stage,
                 p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs) {
-                    WireControl = (p.Transport as IWireControlPath)?.WireControl
+                    WireControl = (p.Transport as IWireControlPath)?.WireControl,
+                    SendQueue = (p.Transport as IMeshSendDiagnostics)?.SendQueue
                 }).ToArray() : [];
     }
     public void CancelPath(int slot, Guid path)

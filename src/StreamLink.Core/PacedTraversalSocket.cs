@@ -5,7 +5,14 @@ namespace StreamLink.Core;
 
 // Keeps the original binding and sole receiver. The flow is joined before the
 // underlying socket is closed, including packets already dequeued by the pacer.
-public sealed class PacedTraversalSocket : ITraversalSocket
+internal interface IQueuedTraversalSocket
+{
+    bool TrySend(ReadOnlySpan<byte> packet, IPEndPoint remote, CancellationToken token);
+    DatagramQueueStats SendQueue { get; }
+    bool Failed { get; }
+}
+
+public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSocket
 {
     readonly ITraversalSocket inner;
     readonly EgressPacer.Flow flow;
@@ -15,6 +22,8 @@ public sealed class PacedTraversalSocket : ITraversalSocket
     public Guid Id => inner.Id;
     public IPEndPoint Local => inner.Local;
     public bool DontFragment => inner.DontFragment;
+    public DatagramQueueStats SendQueue => flow.SendQueue;
+    public bool Failed => Volatile.Read(ref disposed) != 0 || Volatile.Read(ref fatal) != null;
     public PacedTraversalSocket(ITraversalSocket inner, EgressPacer pacer, string peer)
     {
         this.inner = inner;
@@ -38,8 +47,15 @@ public sealed class PacedTraversalSocket : ITraversalSocket
         TaskCompletionSource? completion = data ? null : new(TaskCreationOptions.RunContinuationsAsynchronously);
         bool queued = flow.TrySend(packet.Span, packet.Length + overhead, new IPEndPoint(remote.Address, remote.Port),
             priority: !data, token: token, completion: completion);
-        if (!queued) return data ? ValueTask.CompletedTask : ValueTask.FromException(new SocketException((int)SocketError.NoBufferSpaceAvailable));
+        if (!queued) return ValueTask.FromException(new SocketException((int)SocketError.NoBufferSpaceAvailable));
         return completion == null ? ValueTask.CompletedTask : new(completion.Task.WaitAsync(token));
+    }
+    bool IQueuedTraversalSocket.TrySend(ReadOnlySpan<byte> packet, IPEndPoint remote, CancellationToken token)
+    {
+        if (Volatile.Read(ref disposed) != 0 || Volatile.Read(ref fatal) != null || token.IsCancellationRequested) return false;
+        bool data = packet.Length >= MeshLink.Overhead && packet[..4].SequenceEqual("SLM4"u8) && packet[4] == 4;
+        int overhead = Local.AddressFamily == AddressFamily.InterNetworkV6 ? 48 : 28;
+        return flow.TrySend(packet, packet.Length + overhead, new IPEndPoint(remote.Address, remote.Port), priority: !data, token: token);
     }
     public ValueTask<TraversalDatagram> Receive(CancellationToken token) => inner.Receive(token);
     public void Dispose()

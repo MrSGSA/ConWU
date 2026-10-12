@@ -14,6 +14,8 @@ public sealed record EgressStats(int Mbps, int QueuedBytes, int PeakQueuedBytes,
     public double BackloggedTokenOverrunBytes { get; init; }
     public int BurstBytes { get; init; }
     public string WorkerPriority { get; init; } = "";
+    public double OldestQueuedMs { get; init; }
+    public DatagramSendSnapshot? Accounting { get; init; }
 }
 
 // One instance per device runner, shared by all managed sockets/capture owners
@@ -23,6 +25,7 @@ public sealed class EgressPacer : IDisposable
 {
     const int Quantum = 1536, MaximumDatagram = 4 * Quantum, MaximumFlows = 64;
     readonly object gate = new();
+    readonly DatagramSendAccounting accounting = new();
     readonly Dictionary<string, Peer> peers = [];
     readonly List<Peer> order = [];
     readonly AutoResetEvent changed = new(false);
@@ -86,12 +89,27 @@ public sealed class EgressPacer : IDisposable
             for (int i = 0; i < histogram.Length && total > 0; i++) { count += histogram[i]; if (count >= Math.Ceiling(total * .95)) { p95 = double.IsInfinity(buckets[i]) ? maximumAge : buckets[i]; break; } }
             return new(Mbps, bytes, peak, limit, sent, overflow, cancelled, failures, maximumAge, p95, priorityPackets,
                 order.Select(p => new EgressPeerStats(p.Key, p.Sent, p.Packets, p.Overflow, p.Cancelled, p.Failures)).ToArray(), failure)
-                { TimerWaits = timerWaits, TimerWaitMs = timerWaitMs, BackloggedTokenOverrunBytes = tokenOverrun, BurstBytes = burst, WorkerPriority = priorityName };
+                { TimerWaits = timerWaits, TimerWaitMs = timerWaitMs, BackloggedTokenOverrunBytes = tokenOverrun, BurstBytes = burst, WorkerPriority = priorityName,
+                    OldestQueuedMs = Oldest(null), Accounting = accounting.Snapshot() };
         }
+    }
+    double Oldest(Flow? flow)
+    {
+        long oldest = 0;
+        foreach (var p in order) foreach (var queue in new[] { p.Data, p.Control }) {
+            var item = flow == null ? queue.First?.Value : queue.FirstOrDefault(i => ReferenceEquals(i.Flow, flow));
+            if (item != null && (oldest == 0 || item.At < oldest)) oldest = item.At;
+        }
+        return oldest == 0 ? 0 : Stopwatch.GetElapsedTime(oldest).TotalMilliseconds;
+    }
+    DatagramQueueStats Queue(Flow flow)
+    {
+        lock (gate) return new("SharedEgress", "OuterIpBytes", limit, Oldest(flow), flow.accounting.Snapshot());
     }
     void Drop(Item item, bool capacity)
     {
         bytes -= item.Bytes; item.Flow.peer.Bytes -= item.Bytes;
+        accounting.Drop(item.Bytes, capacity); item.Flow.accounting.Drop(item.Bytes, capacity);
         if (capacity) { overflow++; item.Flow.peer.Overflow++; } else { cancelled++; item.Flow.peer.Cancelled++; }
         if (item.Token.IsCancellationRequested) item.Completion?.TrySetCanceled(item.Token);
         else item.Completion?.TrySetException(new IOException(capacity ? "egress-queue-full" : "egress-flow-closed"));
@@ -101,18 +119,25 @@ public sealed class EgressPacer : IDisposable
     {
         if (wireBytes < packet.Length || wireBytes is < 28 or > MaximumDatagram || packet.Length == 0) throw new ArgumentOutOfRangeException(nameof(wireBytes));
         lock (gate) {
-            if (stopping || !flow.Alive || token.IsCancellationRequested) return false;
+            accounting.Offer(wireBytes); flow.accounting.Offer(wireBytes);
+            if (stopping || !flow.Alive || token.IsCancellationRequested) {
+                accounting.Reject(wireBytes, false); flow.accounting.Reject(wireBytes, false); return false;
+            }
             int ceiling = priority ? limit : limit - reserve;
             // A saturated peer cannot prevent a newly active peer from entering.
             // Evict only a data tail from a more heavily queued peer; no retries.
             while (bytes + wireBytes > ceiling) {
                 var victim = order.Where(p => p != flow.peer && p.Bytes > flow.peer.Bytes && p.Data.Count != 0).MaxBy(p => p.Bytes);
-                if (victim == null) { overflow++; flow.peer.Overflow++; return false; }
+                if (victim == null) {
+                    overflow++; flow.peer.Overflow++;
+                    accounting.Reject(wireBytes, true); flow.accounting.Reject(wireBytes, true); return false;
+                }
                 var tail = victim.Data.Last!; victim.Data.RemoveLast(); Drop(tail.Value, true);
             }
             bool wasEmpty = bytes == 0;
             var item = new Item(flow, packet.ToArray(), wireBytes, context, Stopwatch.GetTimestamp(), priority, token, completion);
             (priority ? flow.peer.Control : flow.peer.Data).AddLast(item);
+            accounting.Accept(wireBytes); flow.accounting.Accept(wireBytes);
             bytes += wireBytes; flow.peer.Bytes += wireBytes; peak = Math.Max(peak, bytes);
             if (wasEmpty) changed.Set(); return true;
         }
@@ -161,6 +186,7 @@ public sealed class EgressPacer : IDisposable
                             var p = item.Flow.peer;
                             (item.Priority ? p.Control : p.Data).RemoveFirst();
                             bytes -= item.Bytes; p.Bytes -= item.Bytes; tokens -= item.Bytes;
+                            accounting.Begin(item.Bytes); item.Flow.accounting.Begin(item.Bytes);
                             if (priority) { priorityTokens -= item.Bytes; priorityPackets++; }
                             else { p.Deficit -= item.Bytes; if (p.Deficit < (p.Data.First?.Value ?? p.Control.First?.Value)?.Bytes) cursor = (cursor + 1) % order.Count; }
                             double age = Stopwatch.GetElapsedTime(item.At).TotalMilliseconds; maximumAge = Math.Max(maximumAge, age);
@@ -177,7 +203,12 @@ public sealed class EgressPacer : IDisposable
                     if (!abandoned) try { success = item.Flow.send(item.Packet, item.Context); }
                     catch (Exception ex) { error = ex; }
                 }
+                // Cancellation can occur inside an already-started socket I/O.
+                // Count that explicit cancellation once, rather than calling it
+                // a network send failure because the pre-call check was false.
+                if (!success && error is OperationCanceledException && (item.Token.IsCancellationRequested || !item.Flow.Alive)) abandoned = true;
                 lock (gate) {
+                    accounting.Complete(item.Bytes, success, abandoned); item.Flow.accounting.Complete(item.Bytes, success, abandoned);
                     if (success) { sent += item.Bytes; item.Flow.peer.Sent += item.Bytes; item.Flow.peer.Packets++; }
                     else if (abandoned) { cancelled++; item.Flow.peer.Cancelled++; }
                     else { failures++; item.Flow.peer.Failures++; }
@@ -211,12 +242,14 @@ public sealed class EgressPacer : IDisposable
     public sealed class Flow : IDisposable
     {
         readonly EgressPacer owner;
+        internal readonly DatagramSendAccounting accounting = new();
         internal readonly Peer peer;
         internal readonly Func<ReadOnlyMemory<byte>, object?, bool> send;
         internal readonly object sendGate = new();
         volatile bool alive = true;
         internal bool Alive { get => alive; set => alive = value; }
         internal Flow(EgressPacer owner, Peer peer, Func<ReadOnlyMemory<byte>, object?, bool> send) { this.owner = owner; this.peer = peer; this.send = send; }
+        public DatagramQueueStats SendQueue => owner.Queue(this);
         public bool TrySend(ReadOnlySpan<byte> packet, int wireBytes, object? context = null, bool priority = false,
             CancellationToken token = default, TaskCompletionSource? completion = null)
             => owner.Enqueue(this, packet, wireBytes, context, priority, token, completion);

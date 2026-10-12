@@ -9,6 +9,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
 {
     public bool Degraded { get; init; }
     public PathRecoverySnapshot? Recovery { get; init; }
+    public DatagramQueueStats? SendQueue { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -113,7 +114,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
-                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64) };
+                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64),
+                    SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue };
         }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)

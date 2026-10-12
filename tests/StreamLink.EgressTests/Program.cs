@@ -20,6 +20,7 @@ try {
     await Lifetime();
     await UdpIo();
     await Churn();
+    rows.Add(new { sendQueues = await SendQueueTests.Run(Check, token) });
     if (priorityStudy) {
         for (int round = 1; round <= 3; round++)
             foreach (var priority in round % 2 == 1 ? new[] { ThreadPriority.Normal, ThreadPriority.AboveNormal } : new[] { ThreadPriority.AboveNormal, ThreadPriority.Normal })
@@ -69,7 +70,7 @@ async Task UdpIo()
     }
     using var failing = new PacedTraversalSocket(new TooLarge(), pacer, "mtu"); bool rejected = false;
     try { await failing.Send(new byte[1344], new(IPAddress.Loopback, 99), token); } catch (SocketException ex) when (ex.SocketErrorCode == SocketError.MessageSize) { rejected = true; }
-    Check(rejected, "PMTU MessageSize from actual send is propagated through queued control completion");
+    Check(rejected && failing.Failed, "PMTU MessageSize from actual send is propagated and exposes a fatal source failure");
 }
 
 async Task Churn()

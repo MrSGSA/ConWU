@@ -50,11 +50,15 @@ public sealed partial class UdpTraversal
             catch { references--; pathAttached = false; throw; }
         }
     }
-    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath
+    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath, IMeshSendDiagnostics
     {
         readonly UdpTraversal owner;
         readonly object gate = new();
-        readonly Channel<byte[]> sending = Channel.CreateBounded<byte[]>(new BoundedChannelOptions(128) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+        const int QueueBytes = 128 * ProbeSize;
+        sealed record PendingSend(byte[] Packet, long At);
+        readonly Channel<PendingSend>? sending;
+        readonly IQueuedTraversalSocket? sharedQueue;
+        readonly DatagramSendAccounting accounting = new();
         readonly CancellationTokenSource stop = new();
         readonly Task sender;
         Task? closing;
@@ -63,27 +67,60 @@ public sealed partial class UdpTraversal
         int failed;
         public ValidatedPathIdentity Identity { get; }
         public TraversalControlRound ControlRound { get; }
-        public bool Failed => Volatile.Read(ref failed) != 0 || owner.receiving.IsCompleted;
+        public bool Failed => Volatile.Read(ref failed) != 0 || owner.receiving.IsCompleted || sharedQueue?.Failed == true;
+        public DatagramQueueStats SendQueue {
+            get {
+                lock (gate) {
+                    if (sharedQueue != null) return sharedQueue.SendQueue;
+                    double age = sending!.Reader.TryPeek(out var first) ? Stopwatch.GetElapsedTime(first.At).TotalMilliseconds : 0;
+                    return new("UdpPath", "MeshDatagramBytes", QueueBytes, age, accounting.Snapshot());
+                }
+            }
+        }
         public UdpPath(UdpTraversal owner, ValidatedPathIdentity identity, TraversalControlRound round)
-        { this.owner = owner; Identity = identity; ControlRound = round; sender = Send(); }
+        {
+            this.owner = owner; Identity = identity; ControlRound = round;
+            sharedQueue = owner.socket as IQueuedTraversalSocket;
+            // A paced socket already owns the bounded shared egress queue. Do
+            // not place another 128 datagrams ahead of that queue or hide its
+            // admission rejection from the Router.
+            if (sharedQueue == null) sending = Channel.CreateBounded<PendingSend>(new BoundedChannelOptions(128) { SingleReader = true, FullMode = BoundedChannelFullMode.Wait });
+            sender = sending == null ? Task.CompletedTask : Send();
+        }
         async Task Send()
         {
             try {
-                await foreach (byte[] packet in sending.Reader.ReadAllAsync(stop.Token)) {
-                    try { await owner.SendPayloadCore(packet, stop.Token); }
+                await foreach (var item in sending!.Reader.ReadAllAsync(stop.Token)) {
+                    byte[] packet = item.Packet; bool success = false;
+                    lock (gate) accounting.Begin(packet.Length);
+                    try { await owner.SendPayloadCore(packet, stop.Token); success = true; }
                     catch (SocketException ex) when (ex.SocketErrorCode is SocketError.NoBufferSpaceAvailable or SocketError.WouldBlock or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) {
                         // Transient pressure/ICMP loses this datagram. Do not
                         // retransmit business or tear down an otherwise live path.
                     }
+                    finally { lock (gate) accounting.Complete(packet.Length, success, !success && stop.IsCancellationRequested); }
                 }
             }
             catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
-            catch { Interlocked.Exchange(ref failed, 1); sending.Writer.TryComplete(); }
+            catch { Interlocked.Exchange(ref failed, 1); sending!.Writer.TryComplete(); }
+            finally {
+                lock (gate) while (sending!.Reader.TryRead(out var remaining)) accounting.Drop(remaining.Packet.Length, false);
+            }
         }
         public bool TrySend(ReadOnlySpan<byte> packet)
         {
-            if (packet.Length is < 1 or > ProbeSize) return false;
-            lock (gate) return !disposed && !Failed && sending.Writer.TryWrite(packet.ToArray());
+            if (packet.Length is < 1 or > ProbeSize || packet.StartsWith("SLP2"u8) || packet.StartsWith("SLG3"u8)) return false;
+            lock (gate) {
+                if (sharedQueue != null) return !disposed && !Failed && sharedQueue.TrySend(packet, Identity.ActualRemote, stop.Token);
+                accounting.Offer(packet.Length);
+                if (disposed || Failed) { accounting.Reject(packet.Length, false); return false; }
+                // Include the in-flight datagram in this local memory ceiling.
+                if (accounting.PendingBytes + packet.Length > QueueBytes || accounting.PendingPackets >= 128 ||
+                    !sending!.Writer.TryWrite(new(packet.ToArray(), Stopwatch.GetTimestamp()))) {
+                    accounting.Reject(packet.Length, true); return false;
+                }
+                accounting.Accept(packet.Length); return true;
+            }
         }
         public async ValueTask<ReadOnlyMemory<byte>> Receive(CancellationToken token)
         {
@@ -109,7 +146,7 @@ public sealed partial class UdpTraversal
         }
         async Task Close()
         {
-            stop.Cancel(); sending.Writer.TryComplete();
+            stop.Cancel(); sending?.Writer.TryComplete();
             try { await sender; }
             finally {
                 Task read; lock (gate) read = readFinished?.Task ?? Task.CompletedTask;

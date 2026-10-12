@@ -79,6 +79,7 @@ static class NativeIpv6RunnerTests
         }
         check(wire.Endpoints.Values.All(io => io.Closed) && adapters.All(ad => ad.Disposed), mode + ": shutdown joins actual capture/worker owners before resource release");
         if (paced) check(factories.All(f => f.Egress?.QueuedBytes == 0), mode + ": pacing closes without retaining a worker or queued packet");
+        if (paced) check(factories.All(f => f.Egress?.Accounting is { Conserved: true, Queued.Packets: 0, InFlight.Packets: 0 }), mode + ": final native broker egress accounts for every local raw submission");
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, wire.Packets, wire.MaximumBytes,
             paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(),
             wireControl = factories.Select(f => f.Transports.Select(p => p.WireControl)).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
