@@ -32,13 +32,19 @@ internal sealed partial class MeshCandidateFactory
     void StartCalibration(IPAddress source, IPEndPoint reflector, MeshMember peer)
     {
         int peerSlot = peer.Slot;
-        if (calibrationStarted || CalibratedTcpModel != null || !options.TcpSynObservation || observer == null || observationBudget == null || observationStop.IsCancellationRequested ||
+        if (calibrationStarted || !calibrationTask.IsCompleted || CalibratedTcpModel != null || !options.TcpSynObservation || observer == null || observationBudget == null || observationStop.IsCancellationRequested ||
             peerSlot == calibrationPeerSlot && Volatile.Read(ref calibrationBusy) != 0) return;
         calibrationStarted = true;
         Volatile.Write(ref calibrationPeerSlot, peerSlot);
         SetCalibrationBusy(true); // wait for a Router status for this target
         calibrationTask = Task.Run(async () => {
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(observationStop.Token);
+            var epoch = operationEpoch.Value!;
+            // Take this reference in the task before using its cancellation
+            // source. An epoch retired before the task starts is rejected.
+            IDisposable? epochReference = null;
+            try { epochReference = HoldEpoch(epoch); } catch (IOException) { return; }
+            using var heldEpoch = epochReference;
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(observationStop.Token, epoch.Stop.Token);
             deadline.CancelAfter(TraversalLimits.CalibrationDeadlineMs); var token = deadline.Token;
             var windows = new List<PortAllocationWindow>(); var raw = new List<TcpShapeObservation[]>();
             var sourceTuples = new HashSet<string>();
@@ -95,7 +101,7 @@ internal sealed partial class MeshCandidateFactory
                 }
                 token.ThrowIfCancellationRequested();
                 if (Volatile.Read(ref calibrationBusy) != 0) throw new OperationCanceledException("Business path became available");
-                CalibratedTcpModel = NatPortPrediction.Fit(windows, out qualification);
+                lock (networkGate) { RequireEpoch(epoch); CalibratedTcpModel = NatPortPrediction.Fit(windows, out qualification); }
                 state = qualification.State; reason = qualification.Reason;
             } catch (OperationCanceledException) {
                 state = observationStop.IsCancellationRequested ? "Cancelled" : Volatile.Read(ref calibrationBusy) != 0 ? "BusinessPathAvailable" : "BudgetExhausted";
@@ -105,15 +111,15 @@ internal sealed partial class MeshCandidateFactory
             } finally {
                 try {
                     Directory.CreateDirectory(root);
-                    await File.WriteAllTextAsync(Path.Combine(root, "tcp-port-calibration.json"), JsonSerializer.Serialize(new {
-                        state, reason, windows, raw, qualification, candidateEnabled = false,
-                        predictionRequested = options.TcpPortPrediction, predictionEligible = SupportsTcpPrediction && CalibratedTcpModel != null,
+                    SaveEpochReport(epoch,"tcp-port-calibration.json", JsonSerializer.Serialize(new {
+                        networkGeneration=epoch.Id,state, reason, windows, raw, qualification, candidateEnabled = false,
+                        predictionRequested = options.TcpPortPrediction, predictionEligible = epoch.Id==CurrentGeneration&&SupportsTcpPrediction && CalibratedTcpModel != null,
                         backgroundEvidence = "observed extra native SYN destination, NOT confirmed allocation count",
                         scope = "actual independent local sources; no peer handshake or reachability proof"
                     }, new JsonSerializerOptions { WriteIndented = true }));
                 } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { observationLog?.Invoke("TCP 校准记录保存失败：" + ex.GetType().Name); }
                 observationLog?.Invoke($"TCP 端口校准结束：{state}；已记录 {windows.Count} 个独立窗口；可进入预测协商={SupportsTcpPrediction && CalibratedTcpModel != null}，校准本身未建立路径");
-                if (state == "BusinessPathAvailable") lock (observationGate) { calibrationInterrupted = Stopwatch.GetTimestamp(); calibrationStarted = false; }
+                if (state == "BusinessPathAvailable" && epoch.Id == CurrentGeneration) lock (observationGate) { calibrationInterrupted = Stopwatch.GetTimestamp(); calibrationStarted = false; }
             }
         });
     }

@@ -199,6 +199,7 @@ static class NativeIpv6RunnerTests
     }
     internal sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
+        public bool PollNetworkChange() => inner.PollNetworkChange();
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
         public readonly ConcurrentQueue<NativeDatagramPath> Transports = [];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;

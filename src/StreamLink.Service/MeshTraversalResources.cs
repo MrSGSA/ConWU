@@ -22,6 +22,7 @@ internal interface IMeshCandidateResource : IAsyncDisposable
 }
 internal interface IMeshCandidateFactory
 {
+    bool PollNetworkChange() => false;
     TraversalProfile[] Profiles { get; }
     bool SupportsUdpIpv6 => false;
     bool SupportsFakeTcpIpv6 => false;
@@ -81,7 +82,6 @@ internal sealed class MeshRequestBudget(int burst = 6)
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
     TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false,bool diagnosticNative=false) : IMeshCandidateFactory, IAsyncDisposable
 {
-    readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
     readonly bool countWireControl = wireControl && captureBroker;
     readonly bool diagnosticTransport=diagnosticNative&&wireControl&&captureBroker&&profile.ManagedEgressMbps>0;
@@ -99,8 +99,11 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
         (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     internal Func<IPAddress[]> GatewaySources { get; init; } = PortControlRoute.LocalSources;
-    MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
-        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer, time: EndpointTimeForTest); } }
+    MeshTcpEndpointPool Pool { get { lock (poolGate) {
+        if (operationEpoch.Value is {} epoch) RequireEpoch(epoch);
+        return pool ??= new(generation,
+            (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer, time: EndpointTimeForTest);
+    } } }
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
@@ -153,12 +156,12 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
-        if (RouteCheckForTest != null) { RouteCheckForTest(endpoint, expected, gatewayCandidate); return; }
+        if (RouteCheckForTest != null) { RouteCheckForTest(endpoint, expected, gatewayCandidate); TrackRoute(endpoint); return; }
         if (endpoint.AddressFamily == AddressFamily.InterNetworkV6) {
             if (gatewayCandidate || !Ipv6Direct.Global(endpoint.Address) || endpoint.Port == 0) throw new IOException("候选不是原生全局 IPv6 单播地址");
             var source = Stun.LocalAddress(endpoint);
             if (expected != null && !source.Equals(expected) || !Ipv6Direct.SourceReady(source)) throw new IOException("IPv6 物理出口或保留的源地址已失效");
-            return;
+            TrackRoute(endpoint); return;
         }
         if (gatewayCandidate && !PortControlRoute.GlobalV4(endpoint.Address)) throw new IOException("UDP 网关只返回内层地址，未推断外层 CGN 可达");
         byte[] ip = endpoint.Address.GetAddressBytes();
@@ -173,11 +176,12 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             (nic.Name + " " + nic.Description).Contains("StreamLink", StringComparison.OrdinalIgnoreCase) ||
             nic.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase) || nic.Description.Contains("EasyTier", StringComparison.OrdinalIgnoreCase))
             throw new IOException("未找到可用的直接出口，避免依赖其他组网承载");
+        TrackRoute(endpoint);
     }
     public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
         => GatherForPeer(peer, kind, attempt, false, null, 1, token);
     public Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile kind, Guid attempt,
-        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => GatherScoped(peer, kind, attempt, allowIpv6, remote, round, false, token);
+        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => GatherCurrent(ct => GatherScoped(peer, kind, attempt, allowIpv6, remote, round, false, ct), token);
     async Task<IMeshCandidateResource> GatherScoped(MeshMember peer, TraversalProfile kind, Guid attempt,
         bool allowIpv6, IPEndPoint? remote, int round, bool peerSource, CancellationToken token, bool standby = false)
     {
@@ -310,5 +314,11 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             if (udp != null && !prepared) await udp.DisposeAsync(); // Prepared owns original UDP reference after transfer.
         }
     }
-    public async ValueTask DisposeAsync() { try { await StopObservation(); } finally { try { if (pool != null) await pool.DisposeAsync(); } finally { pacer?.Dispose(); } } }
+    Task? disposal;
+    public ValueTask DisposeAsync() { lock (poolGate) return new(disposal ??= CloseFactory()); }
+    async Task CloseFactory() {
+        BeginNetworkClose();
+        try { await StopObservation(); }
+        finally { try { if (pool != null) await pool.DisposeAsync(); } finally { try { await CloseNetworkScopes(); } finally { pacer?.Dispose(); } } }
+    }
 }

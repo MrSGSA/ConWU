@@ -16,7 +16,10 @@ internal sealed partial class MeshCandidateFactory
     public Task<IMeshCandidateResource> GatherCoordinated(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, CancellationToken token) =>
         GatherSourceAware(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, false, token);
-    public async Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+    public Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token) =>
+        GatherCurrent(ct => GatherSourceAwareCurrent(peer,profile,attempt,allowIpv6,remote,round,predictionAllowed,peerSourceAllowed,ct),token);
+    async Task<IMeshCandidateResource> GatherSourceAwareCurrent(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token)
     {
         bool requested = remote?.Prediction != null;

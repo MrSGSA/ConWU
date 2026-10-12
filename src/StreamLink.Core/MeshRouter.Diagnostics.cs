@@ -2,6 +2,16 @@ namespace StreamLink.Core;
 
 public sealed partial class MeshRouter
 {
+    public void InvalidateNetworkEvidence()
+    {
+        lock (gate) foreach (var peer in peers.Values) if (peer.Managed is {} managed) {
+            managed.Diagnostic?.Cancel("NetworkScopeChanged");
+            managed.Agreement = null;
+            if (managed.Quality is {} quality) managed.Quality = quality with {
+                CandidateQualified = false, StableBenefit = false, Result = "QualityUnknown", Reason = "NetworkScopeChanged"
+            };
+        }
+    }
     readonly PathDiagnosticResources diagnosticResources=new();
     readonly HashSet<Task> diagnosticTasks=[];
     bool DiagnosticIdle(long now,int horizon)=>!peers.Values.Any(p=>p.Managed?.Active?.Traffic.BusyWithin(now,horizon)==true);

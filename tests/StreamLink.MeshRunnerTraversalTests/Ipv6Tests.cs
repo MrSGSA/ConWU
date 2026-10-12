@@ -292,7 +292,7 @@ static class Ipv6Tests
         public bool Write(byte[] p) { Incoming.Enqueue(p); return true; }
         public void Dispose() { Disposed = true; Outgoing.Dispose(); }
     }
-    sealed class Reflector : IAsyncDisposable
+    internal sealed class Reflector : IAsyncDisposable
     {
         readonly UdpClient udp, blackhole; readonly CancellationTokenSource stop = new(); readonly Task run;
         public bool BlackholeMappings; public int Count;

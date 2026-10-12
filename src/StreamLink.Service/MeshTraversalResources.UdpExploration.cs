@@ -15,6 +15,9 @@ internal sealed partial class MeshCandidateFactory
     public bool SupportsUdpExploration => options.UdpExploration && options.TraversalMode == "tcp-udp" &&
         options.Selection().Allows(TraversalProfile.UdpDirect) && Profiles.Contains(TraversalProfile.UdpDirect);
     public Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token) =>
+        GatherCurrent(ct => GatherEnhancedCurrent(peer,profile,attempt,allowIpv6,remote,round,predictionAllowed,peerSourceAllowed,explorationAllowed,stillEligible,ct),token);
+    Task<IMeshCandidateResource> GatherEnhancedCurrent(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token)
     {
         if (remote?.Exploration != null && (!explorationAllowed || !SupportsUdpExploration || profile != TraversalProfile.UdpDirect ||

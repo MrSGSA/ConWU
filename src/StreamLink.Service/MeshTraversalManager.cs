@@ -102,6 +102,17 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
     public void Tick(IReadOnlyDictionary<int, MeshAnnouncement> announcements, string localExplicit)
     {
         if (disposed) return;
+        if (factory.PollNetworkChange()) {
+            router.InvalidateNetworkEvidence();
+            foreach (var e in entries.Values.ToArray())
+                if (e.Actor?.Phase != MeshAttemptPhase.Selected) Fail(e, "实际出口代次已变化，重新收集候选", PredictionOutcome.Cancelled);
+            // Retain selected actors and their exact capture/socket ownership.
+            // Old sequence history remains, so delayed controls cannot restart
+            // a cancelled attempt by being delivered after the route change.
+            inbox.Clear(); opportunities.Clear(); retryAt.Clear(); explicitPriority.Clear();
+            failures.Clear(); degradedSince.Clear(); upgradeAt.Clear();
+            log("检测到实际出口变化：重新探测打洞候选，已有直连继续验证健康");
+        }
         long now = Environment.TickCount64, utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).OrderBy(m => m.Slot).ToArray() ?? [];
         var statuses = router.Status().ToDictionary(s => s.Slot);

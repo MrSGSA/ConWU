@@ -28,7 +28,7 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 // uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
-public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath, IPathDiagnosticWire
+public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath, IPathDiagnosticWire, IPathResourceLifetime
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
     readonly object gate = new();
@@ -247,7 +247,13 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     }
     public ValueTask DisposeAsync()
     {
-        lock (gate) { if (closing != null) return new(closing); disposed = true; closing = Close(); return new(closing); }
+        lock (gate) { if (closing != null) return new(closing); disposed = true; closing = ReleaseResource(); return new(closing); }
+    }
+    readonly TaskCompletionSource resourceReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public Task ResourceReleased => resourceReleased.Task;
+    async Task ReleaseResource() {
+        try { await Close(); resourceReleased.TrySetResult(); }
+        catch (Exception ex) { resourceReleased.TrySetException(ex); throw; }
     }
     async Task Close()
     {

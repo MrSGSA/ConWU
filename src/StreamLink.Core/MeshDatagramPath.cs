@@ -1,5 +1,9 @@
 namespace StreamLink.Core;
 
+// Completion means the path has joined its I/O and released its own resource
+// references. A failed close stays observable and is not ownership proof.
+public interface IPathResourceLifetime { Task ResourceReleased { get; } }
+
 // A retained resource reference transferred to MeshRouter on successful
 // registration. Exactly one Receive consumer; disposal must release only this
 // reference, not the owning attempt or another peer's reference.

@@ -1,4 +1,4 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.4',[switch]$IncludeLegacy)
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.5',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
@@ -96,6 +96,8 @@ try {
             & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/$case-$releaseVersion.json") "--$case-only"
             if($LASTEXITCODE -ne 0){throw "Formal $case regression failed"}
         }
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/network-scope-$releaseVersion.json") --network-only
+        if($LASTEXITCODE -ne 0) {throw 'Network epoch / stale candidate / retained path ownership regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-endpoint-pool-$releaseVersion.json") --pool-only
         if($LASTEXITCODE -ne 0) {throw 'Shared TCP source observation / cancellation isolation regression failed'}
         & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")

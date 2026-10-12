@@ -170,9 +170,11 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
             foreach (var node in nodes) await node.DisposeAsync();
         } finally { expansion.Dispose(); admission.Dispose(); stop.Dispose(); Release(); }
     }
-    sealed class PathReference(UdpProbabilityPreparation owner, IMeshDatagramPath path) : IMeshDatagramPath, ITraversalControlledPath
+    sealed class PathReference(UdpProbabilityPreparation owner, IMeshDatagramPath path) : IMeshDatagramPath, ITraversalControlledPath,IPathResourceLifetime
     {
         int disposed;
+        readonly TaskCompletionSource resourceReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task ResourceReleased => resourceReleased.Task;
         public ValidatedPathIdentity Identity => path.Identity;
         public bool Failed => path.Failed;
         public TraversalControlRound ControlRound => ((ITraversalControlledPath)path).ControlRound;
@@ -180,7 +182,8 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
         public ValueTask<ReadOnlyMemory<byte>> Receive(CancellationToken token) => path.Receive(token);
         public async ValueTask DisposeAsync() {
             if (Interlocked.Exchange(ref disposed, 1) != 0) return;
-            try { await path.DisposeAsync(); } finally { owner.Release(); }
+            try { try { await path.DisposeAsync(); } finally { owner.Release(); } resourceReleased.TrySetResult(); }
+            catch (Exception ex) { resourceReleased.TrySetException(ex); throw; }
         }
     }
 }

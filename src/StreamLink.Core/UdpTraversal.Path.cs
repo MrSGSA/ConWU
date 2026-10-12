@@ -50,7 +50,7 @@ public sealed partial class UdpTraversal
             catch { references--; pathAttached = false; throw; }
         }
     }
-    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath, IMeshSendDiagnostics,IPathDiagnosticWire
+    sealed class UdpPath : IMeshDatagramPath, ITraversalControlledPath, IMeshSendDiagnostics,IPathDiagnosticWire,IPathResourceLifetime
     {
         readonly UdpTraversal owner;
         readonly object gate = new();
@@ -150,8 +150,14 @@ public sealed partial class UdpTraversal
         {
             lock (gate) {
                 if (closing != null) return new(closing);
-                disposed = true; closing = Close(); return new(closing);
+                disposed = true; closing = ReleaseResource(); return new(closing);
             }
+        }
+        readonly TaskCompletionSource resourceReleased = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public Task ResourceReleased => resourceReleased.Task;
+        async Task ReleaseResource() {
+            try { await Close(); resourceReleased.TrySetResult(); }
+            catch (Exception ex) { resourceReleased.TrySetException(ex); throw; }
         }
         async Task Close()
         {

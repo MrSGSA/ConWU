@@ -5,7 +5,9 @@ namespace StreamLink.Service;
 
 internal sealed partial class MeshCandidateFactory
 {
-    public async Task<IMeshCandidateResource> GatherStandby(MeshMember peer,TraversalProfile profile,Guid attempt,bool allowIpv6,
+    public Task<IMeshCandidateResource> GatherStandby(MeshMember peer,TraversalProfile profile,Guid attempt,bool allowIpv6,
+        MeshTraversalCandidate? remote,CancellationToken token) => GatherCurrent(ct => GatherStandbyCurrent(peer,profile,attempt,allowIpv6,remote,ct), token);
+    async Task<IMeshCandidateResource> GatherStandbyCurrent(MeshMember peer,TraversalProfile profile,Guid attempt,bool allowIpv6,
         MeshTraversalCandidate? remote,CancellationToken token)
     {
         if (!SupportsStandbyProfile(profile) || remote != null && (!remote.Standby || remote.Prediction != null || remote.PeerReflexive || remote.Exploration != null))
