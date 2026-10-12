@@ -1,4 +1,4 @@
-param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.2',[switch]$IncludeLegacy)
+param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.3',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
