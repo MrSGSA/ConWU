@@ -31,6 +31,75 @@ std::string capture_descriptor;
 std::atomic<unsigned long long> suppressed_outbound{0};
 std::atomic<DWORD> reader_error{0};
 std::atomic<unsigned long long> queue_drops{0};
+// Local, opt-in cumulative telemetry only; no public packet/profile changes.
+// Broker workers already report at the parent injection point, so exclude them.
+std::string wire_report_id;
+unsigned long long wire_counts[5]{}, wire_bytes[5]{}, wire_failures=0, wire_report_sequence=0;
+std::atomic<unsigned long long> wire_received{0}, wire_received_bytes{0};
+unsigned long long wire_report_at=0, wire_source_changes=0;
+std::string wire_source="Unknown";
+struct wire_reporter {
+    std::mutex gate;
+    std::string latest;
+    HANDLE wake=CreateEventW(nullptr,FALSE,FALSE,nullptr);
+};
+wire_reporter *reports=nullptr; // bounded process-lifetime state, no packet payload
+DWORD WINAPI report_worker(void *state) {
+    auto &r=*static_cast<wire_reporter *>(state);
+    while(WaitForSingleObject(r.wake,INFINITE)==WAIT_OBJECT_0) {
+        std::string line;
+        {std::lock_guard<std::mutex> lock(r.gate);line.swap(r.latest);}
+        if(line.empty())continue;
+        // A slow log sink blocks ONLY this worker. Producers coalesce at most
+        // one newer cumulative snapshot; the protocol event loop never writes
+        // or waits on stdout. Parent JobObject teardown owns process exit.
+        DWORD written=0;
+        if(!WriteFile(GetStdHandle(STD_OUTPUT_HANDLE),line.data(),static_cast<DWORD>(line.size()),&written,nullptr))return 0;
+    }
+    return 0;
+}
+void initialize_reports() {
+    if(reports||wire_report_id.empty()||native_broker_mode())return;
+    auto *r=new wire_reporter;
+    if(!r->wake){delete r;wire_report_id.clear();return;}
+    HANDLE worker=CreateThread(nullptr,0,report_worker,r,0,nullptr);
+    if(!worker){CloseHandle(r->wake);delete r;wire_report_id.clear();return;}
+    CloseHandle(worker);reports=r;
+}
+void emit_wire_report(bool final=false) {
+    if(wire_report_id.empty() || native_broker_mode()) return;
+    auto now=GetTickCount64();
+    if(!final && wire_report_sequence && now-wire_report_at<1000) return;
+    wire_report_at=now; ++wire_report_sequence;
+    if(!reports)return;
+    char text[1024]{};
+    int size=snprintf(text,sizeof(text),"SLW1 %s %llu %s %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu %u\n",
+        wire_report_id.c_str(),wire_report_sequence,wire_source.c_str(),wire_source_changes,
+        wire_counts[0],wire_bytes[0],wire_counts[1],wire_bytes[1],wire_counts[2],wire_bytes[2],
+        wire_counts[3],wire_bytes[3],wire_counts[4],wire_bytes[4],wire_failures,
+        wire_received.load(),wire_received_bytes.load(),queue_drops.load(),suppressed_outbound.load(),final?1:0);
+    if(size<=0 || size>=static_cast<int>(sizeof(text)))return;
+    {std::lock_guard<std::mutex> lock(reports->gate);reports->latest.assign(text,size);}
+    SetEvent(reports->wake);
+}
+void count_wire_send(const char *packet,int length,bool accepted) {
+    if(wire_report_id.empty() || native_broker_mode()) return;
+    if(!accepted) { ++wire_failures; emit_wire_report(); return; }
+    unsigned kind=static_cast<unsigned>(native_wire_current());
+    if(kind>4)kind=0;
+    ++wire_counts[kind];wire_bytes[kind]+=length;
+    if(length>=40 && (static_cast<unsigned char>(packet[0])>>4)==4) {
+        unsigned ihl=(static_cast<unsigned char>(packet[0])&15)*4;
+        if(ihl>=20 && ihl+4<=static_cast<unsigned>(length)) {
+            char ip[16]{};inet_ntop(AF_INET,packet+12,ip,sizeof(ip));
+            unsigned port=(static_cast<unsigned char>(packet[ihl])<<8)|static_cast<unsigned char>(packet[ihl+1]);
+            std::string source=std::string(ip)+":"+std::to_string(port);
+            if(wire_source=="Unknown")wire_source=source;
+            else if(wire_source!=source)++wire_source_changes;
+        }
+    }
+    emit_wire_report();
+}
 
 #ifdef UDP2RAW_TEST_IO
 SOCKET test_socket = INVALID_SOCKET;
@@ -38,6 +107,7 @@ sockaddr_in test_peer{};
 #endif
 
 void stop_capture() {
+    bool observed_window=reader.joinable();
     stopping.store(true);
     const bool broker_reader=native_broker_mode() && reader.joinable();
     if(broker_reader) native_broker_shutdown();
@@ -49,6 +119,7 @@ void stop_capture() {
     if (handle != INVALID_HANDLE_VALUE) wd_shutdown(handle, WINDIVERT_SHUTDOWN_BOTH);
 #endif
     if (reader.joinable()) reader.join();
+    if(observed_window)emit_wire_report(true);
     if(broker_reader) native_broker_close();
 #ifdef UDP2RAW_TEST_IO
     test_socket = INVALID_SOCKET;
@@ -132,6 +203,7 @@ void capture() {
 #endif
         }
         if (length == 0 || length > huge_data_len) continue;
+        if(!wire_report_id.empty() && !native_broker_mode()){++wire_received;wire_received_bytes+=length;}
         pthread_mutex_lock(&queue_mutex);
         if (!my_queue.full()) my_queue.push_back(packet, length);
         else ++queue_drops;
@@ -168,6 +240,11 @@ int init_raw_socket() {
 
 void init_filter(int port) {
     if (port <= 0 || port > 65535) fail("invalid native filter port");
+    if(wire_report_id.empty()) {
+        const char *id=getenv("STREAMLINK_LEGACY_WIRE_ID");
+        if(id && strlen(id)==32 && strspn(id,"0123456789abcdef")==32) wire_report_id=id;
+    }
+    initialize_reports();
     // Compare the whole capture description, not just the local port. No
     // overlapping old/new handles: retire the previous capture before reopening.
     std::string descriptor=std::to_string(port)+"/"+std::to_string(raw_mode)+"/"+std::to_string(program_mode)+
@@ -261,7 +338,8 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     if (!native_attachment_packet(packet,length)) return -1;
     if(native_broker_mode()) return native_broker_send(packet,length);
 #ifdef UDP2RAW_TEST_IO
-    return send(test_socket, packet, length, 0) == length ? 0 : -1;
+    bool accepted=send(test_socket, packet, length, 0)==length;
+    count_wire_send(packet,length,accepted);return accepted?0:-1;
 #else
     if (handle == INVALID_HANDLE_VALUE) return -1;
     WINDIVERT_ADDRESS address{};
@@ -271,9 +349,11 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     address.UDPChecksum = 1;
     UINT sent = 0;
     if (!wd_send(handle, packet, length, &sent, &address) || sent != static_cast<UINT>(length)) {
+        count_wire_send(packet,length,false);
         mylog(log_warn, "WinDivertSend failed, error=%lu\n", GetLastError());
         return -1;
     }
+    count_wire_send(packet,length,true);
     return 0;
 #endif
 }

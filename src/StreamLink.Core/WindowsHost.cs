@@ -25,6 +25,8 @@ public sealed class ChildJob : IDisposable
         { if (handle != IntPtr.Zero) CloseHandle(handle); throw new IOException("无法建立子进程生命周期约束"); }
     }
     public Process Start(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment = null, IEnumerable<string>? secrets = null)
+        => StartObserved(exe,args,logPath,environment,secrets,null);
+    internal Process StartObserved(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment, IEnumerable<string>? secrets, Action<string>? observe)
     {
         var info = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(exe)!, RedirectStandardOutput = true, RedirectStandardError = true };
         foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("ET_", StringComparison.Ordinal) || k.StartsWith("STREAMLINK_", StringComparison.Ordinal)).ToArray()) info.Environment.Remove(key);
@@ -37,7 +39,11 @@ public sealed class ChildJob : IDisposable
         var writer = logPath == null ? null : new StreamWriter(logPath, false) { AutoFlush = true };
         string[] redactions = (secrets ?? []).Where(x => x.Length > 0).Distinct().OrderByDescending(x => x.Length).ToArray();
         var sync = new object();
-        void Record(object sender, DataReceivedEventArgs e) { if(e.Data != null) lock(sync) { try { string line = e.Data; foreach (string secret in redactions) line = line.Replace(secret, "[redacted]", StringComparison.Ordinal); writer?.WriteLine(line); } catch(Exception ex) when (ex is ObjectDisposedException or IOException) { } } }
+        void Record(object sender, DataReceivedEventArgs e) { if(e.Data != null) lock(sync) {
+            observe?.Invoke(e.Data);
+            try { string line = e.Data; foreach (string secret in redactions) line = line.Replace(secret, "[redacted]", StringComparison.Ordinal); writer?.WriteLine(line); }
+            catch(Exception ex) when (ex is ObjectDisposedException or IOException) { }
+        } }
         process.OutputDataReceived += Record; process.ErrorDataReceived += Record;
         process.EnableRaisingEvents = true; process.Exited += (_, _) => { lock(sync) writer?.Dispose(); };
         process.BeginOutputReadLine(); process.BeginErrorReadLine(); return process;

@@ -64,6 +64,7 @@ native_wire_kind native_wire_classify(char type,const char *data,int length) {
 }
 native_wire_scope::native_wire_scope(native_wire_kind kind):previous(wire_kind) { wire_kind=kind; }
 native_wire_scope::~native_wire_scope() { wire_kind=previous; }
+native_wire_kind native_wire_current() { return wire_kind; }
 bool native_broker_mode() { return enabled; }
 int native_broker_receive(char *packet,unsigned capacity) {
     unsigned char prefix[4]; if(!exact(prefix,4,false,INFINITE)) return -1;

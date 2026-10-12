@@ -3,11 +3,18 @@ using System.Diagnostics;
 namespace StreamLink.Core;
 
 public sealed record LegacyTransportResource(Guid ResourceId, string Mode, bool Server, string Listener,
-    string Target, Guid HelperResourceId, int ProcessId, string State, bool RetirementRequested);
+    string Target, Guid HelperResourceId, int ProcessId, string State, bool RetirementRequested)
+{
+    public LegacyWireReport? Wire { get; init; }
+}
 public sealed record LegacyTransportUsage(int OpenResources, int Limit, int PeakResources, long Created,
     LegacyTransportResource[] Resources)
 {
-    public string Scope => "Compatibility native process/listener resources; client raw source and packet totals remain uninstrumented";
+    public int ActiveReportedResources { get; init; }
+    public int ActiveUnreportedResources { get; init; }
+    public long ActiveKnownInjectionPackets { get; init; }
+    public long ActiveKnownInjectionBytes { get; init; }
+    public string Scope => "Compatibility native resources with optional successful-injection counters; missing snapshots, peer kernel overhead and physical delivery remain unknown";
     public bool CompleteWireAudit => false;
 }
 
@@ -35,12 +42,30 @@ public sealed class LegacyTransportLedger
     {
         foreach(var h in resources.Values.Where(h=>h.Value.RetirementRequested).ToArray())if(h.Gone())h.Complete();
     }
-    public LegacyTransportUsage Snapshot(){lock(gate){Reap();return new(resources.Count,CompatibilityLimit,peak,created,resources.Values.Select(h=>h.Value).Concat(history.TakeLast(4)).ToArray());}}
+    public LegacyTransportUsage Snapshot(){lock(gate){Reap();
+        var reports=resources.Values.Select(h=>h.Value.Wire).Where(w=>w!=null).ToArray();
+        return new(resources.Count,CompatibilityLimit,peak,created,resources.Values.Select(h=>h.Value).Concat(history.TakeLast(4)).ToArray()){
+            ActiveReportedResources=reports.Length,ActiveUnreportedResources=resources.Count-reports.Length,
+            ActiveKnownInjectionPackets=reports.Sum(w=>w!.HandshakePackets+w.MaintenancePackets+w.BusinessPackets+w.CompletionPackets+w.DiagnosticPackets),
+            ActiveKnownInjectionBytes=reports.Sum(w=>w!.HandshakeBytes+w.MaintenanceBytes+w.BusinessBytes+w.CompletionBytes+w.DiagnosticBytes)
+        };
+    }}
     internal sealed class Handle(LegacyTransportLedger owner,LegacyTransportResource value):IDisposable
     {
         internal LegacyTransportResource Value=value;
         long processStart;
         bool completed;
+        internal Guid ResourceId=>Value.ResourceId;
+        internal void WireLine(string line)
+        {
+            if(!LegacyWireReport.TryParse(line,Value.ResourceId,out var next))return;
+            lock(owner.gate){
+                if(completed||Value.Wire is{}old&&(next!.Sequence<=old.Sequence||
+                    old.FirstObservedSource!="Unknown"&&next.FirstObservedSource!=old.FirstObservedSource||
+                    old.Counters().Zip(next.Counters()).Any(p=>p.First>p.Second)))return;
+                Value=Value with{Wire=next};
+            }
+        }
         internal void Started(Process child){lock(owner.gate){
             if(completed)throw new ObjectDisposedException(nameof(Handle));
             Value=Value with{ProcessId=child.Id,State="IdentityPending"};

@@ -63,7 +63,7 @@ def corrupt_authenticated_payload(packet):
 
 
 class Tunnel:
-    def __init__(self, http=True, wrong_key=False, raw_mode="faketcp", udp_shape=False):
+    def __init__(self, http=True, wrong_key=False, raw_mode="faketcp", udp_shape=False, wire_ids=None, closed_report_sink=False):
         self.directory = tempfile.TemporaryDirectory(prefix="streamlink-protocol-")
         self.path = Path(self.directory.name)
         self.stop = threading.Event()
@@ -88,6 +88,8 @@ class Tunnel:
             self.client_app = free_port()
             self.server_raw = free_port(socket.SOCK_DGRAM if raw_mode == "udp" else socket.SOCK_STREAM)
             common = [f"--raw-mode {raw_mode}", "--fix-gro", "--seq-mode 3", "--hb-mode 0", "--log-level 4"]
+            if closed_report_sink:
+                common[-1] = "--log-level 0"
             if http:
                 common.append("--fake-http test.ustc.edu.cn")
             server = ["-s", f"-l 127.0.0.1:{self.server_raw}", f"-r 127.0.0.1:{self.echo.getsockname()[1]}", f"-k {self.key}"] + common
@@ -101,9 +103,15 @@ class Tunnel:
                 log = (self.path / f"{name}.log").open("wb")
                 self.files.append(log)
                 env = dict(os.environ, STREAMLINK_TEST_BIND=str(port), STREAMLINK_TEST_PEER=str(peer))
+                env.pop('STREAMLINK_LEGACY_WIRE_ID', None)
+                if wire_ids is not None:
+                    env['STREAMLINK_LEGACY_WIRE_ID'] = wire_ids[name]
                 env['STREAMLINK_UDP_SHAPE'] = 'stun' if udp_shape else ''
                 self.processes.append(subprocess.Popen([str(EXE), "--conf-file", str(config_file)],
-                    stdout=log, stderr=subprocess.STDOUT, env=env, creationflags=subprocess.CREATE_NO_WINDOW))
+                    stdout=subprocess.PIPE if closed_report_sink else log,
+                    stderr=log if closed_report_sink else subprocess.STDOUT, env=env, creationflags=subprocess.CREATE_NO_WINDOW))
+                if closed_report_sink:
+                    self.processes[-1].stdout.close()
             self.thread = threading.Thread(target=self.pump, daemon=True)
             self.thread.start()
             self.app = udp_socket()

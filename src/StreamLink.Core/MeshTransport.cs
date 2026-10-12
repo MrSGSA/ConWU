@@ -38,8 +38,9 @@ public sealed class MeshTransport : IMeshTransport
             if (profile.Pair.Mode == "faketcp") config += "--fake-http test.ustc.edu.cn\n";
             File.WriteAllText(configuration, config);
             var environment = new Dictionary<string, string> { ["STREAMLINK_ALLOW_DRIVER_INSTALL"] = "1" };
+            environment["STREAMLINK_LEGACY_WIRE_ID"]=accounting.ResourceId.ToString("N");
             if (server && mapping is UdpMapping udp) { environment["STREAMLINK_UDP_SHARED_BIND"] = "1"; environment["STREAMLINK_STUN_ENDPOINT"] = udp.StunEndpoint.ToString(); }
-            var child = job.Start(Path.Combine(components, "udp2raw-native.exe"), ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment, [ticket.RawKey, ticket.Secret]);
+            var child = job.StartObserved(Path.Combine(components, "udp2raw-native.exe"), ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment, [ticket.RawKey, ticket.Secret],accounting.WireLine);
             accounting.Started(child);
         } catch { Dispose(); throw; }
     }

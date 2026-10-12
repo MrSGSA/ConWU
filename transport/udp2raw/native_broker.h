@@ -3,6 +3,7 @@
 // Local pipe metadata only. Public TCP bytes and sequence behaviour stay intact.
 enum class native_wire_kind : unsigned { handshake=0, maintenance=1, business=2, completion=3, diagnostic=4 };
 native_wire_kind native_wire_classify(char type, const char *data, int length);
+native_wire_kind native_wire_current();
 struct native_wire_scope {
     native_wire_kind previous;
     explicit native_wire_scope(native_wire_kind kind);
