@@ -7,7 +7,9 @@ namespace StreamLink.Service;
 
 internal sealed partial class MeshCandidateFactory
 {
-    static readonly SemaphoreSlim calibrationAdmission = new(1, 1);
+    internal TraversalEnhancementScheduler? EnhancementAdmissionForTest { get; init; }
+    TraversalEnhancementScheduler Enhancements => EnhancementAdmissionForTest ?? TraversalResources.Shared.Enhancements;
+    TraversalEnhancementScope EnhancementScope(MeshMember peer) => new(options.Mesh!.Pair.Network, options.Mesh.Self.Device, peer.Device, generation);
     Task calibrationTask = Task.CompletedTask;
     bool calibrationStarted;
     int calibrationBusy = 1;
@@ -27,8 +29,9 @@ internal sealed partial class MeshCandidateFactory
 
     // Caller holds observationGate. At most one completed fit per generation;
     // interrupted collections never produce or retest a qualified model.
-    void StartCalibration(IPAddress source, IPEndPoint reflector, int peerSlot)
+    void StartCalibration(IPAddress source, IPEndPoint reflector, MeshMember peer)
     {
+        int peerSlot = peer.Slot;
         if (calibrationStarted || CalibratedTcpModel != null || !options.TcpSynObservation || observer == null || observationBudget == null || observationStop.IsCancellationRequested ||
             peerSlot == calibrationPeerSlot && Volatile.Read(ref calibrationBusy) != 0) return;
         calibrationStarted = true;
@@ -38,14 +41,12 @@ internal sealed partial class MeshCandidateFactory
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(observationStop.Token);
             deadline.CancelAfter(TraversalLimits.CalibrationDeadlineMs); var token = deadline.Token;
             var windows = new List<PortAllocationWindow>(); var raw = new List<TcpShapeObservation[]>();
-            var sourceTuples = new HashSet<string>(); bool admitted = false;
+            var sourceTuples = new HashSet<string>();
             string state = "Collecting", reason = "independent-native-windows";
             PortPredictionAssessment? qualification = null;
             try {
                 while (Volatile.Read(ref calibrationBusy) != 0 || calibrationInterrupted != 0 &&
                     Stopwatch.GetElapsedTime(calibrationInterrupted).TotalMilliseconds < TraversalLimits.CalibrationInterruptedCooldownMs) await Task.Delay(100, token);
-                await calibrationAdmission.WaitAsync(token); admitted = true;
-                if (Volatile.Read(ref calibrationBusy) != 0) throw new OperationCanceledException("Target connected while calibration queued");
                 for (int i = 0; i < TraversalLimits.PredictionWindows; i++) {
                     // Default spacing preserves the server's 2/member/60s
                     // retained-ticket quota. Never hold a socket while waiting.
@@ -55,16 +56,9 @@ internal sealed partial class MeshCandidateFactory
                         await Task.Delay(100, token);
                     }
                     if (Volatile.Read(ref calibrationBusy) != 0) throw new OperationCanceledException("Target connected before calibration window");
-                    token.ThrowIfCancellationRequested(); CheckRoute(reflector, source);
-                    using var opening = CancellationTokenSource.CreateLinkedTokenSource(token); opening.CancelAfter(3500);
-                    using var lease = await TcpEndpointLease.Open(new(source, 0), reflector, generation, opening.Token);
-                    if (!sourceTuples.Add(lease.Local.ToString())) throw new IOException("校准源端点被复用，无法证明新分配窗口");
-                    await using var capture = new TcpCaptureOwner(lease, generation,
-                        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer);
-                    await capture.Ready;
-                    using var reference = lease.AcquireAttempt(generation);
-                    while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, token);
-                    await reference.Observe(token); // verified helper kept alive throughout this window
+                    // Release after each sample. The 31-second server-ticket
+                    // spacing is not an active high-cost operation and must not
+                    // monopolize prediction/exploration for other peers.
                     bool interference = i % 3 == 1;
                     using var windowStop = CancellationTokenSource.CreateLinkedTokenSource(token);
                     // Interrupt an in-flight window as soon as an authenticated
@@ -75,6 +69,18 @@ internal sealed partial class MeshCandidateFactory
                         catch (OperationCanceledException) when (monitorStop.IsCancellationRequested) { }
                     });
                     try {
+                        using var admitted = await Enhancements.Enter(EnhancementScope(peer), TraversalEnhancementKind.TcpCalibration, windowStop.Token);
+                        if (Volatile.Read(ref calibrationBusy) != 0) throw new OperationCanceledException("Target connected while calibration queued");
+                        windowStop.Token.ThrowIfCancellationRequested(); CheckRoute(reflector, source);
+                        using var opening = CancellationTokenSource.CreateLinkedTokenSource(windowStop.Token); opening.CancelAfter(3500);
+                        using var lease = await TcpEndpointLease.Open(new(source, 0), reflector, generation, opening.Token);
+                        if (!sourceTuples.Add(lease.Local.ToString())) throw new IOException("校准源端点被复用，无法证明新分配窗口");
+                        await using var capture = new TcpCaptureOwner(lease, generation,
+                            (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer);
+                        await capture.Ready.WaitAsync(windowStop.Token);
+                        using var reference = lease.AcquireAttempt(generation);
+                        while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, windowStop.Token);
+                        await reference.Observe(windowStop.Token); // helper remains alive throughout this window
                         var result = await TcpShapeProbe.RunCalibration(capture, observer, () => observationBudget.Take(),
                             ep => CheckRoute(ep, source), interference, windowStop.Token,
                             registrationConfirmed: () => calibrationRegistered = Stopwatch.GetTimestamp());
@@ -95,9 +101,8 @@ internal sealed partial class MeshCandidateFactory
                 state = observationStop.IsCancellationRequested ? "Cancelled" : Volatile.Read(ref calibrationBusy) != 0 ? "BusinessPathAvailable" : "BudgetExhausted";
                 reason = "calibration-ended-without-publishing-predicted-candidates";
             } catch (Exception ex) when (ex is IOException or InvalidOperationException or System.Net.Sockets.SocketException or System.Net.Http.HttpRequestException or ArgumentException or FormatException or JsonException) {
-                state = "PredictionNotSupported"; reason = ex.Message;
+                state = ex.Message.StartsWith("BudgetExhausted", StringComparison.Ordinal) ? "BudgetExhausted" : "PredictionNotSupported"; reason = ex.Message;
             } finally {
-                if (admitted) calibrationAdmission.Release();
                 try {
                     Directory.CreateDirectory(root);
                     await File.WriteAllTextAsync(Path.Combine(root, "tcp-port-calibration.json"), JsonSerializer.Serialize(new {

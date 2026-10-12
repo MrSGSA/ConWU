@@ -186,6 +186,7 @@ static partial class Program
         if (args.Length == 2 && args[0] == "--probability") { await Probability(args[1], 30); return; }
         if (args.Length == 2 && args[0] == "--probability-boundaries") { await ProbabilityBoundaries(args[1]); return; }
         if (args.Length == 2 && args[0] == "--probability-model") { await ProbabilityModel(args[1]); return; }
+        if (args.Length == 2 && args[0] == "--enhancement") { await EnhancementAdmission(args[1]); return; }
         await RealLoopback(); await Classification();
         await Model("eim", "apdf", "eim", "apdf", true);
         await Model("eim", "eif", "apdm", "apdf", true, true);

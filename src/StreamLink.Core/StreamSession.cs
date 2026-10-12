@@ -10,6 +10,7 @@ namespace StreamLink.Core;
 public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "", MeshPeerStatus[]? Peers = null)
 {
     public TraversalResourceUsage? ControlAdmission { get; init; }
+    public TraversalEnhancementUsage? EnhancementAdmission { get; init; }
     public bool Degraded => Peers?.Any(p => p.Connected && p.Degraded) == true;
     public EgressStats? Egress { get; init; }
 }

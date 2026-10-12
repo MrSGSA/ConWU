@@ -99,10 +99,11 @@ static partial class Program
                 var wrapped = new ProbeInterceptSocket(aPort) { HoldSelection = fault == "selection-authentication" };
                 var bPorts = new List<NatLab.Port>();
                 int count = fault == "first-receiver-fails" ? 4 : 2;
+                var easyGeneration = Guid.NewGuid(); var hardGeneration = Guid.NewGuid();
                 using var deadline = new CancellationTokenSource(16000);
-                await using var easy = new UdpProbabilityPreparation(aBudget, c, Guid.NewGuid(), shared, true,
+                await using var easy = new UdpProbabilityPreparation(aBudget, c, easyGeneration, shared, true,
                     IPAddress.Parse("192.0.2.2"), null, Enumerable.Range(0, count).Select(i => 51000 + i * 101).ToArray(), 1, _ => wrapped);
-                await using var hard = new UdpProbabilityPreparation(bBudget, reverse, Guid.NewGuid(), fault == "wrong-member-key" ? Key() : shared, false,
+                await using var hard = new UdpProbabilityPreparation(bBudget, reverse, hardGeneration, fault == "wrong-member-key" ? Key() : shared, false,
                     IPAddress.Parse("192.0.2.1"), IPEndPoint.Parse("192.0.2.1:40111"), [], count, i => {
                         var port = model.Add("192.0.2.2", "apdm", "apdf", 51000 + i * 101, localPort: 45000 + i); bPorts.Add(port);
                         return new ProbeInterceptSocket(port) { FailReceive = fault == "first-receiver-fails" && i == 0 };
@@ -139,6 +140,13 @@ static partial class Program
                 await easy.DisposeAsync(); await hard.DisposeAsync();
                 Check(aBudget.Usage().OpenUdpResources == 0 && bBudget.Usage().OpenUdpResources == 0 && bPorts.All(p => p.Disposed) && aPort.Disposed,
                     "success, failure and cancellation all release their exact resource references");
+                Check(aBudget.Enhancements.Usage() is { Active: 0, Waiting: 0 } && bBudget.Enhancements.Usage() is { Active: 0, Waiting: 0 },
+                    "ending actual exploration releases cross-protocol high-cost admission on both machines");
+                bool cooled = false;
+                try { using var next = aBudget.Enhancements.TryEnter(new(c.NetworkId, c.LocalNodeId, c.RemoteNodeId, easyGeneration), TraversalEnhancementKind.UdpExploration); }
+                catch (IOException ex) { cooled = ex.Message.StartsWith("EnhancementCoolingDown"); }
+                Check(cooled == (fault is "wrong-member-key" or "pmtu-too-small" or "unstable-easy-mapping"),
+                    "only an actually failed peer exploration starts cooldown; success and cancellation permit another round");
                 CryptographicOperations.ZeroMemory(shared);
             }
             CryptographicOperations.ZeroMemory(key);

@@ -12,6 +12,7 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
     readonly UdpProbeGroup group;
     readonly UdpTraversal[] nodes;
     readonly IDisposable expansion;
+    readonly TraversalEnhancementScheduler.Lease admission;
     readonly Guid generation;
     readonly IPEndPoint? fixedPeer;
     readonly CancellationTokenSource stop = new();
@@ -43,14 +44,39 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
     public UdpProbabilityPreparation(TraversalResources machine, TraversalAttemptContext context, Guid generation,
         byte[] key, bool stable, IPAddress peer, IPEndPoint? fixedPeer, int[] targetPorts,
         int sourcesRequested, Func<int, ITraversalSocket> open)
+        : this(machine, context, generation, key, stable, peer, fixedPeer, targetPorts, sourcesRequested, open, null) { }
+    // The product collector can wait fairly without pre-opening sources, then
+    // transfer this exact grant to the preparation (never acquire it twice).
+    internal static async Task<UdpProbabilityPreparation> Create(TraversalResources machine, TraversalAttemptContext context, Guid generation,
+        byte[] key, bool stable, IPAddress peer, IPEndPoint? fixedPeer, int[] targetPorts,
+        int sourcesRequested, Func<int, ITraversalSocket> open, CancellationToken token)
+    {
+        var admitted = await machine.Enhancements.Enter(new(context.NetworkId, context.LocalNodeId, context.RemoteNodeId, generation),
+            TraversalEnhancementKind.UdpExploration, token);
+        UdpProbabilityPreparation? prepared = null;
+        try {
+            token.ThrowIfCancellationRequested();
+            prepared = new(machine, context, generation, key, stable, peer, fixedPeer, targetPorts, sourcesRequested, open, admitted);
+            token.ThrowIfCancellationRequested(); return prepared;
+        } catch {
+            if (prepared != null) await prepared.DisposeAsync(); else admitted.Dispose();
+            throw;
+        }
+    }
+    UdpProbabilityPreparation(TraversalResources machine, TraversalAttemptContext context, Guid generation,
+        byte[] key, bool stable, IPAddress peer, IPEndPoint? fixedPeer, int[] targetPorts,
+        int sourcesRequested, Func<int, ITraversalSocket> open, TraversalEnhancementScheduler.Lease? admitted)
     {
         _ = PathNomination.ContextDigest(context);
         if (context.Profile != TraversalProfile.UdpDirect || generation == Guid.Empty || key.Length != 32 || sourcesRequested is < 1 or > 32 || stable && sourcesRequested != 1)
             throw new ArgumentException("探索上下文或源数量无效");
         Context = context; this.generation = generation; this.fixedPeer = fixedPeer == null ? null : new(fixedPeer.Address, fixedPeer.Port);
         group = new(machine, stable, peer, this.fixedPeer, targetPorts) { RequestedSources = sourcesRequested };
+        try { admission = admitted ?? machine.Enhancements.TryEnter(new(context.NetworkId, context.LocalNodeId, context.RemoteNodeId, generation),
+            TraversalEnhancementKind.UdpExploration) ?? throw new IOException("BudgetExhausted：TCP/UDP 增强任务正在占用全机名额"); }
+        catch { group.Dispose(); stop.Dispose(); throw; }
         try { expansion = machine.BeginUdpExploration(); }
-        catch { group.Dispose(); throw; }
+        catch { admission.Dispose(); group.Dispose(); stop.Dispose(); throw; }
         var created = new List<UdpTraversal>();
         try {
             for (int i = 0; i < sourcesRequested; i++) {
@@ -67,7 +93,7 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
         } catch {
             // No Punch was started and no retained path exists here.
             foreach (var node in created) node.DisposeAsync().AsTask().GetAwaiter().GetResult();
-            expansion.Dispose(); group.Dispose(); stop.Dispose(); throw;
+            expansion.Dispose(); admission.Dispose(); group.Dispose(); stop.Dispose(); throw;
         }
     }
     public Task<IMeshDatagramPath> Activate(CancellationToken token)
@@ -102,7 +128,10 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
             try { await Task.WhenAll(all); } catch (Exception ex) { lastFailure ??= ex; }
         }
         token.ThrowIfCancellationRequested(); stop.Token.ThrowIfCancellationRequested();
-        if (winner == null) throw new IOException($"NoDirectPathWithinBudget：{(group.Exhausted ? "BudgetExhausted" : group.Remaining <= TimeSpan.Zero ? "DeadlineExpired" : "NoVerifiedPair")}；本次有界 UDP 探索未完成共同选择与 PMTU", lastFailure);
+        if (winner == null) {
+            if (group.PeerProbed) admission.Failed();
+            throw new IOException($"NoDirectPathWithinBudget：{(group.Exhausted ? "BudgetExhausted" : group.Remaining <= TimeSpan.Zero ? "DeadlineExpired" : "NoVerifiedPair")}；本次有界 UDP 探索未完成共同选择与 PMTU", lastFailure);
+        }
         foreach (var node in nodes.Where(n => !ReferenceEquals(n, winner))) await node.DisposeAsync();
         var path = winner.RetainPath(generation, Guid.NewGuid());
         lock (gate) references++;
@@ -120,7 +149,7 @@ internal sealed class UdpProbabilityPreparation : IPreparedMeshPath
             if (observation != null) try { await observation; } catch { }
             if (activation != null) try { await activation; } catch { }
             foreach (var node in nodes) await node.DisposeAsync();
-        } finally { expansion.Dispose(); stop.Dispose(); Release(); }
+        } finally { expansion.Dispose(); admission.Dispose(); stop.Dispose(); Release(); }
     }
     sealed class PathReference(UdpProbabilityPreparation owner, IMeshDatagramPath path) : IMeshDatagramPath, ITraversalControlledPath
     {

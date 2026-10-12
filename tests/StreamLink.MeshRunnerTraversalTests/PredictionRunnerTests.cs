@@ -16,9 +16,9 @@ static class PredictionRunnerTests
     {
         var a = MeshIdentity.Create("https://example.com/", "", "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));
         var p = new DeviceProfile { Mesh = a, TraversalMode = "tcp", TcpSynObservation = true, TcpPortCalibration = true, TcpPortPrediction = true, TcpStun = ["fixture.invalid:3478"] };
-        await using var helper = new Reflector(); var control = new NeverObserver(); var budget = new MeshRequestBudget(8); var admission = new SemaphoreSlim(1, 1);
+        await using var helper = new Reflector(); var control = new NeverObserver(); var budget = new MeshRequestBudget(8); var admission = new TraversalEnhancementScheduler();
         await using var factory = new MeshCandidateFactory(p, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true, wireControl: true) {
-            ResolveTarget = (_, _, _) => Task.FromResult(helper.Endpoint), RouteCheckForTest = (_, _, _) => { }, PredictionAdmissionForTest = admission
+            ResolveTarget = (_, _, _) => Task.FromResult(helper.Endpoint), RouteCheckForTest = (_, _, _) => { }, EnhancementAdmissionForTest = admission
         };
         factory.ConfigureObservation(control, budget, _ => { });
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
@@ -37,12 +37,20 @@ static class PredictionRunnerTests
         remote = remote with { Prediction = remote.Prediction! with { StableModel = false } };
         await Reject(true, "formal gather rejects two unstable models before any network probe");
         remote = remote with { Prediction = remote.Prediction! with { StableModel = true } };
+        using (var other = admission.TryEnter(new("fixture", "holder", "peer", Guid.NewGuid()), TraversalEnhancementKind.UdpExploration)) {
+            using var queuedStop = CancellationTokenSource.CreateLinkedTokenSource(token);
+            var queued = factory.GatherCoordinated(b.Self, TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), false, remote, 2, true, queuedStop.Token);
+            check(admission.Usage() is { Active: 1, Waiting: 1 } && helper.Accepted == 0 && control.Calls == 0,
+                "formal TCP prediction waits behind UDP admission before opening a helper or making observer calls");
+            queuedStop.Cancel(); bool removed = false; try { await using var ignored = await queued; } catch (OperationCanceledException) { removed = true; }
+            check(removed && admission.Usage() is { Active: 1, Waiting: 0 }, "cancelled prediction leaves the active UDP owner and removes its queued request");
+        }
         while (budget.Take(true)) { }
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(token); stop.CancelAfter(150);
         bool cancelled = false;
         try { await using var r = await factory.GatherCoordinated(b.Self, TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), false, remote, 2, true, stop.Token); }
         catch (OperationCanceledException) { cancelled = true; }
-        check(cancelled && helper.Accepted == 0 && control.Calls == 0 && admission.CurrentCount == 1,
+        check(cancelled && helper.Accepted == 0 && control.Calls == 0 && admission.Usage() is { Active: 0, Waiting: 0 },
             "cancelling queued HTTP admission releases the heavy slot and never allocates a source");
     }
     sealed class NeverObserver : ITcpObservationControl {
@@ -61,7 +69,7 @@ static class PredictionRunnerTests
         var factories = profiles.Select((p, i) => new MeshCandidateFactory(p, binary, Path.Combine(root, "prediction-" + i), [TraversalProfile.FakeTcpHttpSo],
             captureBroker: true, wireControl: true, diagnostic: logs.Enqueue) {
                 ResolveTarget = (_, _, _) => Task.FromResult(helpers[i].Endpoint), RouteCheckForTest = (_, _, _) => { },
-                OpenCaptureForTest = (local, _) => wire.Open(i, local), PredictionAdmissionForTest = new(1, 1)
+                OpenCaptureForTest = (local, _) => wire.Open(i, local), EnhancementAdmissionForTest = new()
             }).ToArray();
         for (int i = 0; i < 2; i++) factories[i].SetPredictionModelForTest(Model(factories[i].GenerationForTest, i, stablePeer));
         var adapters = new[] { new NativeIpv6RunnerTests.Adapter(), new NativeIpv6RunnerTests.Adapter() }; var states = new SessionStatus?[2];

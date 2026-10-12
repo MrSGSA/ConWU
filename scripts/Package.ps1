@@ -42,6 +42,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Traversal foundation regression failed'}
+        & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --enhancement (Join-Path $root "artifacts/enhancement-admission-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Cross-protocol heavy admission / cooldown / cancellation regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --probability-smoke (Join-Path $root "artifacts/udp-exploration-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Experimental UDP shared-source / winning-path regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --probability-boundaries (Join-Path $root "artifacts/udp-exploration-boundaries-$releaseVersion.json")

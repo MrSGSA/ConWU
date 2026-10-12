@@ -239,7 +239,8 @@ public sealed class MeshRunner
                     int degraded = statuses.Count(p => p.Degraded);
                     report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) {
-                            Egress = egress, ControlAdmission = TraversalResources.Shared.Usage()
+                            Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
+                            EnhancementAdmission = TraversalResources.Shared.Enhancements.Usage()
                         });
                     nextReport = now + 1000;
                 }

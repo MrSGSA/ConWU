@@ -44,6 +44,7 @@ try {
  Invoke-Check 'mesh-regression' 'dotnet' @('run','--project','tests\StreamLink.MeshTests','-c','Release')
  Invoke-Check 'managed-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'managed-router.json'))
  Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
+ Invoke-Check 'shared-enhancement-admission' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--enhancement',(Join-Path $OutputDirectory 'enhancement-admission.json'))
  Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))
  Invoke-Check 'udp-exploration' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability',(Join-Path $OutputDirectory 'udp-exploration.json'))
  Invoke-Check 'udp-exploration-boundaries' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability-boundaries',(Join-Path $OutputDirectory 'udp-exploration-boundaries.json'))

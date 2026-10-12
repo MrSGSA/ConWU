@@ -78,6 +78,7 @@ internal sealed class UdpProbeGroup : IDisposable
         lock (gate) if (Stable && kind == 1 && ports.Contains(endpoint.Port)) guessed.Add(endpoint.Port);
     }
     public void Sent(Guid source) { lock (gate) sourcesSent.Add(source); }
+    public bool PeerProbed { get { lock (gate) return sourcesSent.Count != 0; } }
     public bool Commit(Guid source)
     {
         lock (gate) { if (!sources.Contains(source) || winner != Guid.Empty && winner != source) return false; winner = source; return true; }

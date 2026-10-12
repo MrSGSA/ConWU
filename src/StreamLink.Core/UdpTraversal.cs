@@ -62,6 +62,7 @@ public sealed record TraversalResourceUsage(int OpenUdpResources, int PeakUdpRes
 public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSecond = 60, int burst = 8)
 {
     public static TraversalResources Shared { get; } = new();
+    public TraversalEnhancementScheduler Enhancements { get; } = new();
     readonly object gate = new();
     double tokens = burst;
     double byteTokens = TraversalLimits.ControlBytesPerSecond, searchTokens = burst, maintenanceTokens = burst;

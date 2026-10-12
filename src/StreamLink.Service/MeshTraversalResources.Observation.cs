@@ -18,7 +18,7 @@ internal sealed partial class MeshCandidateFactory
     void ObserveInBackground(TcpCaptureOwner owner, MeshMember peer)
     {
         lock (observationGate) {
-            if (options.TcpPortCalibration) { StartCalibration(owner.Lease.Local.Address, owner.Lease.Reflector, peer.Slot); return; }
+            if (options.TcpPortCalibration) { StartCalibration(owner.Lease.Local.Address, owner.Lease.Reflector, peer); return; }
             // At most one running probe, eight source resources per service
             // lifetime. No retries/fan-out per peer; diagnostic failure cannot
             // delay Gather, reset STUN or replace a healthy data path.

@@ -113,6 +113,8 @@ static class Program
             Check(!mapped.Task.IsCompleted, "strict local NAT does not block using another member's entry");
             Check(status?.ControlAdmission is { SearchAdmitted: > 0, AdmittedBytes: > 0 },
                 "formal Runner status exposes cumulative control admission separately from wire traffic");
+            Check(status?.EnhancementAdmission is { Active: 0, Waiting: 0, Granted: 0 },
+                "default legacy Runner reports idle cross-protocol admission without enabling enhancement probes");
             mapped.SetResult(mapping);
             await Until(() => transports.OfType<StubTransport>().Any(), "local entry starts when mapping completes");
             await Until(() => discovery.Published.Any(p => p.Endpoint == mapping.PublicEndpoint.ToString()), "new TCP entry is published promptly");

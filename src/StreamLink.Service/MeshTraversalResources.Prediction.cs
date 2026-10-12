@@ -9,7 +9,6 @@ namespace StreamLink.Service;
 internal sealed partial class MeshCandidateFactory
 {
     internal Guid GenerationForTest => generation;
-    internal SemaphoreSlim? PredictionAdmissionForTest { get; init; }
     internal void SetPredictionModelForTest(NatPortPrediction model) {
         if (model.Scope.NetworkGeneration != generation) throw new ArgumentException("Model generation differs");
         CalibratedTcpModel = model;
@@ -33,8 +32,7 @@ internal sealed partial class MeshCandidateFactory
     {
         // Same heavy-operation slot as calibration, not a separate allowance
         // multiplied by the number of peers. Never hold a new socket in queue.
-        var admission = PredictionAdmissionForTest ?? calibrationAdmission;
-        if (!await admission.WaitAsync(0, token)) throw new IOException("BudgetExhausted：端口增强任务正在使用全机名额");
+        var admission = await Enhancements.Enter(EnhancementScope(peer), TraversalEnhancementKind.TcpPrediction, token);
         TcpEndpointLease? lease = null; TcpCaptureOwner? capture = null;
         var background = observationBudget!.HoldBackground();
         try {
@@ -65,11 +63,11 @@ internal sealed partial class MeshCandidateFactory
             return new PredictionResource(this, peer, candidate, lease, capture, model, catalog, admission, background);
         } catch {
             try { if (capture != null) await capture.DisposeAsync(); }
-            finally { lease?.Dispose(); background.Dispose(); admission.Release(); } throw;
+            finally { lease?.Dispose(); background.Dispose(); admission.Dispose(); } throw;
         }
     }
     sealed class PredictionResource(MeshCandidateFactory factory, MeshMember peer, MeshTraversalCandidate reservation,
-        TcpEndpointLease lease, TcpCaptureOwner capture, NatPortPrediction model, TcpObserverReply catalog, SemaphoreSlim heavyAdmission, IDisposable background) : IMeshCandidateResource
+        TcpEndpointLease lease, TcpCaptureOwner capture, NatPortPrediction model, TcpObserverReply catalog, TraversalEnhancementScheduler.Lease heavyAdmission, IDisposable background) : IMeshCandidateResource
     {
         MeshTraversalCandidate candidate = reservation;
         readonly MeshTraversalCandidate reserved = reservation;
@@ -133,7 +131,7 @@ internal sealed partial class MeshCandidateFactory
             if (finished) return; finished = true; background.Dispose();
             if (forecast != null) model.Finish(forecast.Id, outcome);
             factory.observationLog?.Invoke($"TCP 预测结束：{outcome}；观察与握手共 {round.Packets}/{TraversalLimits.RoundPackets} 包，{round.Bytes}/{TraversalLimits.RoundBytes} 字节");
-            if (outcome == PredictionOutcome.PathAuthenticated && Interlocked.Exchange(ref admission, 0) != 0) heavyAdmission.Release();
+            if (outcome == PredictionOutcome.PathAuthenticated && Interlocked.Exchange(ref admission, 0) != 0) heavyAdmission.Dispose();
         }
         public async ValueTask DisposeAsync()
         {
@@ -142,7 +140,7 @@ internal sealed partial class MeshCandidateFactory
             // Capture retirement keeps selected child session references alive;
             // its completion is owned by those children, not this Attempt.
             try { await capture.DisposeAsync(); }
-            finally { lease.Dispose(); if (Interlocked.Exchange(ref admission, 0) != 0) heavyAdmission.Release(); }
+            finally { lease.Dispose(); if (Interlocked.Exchange(ref admission, 0) != 0) heavyAdmission.Dispose(); }
         }
     }
 }

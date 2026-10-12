@@ -12,7 +12,7 @@ static partial class PredictionQualificationTests
     static async Task<object> Calibration(string binary, string root, Action<bool, string> check, CancellationToken token)
     {
         var rows = new List<object>();
-        foreach (string scenario in new[] { "twenty-windows", "business-return", "waiting-cancel", "interval-cancel", "interval-business", "missing-observer" }) {
+        foreach (string scenario in new[] { "twenty-windows", "business-return", "waiting-cancel", "queued-business", "interval-cancel", "interval-business", "missing-observer" }) {
             await using var helper = new Reflector();
             var mesh = MeshIdentity.Create("https://example.com", "", "faketcp"); var peer = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh)));
             var profile = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", TcpSynObservation = true, TcpPortCalibration = true, TcpStun = ["fixture.invalid:3478"] };
@@ -24,6 +24,8 @@ static partial class PredictionQualificationTests
                 OpenCaptureForTest = (_, _) => { var io = new CalibrationIo(control); ios.Add(io); return io; },
                 CalibrationIntervalForTest = scenario == "twenty-windows" ? TimeSpan.Zero : null
             };
+            var admission = TraversalResources.Shared.Enhancements;
+            using var blocker = scenario == "queued-business" ? admission.TryEnter(new("fixture", "holder", "peer", Guid.NewGuid()), TraversalEnhancementKind.TcpPrediction) : null;
             factory.ConfigureObservation(control, new(), messages.Enqueue);
             await using var resource = await factory.Gather(peer.Self, TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), token);
             await Task.Delay(150, token);
@@ -36,12 +38,26 @@ static partial class PredictionQualificationTests
                 factory.SetCalibrationBusy(true);
             }
             if (scenario == "waiting-cancel") await factory.DisposeAsync();
+            if (scenario == "queued-business") {
+                var wait = Stopwatch.StartNew();
+                while (admission.Usage().Waiting == 0) { if (wait.Elapsed.TotalSeconds > 3) throw new TimeoutException("calibration was not queued"); await Task.Delay(10, token); }
+                factory.SetCalibrationBusy(true);
+                await factory.CalibrationCompletion.WaitAsync(TimeSpan.FromSeconds(2), token);
+                check(admission.Usage() is { Active: 1, Waiting: 0 } && helper.Accepted == 1 && control.Calls == 0,
+                    "a returning business path cancels queued calibration before a helper is opened and leaves the other TCP owner intact");
+            }
             if (scenario is "interval-cancel" or "interval-business") {
                 var wait = Stopwatch.StartNew();
                 while (!messages.Any(s => s.StartsWith("TCP 端口校准 1/"))) { if (wait.Elapsed.TotalSeconds > 14) throw new TimeoutException("calibration first window did not finish"); await Task.Delay(20, token); }
                 await Task.Delay(300, token);
                 check(helper.Accepted == 2 && control.Calls == 3 && ios.Count(i => !i.Closed) == 1,
                     "default 31-second ticket spacing releases the calibration resource before waiting for another window");
+                var context = new TraversalAttemptContext(mesh.Pair.Network, mesh.Self.Device, Guid.NewGuid(), peer.Self.Device, Guid.NewGuid(),
+                    Guid.NewGuid(), Guid.NewGuid(), 1, Guid.NewGuid(), 1, TraversalProfile.UdpDirect, true, true, Guid.NewGuid());
+                await using (var udp = new UdpProbabilityPreparation(TraversalResources.Shared, context, Guid.NewGuid(), System.Security.Cryptography.RandomNumberGenerator.GetBytes(32),
+                    true, IPAddress.Parse("127.0.0.2"), null, [47221], 1, _ => new TraversalSocket(new(IPAddress.Loopback, 0))))
+                    check(udp.Armed && admission.Usage() is { Active: 1, Running: TraversalEnhancementKind.UdpExploration } && helper.Accepted == 2,
+                        "actual UDP preparation can use the same machine admission during the TCP collector's required sample spacing");
                 if (scenario == "interval-cancel") await factory.DisposeAsync();
                 else factory.SetCalibrationBusy(true);
             }
@@ -62,7 +78,7 @@ static partial class PredictionQualificationTests
                 rows.Add(new { scenario, state, windows = windows.Length, model = model!.Assessment, control.Sent, control.Calls,
                     control.Mappings, actualHelperConnections = helper.Accepted, serverQuotaEmulated = false, spacingMsForFixture = 0 });
             } else {
-                string expected = scenario is "business-return" or "interval-business" ? "BusinessPathAvailable" : scenario is "waiting-cancel" or "interval-cancel" ? "Cancelled" : "PredictionNotSupported";
+                string expected = scenario is "business-return" or "interval-business" or "queued-business" ? "BusinessPathAvailable" : scenario is "waiting-cancel" or "interval-cancel" ? "Cancelled" : "PredictionNotSupported";
                 check(state == expected && model == null && r.GetProperty("windows").GetArrayLength() == (scenario is "interval-cancel" or "interval-business" ? 1 : 0),
                     "collector terminates " + scenario + " without promoting incomplete evidence");
                 rows.Add(new { scenario, state, control.Sent, control.Calls });
