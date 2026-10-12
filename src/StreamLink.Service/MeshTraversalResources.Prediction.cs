@@ -39,17 +39,10 @@ internal sealed partial class MeshCandidateFactory
             // Refill before holding a new source; this does not precharge,
             // refund or bypass the shared HTTP token bucket.
             while (!observationBudget.Available(8)) await Task.Delay(100, token);
-            using var limit = CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(3500);
-            var target = await ResolveTarget(options.OrderedTcp().First(), AddressFamily.InterNetwork, limit.Token);
-            var source = IPAddress.Parse(model.Scope.SourceAddress); CheckRoute(target, source);
+            var source = IPAddress.Parse(model.Scope.SourceAddress);
             if (model.Scope.NetworkGeneration != generation) throw new IOException("PredictionInvalidated：出口代次不符");
-            lease = await TcpEndpointLease.Open(new(source, 0), target, generation, limit.Token);
-            capture = new(lease, generation, (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ??
-                new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer);
-            await capture.Ready.WaitAsync(limit.Token);
-            using var query = lease.AcquireAttempt(generation);
-            while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, limit.Token);
-            var observed = await query.Observe(limit.Token);
+            var helper = await OpenPredictionHelper(source, token);
+            lease = helper.Lease; capture = helper.Capture;
             while (!observationBudget.Take(priority: true)) await Task.Delay(100, token);
             var catalog = await observer!.TcpObservation("catalog", Guid.Empty, null, token);
             if (catalog.Version != 1 || catalog.FreshWindowMs != TcpObserverProtocol.FreshWindowMs) throw new IOException("ObserverUnavailable：服务不支持短窗观察");
@@ -57,14 +50,50 @@ internal sealed partial class MeshCandidateFactory
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             // Hint port belongs only to the reservation. Measure replaces it
             // using native evidence from THIS still-held source before Prepare.
-            var hint = new IPEndPoint(IPAddress.Parse(model.PublicAddress), observed.Public.Port); CheckRoute(hint, source);
-            var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, hint.ToString(), target.ToString(), now, now + 120,
+            var hint = new IPEndPoint(IPAddress.Parse(model.PublicAddress), helper.Observation.Public.Port); CheckRoute(hint, source);
+            var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, hint.ToString(), helper.Target.ToString(), now, now + 120,
                 CandidatePurpose.SimultaneousOpen, new(model.Assessment.ModelId, model.StableModel, ""));
             return new PredictionResource(this, peer, candidate, lease, capture, model, catalog, admission, background);
         } catch {
             try { if (capture != null) await capture.DisposeAsync(); }
             finally { lease?.Dispose(); background.Dispose(); admission.Dispose(); } throw;
         }
+    }
+    async Task<(TcpEndpointLease Lease, TcpCaptureOwner Capture, IPEndPoint Target, StunResult Observation)>
+        OpenPredictionHelper(IPAddress source, CancellationToken token)
+    {
+        // Reflection failures are not failures of the calibrated port model.
+        // Try the same bounded configured list as ordinary candidate gathering,
+        // but never reuse an ambiguous helper transaction or its failed source.
+        using var preparation = CancellationTokenSource.CreateLinkedTokenSource(token);
+        preparation.CancelAfter(TraversalLimits.PredictionHelperPrepareMs);
+        Exception? last = null;
+        foreach (string name in options.OrderedTcp().Distinct(StringComparer.OrdinalIgnoreCase).Take(3)) {
+            TcpEndpointLease? lease = null; TcpCaptureOwner? capture = null; bool transferred = false, reflection = true;
+            using var limit = CancellationTokenSource.CreateLinkedTokenSource(preparation.Token); limit.CancelAfter(3500);
+            try {
+                var target = await ResolveTarget(name, AddressFamily.InterNetwork, limit.Token); CheckRoute(target, source);
+                lease = await TcpEndpointLease.Open(new(source, 0), target, generation, limit.Token);
+                reflection = false; // driver/capture setup faults cannot be fixed by another STUN server
+                capture = new(lease, generation, (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ??
+                    new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer);
+                await capture.Ready.WaitAsync(limit.Token);
+                reflection = true;
+                using var query = lease.AcquireAttempt(generation);
+                while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, limit.Token);
+                var observed = await query.Observe(limit.Token);
+                limit.Token.ThrowIfCancellationRequested();
+                transferred = true; return (lease, capture, target, observed);
+            } catch (Exception ex) when (reflection && !token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) {
+                last = ex; observationLog?.Invoke($"TCP 预测反射准备失败：{name}，{ex.GetType().Name}；在本轮剩余准备时间内尝试下一项");
+            } finally {
+                if (!transferred) try { if (capture != null) await capture.DisposeAsync(); }
+                    finally { lease?.Dispose(); }
+            }
+            if (preparation.IsCancellationRequested) break;
+        }
+        token.ThrowIfCancellationRequested();
+        throw new IOException("HelperQueryUnusable：本轮配置的 TCP 反射服务器未产生可用源端点", last);
     }
     sealed class PredictionResource(MeshCandidateFactory factory, MeshMember peer, MeshTraversalCandidate reservation,
         TcpEndpointLease lease, TcpCaptureOwner capture, NatPortPrediction model, TcpObserverReply catalog, TraversalEnhancementScheduler.Lease heavyAdmission, IDisposable background) : IMeshCandidateResource

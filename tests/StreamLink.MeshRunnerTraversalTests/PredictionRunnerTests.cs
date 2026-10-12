@@ -3,13 +3,14 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
 using System.Net.NetworkInformation;
+using System.Net.Sockets;
 using System.Threading.Channels;
 using StreamLink.Core;
 using StreamLink.Discovery;
 using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
-static class PredictionRunnerTests
+static partial class PredictionRunnerTests
 {
     public static readonly TcpObserverPoint[] Points = [new("a", "127.0.0.2:47221"), new("b", "127.0.0.3:47221")];
     public static async Task Admission(string binary, string root, Action<bool, string> check, CancellationToken token)
@@ -52,12 +53,13 @@ static class PredictionRunnerTests
         catch (OperationCanceledException) { cancelled = true; }
         check(cancelled && helper.Accepted == 0 && control.Calls == 0 && admission.Usage() is { Active: 0, Waiting: 0 },
             "cancelling queued HTTP admission releases the heavy slot and never allocates a source");
+        await HelperFallback(binary, root, check, token);
     }
     sealed class NeverObserver : ITcpObservationControl {
         public int Calls;
         public Task<TcpObserverReply> TcpObservation(string operation, Guid ticket, TcpProbeSpec[]? probes, CancellationToken token) { Calls++; throw new IOException("No observation should be issued"); }
     }
-    public static async Task<object> Run(string binary, string root, string url, string pin, TcpSynObserver observer, Action<bool, string> check, CancellationToken token, int stablePeer = 0, bool changedStableMapping = false)
+    public static async Task<object> Run(string binary, string root, string url, string pin, TcpSynObserver observer, Action<bool, string> check, CancellationToken token, int stablePeer = 0, bool changedStableMapping = false, bool helperFallback = false)
     {
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var logs = new ConcurrentQueue<string>(); var wire = new NatWire(observer, stablePeer, changedStableMapping);
@@ -65,10 +67,11 @@ static class PredictionRunnerTests
         await using var bh = new Reflector { MapForTest = _ => new(NatWire.Public[1], 35000) };
         var helpers = new[] { ah, bh };
         var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only",
-            TcpSynObservation = true, TcpPortCalibration = true, TcpPortPrediction = true, TcpStun = ["fixture.invalid:3478"] }).ToArray();
+            TcpSynObservation = true, TcpPortCalibration = true, TcpPortPrediction = true,
+            TcpStun = helperFallback ? ["unavailable.fixture:3478", "fixture.invalid:3478"] : ["fixture.invalid:3478"] }).ToArray();
         var factories = profiles.Select((p, i) => new MeshCandidateFactory(p, binary, Path.Combine(root, "prediction-" + i), [TraversalProfile.FakeTcpHttpSo],
             captureBroker: true, wireControl: true, diagnostic: logs.Enqueue) {
-                ResolveTarget = (_, _, _) => Task.FromResult(helpers[i].Endpoint), RouteCheckForTest = (_, _, _) => { },
+                ResolveTarget = (name, _, _) => name.StartsWith("unavailable") ? throw new SocketException((int)SocketError.HostNotFound) : Task.FromResult(helpers[i].Endpoint), RouteCheckForTest = (_, _, _) => { },
                 OpenCaptureForTest = (local, _) => wire.Open(i, local), EnhancementAdmissionForTest = new()
             }).ToArray();
         for (int i = 0; i < 2; i++) factories[i].SetPredictionModelForTest(Model(factories[i].GenerationForTest, i, stablePeer));
@@ -98,12 +101,14 @@ static class PredictionRunnerTests
             check(logs.Any(s => s.Contains("候选失败")) && wire.Refused > 0, "ordinary helper endpoints fail before enhanced traversal under the controlled mapping rules");
             check(wire.ObservedSources.Count >= 2 && wire.PeerMappings.Any(p => p.Peer != stablePeer && p.Port == 40014), "fresh native observation and subsequent peer SYN create the predicted hard-side mapping");
             check(states.All(s => s!.Connected && !s.Degraded), "production Runner selects the authenticated predicted FakeTCP path");
+            if (helperFallback) check(logs.Count(s => s.Contains("TCP 预测反射准备失败：unavailable.fixture")) == 2,
+                "both formal predicted Runners recover from their first reflection DNS failure within the same opportunity");
             long connectedMs = clock.ElapsedMilliseconds;
             await Task.Delay(8500, token); // resource survives Measure's shared deadline
             adapters[0].Outgoing.Add(NativeIpv6RunnerTests.Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(NativeIpv6RunnerTests.Packet(b.LocalIp, a.LocalIp));
             var data = Stopwatch.StartNew(); while (adapters.Any(ad => ad.Incoming.Count == 0)) { if (data.Elapsed.TotalSeconds > 3) throw new TimeoutException("predicted Runner business absent"); await Task.Delay(10, token); }
             check(states.All(s => s?.Connected == true), "full-size bidirectional MeshLink business continues after the predicted attempt ends");
-            return new { connectedMs, stablePeer, wire.Refused, wire.Packets, observations = wire.ObservedSources.Count, mappings = wire.PeerMappings.Select(p => new { p.Peer, p.Port }).ToArray(),
+            return new { connectedMs, stablePeer, helperFallback, wire.Refused, wire.Packets, observations = wire.ObservedSources.Count, mappings = wire.PeerMappings.Select(p => new { p.Peer, p.Port }).ToArray(),
                 training = "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
                 scope = "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C++ and formal Runner" };
         } finally {

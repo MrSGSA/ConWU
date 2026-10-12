@@ -55,7 +55,7 @@ try {
     if (poolOnly) { for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
     else if (predictionRunnerOnly) {
         await PredictionRunnerTests.Admission(binary, root, Check, token);
-        for (int round = 0; round < rounds; round++) rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-round-" + round), url, pin, predictionObserver, Check, token, round % 2));
+        for (int round = 0; round < rounds; round++) rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-round-" + round), url, pin, predictionObserver, Check, token, round % 2, helperFallback: round % 2 == 1));
         rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-mismatch"), url, pin, predictionObserver, Check, token, changedStableMapping: true));
     }
     else if (predictionOnly) rows.Add(await PredictionQualificationTests.Run(binary, root, Check, token));

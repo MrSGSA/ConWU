@@ -52,4 +52,5 @@ public static class TraversalLimits
     // Ordinary candidates on the same retained helper/capture resource only.
     // This is not stable NAT evidence or the independent prediction age rule.
     public const int TcpCandidateReuseMs = 2000;
+    public const int PredictionHelperPrepareMs = 12000; // within caller's existing pair opportunity
 }
