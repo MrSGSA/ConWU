@@ -64,6 +64,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Formal predicted FakeTCP Runner regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-source-runner-$releaseVersion.json") --source-only
         if($LASTEXITCODE -ne 0) {throw 'Signed TCP source-learning product admission / same-IP member isolation regression failed'}
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/udp-exploration-runner-$releaseVersion.json") --exploration-only
+        if($LASTEXITCODE -ne 0) {throw 'Formal UDP exploration source continuity / signed role / shared budget regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-endpoint-pool-$releaseVersion.json") --pool-only
         if($LASTEXITCODE -ne 0) {throw 'Shared TCP source observation / cancellation isolation regression failed'}
         & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")

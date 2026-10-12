@@ -2,6 +2,8 @@
 
 基于 `a24f657` 继续实现执行计划 §8.4。**本次完成内部机制及真实 Router 接口验证，尚未接入正式候选收集、签名协商或用户设置。M5 Gate 未通过，默认没有新增探测行为。** FakeTCP＋HTTP、MeshLink 业务加密和禁止中继策略保持原行为。
 
+后续已完成 [正式产品接入](m5-udp-exploration-product-20261012.md)：候选/能力/Runner/设置及原观察源接管已实现，生产自动资格有明确限制，默认仍关闭。本文“尚缺正式接入”描述早期机制提交，不代表最新源码状态；公网与真实驱动 Gate 仍未通过。
+
 ## 所有权与预算
 
 `UdpProbabilityPreparation` 实现现有 `IPreparedMeshPath`，持有一个稳定侧源或至多 32 个严格侧源。每个源继续使用 `UdpTraversal` 的唯一接收循环，分流 STUN、检查、PMTU 和最终 MeshLink 数据。所有源从同一个 `TraversalResources` 账本先领取名额再创建 socket。

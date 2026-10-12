@@ -115,6 +115,7 @@ try {
     await client.SaveDirectory(fresh.Directory!, all.Token);
     Check((await client.WaitForChanges(all.Token))!.Directory.Members.Length == 2, "production client reads new watch API over pinned HTTPS");
     Check(client.SupportsTcpPeerReflexive, "HTTPS watch independently negotiates TCP source-learning capability");
+    Check(client.SupportsUdpExploration, "HTTPS watch independently negotiates UDP exploration without inferring it from traversal version");
     var clock = Stopwatch.StartNew();
     var idle = await client.WaitForChanges(all.Token);
     clock.Stop();
@@ -129,6 +130,7 @@ try {
     legacy = true; using var oldServer = new MeshDiscoveryClient(fresh);
     Check((await oldServer.WaitForChanges(all.Token)) != null && !oldServer.SupportsLongPolling, "explicit old-server 404 falls back to the existing read API");
     Check(!oldServer.SupportsTcpPeerReflexive, "old-server read fallback cannot retain source-learning permission");
+    Check(!oldServer.SupportsUdpExploration, "old-server read fallback cannot retain UDP source-expansion permission");
     int attempts = watches;
     await oldServer.WaitForChanges(all.Token);
     Check(watches == attempts && reads >= 2, "fallback is remembered rather than retrying unsupported route every poll");

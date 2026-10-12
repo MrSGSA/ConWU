@@ -24,7 +24,7 @@ public sealed record TraversalCandidate(Guid CandidateId, long Version, Traversa
 public sealed record TraversalAttemptContext(string NetworkId, string LocalNodeId, Guid LocalBootId,
     string RemoteNodeId, Guid RemoteBootId, Guid AttemptId, Guid LocalCandidateId,
     long LocalCandidateVersion, Guid RemoteCandidateId, long RemoteCandidateVersion,
-    TraversalProfile Profile, bool ProtocolClient, bool Nominator, Guid ValidationNonce);
+    TraversalProfile Profile, bool ProtocolClient, bool Nominator, Guid ValidationNonce, bool UdpExploration = false);
 
 public sealed record ValidatedPathIdentity(Guid PathId, Guid AttemptId, Guid LeaseId,
     Guid? AttachId, Guid NetworkGeneration, IPEndPoint ActualLocal,

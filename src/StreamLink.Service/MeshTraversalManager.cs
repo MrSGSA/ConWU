@@ -30,6 +30,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         public Entry? Previous;
         public Task? Retiring;
         public bool Upgrade;
+        public bool ExplorationStatsLogged;
         public Guid Acknowledged;
     }
     readonly MeshProfile mesh;
@@ -78,7 +79,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             UdpIpv6: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpIpv6 ? 1 : 0,
             FakeTcpIpv6: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsFakeTcpIpv6 ? 1 : 0,
             TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0,
-            TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0);
+            TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0,
+            UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -171,6 +173,11 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 if (e.Measuring?.IsCompleted == true) { e.Actor!.Measured(e.Measuring.GetAwaiter().GetResult()); e.Measuring = null; }
                 if (e.Actor is { Predicting: true, PredictionBegan: > 0 } predicting && predicting.Phase != MeshAttemptPhase.Selected && predicting.PredictionRemaining <= TimeSpan.Zero)
                     throw new IOException("预测整轮8秒期限已结束");
+                if (e.Actor is { Exploring: true } exploring && exploring.Phase != MeshAttemptPhase.Selected && e.Resource!.ExplorationRemaining <= TimeSpan.Zero)
+                    throw new IOException("UDP 探索整轮12秒期限已结束");
+                if (e.Actor is { Exploring: true } && e.Actor.Phase != MeshAttemptPhase.Selected && Healthy(slot) &&
+                    router.Paths(slot).Any(p => p.Active && p.Stage == NominationStage.Selected && p.AttemptId != e.Attempt))
+                    throw new IOException("已有健康路径，取消 UDP 高成本探索");
                 if (e.Preparing?.IsCompleted == true) {
                     var path = e.Preparing.GetAwaiter().GetResult(); RequireRoundTime(e); e.Actor!.Prepared(path); e.Preparing = null;
                 }
@@ -178,7 +185,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 e.Actor?.ObserveRouter();
                 if (e.Actor?.Phase == MeshAttemptPhase.Cancelled) { Fail(e, "路径验证失败"); continue; }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected && !Healthy(slot)) { Fail(e, "已选路径失效，重新收集端点"); continue; }
-                if (e.Actor?.Phase == MeshAttemptPhase.Selected) { failures[slot] = 0; e.Resource?.FinishPrediction(PredictionOutcome.PathAuthenticated); }
+                if (e.Actor?.Phase == MeshAttemptPhase.Selected) { failures[slot] = 0; e.Resource?.FinishPrediction(PredictionOutcome.PathAuthenticated); LogExploration(e); }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected && e.Previous != null && e.Retiring == null &&
                     !router.Paths(slot).Any(p => p.AttemptId == e.Previous.Attempt)) {
                     e.Retiring = Close(e.Previous); e.Previous = null;
@@ -203,6 +210,10 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                     (m.Candidate?.PeerReflexive == true || m.PeerCandidate?.PeerReflexive == true) &&
                     (!discovery.SupportsTcpPeerReflexive || Capabilities.TcpPeerReflexive != 1 || remote.TcpPeerReflexive != 1))
                     throw new IOException("协调服务或双方未授权本轮 TCP 来源学习消息");
+                if (m.Stage is not (MeshTraversalStage.Cancel or MeshTraversalStage.Selected) &&
+                    (m.Candidate?.Exploration != null || m.PeerCandidate?.Exploration != null) &&
+                    (!discovery.SupportsUdpExploration || Capabilities.UdpExploration != 1 || remote.UdpExploration != 1))
+                    throw new IOException("协调服务或双方未授权本轮 UDP 探索消息");
                 if (entries.TryGetValue(slot, out var e)) {
                     if (e.Closing != null) continue;
                     if (m.AttemptId != e.Attempt && m.Stage == MeshTraversalStage.Offer && e.Actor?.Phase != MeshAttemptPhase.Selected) {
@@ -295,8 +306,11 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             if (offer?.Candidate?.Prediction != null && !prediction) throw new IOException("协调服务或双方未授权预测扩展");
             bool sourceLearning = discovery.SupportsTcpPeerReflexive && Capabilities.TcpPeerReflexive == 1 && remote.TcpPeerReflexive == 1;
             if (offer?.Candidate?.PeerReflexive == true && !sourceLearning) throw new IOException("协调服务或双方未授权 TCP 来源学习");
-            e.Gathering = factory.GatherSourceAware(peer, kind, attempt, allow6, offer?.Candidate,
-                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, e.Stop.Token);
+            bool exploration = !e.Upgrade && kind == TraversalProfile.UdpDirect && discovery.SupportsUdpExploration && Capabilities.UdpExploration == 1 && remote.UdpExploration == 1 &&
+                e.Deadline - Environment.TickCount64 >= UdpProbeGroup.DurationMs;
+            if (offer?.Candidate?.Exploration != null && !exploration) throw new IOException("协调服务、双方或机会窗未授权 UDP 探索");
+            e.Gathering = factory.GatherEnhanced(peer, kind, attempt, allow6, offer?.Candidate,
+                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, exploration, () => !router.Status().Any(s => s.Slot == peer.Slot && s.Connected), e.Stop.Token);
         }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
         log($"设备 {peer.Slot} " + (e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +
@@ -316,12 +330,22 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
     }
     static void RequireRoundTime(Entry e)
     {
+        if (e.Actor is { Exploring: true }) {
+            if (e.Resource!.ExplorationRemaining <= TimeSpan.Zero || e.Deadline <= Environment.TickCount64) throw new IOException("UDP 探索共享期限已结束");
+            return;
+        }
         if (e.Actor is { Predicting: true, PredictionBegan: > 0 } predicting) {
             if (predicting.PredictionRemaining <= TimeSpan.Zero || e.Deadline <= Environment.TickCount64) throw new IOException("预测共享期限已结束");
             return;
         }
         if (e.Deadline - Environment.TickCount64 < MeshPairOpportunity.RoundMs(e.Profile))
             throw new IOException("机会窗剩余时间不足以完成新的握手轮次");
+    }
+    void LogExploration(Entry e)
+    {
+        if (e.ExplorationStatsLogged || e.Resource?.ExplorationStats is not {} statistics) return;
+        e.ExplorationStatsLogged = true;
+        log($"设备 {e.Peer.Slot} UDP 探索实际成本：" + System.Text.Json.JsonSerializer.Serialize(statistics));
     }
     void EndOpportunity(int slot, long now)
     {
@@ -365,6 +389,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
     void Fail(Entry e, string reason, PredictionOutcome predictionOutcome = PredictionOutcome.Failed)
     {
         if (e.Closing != null) return;
+        LogExploration(e);
         e.Resource?.FinishPrediction(predictionOutcome);
         e.Actor?.Cancel(); e.Stop.Cancel();
         if (e.Actor?.Outbound is {} cancel) Queue(cancel);

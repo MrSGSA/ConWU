@@ -185,7 +185,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
     readonly TraversalResources resources;
     readonly IDisposable lease;
     readonly Guid generation;
-    readonly byte localSlot, remoteSlot;
+    byte localSlot, remoteSlot;
     readonly byte[] attempt, key;
     readonly object gate = new();
     readonly Dictionary<string, Candidate> candidates = [];
@@ -216,6 +216,13 @@ public sealed partial class UdpTraversal : IAsyncDisposable
         var machine = resources ?? TraversalResources.Shared; var quota = machine.Acquire();
         ITraversalSocket? socket = null;
         try { socket = new TraversalSocket(local); if (pacer != null) socket = new PacedTraversalSocket(socket, pacer, fairnessKey ?? remoteSlot.ToString()); return new(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, machine, quota); }
+        catch { socket?.Dispose(); quota.Dispose(); throw; }
+    }
+    internal static UdpTraversal CreateUsing(Func<ITraversalSocket> open, Guid networkGeneration, Guid attemptId,
+        int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources machine)
+    {
+        var quota = machine.Acquire(); ITraversalSocket? socket = null;
+        try { socket = open(); return new(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, machine, quota); }
         catch { socket?.Dispose(); quota.Dispose(); throw; }
     }
     UdpTraversal(ITraversalSocket socket, Guid networkGeneration, Guid attemptId, int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources resources, IDisposable? quota)
@@ -251,14 +258,16 @@ public sealed partial class UdpTraversal : IAsyncDisposable
             byte[] request = Stun.Request(); string id = Convert.ToHexString(request.AsSpan(8, 12));
             var completion = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
-            if (group != null && group.Remaining <= TimeSpan.Zero) throw new IOException("UDP 探索共同期限已结束");
-            deadline.CancelAfter(group == null ? TimeSpan.FromMilliseconds(3500) : TimeSpan.FromMilliseconds(Math.Clamp(group.Remaining.TotalMilliseconds, 0, 3500)));
+            TimeSpan? remaining = group?.Remaining ?? explorationSeed?.Remaining;
+            if (remaining <= TimeSpan.Zero) throw new IOException("UDP 探索共同期限已结束");
+            deadline.CancelAfter(remaining == null ? TimeSpan.FromMilliseconds(3500) : TimeSpan.FromMilliseconds(Math.Clamp(remaining.Value.TotalMilliseconds, 0, 3500)));
             queries[id] = new(server, request, completion);
             long probeStarted = Stopwatch.GetTimestamp(); // conservative age, includes any send admission/queue delay
             try {
                 for (;;) {
                     deadline.Token.ThrowIfCancellationRequested();
-                    if (group != null ? group.Round.TrySend(request.Length, false) : resources.TrySend(request.Length)) await socket.Send(request, server, deadline.Token);
+                    if (group != null ? group.Round.TrySend(request.Length, false) : explorationSeed != null ? explorationSeed.SendAdmission(request.Length) : resources.TrySend(request.Length))
+                        await socket.Send(request, server, deadline.Token);
                     var finished = await Task.WhenAny(completion.Task, Task.Delay(700, deadline.Token));
                     deadline.Token.ThrowIfCancellationRequested();
                     if (finished == completion.Task) return new(socket.Id, generation, "udp", Local, server, await completion.Task, DateTimeOffset.UtcNow, probeStarted);

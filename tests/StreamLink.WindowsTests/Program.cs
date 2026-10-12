@@ -105,6 +105,20 @@ static class Program
             }
             using (var oldSource = new SettingsWindow(calibrationProfile, supportsPeerSource: false))
                 Check(!Field<CheckBox>(oldSource, "tcpPeerSource").Enabled, "Old backend cannot be opted into source learning from the new frontend");
+            var explorationProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;
+            explorationProfile.TraversalMode="tcp-udp";explorationProfile.PathSelection="prefer-faketcp";explorationProfile.AllowUdpFallback=true;
+            using(var explorationSettings=new SettingsWindow(explorationProfile)){
+                var box=Field<CheckBox>(explorationSettings,"udpExploration");
+                Check(box.Enabled&&!box.Checked,"UDP exploration starts unchecked behind explicit fallback permission");
+                box.Checked=true;explorationSettings.Result.Validate();
+                Check(explorationSettings.Result.UdpExploration,"UDP exploration checkbox updates the actual profile");
+                Field<CheckBox>(explorationSettings,"udpFallback").Checked=false;
+                Check(!box.Enabled&&!box.Checked&&!explorationSettings.Result.UdpExploration,"removing fallback clears hidden expensive UDP opt-in");
+            }
+            using(var oldExploration=new SettingsWindow(explorationProfile,supportsUdpExploration:false))
+                Check(!Field<CheckBox>(oldExploration,"udpExploration").Enabled,"old backend cannot silently accept UDP source expansion");
+            Check((await worker.Handle(new("status"))).UdpExplorationVersion==1,"backend independently advertises UDP expansion IPC version");
+            Check(new ControlReply(true,"",null,null,"",[]).UdpExplorationVersion==0,"old IPC reply defaults to no UDP expansion capability");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

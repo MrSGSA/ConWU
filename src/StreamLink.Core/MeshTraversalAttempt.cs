@@ -25,6 +25,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     readonly TraversalProfile profile;
     readonly bool leader;
     readonly bool sourceNegotiated;
+    readonly bool explorationNegotiated;
     readonly long revision;
     readonly Func<long> nextSequence;
     MeshTraversalCandidate localCandidate;
@@ -33,6 +34,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     bool remotePrepared;
     long predictionBegan;
     public bool Predicting => localReservation.Prediction != null;
+    public bool Exploring => localReservation.Exploration != null;
     public long PredictionBegan { get { lock (gate) return predictionBegan; } }
     public TimeSpan PredictionRemaining { get { lock (gate) return predictionBegan == 0 ? TimeSpan.Zero : TimeSpan.FromMilliseconds(TraversalLimits.SoRoundMs) - Stopwatch.GetElapsedTime(predictionBegan); } }
     public MeshTraversalCandidate? RemoteCandidate { get { lock (gate) return remoteCandidate; } }
@@ -52,15 +54,16 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     public TraversalAttemptContext Context { get { lock (gate) {
         if (remoteCandidate == null) throw new InvalidOperationException("候选对尚未齐备");
         return new(local.Pair.Network, local.Self.Device, localBoot, peer.Device, remoteBoot, attempt, localCandidate.Id, localCandidate.Version,
-            remoteCandidate.Id, remoteCandidate.Version, profile, leader, leader, nonce);
+            remoteCandidate.Id, remoteCandidate.Version, profile, leader, leader, nonce, Exploring);
     } } }
     MeshTraversalAttempt(MeshProfile local, MeshMember peer, Guid localBoot, Guid remoteBoot, TraversalProfile profile,
-        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated)
+        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated, bool explorationNegotiated)
     {
         this.local = local; this.peer = peer; this.localBoot = localBoot; this.remoteBoot = remoteBoot; this.profile = profile;
         localReservation = localCandidate = candidate; this.attempt = attempt; this.nonce = nonce; this.revision = revision; nextSequence = sequence;
         leader = local.Self.Slot < peer.Slot;
         this.sourceNegotiated = sourceNegotiated;
+        this.explorationNegotiated = explorationNegotiated;
     }
     static void Membership(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs, TraversalProfile profile)
     {
@@ -76,7 +79,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
         RequireFamily(candidate, mine, theirs, profile);
         if (local.Self.Slot >= peer.Slot) throw new InvalidOperationException("由较小成员编号统一发起本轮，避免交叉 Offer");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, profile, candidate, attemptId ?? Guid.NewGuid(), Guid.NewGuid(), revision, sequence,
-            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1);
+            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1);
         try { result.phase = MeshAttemptPhase.Offering; result.outbound = result.Message(MeshTraversalStage.Offer); return result; }
         catch { result.stop.Dispose(); throw; }
     }
@@ -94,6 +97,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     {
         if (candidate.Prediction != null && (mine.TcpPrediction != 1 || theirs.TcpPrediction != 1)) throw new CryptographicException("双方尚未协商 TCP 预测能力");
         if (candidate.PeerReflexive && (mine.TcpPeerReflexive != 1 || theirs.TcpPeerReflexive != 1)) throw new CryptographicException("双方尚未协商 TCP 来源学习能力");
+        if (candidate.Exploration != null && (mine.UdpExploration != 1 || theirs.UdpExploration != 1)) throw new CryptographicException("双方尚未协商 UDP 探索能力");
         if (System.Net.IPEndPoint.Parse(candidate.Endpoint).AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 &&
             (profile == TraversalProfile.UdpDirect ? mine.UdpIpv6 != 1 || theirs.UdpIpv6 != 1 : mine.FakeTcpIpv6 != 1 || theirs.FakeTcpIpv6 != 1))
             throw new CryptographicException("双方尚未协商该承载的原生 IPv6 能力");
@@ -105,7 +109,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
         RequireFamily(candidate, mine, theirs, offer.Profile);
         if ((candidate.Prediction != null) != (offer.Candidate!.Prediction != null)) throw new CryptographicException("不能把预约替换为普通候选");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, offer.Profile, candidate, offer.AttemptId, offer.ValidationNonce, offer.NominationRevision, sequence,
-            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1);
+            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1);
         try {
             result.remoteReservation = result.remoteCandidate = offer.Candidate; result.remoteSequence = offer.Sequence;
             result.phase = result.Predicting ? MeshAttemptPhase.Reserving : MeshAttemptPhase.Preparing;
@@ -132,6 +136,8 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             if (message.Sequence <= remoteSequence) return false;
             if (!sourceNegotiated && (message.Candidate?.PeerReflexive == true || message.PeerCandidate?.PeerReflexive == true))
                 throw new CryptographicException("本轮未协商 TCP 来源学习，拒绝后续消息扩大范围");
+            if (!explorationNegotiated && (message.Candidate?.Exploration != null || message.PeerCandidate?.Exploration != null))
+                throw new CryptographicException("本轮未协商 UDP 探索，拒绝后续消息扩大范围");
             if (message.Stage == MeshTraversalStage.Cancel) { remoteSequence = message.Sequence; CancelLocked(); return true; }
             if (Predicting && ReceivePrediction(message)) { remoteSequence = message.Sequence; return true; }
             if (message.PeerCandidate != localCandidate || message.Candidate == null || remoteCandidate != null && message.Candidate != remoteCandidate)

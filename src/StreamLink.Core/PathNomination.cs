@@ -34,7 +34,7 @@ public sealed class PathNomination
     public PathNomination(TraversalAttemptContext context, Guid path, long revision, TimeSpan remaining,
         bool mtuQualified, TimeProvider? time = null)
     {
-        int maximum = context.Profile == TraversalProfile.UdpDirect ? TraversalLimits.UdpRoundMs : TraversalLimits.SoRoundMs;
+        int maximum = context.Profile == TraversalProfile.UdpDirect ? context.UdpExploration ? UdpProbeGroup.DurationMs : TraversalLimits.UdpRoundMs : TraversalLimits.SoRoundMs;
         if (path == Guid.Empty || revision <= 0 || remaining <= TimeSpan.Zero || remaining > TimeSpan.FromMilliseconds(maximum))
             throw new ArgumentException("提名路径、版本或剩余期限无效");
         this.context = context; this.path = path; this.revision = revision; this.remaining = remaining;
@@ -46,12 +46,15 @@ public sealed class PathNomination
         if (string.IsNullOrWhiteSpace(c.NetworkId) || c.NetworkId.Length > 128 || string.IsNullOrWhiteSpace(c.LocalNodeId) || c.LocalNodeId.Length > 128 ||
             string.IsNullOrWhiteSpace(c.RemoteNodeId) || c.RemoteNodeId.Length > 128 || c.LocalNodeId == c.RemoteNodeId || c.LocalBootId == Guid.Empty ||
             c.RemoteBootId == Guid.Empty || c.AttemptId == Guid.Empty || c.LocalCandidateId == Guid.Empty || c.RemoteCandidateId == Guid.Empty ||
-            c.LocalCandidateVersion <= 0 || c.RemoteCandidateVersion <= 0 || c.ValidationNonce == Guid.Empty || !Enum.IsDefined(c.Profile))
+            c.LocalCandidateVersion <= 0 || c.RemoteCandidateVersion <= 0 || c.ValidationNonce == Guid.Empty || !Enum.IsDefined(c.Profile) ||
+            c.UdpExploration && c.Profile != TraversalProfile.UdpDirect)
             throw new ArgumentException("提名上下文不完整");
         object Local() => new { node = c.LocalNodeId, boot = c.LocalBootId, candidate = c.LocalCandidateId, version = c.LocalCandidateVersion, client = c.ProtocolClient, nominator = c.Nominator };
         object Remote() => new { node = c.RemoteNodeId, boot = c.RemoteBootId, candidate = c.RemoteCandidateId, version = c.RemoteCandidateVersion, client = !c.ProtocolClient, nominator = !c.Nominator };
         bool first = string.CompareOrdinal(c.LocalNodeId, c.RemoteNodeId) < 0;
-        return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { domain = "streamlink-path-nomination-v1", c.NetworkId,
+        // The ordinary digest remains byte-for-byte compatible. Only negotiated
+        // exploration has a distinct domain and its extended shared deadline.
+        return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { domain = c.UdpExploration ? "streamlink-path-nomination-udp-exploration-v1" : "streamlink-path-nomination-v1", c.NetworkId,
             a = first ? Local() : Remote(), b = first ? Remote() : Local(), c.AttemptId, c.Profile, c.ValidationNonce }));
     }
     byte[] Frame(byte kind, bool echo = true)

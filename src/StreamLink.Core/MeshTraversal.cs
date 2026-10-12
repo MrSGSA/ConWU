@@ -9,14 +9,16 @@ namespace StreamLink.Core;
 public sealed record MeshTraversalCapabilities(int Version, int NativeAbi, Guid BootId, TraversalProfile[] Profiles,
     int BackgroundUpgrade = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int TcpPrediction = 0,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int TcpPeerReflexive = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int TcpPeerReflexive = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int UdpExploration = 0);
 public enum MeshTraversalStage { Offer = 1, Ready = 2, Start = 3, Cancel = 4, Selected = 5, Reserved = 6, Measure = 7, Measured = 8 }
 // Public observations only. Local lease/attachment IDs and socket handles never
 // leave the endpoint. Both TCP and UDP retain their own profile and observations.
 public sealed record MeshTraversalCandidate(Guid Id, long Version, string Endpoint, string? ObservationTarget,
     long ObservedAt, long Expires, CandidatePurpose Purpose,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] TcpPredictionCandidate? Prediction = null,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool PeerReflexive = false);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] bool PeerReflexive = false,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] UdpExplorationCandidate? Exploration = null);
 public sealed record MeshTraversalMessage(int Version, Guid MessageId, int FromSlot, string FromDevice, Guid FromBoot,
     int ToSlot, string ToDevice, Guid ToBoot, long Sequence, Guid AttemptId, long NominationRevision,
     Guid ValidationNonce, TraversalProfile Profile, int ProtocolClientSlot, int NominatorSlot,
@@ -35,12 +37,13 @@ public static class MeshTraversal
     public static void ValidateCapabilities(MeshTraversalCapabilities? c)
     {
         if (c == null) return;
-        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.FakeTcpIpv6 is < 0 or > 1 || c.TcpPrediction is < 0 or > 1 || c.TcpPeerReflexive is < 0 or > 1 || c.BootId == Guid.Empty ||
+        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.FakeTcpIpv6 is < 0 or > 1 || c.TcpPrediction is < 0 or > 1 || c.TcpPeerReflexive is < 0 or > 1 || c.UdpExploration is < 0 or > 1 || c.BootId == Guid.Empty ||
             c.Profiles is not { Length: >= 1 and <= 2 } || c.Profiles.Distinct().Count() != c.Profiles.Length ||
             c.UdpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.UdpDirect) ||
             c.FakeTcpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) ||
             c.TcpPrediction == 1 && !c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) ||
             c.TcpPeerReflexive == 1 && !c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) ||
+            c.UdpExploration == 1 && !c.Profiles.Contains(TraversalProfile.UdpDirect) ||
             c.Profiles.Any(p => p is not (TraversalProfile.FakeTcpHttpSo or TraversalProfile.UdpDirect)) ||
             c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) && c.NativeAbi != TraversalLimits.NativeAbi)
             throw new FormatException("打洞能力或启动代次无效");
@@ -59,6 +62,7 @@ public static class MeshTraversal
             c.Purpose != CandidatePurpose.Host && c.Purpose != (profile == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen))
             throw new FormatException("候选观察、协议或有效期无效");
         MeshTcpPrediction.Validate(c, profile);
+        MeshUdpExploration.Validate(c, profile);
         if (c.PeerReflexive && (profile != TraversalProfile.FakeTcpHttpSo || c.Prediction != null || IPEndPoint.Parse(c.Endpoint).AddressFamily != AddressFamily.InterNetwork))
             throw new FormatException("TCP 来源学习只允许独立 IPv4 SO 候选");
     }
@@ -82,6 +86,8 @@ public static class MeshTraversal
         ValidateCandidate(m.Candidate, m.Profile, now, m.Stage != MeshTraversalStage.Selected);
         ValidateCandidate(m.PeerCandidate, m.Profile, now, m.Stage != MeshTraversalStage.Selected);
         MeshTcpPrediction.ValidateStage(m);
+        if (m.Candidate?.Exploration != null && m.PeerCandidate != null || m.PeerCandidate?.Exploration != null && m.Candidate != null)
+            MeshUdpExploration.Pair(m.Candidate!, m.PeerCandidate!);
         if (m.Candidate != null && m.PeerCandidate != null && IPEndPoint.Parse(m.Candidate.Endpoint).AddressFamily != IPEndPoint.Parse(m.PeerCandidate.Endpoint).AddressFamily)
             throw new FormatException("候选对地址族不匹配");
     }
@@ -106,9 +112,9 @@ public static class MeshTraversal
         if (m.Candidate == null || m.PeerCandidate == null) throw new InvalidOperationException("Offer 尚未形成完整候选对");
         return sender
             ? new(network, m.FromDevice, m.FromBoot, m.ToDevice, m.ToBoot, m.AttemptId, m.Candidate.Id, m.Candidate.Version,
-                m.PeerCandidate.Id, m.PeerCandidate.Version, m.Profile, m.ProtocolClientSlot == m.FromSlot, m.NominatorSlot == m.FromSlot, m.ValidationNonce)
+                m.PeerCandidate.Id, m.PeerCandidate.Version, m.Profile, m.ProtocolClientSlot == m.FromSlot, m.NominatorSlot == m.FromSlot, m.ValidationNonce, m.Candidate.Exploration != null)
             : new(network, m.ToDevice, m.ToBoot, m.FromDevice, m.FromBoot, m.AttemptId, m.PeerCandidate.Id, m.PeerCandidate.Version,
-                m.Candidate.Id, m.Candidate.Version, m.Profile, m.ProtocolClientSlot == m.ToSlot, m.NominatorSlot == m.ToSlot, m.ValidationNonce);
+                m.Candidate.Id, m.Candidate.Version, m.Profile, m.ProtocolClientSlot == m.ToSlot, m.NominatorSlot == m.ToSlot, m.ValidationNonce, m.Candidate.Exploration != null);
     }
 }
 
@@ -120,5 +126,6 @@ public interface IMeshTraversalDiscovery
     bool SupportsFakeTcpIpv6 => false;
     bool SupportsTcpPrediction => false;
     bool SupportsTcpPeerReflexive => false;
+    bool SupportsUdpExploration => false;
     Task PublishTraversal(MeshTraversalMessage[] messages, CancellationToken token);
 }

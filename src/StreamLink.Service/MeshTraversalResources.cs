@@ -12,6 +12,8 @@ internal interface IMeshCandidateResource : IAsyncDisposable
 {
     MeshTraversalCandidate Candidate { get; }
     bool PredictionReady => false;
+    TimeSpan ExplorationRemaining => TimeSpan.Zero;
+    object? ExplorationStats => null;
     bool PredictionControlReady(int requests) => false;
     Task<MeshTraversalCandidate> MeasurePrediction(long started, CancellationToken token) => throw new NotSupportedException();
     void FinishPrediction(PredictionOutcome outcome) { }
@@ -25,6 +27,7 @@ internal interface IMeshCandidateFactory
     bool SupportsFakeTcpIpv6 => false;
     bool SupportsTcpPrediction => false;
     bool SupportsTcpPeerReflexive => false;
+    bool SupportsUdpExploration => false;
     EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
@@ -35,6 +38,9 @@ internal interface IMeshCandidateFactory
     Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token) =>
         GatherCoordinated(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, token);
+    Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token) =>
+        GatherSourceAware(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, peerSourceAllowed, token);
 }
 
 // One request budget for all discovery operations of this running device.

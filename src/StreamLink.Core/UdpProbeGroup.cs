@@ -19,6 +19,7 @@ internal sealed class UdpProbeGroup : IDisposable
     readonly int[] ports;
     readonly IPAddress peer;
     readonly IPEndPoint? fixedPeer;
+    readonly bool constrainStablePorts;
     Guid winner;
     int cursor, targetCursor;
     long lastDrive;
@@ -31,14 +32,17 @@ internal sealed class UdpProbeGroup : IDisposable
     // Less than one such datagram cannot complete this wire profile.
     public bool Exhausted => Round.Packets >= PacketLimit || Round.Bytes > ByteLimit - TraversalLimits.UdpRequiredPayload;
     public const int DurationMs = 12000, PacketLimit = 512, ByteLimit = 256 * 1024;
-    public UdpProbeGroup(TraversalResources machine, bool stable, IPAddress peer, IPEndPoint? fixedPeer, int[] ports)
+    public UdpProbeGroup(TraversalResources machine, bool stable, IPAddress peer, IPEndPoint? fixedPeer, int[] ports, TraversalControlRound? heldRound = null, bool constrainStablePorts = false)
     {
         if (peer.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || peer.GetAddressBytes()[0] == 0 ||
             peer.GetAddressBytes()[0] >= 224 || stable && (fixedPeer != null || ports.Length is < 1 or > 256) ||
             !stable && (fixedPeer == null || !fixedPeer.Address.Equals(peer) || fixedPeer.Port <= 0 || ports.Length != 0) ||
             ports.Any(p => p is < 1 or > 65535) || ports.Distinct().Count() != ports.Length) throw new ArgumentException("概率轮次目标无效");
         Stable = stable; this.peer = new(peer.GetAddressBytes()); this.fixedPeer = fixedPeer == null ? null : new(this.peer, fixedPeer.Port);
-        this.ports = ports.ToArray(); Round = new(machine, PacketLimit, ByteLimit);
+        this.ports = ports.ToArray();
+        this.constrainStablePorts = constrainStablePorts;
+        if (heldRound != null && !ReferenceEquals(heldRound.Machine, machine)) throw new ArgumentException("探索账本不属于当前机器");
+        Round = heldRound ?? new(machine, PacketLimit, ByteLimit);
     }
     public void Register(Guid source)
     {
@@ -50,7 +54,9 @@ internal sealed class UdpProbeGroup : IDisposable
     // The first observation starts the same clock later used by checks and
     // nomination. Repeated observations/activation never renew that deadline.
     public void Begin() { lock (gate) { if (sources.Count == 0) throw new IOException("探索没有资源"); if (Started == 0) Started = Stopwatch.GetTimestamp(); } }
-    public bool Allows(IPEndPoint endpoint) => endpoint.Address.Equals(peer) && endpoint.Port > 0 && (Stable || endpoint.Equals(fixedPeer));
+    public void BeginFrom(long began) { lock (gate) { if (sources.Count == 0 || Started != 0 || began <= 0 || Stopwatch.GetElapsedTime(began).TotalMilliseconds >= DurationMs) throw new IOException("探索种子时钟无效或过期"); Started = began; } }
+    public bool Allows(IPEndPoint endpoint) => endpoint.Address.Equals(peer) && endpoint.Port > 0 &&
+        (Stable ? !constrainStablePorts || ports.Contains(endpoint.Port) : endpoint.Equals(fixedPeer));
     public bool Drive(Guid source)
     {
         lock (gate) {
