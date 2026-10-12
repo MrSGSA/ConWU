@@ -95,7 +95,13 @@ static class NativeIpv6RunnerTests
                 mode + ": formal native Runner exposes actual directional IP observations without inventing peer receipt or loss");
             check(wire.Packets > 0 && wire.MaximumBytes >= 1392, mode + ": native serialized packet length is measured separately from UDP framing");
             check(factories.All(f => f.Transports.Single().WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 }), mode + ": formal factory enables native wire accounting and only selected business bypasses control limits");
-            if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
+            if (paced) {
+                check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
+                check(factories.All(f => f.Egress!.RateScope == "WholeDevice" &&
+                    f.Egress.Outlets.Any(o => o.Outlet.StartsWith("WindowsInterface:") && o.SentBytes > 0) &&
+                    f.Egress.Outlets.Sum(o => o.SentBytes) == f.Egress.SentBytes),
+                    mode + ": formal native send uses actual Windows route outlet without multiplying device rate");
+            }
             if (feedback) await DeliveryRunnerChecks.Run(states, mode != "old-service", "native/" + mode, check, token);
             if(qualityMode=="benefit"){
                 var original=factories[0].Paths.First().ActualLocal;

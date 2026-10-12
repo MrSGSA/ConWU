@@ -20,6 +20,8 @@ public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSoc
     bool IQueuedTraversalSocket.SupportsDiagnostics=>true;
     readonly ITraversalSocket inner;
     readonly EgressPacer.Flow flow;
+    readonly EgressRouteCache routes = new();
+    readonly IPAddress source;
     readonly CancellationTokenSource stop = new();
     Exception? fatal;
     int disposed;
@@ -31,7 +33,11 @@ public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSoc
     public PacedTraversalSocket(ITraversalSocket inner, EgressPacer pacer, string peer)
     {
         this.inner = inner;
-        try { flow = pacer.Register(peer, SendNow); }
+        source = inner.Local.Address;
+        try { flow = pacer.RegisterRouted(peer, context => {
+            var remote = context is DiagnosticContext diagnostic ? diagnostic.Remote : (IPEndPoint)context!;
+            return routes.Get(source, remote.Address);
+        }, SendNow); }
         catch { inner.Dispose(); stop.Dispose(); throw; }
     }
     bool SendNow(ReadOnlyMemory<byte> packet, object? context)

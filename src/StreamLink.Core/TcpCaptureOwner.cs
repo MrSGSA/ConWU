@@ -34,6 +34,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     readonly TcpEndpointLease.NativeReference reference;
     readonly IEndpointPacketIo io;
     readonly EgressPacer? pacer;
+    readonly EgressRouteCache routes = new();
     readonly Dictionary<IPEndPoint, Session> sessions = [];
     readonly CancellationTokenSource stop = new();
     readonly Task receiver;
@@ -183,7 +184,9 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         bool frozen;
         readonly EgressPacer.Flow? outbound;
         internal Session(TcpCaptureOwner owner, IPEndPoint peer, string? fairnessKey, bool peerReflexive)
-        { this.owner = owner; this.peer = peer; announced = peer; this.peerReflexive = peerReflexive; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, kind) => SendNow(packet.Span, (NativeWireKind)(kind ?? NativeWireKind.Handshake))); }
+        { this.owner = owner; this.peer = peer; announced = peer; this.peerReflexive = peerReflexive;
+          outbound = owner.pacer?.RegisterRouted(fairnessKey ?? peer.ToString(), _ => owner.routes.Get(Lease.Local.Address, Volatile.Read(ref this.peer).Address),
+              (packet, kind) => SendNow(packet.Span, (NativeWireKind)(kind ?? NativeWireKind.Handshake))); }
         NativeWireBudget? wireBudget;
         internal void ConfigureWireBudget(NativeWireBudget budget)
         {

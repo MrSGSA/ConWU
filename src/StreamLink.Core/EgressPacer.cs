@@ -5,6 +5,8 @@ using Microsoft.Win32.SafeHandles;
 namespace StreamLink.Core;
 
 public sealed record EgressPeerStats(string Peer, long SentBytes, long Packets, long OverflowDrops, long Cancelled, long SendFailures);
+public sealed record EgressOutletStats(string Outlet, int QueuedBytes, int PeakQueuedBytes, int QueueLimitBytes,
+    long SentBytes, EgressPeerStats[] Peers);
 public sealed record EgressStats(int Mbps, int QueuedBytes, int PeakQueuedBytes, int QueueLimitBytes, long SentBytes,
     long OverflowDrops, long Cancelled, long SendFailures, double MaximumQueueMs, double QueueP95Ms, long PriorityPackets,
     EgressPeerStats[] Peers, string Failure)
@@ -16,6 +18,9 @@ public sealed record EgressStats(int Mbps, int QueuedBytes, int PeakQueuedBytes,
     public string WorkerPriority { get; init; } = "";
     public double OldestQueuedMs { get; init; }
     public DatagramSendSnapshot? Accounting { get; init; }
+    public EgressOutletStats[] Outlets { get; init; } = [];
+    public string RateScope { get; init; } = "WholeDevice";
+    public long RetiredOutletSentBytes { get; init; }
 }
 
 // One instance per device runner, shared by all managed sockets/capture owners
@@ -26,8 +31,9 @@ public sealed class EgressPacer : IDisposable
     const int Quantum = 1536, MaximumDatagram = 4 * Quantum, MaximumFlows = 64;
     readonly object gate = new();
     readonly DatagramSendAccounting accounting = new();
-    readonly Dictionary<string, Peer> peers = [];
+    readonly Dictionary<(string Outlet, string Peer), Peer> peers = [];
     readonly List<Peer> order = [];
+    readonly List<Outlet> outlets = [];
     readonly AutoResetEvent changed = new(false);
     readonly PreciseTimer timer = new();
     readonly Thread worker;
@@ -40,18 +46,27 @@ public sealed class EgressPacer : IDisposable
     static readonly double[] buckets = [.1, .25, .5, 1, 2, 5, 10, 20, 50, 100, 500, double.PositiveInfinity];
     double maximumAge;
     long timerWaits; double timerWaitMs, tokenOverrun;
+    long retiredOutletSentBytes;
     int cursor, bytes, peak, flowCount;
-    bool stopping, disposed, waitingForReadiness;
+    bool stopping, disposed, waitingForReadiness, newOutletVisit = true;
     string failure = "";
     public int Mbps { get; }
-    internal sealed class Peer(string key)
+    internal sealed class Outlet(string key)
     {
         public readonly string Key = key;
+        public readonly List<Peer> Peers = [];
+        public int Bytes, Peak, Deficit, Cursor;
+        public long Sent;
+    }
+    internal sealed class Peer(string key, Outlet outlet)
+    {
+        public readonly string Key = key;
+        public readonly Outlet Outlet = outlet;
         public readonly LinkedList<Item> Data = [], Control = [];
-        public int Bytes, Deficit, References;
+        public int Bytes, Deficit, References, InFlight;
         public long Sent, Packets, Overflow, Cancelled, Failures;
     }
-    internal sealed record Item(Flow Flow, byte[] Packet, int Bytes, object? Context, long At, bool Priority,
+    internal sealed record Item(Flow Flow, Peer Peer, byte[] Packet, int Bytes, object? Context, long At, bool Priority,
         CancellationToken Token, TaskCompletionSource? Completion, Func<int,double>? Readiness);
     // 50 Mbps Windows A/B: a ~2ms credit ceiling plus one AboveNormal sender
     // avoids losing capacity to wakeup jitter, without spin or process-wide
@@ -71,16 +86,39 @@ public sealed class EgressPacer : IDisposable
         worker = new Thread(Run) { IsBackground = true, Name = "StreamLink egress", Priority = priority }; worker.Start();
     }
     public Flow Register(string peer, Func<ReadOnlyMemory<byte>, object?, bool> send)
+        => Register(peer, "DeviceShared", send);
+    internal Flow RegisterRouted(string peer, Func<object?, string> outlet, Func<ReadOnlyMemory<byte>, object?, bool> send)
+    {
+        ArgumentNullException.ThrowIfNull(outlet);
+        var flow = Register(peer, "Unresolved", send); flow.route = outlet; return flow;
+    }
+    public Flow Register(string peer, string outlet, Func<ReadOnlyMemory<byte>, object?, bool> send)
     {
         if (string.IsNullOrWhiteSpace(peer) || peer.Length > 128) throw new ArgumentException("出口成员标识无效");
+        if (string.IsNullOrWhiteSpace(outlet) || outlet.Length > 128) throw new ArgumentException("出口标识无效");
+        ArgumentNullException.ThrowIfNull(send);
         lock (gate) {
             ObjectDisposedException.ThrowIf(stopping, this);
             if (flowCount >= MaximumFlows) throw new IOException("出口路径资源已满");
-            if (peers.Count >= MaximumFlows) foreach (var old in order.Where(p => p.References == 0 && p.Bytes == 0).ToArray()) { peers.Remove(old.Key); order.Remove(old); }
-            cursor = order.Count == 0 ? 0 : cursor % order.Count;
-            if (!peers.TryGetValue(peer, out var p)) { p = new(peer); peers.Add(peer, p); order.Add(p); }
+            Reclaim();
+            if (!peers.TryGetValue((outlet, peer), out var p)) {
+                if (peers.Count >= 2 * MaximumFlows) throw new IOException("出口分区资源已满");
+                var o = outlets.FirstOrDefault(o => o.Key == outlet);
+                if (o == null) { o = new(outlet); outlets.Add(o); }
+                p = new(peer, o); peers.Add((outlet, peer), p); order.Add(p); o.Peers.Add(p);
+            }
             p.References++; flowCount++; return new(this, p, send);
         }
+    }
+    void Reclaim()
+    {
+        if (peers.Count >= MaximumFlows) foreach (var old in order.Where(p => p.References == 0 && p.Bytes == 0 && p.InFlight == 0).ToArray()) {
+            peers.Remove((old.Outlet.Key, old.Key)); order.Remove(old); old.Outlet.Peers.Remove(old);
+        }
+        foreach (var o in outlets.Where(o => o.Peers.Count == 0).ToArray()) { retiredOutletSentBytes += o.Sent; outlets.Remove(o); }
+        cursor = outlets.Count == 0 ? 0 : cursor % outlets.Count;
+        newOutletVisit = true;
+        foreach (var o in outlets) o.Cursor = o.Peers.Count == 0 ? 0 : o.Cursor % o.Peers.Count;
     }
     public EgressStats Snapshot()
     {
@@ -88,9 +126,13 @@ public sealed class EgressPacer : IDisposable
             long total = histogram.Sum(), count = 0; double p95 = 0;
             for (int i = 0; i < histogram.Length && total > 0; i++) { count += histogram[i]; if (count >= Math.Ceiling(total * .95)) { p95 = double.IsInfinity(buckets[i]) ? maximumAge : buckets[i]; break; } }
             return new(Mbps, bytes, peak, limit, sent, overflow, cancelled, failures, maximumAge, p95, priorityPackets,
-                order.Select(p => new EgressPeerStats(p.Key, p.Sent, p.Packets, p.Overflow, p.Cancelled, p.Failures)).ToArray(), failure)
+                order.GroupBy(p => p.Key).Select(g => new EgressPeerStats(g.Key, g.Sum(p => p.Sent), g.Sum(p => p.Packets),
+                    g.Sum(p => p.Overflow), g.Sum(p => p.Cancelled), g.Sum(p => p.Failures))).ToArray(), failure)
                 { TimerWaits = timerWaits, TimerWaitMs = timerWaitMs, BackloggedTokenOverrunBytes = tokenOverrun, BurstBytes = burst, WorkerPriority = priorityName,
-                    OldestQueuedMs = Oldest(null), Accounting = accounting.Snapshot() };
+                    OldestQueuedMs = Oldest(null), Accounting = accounting.Snapshot(),
+                    RetiredOutletSentBytes = retiredOutletSentBytes,
+                    Outlets = outlets.Select(o => new EgressOutletStats(o.Key, o.Bytes, o.Peak, limit, o.Sent,
+                        o.Peers.Select(p => new EgressPeerStats(p.Key, p.Sent, p.Packets, p.Overflow, p.Cancelled, p.Failures)).ToArray())).ToArray() };
         }
     }
     double Oldest(Flow? flow)
@@ -108,9 +150,9 @@ public sealed class EgressPacer : IDisposable
     }
     void Drop(Item item, bool capacity)
     {
-        bytes -= item.Bytes; item.Flow.peer.Bytes -= item.Bytes;
+        bytes -= item.Bytes; item.Peer.Bytes -= item.Bytes; item.Peer.Outlet.Bytes -= item.Bytes;
         accounting.Drop(item.Bytes, capacity); item.Flow.accounting.Drop(item.Bytes, capacity);
-        if (capacity) { overflow++; item.Flow.peer.Overflow++; } else { cancelled++; item.Flow.peer.Cancelled++; }
+        if (capacity) { overflow++; item.Peer.Overflow++; } else { cancelled++; item.Peer.Cancelled++; }
         if (item.Token.IsCancellationRequested) item.Completion?.TrySetCanceled(item.Token);
         else item.Completion?.TrySetException(new IOException(capacity ? "egress-queue-full" : "egress-flow-closed"));
     }
@@ -118,27 +160,46 @@ public sealed class EgressPacer : IDisposable
         CancellationToken token, TaskCompletionSource? completion, Func<int,double>? readiness = null)
     {
         if (wireBytes < packet.Length || wireBytes is < 28 or > MaximumDatagram || packet.Length == 0) throw new ArgumentOutOfRangeException(nameof(wireBytes));
+        // Route lookup is cached by its owner and deliberately outside the
+        // scheduler lock: NIC/OS lookup must not block other sending peers.
+        string outlet = flow.route?.Invoke(context) ?? flow.peer.Outlet.Key;
+        if (string.IsNullOrWhiteSpace(outlet) || outlet.Length > 128) throw new ArgumentException("出口标识无效");
         lock (gate) {
             accounting.Offer(wireBytes); flow.accounting.Offer(wireBytes);
             if (stopping || !flow.Alive || token.IsCancellationRequested) {
                 accounting.Reject(wireBytes, false); flow.accounting.Reject(wireBytes, false); return false;
             }
+            var p = flow.peer;
+            if (flow.route != null && outlet != p.Outlet.Key) {
+                if (!peers.TryGetValue((outlet, p.Key), out p)) {
+                    Reclaim();
+                    if (peers.Count >= 2 * MaximumFlows) {
+                        overflow++; flow.peer.Overflow++;
+                        accounting.Reject(wireBytes, true); flow.accounting.Reject(wireBytes, true); return false;
+                    }
+                    var o = outlets.FirstOrDefault(o => o.Key == outlet);
+                    if (o == null) { o = new(outlet); outlets.Add(o); }
+                    p = new(flow.peer.Key, o); peers.Add((outlet, p.Key), p); order.Add(p); o.Peers.Add(p);
+                }
+                if (flow.members.Add(p)) p.References++;
+            }
             int ceiling = priority ? limit : limit - reserve;
             // A saturated peer cannot prevent a newly active peer from entering.
             // Evict only a data tail from a more heavily queued peer; no retries.
             while (bytes + wireBytes > ceiling) {
-                var victim = order.Where(p => p != flow.peer && p.Bytes > flow.peer.Bytes && p.Data.Count != 0).MaxBy(p => p.Bytes);
+                var victim = order.Where(v => v != p && v.Bytes > p.Bytes && v.Data.Count != 0).MaxBy(v => v.Bytes);
                 if (victim == null) {
-                    overflow++; flow.peer.Overflow++;
+                    overflow++; p.Overflow++;
                     accounting.Reject(wireBytes, true); flow.accounting.Reject(wireBytes, true); return false;
                 }
                 var tail = victim.Data.Last!; victim.Data.RemoveLast(); Drop(tail.Value, true);
             }
             bool wasEmpty = bytes == 0;
-            var item = new Item(flow, packet.ToArray(), wireBytes, context, Stopwatch.GetTimestamp(), priority, token, completion,readiness);
-            (priority ? flow.peer.Control : flow.peer.Data).AddLast(item);
+            var item = new Item(flow, p, packet.ToArray(), wireBytes, context, Stopwatch.GetTimestamp(), priority, token, completion,readiness);
+            (priority ? p.Control : p.Data).AddLast(item);
             accounting.Accept(wireBytes); flow.accounting.Accept(wireBytes);
-            bytes += wireBytes; flow.peer.Bytes += wireBytes; peak = Math.Max(peak, bytes);
+            bytes += wireBytes; p.Bytes += wireBytes; peak = Math.Max(peak, bytes);
+            p.Outlet.Bytes += wireBytes; p.Outlet.Peak = Math.Max(p.Outlet.Peak, p.Outlet.Bytes);
             if (wasEmpty||waitingForReadiness) changed.Set(); return true;
         }
     }
@@ -152,15 +213,23 @@ public sealed class EgressPacer : IDisposable
     Item? Select(out bool priority,out double blockedWait)
     {
         priority = false;blockedWait=double.PositiveInfinity;
-        if (order.Count == 0) return null;
+        if (outlets.Count == 0) return null;
         // Priority remains in the SAME rate/queue budget and has its own small
         // allowance. Exhausted priority flows join normal deficit scheduling.
-        for (int i = 0; i < order.Count; i++) {
-            var p = order[(cursor + i) % order.Count]; var item = p.Control.First?.Value;
-            if (item != null && item.Bytes <= priorityTokens) { priority = true; return item; }
+        for (int i = 0; i < outlets.Count; i++) {
+            var o = outlets[(cursor + i) % outlets.Count];
+            for (int j = 0; j < o.Peers.Count; j++) {
+                var p = o.Peers[(o.Cursor + j) % o.Peers.Count]; var item = p.Control.First?.Value;
+                if (item != null && item.Bytes <= priorityTokens) { priority = true; return item; }
+            }
         }
-        for (int i = 0; i < order.Count * 5; i++) {
-            var p = order[cursor]; var item = p.Data.First?.Value ?? p.Control.First?.Value;
+        // Deficit round robin at the outlet, then at the peer. All outlets
+        // still spend the ONE device token bucket; a second NIC adds no rate.
+        for (int i = 0; i < outlets.Count * 5; i++) {
+            var o = outlets[cursor];
+            if (newOutletVisit) { o.Deficit = Math.Min(MaximumDatagram + Quantum, o.Deficit + Quantum); newOutletVisit = false; }
+            for (int j = 0; j < o.Peers.Count * 5; j++) {
+            var p = o.Peers[o.Cursor]; var item = p.Data.First?.Value ?? p.Control.First?.Value;
             if(item!=null&&!item.Token.IsCancellationRequested&&item.Readiness is{}ready){
                 double delay=ready(item.Bytes);
                 if(delay>0){
@@ -172,9 +241,19 @@ public sealed class EgressPacer : IDisposable
             }
             if (item != null) {
                 if (p.Deficit < item.Bytes) p.Deficit += Quantum;
-                if (p.Deficit >= item.Bytes) return item;
+                if (p.Deficit >= item.Bytes) {
+                    if (o.Deficit >= item.Bytes) return item;
+                    // Preserve the next peer while this outlet waits for its
+                    // next credit. Searching smaller packets here would bias
+                    // the byte shares and inflate peer deficits on each wait.
+                    break;
+                }
             } else p.Deficit = 0;
-            cursor = (cursor + 1) % order.Count;
+            o.Cursor = (o.Cursor + 1) % o.Peers.Count;
+            }
+            if (o.Bytes == 0) o.Deficit = 0;
+            cursor = (cursor + 1) % outlets.Count;
+            newOutletVisit = true;
         }
         return null;
     }
@@ -194,12 +273,20 @@ public sealed class EgressPacer : IDisposable
                         // rounding loses throughput to the bounded bucket cap.
                         if (tokens < item.Bytes) { wait = (item.Bytes - tokens) / rate; item = null; }
                         else {
-                            var p = item.Flow.peer;
+                            var p = item.Peer;
                             (item.Priority ? p.Control : p.Data).RemoveFirst();
-                            bytes -= item.Bytes; p.Bytes -= item.Bytes; tokens -= item.Bytes;
+                            bytes -= item.Bytes; p.Bytes -= item.Bytes; p.Outlet.Bytes -= item.Bytes; tokens -= item.Bytes;
                             accounting.Begin(item.Bytes); item.Flow.accounting.Begin(item.Bytes);
+                            p.InFlight++;
                             if (priority) { priorityTokens -= item.Bytes; priorityPackets++; }
-                            else { p.Deficit -= item.Bytes; if (p.Deficit < (p.Data.First?.Value ?? p.Control.First?.Value)?.Bytes) cursor = (cursor + 1) % order.Count; }
+                            else {
+                                p.Deficit -= item.Bytes; p.Outlet.Deficit -= item.Bytes;
+                                if (p.Deficit < (p.Data.First?.Value ?? p.Control.First?.Value)?.Bytes)
+                                    p.Outlet.Cursor = (p.Outlet.Cursor + 1) % p.Outlet.Peers.Count;
+                            }
+                            // Even priority traffic rotates across outlets/peers.
+                            if (priority) p.Outlet.Cursor = (p.Outlet.Peers.IndexOf(p) + 1) % p.Outlet.Peers.Count;
+                            if (priority) { cursor = (outlets.IndexOf(p.Outlet) + 1) % outlets.Count; newOutletVisit = true; }
                             double age = Stopwatch.GetElapsedTime(item.At).TotalMilliseconds; maximumAge = Math.Max(maximumAge, age);
                             histogram[Array.FindIndex(buckets, b => age <= b)]++;
                         }
@@ -220,9 +307,10 @@ public sealed class EgressPacer : IDisposable
                 if (!success && error is OperationCanceledException && (item.Token.IsCancellationRequested || !item.Flow.Alive)) abandoned = true;
                 lock (gate) {
                     accounting.Complete(item.Bytes, success, abandoned); item.Flow.accounting.Complete(item.Bytes, success, abandoned);
-                    if (success) { sent += item.Bytes; item.Flow.peer.Sent += item.Bytes; item.Flow.peer.Packets++; }
-                    else if (abandoned) { cancelled++; item.Flow.peer.Cancelled++; }
-                    else { failures++; item.Flow.peer.Failures++; }
+                    item.Peer.InFlight--;
+                    if (success) { sent += item.Bytes; item.Peer.Sent += item.Bytes; item.Peer.Packets++; item.Peer.Outlet.Sent += item.Bytes; }
+                    else if (abandoned) { cancelled++; item.Peer.Cancelled++; }
+                    else { failures++; item.Peer.Failures++; }
                 }
                 if (success) item.Completion?.TrySetResult();
                 else if (item.Token.IsCancellationRequested) item.Completion?.TrySetCanceled(item.Token);
@@ -237,9 +325,12 @@ public sealed class EgressPacer : IDisposable
     void Close(Flow flow)
     {
         lock (gate) {
-            if (!flow.Alive) return; flow.Alive = false; flowCount--; flow.peer.References--;
-            foreach (var q in new[] { flow.peer.Data, flow.peer.Control }) {
+            if (!flow.Alive) return; flow.Alive = false; flowCount--;
+            foreach (var p in flow.members) {
+            p.References--;
+            foreach (var q in new[] { p.Data, p.Control }) {
                 for (var node = q.First; node != null;) { var next = node.Next; if (node.Value.Flow == flow) { Drop(node.Value, false); q.Remove(node); } node = next; }
+            }
             }
             if (!disposed) changed.Set();
         }
@@ -255,11 +346,13 @@ public sealed class EgressPacer : IDisposable
         readonly EgressPacer owner;
         internal readonly DatagramSendAccounting accounting = new();
         internal readonly Peer peer;
+        internal readonly HashSet<Peer> members = [];
+        internal Func<object?, string>? route;
         internal readonly Func<ReadOnlyMemory<byte>, object?, bool> send;
         internal readonly object sendGate = new();
         volatile bool alive = true;
         internal bool Alive { get => alive; set => alive = value; }
-        internal Flow(EgressPacer owner, Peer peer, Func<ReadOnlyMemory<byte>, object?, bool> send) { this.owner = owner; this.peer = peer; this.send = send; }
+        internal Flow(EgressPacer owner, Peer peer, Func<ReadOnlyMemory<byte>, object?, bool> send) { this.owner = owner; this.peer = peer; this.send = send; members.Add(peer); }
         public DatagramQueueStats SendQueue => owner.Queue(this);
         public bool TrySend(ReadOnlySpan<byte> packet, int wireBytes, object? context = null, bool priority = false,
             CancellationToken token = default, TaskCompletionSource? completion = null)

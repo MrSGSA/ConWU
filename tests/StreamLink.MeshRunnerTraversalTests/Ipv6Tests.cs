@@ -168,6 +168,10 @@ static class Ipv6Tests
             check(states.All(s => s!.Peers!.Single().Traffic is { Qualification: "QualityUnknown", SendLossPercent: null, PeerDeliveredSendBytes: null, OneWayDelayMs: null }),
                 mode + ": actual formal UDP status exposes directional application IP counters while absent remote quality evidence stays unknown");
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": same-socket UDP pacing reports actual outer bytes through formal Runner");
+            if (paced) check(factories.All(f => f.Egress!.RateScope == "WholeDevice" &&
+                f.Egress.Outlets.Any(o => o.Outlet.StartsWith("WindowsInterface:") && o.SentBytes > 0) &&
+                f.Egress.Outlets.Sum(o => o.SentBytes) == f.Egress.SentBytes),
+                mode + ": same retained UDP resource queues on actual Windows route outlet");
             if (paced) check(states.All(s => s!.Peers!.Where(p => p.Connected).All(p => p.SendQueue is { Owner: "SharedEgress", ByteUnit: "OuterIpBytes", Accounting.Conserved: true })) &&
                 factories.All(f => f.Egress?.Accounting?.Conserved == true), mode + ": formal Runner exposes the same sole UDP egress queue and conserved local outcomes");
             if (feedback) await DeliveryRunnerChecks.Run(states, !mode.StartsWith("old-"), "UDP/" + mode, check, token);

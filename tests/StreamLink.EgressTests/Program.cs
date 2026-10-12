@@ -21,6 +21,7 @@ try {
     await UdpIo();
     await Churn();
     rows.Add(new { sendQueues = await SendQueueTests.Run(Check, token) });
+    rows.Add(new { outlets = await OutletTests.Run(Check, token) });
     if (priorityStudy) {
         for (int round = 1; round <= 3; round++)
             foreach (var priority in round % 2 == 1 ? new[] { ThreadPriority.Normal, ThreadPriority.AboveNormal } : new[] { ThreadPriority.AboveNormal, ThreadPriority.Normal })
@@ -81,6 +82,8 @@ async Task Churn()
         f.TrySend(new byte[40], 40, completion: done); await done.Task.WaitAsync(token);
     }
     Check(pacer.Snapshot().SentBytes == 6000 && pacer.Snapshot().Peers.Length <= 64 && pacer.Snapshot().Failure == "", "member churn reclaims bounded peer records without corrupting scheduler cursor");
+    Check(pacer.Snapshot().Outlets.Sum(o => o.SentBytes) + pacer.Snapshot().RetiredOutletSentBytes == 6000,
+        "reclaiming retired outlet records preserves the lifetime device send total");
     var live = Enumerable.Range(0, 64).Select(i => pacer.Register("live-" + i, (_, _) => true)).ToArray(); bool rejected = false;
     try { using var extra = pacer.Register("excess", (_, _) => true); } catch (IOException) { rejected = true; }
     Check(rejected, "flow quota remains global across all members and path generations");
