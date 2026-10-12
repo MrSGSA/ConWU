@@ -22,3 +22,5 @@
 原始产物：`artifacts/m3-helper-windivert-third-20261013.json`、`m3-helper-endpoint-second-20261013.json`，旧入口与 Windows 日志为 `m3-helper-legacy-final-20261013.log`、`m3-windows-final-20261013.log`。首次端口负例因取消发生在准入等待阶段失败的日志保留，不能作为已实际发送的事务失败证据。
 
 `CompleteWireAudit` 明确为 false。现有证据不覆盖兼容 raw 的逐包分类/源端点、NIC 物理出口总数、并发全部 native 与 kernel 控制包的总账，也不覆盖公网 NAT/八真实 Windows/正式安装恢复。真实 WinDivert helper 观测不是 native 对等流的线上 RST 验收。M0—M9 总 Gate 不提升。
+
+后续独立工作树增量（不在正在打包的 `41e5102` 中）：helper 新事务同时参考最近一秒自身 kernel 观测和共享调度控制的准入量，以两者合计的保守条件延后新查询。两个计数仍独立输出，准入量不改称实发报文；不拦截内核响应。精简 IPC 状态补充可观测/不可观测资源数，避免详细列表省略后把缺失观测误读为零流量。70 项专项检查、87 项普通 UDP 打洞、71 项 TCP 兼容及 100 项 Windows/IPC 回归通过。混合条件负例是 53 个合成 kernel 观察加 8 次调度准入，其等待/取消和两套独立数字都已验证；不是完整机器出口压测。产物 `artifacts/m3-helper-combined-control-first-20261013.json`，各回归日志 `m3-combined-*-20261013.log`。完整 native/兼容包级审计继续，不能由这个保守准入改动代替。

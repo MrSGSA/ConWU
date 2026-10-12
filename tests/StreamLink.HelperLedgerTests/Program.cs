@@ -39,6 +39,18 @@ var order=new List<int>();
 async Task Turn(int i){await fair.Admit(stop.Token);lock(order)order.Add(i);}
 await Task.WhenAll(Turn(0),Turn(1),Turn(2));
 Check(order.SequenceEqual([0,1,2])&&fair.Snapshot().PendingTransactions==0,"concurrent helper transactions receive FIFO admission without leaking queue owners");
+var sharedControls=new TraversalResources();var mixed=new TcpHelperLedger(null,sharedControls);
+using(var mixResource=mixed.Register(Guid.NewGuid(),Guid.NewGuid(),TcpHelperPurpose.ServerScreening,local,remote)){
+ for(int i=0;i<8;i++)Check(sharedControls.TrySend(40),"controlled native/UDP admission is registered once");
+ for(int i=0;i<53;i++)mixResource.Packet(true,40,0x10,0);
+ using var cancel=new CancellationTokenSource(120);bool cancelled=false;
+ try{await mixed.Admit(cancel.Token);}catch(OperationCanceledException){cancelled=true;}
+ var state=mixed.Snapshot();
+ Check(cancelled&&state.RecentOutboundPackets==53&&state.RecentScheduledControlAdmissions==8&&state.PendingTransactions==0,
+    "helper defers when kernel observations plus scheduled controls reach the common envelope, without relabeling admissions as wire packets");
+ Check(state.ObservableResources==0&&state.UnobservableResources==1,
+    "compact status distinguishes an unavailable observer from observed zero traffic");
+}
 
 for(int round=0;round<6;round++){
  var actual=new TcpHelperLedger();await using var reflector=new Reflector();

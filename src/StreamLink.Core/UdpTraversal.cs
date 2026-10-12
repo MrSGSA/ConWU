@@ -70,6 +70,13 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     int sockets, peakSockets;
     bool exploring;
     long searchAdmitted, maintenanceAdmitted, searchDeferred, maintenanceDeferred, admittedBytes;
+    readonly (long Bin, int Count)[] recentControls = new (long, int)[10];
+    public int RecentControlAdmissions {
+        get { lock (gate) {
+            long now = (long)(Stopwatch.GetElapsedTime(0, Stopwatch.GetTimestamp()).TotalMilliseconds / 100);
+            return recentControls.Where(b => b.Bin <= now && now - b.Bin < 10).Sum(b => b.Count);
+        } }
+    }
     readonly HashSet<OptionalSocket> optionalSockets = [];
     public IDisposable Acquire()
     {
@@ -136,7 +143,11 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
             tokens--; byteTokens -= bytes;
             if (maintenance) { maintenanceTokens--; maintenanceAdmitted++; }
             else { if (!completion) searchTokens--; searchAdmitted++; }
-            admittedBytes += bytes; return true;
+            admittedBytes += bytes;
+            long bin = (long)(Stopwatch.GetElapsedTime(0, now).TotalMilliseconds / 100);
+            int index = (int)(bin % recentControls.Length);
+            var prior = recentControls[index]; recentControls[index] = (bin, prior.Bin == bin ? prior.Count + 1 : 1);
+            return true;
         }
     }
     // Admission counts, not packets observed on the wire: an authorized sender

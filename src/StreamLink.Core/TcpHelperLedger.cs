@@ -12,6 +12,9 @@ public sealed record TcpHelperUsage(int OpenResources, int PeakResources, long C
     int RecentOutboundPackets, long AdmissionWaits, TcpHelperResource[] Resources)
 {
     public int PendingTransactions { get; init; }
+    public int ObservableResources { get; init; }
+    public int UnobservableResources { get; init; }
+    public int RecentScheduledControlAdmissions { get; init; }
     public string Scope => "Process-owned kernel TCP helpers; NETWORK-layer observations, not physical NIC totals or native peer traffic";
     public bool CompleteWireAudit => false;
 }
@@ -24,6 +27,7 @@ public sealed class TcpHelperLedger
     public static TcpHelperLedger Shared { get; } = new();
     readonly object gate = new();
     readonly TimeProvider time;
+    readonly TraversalResources controls;
     readonly Dictionary<Guid, Handle> active = [];
     readonly Queue<TcpHelperResource> retired = [];
     readonly LinkedList<object> pending = [];
@@ -32,7 +36,8 @@ public sealed class TcpHelperLedger
     int peak;
     double tokens = 2;
     long admissionAt;
-    public TcpHelperLedger(TimeProvider? time = null) { this.time = time ?? TimeProvider.System; admissionAt = this.time.GetTimestamp(); }
+    public TcpHelperLedger(TimeProvider? time = null) : this(time, TraversalResources.Shared) { }
+    internal TcpHelperLedger(TimeProvider? time, TraversalResources controls) { this.time = time ?? TimeProvider.System; this.controls = controls; admissionAt = this.time.GetTimestamp(); }
     long Bin() => (long)(time.GetElapsedTime(0, time.GetTimestamp()).TotalMilliseconds / 100);
     int Recent()
     {
@@ -62,12 +67,13 @@ public sealed class TcpHelperLedger
                     long now = time.GetTimestamp();
                     tokens = Math.Min(2, tokens + time.GetElapsedTime(admissionAt, now).TotalSeconds * 4); admissionAt = now;
                     bool turn = queued == null ? pending.Count == 0 : ReferenceEquals(pending.First, queued);
-                    if (turn && tokens >= 1 && Recent() < TraversalLimits.ControlPps) { tokens--; return; }
+                    bool congested = Recent() + controls.RecentControlAdmissions >= TraversalLimits.ControlPps;
+                    if (turn && tokens >= 1 && !congested) { tokens--; return; }
                     if (queued == null) {
                         if (pending.Count >= 32) throw new IOException("BudgetExhausted: TCP helper transaction queue is full");
                         queued = pending.AddLast(new object()); waits++;
                     }
-                    delay = !turn || Recent() >= TraversalLimits.ControlPps ? 100 : Math.Clamp((1 - tokens) * 250, 10, 250);
+                    delay = !turn || congested ? 100 : Math.Clamp((1 - tokens) * 250, 10, 250);
                 }
                 await Task.Delay(TimeSpan.FromMilliseconds(delay), time, token);
             }
@@ -76,7 +82,12 @@ public sealed class TcpHelperLedger
     public TcpHelperUsage Snapshot()
     {
         lock (gate) return new(active.Count, peak, created, queries, queryFailures, sent, sentBytes,
-            received, receivedBytes, Recent(), waits, active.Values.Select(h => h.Snapshot()).Concat(retired.TakeLast(4)).ToArray()) { PendingTransactions = pending.Count };
+            received, receivedBytes, Recent(), waits, active.Values.Select(h => h.Snapshot()).Concat(retired.TakeLast(4)).ToArray()) {
+                PendingTransactions = pending.Count,
+                ObservableResources = active.Values.Count(h => h.Snapshot().Observation.StartsWith("WindowsNetworkLayer:")),
+                UnobservableResources = active.Values.Count(h => !h.Snapshot().Observation.StartsWith("WindowsNetworkLayer:")),
+                RecentScheduledControlAdmissions = controls.RecentControlAdmissions
+            };
     }
     internal sealed class Handle(TcpHelperLedger owner, Guid id, Guid generation, TcpHelperPurpose purpose, string local, string reflector) : IDisposable
     {
