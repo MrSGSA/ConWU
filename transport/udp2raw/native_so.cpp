@@ -47,13 +47,21 @@ bool native_so_receive() {
     if (!outer_complete && GetTickCount64()>=state->deadline()) { mylog(log_warn,"SO shared deadline exceeded\n"); myexit(74); }
     raw_info_t incoming; incoming.peek=true; char *payload=nullptr; int size=0;
     if (recv_raw0(incoming,payload,size)!=0) { discard_raw_packet(); return true; }
-    const auto &r=incoming.recv_info; const auto &s=shape.send_info;
-    if (!r.new_src_ip.equal(s.new_dst_ip) || !r.new_dst_ip.equal(s.new_src_ip) || r.src_port!=s.dst_port || r.dst_port!=s.src_port) {
-        discard_raw_packet(); return true;
-    }
+    const auto &r=incoming.recv_info; auto &s=shape.send_info;
     const auto *raw=reinterpret_cast<const unsigned char*>(g_packet_buf);
     unsigned ihl=raw_ip_version==AF_INET6?40:(raw[0]&15)*4;
     std::uint8_t flags=raw[ihl+13];
+    if (!r.new_src_ip.equal(s.new_dst_ip) || !r.new_dst_ip.equal(s.new_src_ip) || r.dst_port!=s.src_port) {
+        discard_raw_packet(); return true;
+    }
+    if(r.src_port!=s.dst_port) {
+        if(outer_complete || state->phase()!=streamlink::ShapePhase::syn_sent || size!=0 ||
+            !(flags==2 || (flags==18 && r.ack_seq==state->iss()+1u)) || !native_attachment_learn_peer_port(r.src_port)) {
+            discard_raw_packet(); return true;
+        }
+        s.dst_port=r.src_port;
+        mylog(log_info,"SO tentative peer port learned; authentication still required\n");
+    }
     if ((flags&4) && outer_complete) return false; // retain the legacy data-phase reset policy
     shape.recv_info=r;
     bool before=state->established();

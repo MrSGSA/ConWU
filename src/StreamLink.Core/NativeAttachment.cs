@@ -19,6 +19,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     readonly TcpCaptureOwner.Session? brokerSession;
     readonly NativeRawChannel? rawChannel;
     readonly NativeWireBudget? wireBudget;
+    readonly IPEndPoint announcedPeer;
     readonly ChildJob job;
     readonly NamedPipeServerStream pipe;
     readonly byte[] identity;
@@ -32,6 +33,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public Guid AttachId { get; }
     public Guid? CaptureOwnerId => brokerSession?.CaptureOwnerId;
     public Guid LeaseId { get; }
+    public IPEndPoint ActualPeer => brokerSession?.Peer ?? new(announcedPeer.Address, announcedPeer.Port);
+    public TcpPeerSourceStats? PeerSource => brokerSession?.PeerSource;
+    public void FreezePeer() => brokerSession?.FreezePeer();
     public bool Armed { get; private set; }
     public bool Started { get; private set; }
     // Start transmission, not the acknowledgement, begins the one round clock.
@@ -51,18 +55,20 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     [DllImport("kernel32.dll", SetLastError = true)]
     static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
 
-    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner, string? fairnessKey, NativeWireBudget? wireBudget)
+    NativeAttachment(TcpEndpointLease lease, Guid generation, IPEndPoint peer, bool server, bool simultaneousOpen, TcpCaptureOwner? captureOwner, string? fairnessKey, NativeWireBudget? wireBudget, bool peerReflexive)
     {
         if (wireBudget != null && captureOwner == null) throw new ArgumentException("Wire accounting requires a capture owner");
         this.wireBudget = wireBudget;
         bool v6 = lease.Local.AddressFamily == AddressFamily.InterNetworkV6;
+        if (peerReflexive && (v6 || !simultaneousOpen || captureOwner == null || wireBudget == null)) throw new ArgumentException("Peer-reflexive learning requires accounted brokered IPv4 SO");
+        announcedPeer = new(peer.Address, peer.Port);
         Size = v6 ? 144 : 96;
         if (peer.AddressFamily != lease.Local.AddressFamily || peer.Equals(lease.Reflector) || peer.Equals(lease.Local) ||
             v6 && (!Ipv6Direct.UnscopedUnicast(peer.Address) || captureOwner == null))
             throw new ArgumentException("Native peer and helper require distinct same-family tuples; IPv6 requires the capture broker");
         if (captureOwner != null) {
             if (!ReferenceEquals(captureOwner.Lease, lease)) throw new ArgumentException("Capture owner does not hold this lease");
-            brokerSession = captureOwner.Register(generation, peer, fairnessKey); reference = brokerSession; AttachId = brokerSession.AttachId;
+            brokerSession = captureOwner.Register(generation, peer, fairnessKey, peerReflexive); reference = brokerSession; AttachId = brokerSession.AttachId;
         } else { var owned = lease.AcquireNativeAttachment(generation); reference = owned; AttachId = owned.AttachId; }
         LeaseId = lease.Id;
         try {
@@ -84,6 +90,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             if (brokerSession != null) {
                 identity[92] = 1; // authorized brokered data pipe, not an environment skip-bind flag
                 identity[93] = (byte)(wireBudget != null ? 1 : 0); // local-only frame category capability
+                identity[94] = (byte)(peerReflexive ? 1 : 0); // bounded same-IP initial SYN source learning
                 rawChannel = new(name, brokerSession, wireBudget != null);
                 rawChannel.Faulted += () => { if (Volatile.Read(ref disposed) == 0 && process is { HasExited: false }) try { process.Kill(); } catch (InvalidOperationException) { } };
             }
@@ -99,9 +106,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public static async Task<NativeAttachment> Launch(TcpEndpointLease lease, Guid generation,
         string executable, IEnumerable<string> arguments, IPEndPoint peer, bool server,
         string? logPath, CancellationToken token, IDictionary<string, string>? environment = null,
-        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null, string? fairnessKey = null, NativeWireBudget? wireBudget = null)
+        IEnumerable<string>? secrets = null, bool simultaneousOpen = false, bool startImmediately = true, TcpCaptureOwner? captureOwner = null, string? fairnessKey = null, NativeWireBudget? wireBudget = null, bool peerReflexive = false)
     {
-        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner, fairnessKey, wireBudget);
+        var owner = new NativeAttachment(lease, generation, peer, server, simultaneousOpen, captureOwner, fairnessKey, wireBudget, peerReflexive);
         try {
             owner.process = owner.job.Start(executable, arguments.Concat(["--managed-pipe", owner.PipeName]), logPath, environment, secrets);
             owner.childId = owner.process.Id;

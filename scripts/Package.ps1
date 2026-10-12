@@ -56,6 +56,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Conditional port prediction regression failed'}
         & dotnet run --project tests/StreamLink.EndpointPoc -c Release -- --port-window-wide (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --output (Join-Path $root "artifacts/native-port-window-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Native bounded port-window regression failed'}
+        & dotnet run --project tests/StreamLink.EndpointPoc -c Release --no-build -- --tcp-prflx (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-source-learning-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Bounded native TCP source-learning mechanism regression failed'}
         & dotnet run --project tests/StreamLink.MeshTraversalTests -c Release -- --output (Join-Path $root "artifacts/prediction-control-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Signed prediction control regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 2 --output (Join-Path $root "artifacts/prediction-runner-$releaseVersion.json") --prediction-runner-only

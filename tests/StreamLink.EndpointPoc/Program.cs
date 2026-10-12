@@ -5,6 +5,9 @@ using System.Text.Json;
 using StreamLink.EndpointPoc;
 using StreamLink.Core;
 
+if (args is ["--tcp-prflx", var reflexiveBinary, "--rounds", var reflexiveRounds, "--output", var reflexiveOutput])
+    return await TcpPeerReflexivePoc.Run(Path.GetFullPath(reflexiveBinary), int.Parse(reflexiveRounds), Path.GetFullPath(reflexiveOutput));
+
 if (args is ["--port-window", var windowBinary, "--rounds", var windowRounds, "--output", var windowOutput])
     return await NativePortWindowPoc.Run(Path.GetFullPath(windowBinary), int.Parse(windowRounds), Path.GetFullPath(windowOutput));
 if (args is ["--port-window-wide", var wideBinary, "--output", var wideOutput])

@@ -18,7 +18,9 @@ public sealed record CaptureOwnerStatus(Guid OwnerId, Guid LeaseId, bool Retirin
     long Received, long Injected, long KernelSuppressed, long HelperReinjected, long QueueDrops, string Failure)
 {
     public CaptureQueueDiagnostics Queues { get; init; } = new(0, 0, 0, 0, 0, 0, 0, 0);
+    public int WireTuples { get; init; }
 }
+public sealed record TcpPeerSourceStats(bool Enabled, string Announced, string Actual, int Hypotheses, bool Learned, bool Frozen);
 public sealed record CaptureQueueDiagnostics(long Enqueued, long Dequeued, int PeakSessionDepth,
     double MaximumQueueMs, long QueuedOver20Ms, long PipeWrites, double MaximumPipeWriteMs, long PipeWritesOver16Ms);
 
@@ -47,7 +49,8 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
     public Task Ready => ready.Task;
     public Task Closed => closed.Task;
     public bool Failed { get { lock (gate) return failure.Length != 0 || closing; } }
-    public CaptureOwnerStatus Status { get { lock (gate) return new(OwnerId, Lease.Id, retiring, closed.Task.IsCompletedSuccessfully, sessions.Count, received, injected, suppressed, helperReinjected, queueDrops, failure) {
+    public CaptureOwnerStatus Status { get { lock (gate) return new(OwnerId, Lease.Id, retiring, closed.Task.IsCompletedSuccessfully, sessions.Values.Distinct().Count(), received, injected, suppressed, helperReinjected, queueDrops, failure) {
+        WireTuples = sessions.Count,
         Queues = new(enqueued, dequeued, peakDepth, queueTicks * 1000d / Stopwatch.Frequency, queuedOver20,
             pipeWrites, pipeTicks * 1000d / Stopwatch.Frequency, pipeOver16)
     }; } }
@@ -59,16 +62,18 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         try { io = open(lease.Local, lease.Reflector); receiver = Task.Factory.StartNew(Receive, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default).Unwrap(); }
         catch { reference.Dispose(); throw; }
     }
-    public Session Register(Guid generation, IPEndPoint peer, string? fairnessKey = null)
+    public Session Register(Guid generation, IPEndPoint peer, string? fairnessKey = null, bool peerReflexive = false)
     {
         lock (gate) {
             if (retiring || closing || failure.Length != 0 || generation != Lease.NetworkGeneration ||
                 peer.AddressFamily != Lease.Local.AddressFamily || peer.Port == 0 ||
                 peer.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !Ipv6Direct.UnscopedUnicast(peer.Address) ||
-                peer.Equals(Lease.Local) || peer.Equals(Lease.Reflector) || sessions.Count >= 8)
+                peer.Equals(Lease.Local) || peer.Equals(Lease.Reflector) || sessions.Values.Distinct().Count() >= 8 ||
+                peerReflexive && (peer.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork ||
+                    sessions.Values.Any(s => s.peerReflexive && s.announced.Address.Equals(peer.Address))))
                 throw new IOException("Capture owner unavailable or unauthorized tuple");
             if (sessions.ContainsKey(peer)) throw new IOException("The TCP wire tuple already has a live or retiring session");
-            var session = new Session(this, new(peer.Address, peer.Port), fairnessKey); sessions.Add(session.Peer, session); return session;
+            var session = new Session(this, new(IPAddress.Parse(peer.Address.ToString()), peer.Port), fairnessKey, peerReflexive); sessions.Add(session.Peer, session); return session;
         }
     }
     // Unfragmented IPv4/TCP or fixed-header IPv6/TCP. Extension/fragment/jumbo
@@ -114,7 +119,9 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
                         continue;
                     }
                     if (packet.Outbound) { suppressed++; continue; }
-                    if (sessions.TryGetValue(remote, out var session) && session.started && !session.retired && !session.revoked) {
+                    sessions.TryGetValue(remote, out var session);
+                    session ??= sessions.Values.Distinct().FirstOrDefault(s => s.ObserveSource(remote, packet.Bytes));
+                    if (session != null && session.started && !session.retired && !session.revoked) {
                         if (!session.incoming.Writer.TryWrite(new(packet.Bytes, Stopwatch.GetTimestamp()))) queueDrops++;
                         else { enqueued++; session.depth++; peakDepth = Math.Max(peakDepth, session.depth); }
                     }
@@ -131,7 +138,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         lock (gate) {
             if (!session.retired) {
                 session.retired = true; session.started = false; session.incoming.Writer.TryComplete();
-                sessions.Remove(session.Peer);
+                foreach (var key in sessions.Where(pair => ReferenceEquals(pair.Value, session)).Select(pair => pair.Key).ToArray()) sessions.Remove(key);
             }
             if (retiring && sessions.Count == 0 && !closing) { closing = true; _ = Close(); }
         }
@@ -166,10 +173,17 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         internal readonly Channel<QueuedPacket> incoming = Channel.CreateBounded<QueuedPacket>(new BoundedChannelOptions(64) { FullMode = BoundedChannelFullMode.Wait, SingleReader = true, SingleWriter = true });
         internal int depth;
         internal bool started, retired, revoked;
-        readonly IPEndPoint peer;
+        IPEndPoint peer;
+        internal readonly IPEndPoint announced;
+        internal readonly bool peerReflexive;
+        readonly Dictionary<IPEndPoint, uint> sourceSyns = [];
+        int hypotheses;
+        uint? ownIss;
+        long startedAt;
+        bool frozen;
         readonly EgressPacer.Flow? outbound;
-        internal Session(TcpCaptureOwner owner, IPEndPoint peer, string? fairnessKey)
-        { this.owner = owner; this.peer = peer; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, kind) => SendNow(packet.Span, (NativeWireKind)(kind ?? NativeWireKind.Handshake))); }
+        internal Session(TcpCaptureOwner owner, IPEndPoint peer, string? fairnessKey, bool peerReflexive)
+        { this.owner = owner; this.peer = peer; announced = peer; this.peerReflexive = peerReflexive; outbound = owner.pacer?.Register(fairnessKey ?? peer.ToString(), (packet, kind) => SendNow(packet.Span, (NativeWireKind)(kind ?? NativeWireKind.Handshake))); }
         NativeWireBudget? wireBudget;
         internal void ConfigureWireBudget(NativeWireBudget budget)
         {
@@ -178,21 +192,27 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         public Guid AttachId { get; } = Guid.NewGuid();
         public Guid CaptureOwnerId => owner.OwnerId;
         public TcpEndpointLease Lease => owner.Lease;
-        public IPEndPoint Peer => new(peer.Address, peer.Port);
+        public IPEndPoint Peer { get { var value = Volatile.Read(ref peer); return new(IPAddress.Parse(value.Address.ToString()), value.Port); } }
+        public bool PeerLearned => !Peer.Equals(announced);
+        public TcpPeerSourceStats PeerSource { get { lock (owner.gate) return new(peerReflexive, announced.ToString(), peer.ToString(), hypotheses, PeerLearned, frozen); } }
+        public void FreezePeer() { lock (owner.gate) frozen = true; }
         public bool Failed { get { lock (owner.gate) return retired || revoked || owner.failure.Length != 0 || owner.closing; } }
         public Task CaptureReady => owner.Ready;
-        public void Start() { lock (owner.gate) { if (Failed) throw new IOException("Capture session unavailable"); started = true; } }
+        public void Start() { lock (owner.gate) { if (Failed) throw new IOException("Capture session unavailable"); if (peerReflexive && wireBudget == null) throw new IOException("Source learning requires wire accounting"); if (startedAt == 0) startedAt = Stopwatch.GetTimestamp(); started = true; } }
         public void Revoke() { lock (owner.gate) { started = false; revoked = true; } }
         public bool Send(ReadOnlySpan<byte> packet, NativeWireKind kind = NativeWireKind.Handshake)
         {
-            if (!Tuple(packet, out var source, out var target, exactLength: true) || !source.Equals(Lease.Local) || !target.Equals(Peer))
+            if (!Tuple(packet, out var source, out var target, exactLength: true) || !source.Equals(Lease.Local))
                 throw new IOException("Worker attempted an unauthorized raw tuple");
-            lock (owner.gate) if (!started || Failed) return false;
             if (!Enum.IsDefined(kind) || wireBudget == null && kind != NativeWireKind.Handshake) throw new IOException("Unauthorized wire metadata");
             int ip = (packet[0] >> 4) == 6 ? 40 : (packet[0] & 15) * 4;
             int tcp = (packet[ip + 12] >> 4) * 4;
             if (kind == NativeWireKind.Business && (packet.Length <= ip + tcp || (packet[ip + 13] & 7) != 0))
                 throw new IOException("TCP shape control cannot use the business budget");
+            lock (owner.gate) {
+                if (!started || Failed) return false;
+                if (!target.Equals(peer) && !ClaimSource(target, packet)) throw new IOException("Worker attempted an unobserved or conflicting peer tuple");
+            }
             if (outbound == null) return SendNow(packet, kind);
             // Only actual small TCP shape controls get priority. Encrypted
             // udp2raw payloads cannot be classified by guessed application data.
@@ -203,10 +223,43 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         {
             lock (owner.gate) {
                 if (!started || Failed) return false;
+                if (!Tuple(packet, out _, out var target, exactLength: true) || !target.Equals(peer)) return false;
                 if (wireBudget != null && !wireBudget.Admit(kind, packet.Length)) return false;
+                if (peerReflexive && SynHeader(packet, out byte flags, out uint seq, out _, out _) && flags == 2)
+                    ownIss ??= seq;
                 try { bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent; }
                 catch (Exception ex) { owner.failure = "inject-" + ex.GetType().Name; throw; }
             }
+        }
+        bool Learning => peerReflexive && !frozen && started && !retired && !revoked && !PeerLearned && ownIss != null &&
+            startedAt != 0 && Stopwatch.GetElapsedTime(startedAt).TotalMilliseconds < TraversalLimits.SoRoundMs;
+        // Only initial, empty TCP shape SYNs from the declared peer IP may enter
+        // the bounded hypothesis set. They are not authenticated path evidence.
+        internal bool ObserveSource(IPEndPoint source, ReadOnlySpan<byte> packet)
+        {
+            if (!Learning || !source.Address.Equals(announced.Address) || source.Equals(Lease.Reflector) || source.Equals(Lease.Local) ||
+                !SynHeader(packet, out byte flags, out uint seq, out uint ack, out _) || flags is not (2 or 18) ||
+                flags == 18 && ack != unchecked(ownIss!.Value + 1)) return false;
+            if (sourceSyns.TryGetValue(source, out uint previous)) return previous == seq;
+            if (sourceSyns.Count >= TraversalLimits.TcpSourceHypotheses) return false;
+            sourceSyns.Add(new(source.Address, source.Port), seq); hypotheses++; return true;
+        }
+        bool ClaimSource(IPEndPoint target, ReadOnlySpan<byte> packet)
+        {
+            if (!Learning || !sourceSyns.TryGetValue(target, out uint remoteIss) || owner.sessions.ContainsKey(target) ||
+                !SynHeader(packet, out byte flags, out uint seq, out uint ack, out _) || ack != unchecked(remoteIss + 1) ||
+                !(flags == 18 && seq == ownIss || flags == 16 && seq == unchecked(ownIss!.Value + 1))) return false;
+            // Keep the announced tuple reserved until confirmed worker exit.
+            // The changed tuple shares the same ISS/state, never a second SYN.
+            owner.sessions.Add(new(target.Address, target.Port), this);
+            Volatile.Write(ref peer, new(target.Address, target.Port)); sourceSyns.Clear(); return true;
+        }
+        static bool SynHeader(ReadOnlySpan<byte> p, out byte flags, out uint seq, out uint ack, out int ip)
+        {
+            flags = 0; seq = ack = 0; ip = (p[0] >> 4) == 6 ? 40 : (p[0] & 15) * 4;
+            int tcp = (p[ip + 12] >> 4) * 4;
+            if (p.Length != ip + tcp) return false;
+            flags = p[ip + 13]; seq = BinaryPrimitives.ReadUInt32BigEndian(p[(ip + 4)..]); ack = BinaryPrimitives.ReadUInt32BigEndian(p[(ip + 8)..]); return true;
         }
         public async ValueTask<byte[]> Receive(CancellationToken token)
         {

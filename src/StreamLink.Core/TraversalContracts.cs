@@ -53,4 +53,5 @@ public static class TraversalLimits
     // This is not stable NAT evidence or the independent prediction age rule.
     public const int TcpCandidateReuseMs = 2000;
     public const int PredictionHelperPrepareMs = 12000; // within caller's existing pair opportunity
+    public const int TcpSourceHypotheses = 4; // untrusted, empty initial SYNs on one authorized peer IP
 }

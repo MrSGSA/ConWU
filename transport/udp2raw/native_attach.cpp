@@ -19,6 +19,7 @@ std::atomic<bool> started{false};
 std::atomic<bool> armed{false};
 std::atomic<unsigned long long> start_tick{0};
 address_t local, helper, peer;
+bool peer_learned=false;
 unsigned last_request = 1;
 unsigned short read16(const unsigned char *p) { return p[0] | (p[1] << 8); }
 unsigned read32(const unsigned char *p) { return read16(p) | (unsigned(read16(p+2)) << 16); }
@@ -132,7 +133,8 @@ void native_attach_configure() {
     unsigned char zero[16]{};
     for (int offset: {16,32,48}) if (memcmp(authorization+offset,zero,16)==0) reject("empty identity");
     const bool v6=frame_size==144;
-    if (raw_mode!=mode_faketcp || raw_ip_version!=(v6?AF_INET6:AF_INET) || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || authorization[92]>1 || authorization[93]>authorization[92] || read16(authorization+94)) reject("unsupported profile or descriptor");
+    if (raw_mode!=mode_faketcp || raw_ip_version!=(v6?AF_INET6:AF_INET) || (authorization[83]!=1 && authorization[83]!=2) || read32(authorization+84)!=10000 || read32(authorization+88)!=1 || authorization[92]>1 || authorization[93]>authorization[92] || authorization[94]>1 || authorization[95] ||
+        (authorization[94] && (v6 || authorization[83]!=2 || authorization[92]!=1 || authorization[93]!=1))) reject("unsupported profile or descriptor");
     if (v6 && (read32(authorization+64) || read32(authorization+70) || read32(authorization+76) || authorization[92]!=1)) reject("IPv6 requires canonical broker descriptor");
     local=endpoint(authorization+(v6?96:64),read16(authorization+68));
     helper=endpoint(authorization+(v6?112:70),read16(authorization+74));
@@ -149,6 +151,15 @@ bool native_attached() { return pipe_handle!=INVALID_HANDLE_VALUE; }
 bool native_attachment_so() { return native_attached() && authorization[83]==2; }
 unsigned long long native_attachment_start_tick() { return start_tick.load(); }
 void native_attachment_endpoints(address_t &source, address_t &destination) { source=local; destination=peer; }
+bool native_attachment_learn_peer_port(unsigned short port) {
+    if (!native_attachment_so() || authorization[94]!=1 || peer_learned || !port || peer.get_type()!=AF_INET) return false;
+    std::lock_guard<std::mutex> lock(native_injection_mutex);
+    address_t changed=peer; changed.inner.ipv4.sin_port=htons(port);
+    if(changed==local || changed==helper || changed==peer) return false;
+    peer=changed; peer_learned=true;
+    if(program_mode==client_mode) remote_addr=peer;
+    return true;
+}
 bool native_attachment_started() { return !native_attached() || started.load(); }
 std::string native_attachment_filter() {
     std::string ip=frame_size==144?"ipv6":"ip";

@@ -12,6 +12,7 @@ public sealed record NativePathDiagnostics(Guid AttemptId, Guid LeaseId, Guid At
     int AuthenticatedProbeReceives, bool PayloadQualified, double RemainingMs)
 {
     public NativeWireStats? WireControl { get; init; }
+    public TcpPeerSourceStats? PeerSource { get; init; }
 }
 
 public sealed class NativePathVerificationException(string reason, NativePathDiagnostics diagnostic, Exception inner)
@@ -53,7 +54,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public void SelectWireBudget() => wireBudget?.Select();
     public TraversalAttemptContext Context { get; }
     public ValidatedPathIdentity Identity => Volatile.Read(ref qualified) != 0 && native != null
-        ? identity with { AttachId = native.AttachId, ActualLocal = Copy(identity.ActualLocal), ActualRemote = Copy(identity.ActualRemote) }
+        ? identity with { AttachId = native.AttachId, ActualLocal = Copy(identity.ActualLocal), ActualRemote = Copy(native.ActualPeer) }
         : throw new InvalidOperationException("Native 路径尚未完成本轮认证与包长检查");
     public bool Failed => Volatile.Read(ref failed) != 0 || native?.Exited == true;
     public bool Armed => !Volatile.Read(ref disposed) && native?.Armed == true && !Failed;
@@ -66,9 +67,9 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     // Bridge sends are not physical SYN counters. Start acknowledges the worker
     // command, not the peer handshake; only an authenticated full payload proves it.
     public NativePathDiagnostics Diagnostics => new(Context.AttemptId, identity.LeaseId, AttachId,
-        identity.ActualLocal.ToString(), identity.ActualRemote.ToString(), native?.Armed == true, Started, native?.Exited != false,
+        identity.ActualLocal.ToString(), (native?.ActualPeer ?? identity.ActualRemote).ToString(), native?.Armed == true, Started, native?.Exited != false,
         Volatile.Read(ref bridgeProbeAttempts), Volatile.Read(ref authenticatedProbeReceives), Volatile.Read(ref qualified) != 0,
-        RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl };
+        RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl, PeerSource = native?.PeerSource };
     public IPEndPoint BridgeEndpoint => Copy((IPEndPoint)bridge.LocalEndPoint!);
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
@@ -93,10 +94,11 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public static async Task<NativeDatagramPath> Prepare(string executable, string sessionRoot,
         TcpEndpointLease lease, Guid generation, TraversalAttemptContext context, IPEndPoint peer,
         byte[] sharedKey, CancellationToken token, TraversalResources? resources = null,
-        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false, NativeAttemptGroup? group = null)
+        IDictionary<string, string>? environment = null, TcpCaptureOwner? captureOwner = null, bool countWireControl = false, NativeAttemptGroup? group = null, bool peerReflexive = false)
     {
         Directory.CreateDirectory(sessionRoot);
         if (group != null && (!countWireControl || captureOwner == null)) throw new ArgumentException("Multi-tuple attempts require broker wire accounting");
+        if (peerReflexive && group != null) throw new ArgumentException("Peer source learning cannot overlap a multi-tuple prediction window");
         var path = new NativeDatagramPath(lease, generation, context, peer, sharedKey, sessionRoot, resources ?? TraversalResources.Shared, countWireControl, group);
         byte[] rawSecret = new byte[32]; HKDF.DeriveKey(HashAlgorithmName.SHA256, sharedKey, rawSecret, path.digest, "streamlink-native-outer-v1"u8);
         string rawKey = Convert.ToHexString(rawSecret); CryptographicOperations.ZeroMemory(rawSecret);
@@ -113,7 +115,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await File.WriteAllTextAsync(path.configuration,
                 $"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n", token);
             path.native = await NativeAttachment.Launch(lease, generation, executable, ["--conf-file", path.configuration], peer,
-                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId, wireBudget: path.wireBudget);
+                !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId, wireBudget: path.wireBudget, peerReflexive: peerReflexive);
             path.native.ProcessExited += path.Fault;
             if (path.native.Exited) throw new IOException("Native exited during preparation");
             path.receiver = path.ReceiveLoop(); path.sender = path.SendLoop();
@@ -148,7 +150,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             }
             await proof.Task;
             if (RemainingAttemptTime <= TimeSpan.Zero) throw new TimeoutException("Native round expired after path check");
-            Volatile.Write(ref qualified, 1);
+            native.FreezePeer(); Volatile.Write(ref qualified, 1);
         } catch (Exception ex) when ((ex is OperationCanceledException or TimeoutException) && !token.IsCancellationRequested && !Volatile.Read(ref disposed)) {
             var diagnostic = Diagnostics;
             string reason = diagnostic.NativeExited ? "native-exited" : diagnostic.RemainingMs <= 0 ? "round-expired" : "path-pump-stopped";

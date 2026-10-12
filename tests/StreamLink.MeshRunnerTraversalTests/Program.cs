@@ -52,7 +52,7 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (poolOnly) { for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
+    if (poolOnly) { await PeerSourceBoundaryTests.Run(Check, token); for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
     else if (predictionRunnerOnly) {
         await PredictionRunnerTests.Admission(binary, root, Check, token);
         for (int round = 0; round < rounds; round++) rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-round-" + round), url, pin, predictionObserver, Check, token, round % 2, helperFallback: round % 2 == 1));
