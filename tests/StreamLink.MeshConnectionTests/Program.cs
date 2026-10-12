@@ -123,6 +123,12 @@ static class Program
             mapping.Change(new(IPAddress.Loopback, 43002));
             await Until(() => discovery.Published.Any(p => p.Endpoint == mapping.PublicEndpoint.ToString()), "changed mapping is published while the independent GET remains blocked", 4000);
             Check(discovery.WaitingReads > 0 && status?.Connected == true && !adapter.Disposed, "HTTP stall preserves the working encrypted peer path");
+            await Until(() => status?.Peers?.Single().Recovery?.StablePathConfirmedMs != null,
+                "formal idle Runner reports ordinary same-path keepalive confirmation", 20000);
+            await Until(() => logs.Any(l => l.StartsWith("StablePath ")), "formal Runner emits idle path evidence", 1500);
+            Check(status!.Peers!.Single().Recovery!.FirstBusinessMs == null && logs.Count(l => l.StartsWith("StablePath ")) == 1 &&
+                !logs.Any(l => l.StartsWith("FirstBusiness ") || l.StartsWith("StableBusiness ")),
+                "idle service logs path reachability once without claiming business recovery");
             int data = endpoint.DataPackets; adapter.Outgoing.Add(Packet(owner.LocalIp, guest.LocalIp));
             await Until(() => endpoint.DataPackets > data, "real encrypted datagram delivery continues through a coordination stall");
             endpoint.ReplyPacket = Packet(guest.LocalIp, owner.LocalIp);

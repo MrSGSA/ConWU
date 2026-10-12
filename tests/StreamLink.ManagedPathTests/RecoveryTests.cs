@@ -48,6 +48,29 @@ static class RecoveryTests
             "failed business enqueue invalidates only recovery evidence, not transport ownership");
         var unhealthy = New(); unhealthy.Health(false, 0); Drive(unhealthy, 100, 4000);
         check(unhealthy.Snapshot(4000).StableBusinessConfirmedMs == null, "business and replies cannot override an unhealthy selected path");
+        var quiet = New();
+        for (long at = 100; at <= 13600; at += 1500) { quiet.KeepaliveSent(at, at); quiet.Pong(at, at + 16); quiet.Pong(at, at + 17); }
+        var quietProof = quiet.Snapshot(13617);
+        check(quietProof.StablePathStartMs == 100 && quietProof.StablePathConfirmedMs == 13616 && quietProof.PathProbes == 10 &&
+            quietProof.FirstBusinessMs == null && quietProof.StableBusinessConfirmedMs == null && quietProof.ProbePackets == 0,
+            "ten ordinary keepalives establish only StablePath; duplicate replies cannot fabricate samples or business");
+        quiet.Health(false, 15000); var quietLost = quiet.Snapshot(15000);
+        check(quietLost.EpisodeId != quietProof.EpisodeId && quietLost.StablePathConfirmedMs == null && quietLost.FirstBusinessMs == null,
+            "idle path health loss starts another episode without inventing a business recovery");
+        var missed = New(); missed.KeepaliveSent(1, 100); missed.KeepaliveSent(2, 1600); missed.Pong(1, 1610); missed.Pong(2, 1616);
+        check(missed.Snapshot(1616).PathProbes == 1, "expired keepalive cannot be revived by a late reply");
+        for (long at = 3100; at <= 13600; at += 1500) { missed.KeepaliveSent(at, at); missed.Pong(at, at + 16); }
+        check(missed.Snapshot(13616).StablePathConfirmedMs == null, "a missing ordinary reply prevents premature idle path confirmation");
+        missed.KeepaliveSent(15100, 15100); missed.Pong(15100, 15116);
+        check(missed.Snapshot(15116).StablePathStartMs == 1600, "idle path start excludes the missing initial round trip");
+        var quietChange = New(); quietChange.KeepaliveSent(1, 100); quietChange.Select(Guid.NewGuid(), 200); quietChange.Pong(1, 220);
+        check(quietChange.Snapshot(220).PathProbes == 0, "retired path keepalive cannot validate the replacement path");
+        var paused = New(); paused.KeepaliveSent(1, 100); paused.Pong(1, 116); paused.Tick(4000);
+        check(paused.Snapshot(4000).PathProbes == 0 && paused.Snapshot(4000).PathWindowRestarts == 1,
+            "a long scheduler or maintenance-budget gap cannot be extrapolated into an uninterrupted idle path");
+        var quietUnhealthy = New(); quietUnhealthy.Health(false, 0);
+        for (long at = 100; at <= 13600; at += 1500) { quietUnhealthy.KeepaliveSent(at, at); quietUnhealthy.Pong(at, at + 16); }
+        check(quietUnhealthy.Snapshot(13616).StablePathConfirmedMs == null, "keepalive evidence cannot override actual path health");
     }
     public static async Task<object[]> Run(Action<bool, string> check, Func<string, string, byte[]> packet)
     {
@@ -76,6 +99,19 @@ static class RecoveryTests
                 $"formal {(managed ? "managed" : "legacy")} routers stay idle after handshake without inventing business");
             if (managed) { var invalid = new byte[128]; invalid[4] = 4; right.Send(invalid); await Task.Delay(150);
                 check(ra.Status().Single().Recovery!.FirstBusinessMs == null, "unauthenticated same-source packet is not first business"); }
+            long idleDrops = 0;
+            if (managed) {
+                right.Filter = p => { if (p[4] == 6) { Interlocked.Increment(ref idleDrops); return false; } return true; };
+                await Task.Delay(4100);
+                check(idleDrops >= 2 && ra.Status().Single().Recovery!.StablePathConfirmedMs == null,
+                    "real idle path with missing keepalive replies is not reported stable");
+                right.Filter = null;
+            }
+            await Until(() => ra.Status().Single().Recovery!.StablePathConfirmedMs != null && rb.Status().Single().Recovery!.StablePathConfirmedMs != null, 22000);
+            var idleProof = ra.Status().Single().Recovery!;
+            check(idleProof.PathProbes >= 10 && idleProof.StablePathStartMs < idleProof.StablePathConfirmedMs &&
+                idleProof.FirstBusinessMs == null && idleProof.StableBusinessConfirmedMs == null && idleProof.ProbePackets == 0 && aa.Incoming.Count == 0,
+                "real ordinary keepalives establish StablePath without extra probes, inner business packets or QoS claims");
             long dropped = 0;
             if (managed) right.Filter = p => { if (p[4] == 6) { Interlocked.Increment(ref dropped); return false; } return true; };
             using var feeding = new CancellationTokenSource();
@@ -99,7 +135,7 @@ static class RecoveryTests
                 if (managed) check(s.StableBusinessStartMs > first + 2000, "first success is preserved while stable start excludes the actual interruption");
                 int sent = s.ProbePackets; await Task.Delay(650);
                 check(ra.Status().Single().Recovery!.ProbePackets == sent, "completed recovery stops additional fast probes and leaves ordinary keepalive running");
-                rows.Add(new { managed, receivedIpPackets = aa.Incoming.Count, suppressedProbeReplies = dropped, snapshot = s,
+                rows.Add(new { managed, receivedIpPackets = aa.Incoming.Count, suppressedProbeReplies = dropped, snapshot = s, idleSnapshot = idleProof, idleSuppressedReplies = idleDrops,
                     scope = "real loopback UDP + production MeshRouter/MeshLink; memory IP adapters; no native/Wintun/NAT" });
             } finally { feeding.Cancel(); await traffic; right.Filter = null; }
         }

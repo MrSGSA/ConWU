@@ -61,7 +61,7 @@ public sealed class MeshRunner
         var clients = new Dictionary<int, MeshPeerTransports>();
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
-        var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable)>();
+        var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
         long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0;
         int probeFailures = 0, readFailures = 0, serverFailures = 0;
@@ -215,7 +215,11 @@ public sealed class MeshRunner
                     foreach (int slot in recoveryReports.Keys.Where(slot => !statuses.Any(p => p.Slot == slot)).ToArray()) recoveryReports.Remove(slot);
                     foreach (var peer in statuses) if (peer.Recovery is {} recovery) {
                         var prior = recoveryReports.GetValueOrDefault(peer.Slot);
-                        if (prior.Episode != recovery.EpisodeId) prior = (recovery.EpisodeId, false, false);
+                        if (prior.Episode != recovery.EpisodeId) prior = (recovery.EpisodeId, false, false, false);
+                        if (!prior.Path && recovery.StablePathConfirmedMs is {} pathConfirmed) {
+                            log($"StablePath peer={peer.Slot} episode={recovery.EpisodeId:N} path={recovery.PathId:N} startMs={recovery.StablePathStartMs} confirmedMs={pathConfirmed} probes={recovery.PathProbes}；普通保活已验证双向路径，不代表业务恢复或负载质量");
+                            prior.Path = true;
+                        }
                         if (!prior.First && recovery.FirstBusinessMs is {} firstBusiness) {
                             log($"FirstBusiness peer={peer.Slot} episode={recovery.EpisodeId:N} path={recovery.FirstBusinessPathId:N} elapsedMs={firstBusiness}；已收到认证业务包，尚不代表稳定恢复");
                             prior.First = true;

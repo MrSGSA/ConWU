@@ -48,11 +48,13 @@ public sealed class MeshLink : IDisposable
         return result;
     }
     public byte[] Hello() { lock (gate) return Encode(1, new byte[16], []); }
-    public byte[]? Ping()
+    public byte[]? Ping() => Ping(out _);
+    public byte[]? Ping(out long nonce)
     {
         lock (gate) {
+            nonce = 0;
             if (remoteEpoch == null) return null;
-            pendingPing = Stopwatch.GetTimestamp(); Span<byte> body = stackalloc byte[8]; BinaryPrimitives.WriteInt64BigEndian(body, pendingPing); return Encode(5, remoteEpoch, body);
+            pendingPing = nonce = Stopwatch.GetTimestamp(); Span<byte> body = stackalloc byte[8]; BinaryPrimitives.WriteInt64BigEndian(body, pendingPing); return Encode(5, remoteEpoch, body);
         }
     }
     public byte[]? Data(ReadOnlySpan<byte> packet) { lock (gate) return Connected ? Encode(4, remoteEpoch!, packet) : null; }

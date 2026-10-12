@@ -178,7 +178,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 if (peer.Managed != null) { TickManaged(peer, now); TickRecovery(peer, now); continue; }
                 TickRecovery(peer, now);
                 if (now < nextLegacy) continue;
-                if (Healthy(peer)) Send(peer.Link.Ping(), peer.Active);
+                if (Healthy(peer)) {
+                    byte[]? ping = peer.Link.Ping(out long nonce);
+                    if (ping != null && TraversalResources.Shared.TrySend(ping.Length, maintenance: true) && Send(ping, peer.Active))
+                        peer.Recovery.KeepaliveSent(nonce, now);
+                }
                 else {
                     byte[] hello = peer.Link.Hello(); Send(hello, peer.Candidate);
                     if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) Send(hello, peer.Active);

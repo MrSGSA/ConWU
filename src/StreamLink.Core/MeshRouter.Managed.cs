@@ -211,6 +211,7 @@ public sealed partial class MeshRouter
                 if (ping != null && AdmitMaintenance(path, ping.Length) && SendManaged(ping, path)) {
                     if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value).Key);
                     path.PendingRoundTrips[nonce] = Stopwatch.GetTimestamp();
+                    if (path.ProofAt != 0) peer.Recovery.KeepaliveSent(nonce, now);
                 }
             }
         }
