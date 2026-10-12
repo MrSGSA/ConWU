@@ -10,6 +10,8 @@ using StreamLink.Service;
 
 static class Ipv6Tests
 {
+    public static Task<object> RunStandby(string root,string url,string pin,Action<bool,string> check,CancellationToken token) =>
+        Runners(root,url,pin,"ipv6",check,token,false,false,true);
     public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromMinutes(4)); token = deadline.Token;
@@ -112,12 +114,12 @@ static class Ipv6Tests
         public ValueTask<TraversalDatagram> Receive(CancellationToken t) => inner.Receive(t);
         public void Dispose() => inner.Dispose();
     }
-    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback)
+    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false)
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0,
-            QualityFeedback = feedback && (i == 0 || mode != "old-peer") }).ToArray();
+            QualityFeedback = feedback && (i == 0 || mode != "old-peer"), StandbyPaths=standby }).ToArray();
         var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select(p => new Inspect(new MeshCandidateFactory(p, "unused", root, [TraversalProfile.UdpDirect], diagnostic: logs.Enqueue) {
             Ipv6AvailableForTest = () => true,
@@ -161,6 +163,28 @@ static class Ipv6Tests
             if (paced) check(states.All(s => s!.Peers!.Where(p => p.Connected).All(p => p.SendQueue is { Owner: "SharedEgress", ByteUnit: "OuterIpBytes", Accounting.Conserved: true })) &&
                 factories.All(f => f.Egress?.Accounting?.Conserved == true), mode + ": formal Runner exposes the same sole UDP egress queue and conserved local outcomes");
             if (feedback) await DeliveryRunnerChecks.Run(states, !mode.StartsWith("old-"), "UDP/" + mode, check, token);
+            if(standby){
+                long due=clock.ElapsedMilliseconds+45000;
+                while(!states.All(s=>s?.Peers?.Single().Standby is{Ready:true,BidirectionalFresh:true})){
+                    foreach(var task in tasks)if(task.IsCompleted)await task;
+                    if(clock.ElapsedMilliseconds>due)throw new TimeoutException("formal UDP standby: "+string.Join('\n',logs));await Task.Delay(20,token);
+                }
+                check(factories.All(f=>f.Paths.Count==2&&f.Paths.Select(p=>p.LeaseId).Distinct().Count()==2&&f.Paths.Select(p=>p.ActualLocal.ToString()).Distinct().Count()==2),
+                    "formal UDP standby keeps two distinct winning socket resources and actual endpoints");
+                await Task.Delay(8500,token);
+                adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));adapters[1].Outgoing.Add(Packet(b.LocalIp,a.LocalIp));
+                due=clock.ElapsedMilliseconds+4000;
+                while(adapters.Any(x=>x.Incoming.Count<2)){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("UDP Active interrupted");await Task.Delay(10,token);}
+                check(states.All(s=>s?.Connected==true&&s.Peers?.Single().Standby is{Ready:true,BidirectionalFresh:true,Qualification:"QualityUnknown"}),
+                    "after its original checking deadline formal UDP standby retains the exact socket and original Active delivers full packets");
+                await factories[0].Transports.Last().DisposeAsync();
+                due=clock.ElapsedMilliseconds+12000;
+                while(!logs.Any(l=>l.Contains("备用已结束"))){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("UDP standby did not cancel");await Task.Delay(20,token);}
+                adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));adapters[1].Outgoing.Add(Packet(b.LocalIp,a.LocalIp));
+                due=clock.ElapsedMilliseconds+4000;
+                while(adapters.Any(x=>x.Incoming.Count<3)){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("UDP Active lost after standby cleanup");await Task.Delay(10,token);}
+                check(states.All(s=>s?.Connected==true)&&factories.All(f=>!f.Transports.First().Failed),"formal UDP standby cancellation leaves the original same-socket Active references intact");
+            }
         } finally {
             stopping.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
         }
@@ -172,9 +196,14 @@ static class Ipv6Tests
     sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
         public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = []; public int Gathers;
+        public readonly ConcurrentQueue<IMeshDatagramPath> Transports=[];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsUdpIpv6 => inner.SupportsUdpIpv6;
         public EgressStats? Egress => inner.Egress;
         public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
+        public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
+        public bool SupportsStandbyProfile(TraversalProfile p)=>inner.SupportsStandbyProfile(p);
+        public async Task<IMeshCandidateResource> GatherStandby(MeshMember p,TraversalProfile k,Guid a,bool allow,MeshTraversalCandidate? remote,CancellationToken t)
+        {Interlocked.Increment(ref Gathers);return new Resource(await inner.GatherStandby(p,k,a,allow,remote,t),this);}
         public Task<IMeshCandidateResource> Gather(MeshMember p, TraversalProfile k, Guid a, CancellationToken t) => GatherForPeer(p, k, a, false, null, 1, t);
         public async Task<IMeshCandidateResource> GatherForPeer(MeshMember p, TraversalProfile k, Guid a, bool allow, IPEndPoint? remote, int round, CancellationToken t)
         { Interlocked.Increment(ref Gathers); return new Resource(await inner.GatherForPeer(p, k, a, allow, remote, round, t), this); }
@@ -187,7 +216,7 @@ static class Ipv6Tests
         sealed class Prepared(IPreparedMeshPath inner, Inspect owner) : IPreparedMeshPath
         {
             public TraversalAttemptContext Context => inner.Context; public bool Armed => inner.Armed; public TimeSpan RemainingAttemptTime => inner.RemainingAttemptTime;
-            public async Task<IMeshDatagramPath> Activate(CancellationToken t) { var path = await inner.Activate(t); owner.Paths.Enqueue(path.Identity); return path; }
+            public async Task<IMeshDatagramPath> Activate(CancellationToken t) { var path = await inner.Activate(t); owner.Paths.Enqueue(path.Identity);owner.Transports.Enqueue(path); return path; }
             public ValueTask DisposeAsync() => inner.DisposeAsync();
         }
         public ValueTask DisposeAsync() => inner.DisposeAsync();

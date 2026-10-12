@@ -19,6 +19,12 @@ static class NativeIpv6RunnerTests
         foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-native-abi", "old-service" }) rows.Add(await Pair(binary, root, url, pin, mode, check, token, paced, feedback));
         return new { rows, actualNative = true, realTcpHelpers = true, realHttps = true, rawCaptureSimulated = true, realWinDivertIo = false, realNat = false, wintun = false };
     }
+    public static async Task<object> RunStandby(string binary,string root,string url,string pin,Action<bool,string> check,CancellationToken token)
+    {
+        var rows=new List<object>();
+        foreach(string mode in new[]{"ipv6","standby-old-peer","standby-old-service"})rows.Add(await Pair(binary,root,url,pin,mode,check,token,false,false,true));
+        return new{rows,actualNative=true,realTcpHelpers=true,realHttps=true,rawCaptureSimulated=true,realWinDivertIo=false,realNat=false,wintun=false};
+    }
     static async Task Contract(Action<bool, string> check)
     {
         var a = MeshIdentity.Create("https://localhost", "", "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
@@ -32,11 +38,12 @@ static class NativeIpv6RunnerTests
         check(rejected, "UDP IPv6 capability cannot authorize a FakeTCP IPv6 Offer");
         check(!new DeviceProfile().FakeTcpIpv6, "FakeTCP IPv6 remains disabled in default/existing device profiles");
     }
-    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback)
+    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false)
     {
         await using var v4 = new Reflector(); await using var v6 = new Reflector(new(IPAddress.IPv6Loopback, 0));
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only", FakeTcpIpv6 = true, TcpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0, QualityFeedback = feedback }).ToArray();
+        for(int i=0;i<profiles.Length;i++)profiles[i].StandbyPaths=standby&&(i==0||mode!="standby-old-peer");
         var wire = new Wire(mode == "ipv6-unreachable"); var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select((p, i) => new Inspect(new MeshCandidateFactory(p, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true,
             diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0, wireControl: true) {
@@ -49,7 +56,7 @@ static class NativeIpv6RunnerTests
         })).ToArray();
         var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
         using var running = CancellationTokenSource.CreateLinkedTokenSource(token); int legacy = 0;
-        MeshRuntimeServices Services(int i) => new(m => mode == "old-service" ? new OldService(new MeshDiscoveryClient(m)) : new MeshDiscoveryClient(m),
+        MeshRuntimeServices Services(int i) => new(m => mode == "old-service" || mode=="standby-old-service" ? new OldService(new MeshDiscoveryClient(m),mode=="standby-old-service") : new MeshDiscoveryClient(m),
             _ => Task.FromResult<IPacketAdapter>(adapters[i]), async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new IOException(); },
             _ => { Interlocked.Increment(ref legacy); throw new IOException("no legacy entry"); }, (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "native-ipv6")) {
                 Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
@@ -63,7 +70,7 @@ static class NativeIpv6RunnerTests
                 await Task.Delay(20, token);
             }
             connected = clock.ElapsedMilliseconds;
-            var family = mode == "ipv6" ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
+            var family = mode == "ipv6" || mode.StartsWith("standby-") ? AddressFamily.InterNetworkV6 : AddressFamily.InterNetwork;
             check(legacy == 0 && factories.All(f => f.Paths.Count == 1 && f.Paths.Single().ActualLocal.AddressFamily == family && f.Paths.Single().ActualRemote.AddressFamily == family), mode + ": actual production candidate factory and Runner agree on the FakeTCP address family");
             check(states.All(s => s!.Degraded == false) && factories.All(f => f.Paths.Single().Profile == TraversalProfile.FakeTcpHttpSo), mode + ": only FakeTCP policy never substitutes UDP or relay");
             check(mode == "ipv6-unreachable" ? factories.All(f => f.Gathers == 2) && v6.Accepted == 2 && v4.Accepted == 2 : factories.All(f => f.Gathers == 1), mode + ": automatic fallback uses the second existing TCP round");
@@ -81,6 +88,35 @@ static class NativeIpv6RunnerTests
             check(factories.All(f => f.Transports.Single().WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 }), mode + ": formal factory enables native wire accounting and only selected business bypasses control limits");
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
             if (feedback) await DeliveryRunnerChecks.Run(states, mode != "old-service", "native/" + mode, check, token);
+            if (standby) {
+                if (mode=="ipv6") {
+                    long due=clock.ElapsedMilliseconds+45000;
+                    while(!factories.All(f=>f.Transports.Count==2&&f.Transports.Last().WireControl is{Standby:true,Selected:false})){
+                        foreach(var task in tasks)if(task.IsCompleted)await task;
+                        if(clock.ElapsedMilliseconds>due)throw new TimeoutException("standby preparation failed: "+string.Join('\n',logs));
+                        await Task.Delay(20,token);
+                    }
+                    check(factories.All(f=>f.Paths.Select(p=>p.ActualLocal.ToString()).Distinct().Count()==2&&f.Paths.Select(p=>p.LeaseId).Distinct().Count()==2),
+                        "formal native standby uses a different retained source and TCP tuple, never a second SEQ state on Active");
+                    await Task.Delay(8500,token);
+                    adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));adapters[1].Outgoing.Add(Packet(b.LocalIp,a.LocalIp));
+                    due=clock.ElapsedMilliseconds+4000;
+                    while(adapters.Any(x=>x.Incoming.Count<2)){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("Active interrupted by retained standby");await Task.Delay(10,token);}
+                    check(factories.All(f=>f.Transports.Last().WireControl is{Standby:true,Selected:false,BusinessPackets:0,MaintenancePackets:>0})&&states.All(s=>s?.Connected==true),
+                        "past the original native eight-second deadline only old Active carries full business; standby remains maintenance-only");
+                    await factories[0].Transports.Last().DisposeAsync();
+                    due=clock.ElapsedMilliseconds+12000;
+                    while(!logs.Any(l=>l.Contains("备用已结束"))){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("failed standby was not cancelled");await Task.Delay(20,token);}
+                    adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));adapters[1].Outgoing.Add(Packet(b.LocalIp,a.LocalIp));
+                    due=clock.ElapsedMilliseconds+4000;
+                    while(adapters.Any(x=>x.Incoming.Count<3)){if(clock.ElapsedMilliseconds>due)throw new TimeoutException("Active lost after standby failure");await Task.Delay(10,token);}
+                    check(factories.All(f=>f.Transports.First().WireControl is{Selected:true,BusinessPackets:>0})&&states.All(s=>s?.Connected==true),
+                        "native standby process/path failure cancels only that candidate and retains both original authenticated Active owners");
+                }else{
+                    await Task.Delay(TraversalLimits.UpgradeResidenceMs+1500,token);
+                    check(factories.All(f=>f.Gathers==1&&f.Paths.Count==1),mode+": missing peer/server standby permission prevents a second actual helper/capture allocation");
+                }
+            }
         } finally {
             running.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
         }
@@ -99,6 +135,10 @@ static class NativeIpv6RunnerTests
         public bool SupportsTcpPeerReflexive => inner.SupportsTcpPeerReflexive;
         public bool SupportsUdpExploration => inner.SupportsUdpExploration;
         public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
+        public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
+        public bool SupportsStandbyProfile(TraversalProfile p) => inner.SupportsStandbyProfile(p);
+        public async Task<IMeshCandidateResource> GatherStandby(MeshMember peer,TraversalProfile p,Guid attempt,bool v6,MeshTraversalCandidate? remote,CancellationToken t)
+        {Interlocked.Increment(ref Gathers);var gathered=await inner.GatherStandby(peer,p,attempt,v6,remote,t);Candidates.Enqueue(gathered.Candidate);return new Resource(gathered,this);}
         public readonly ConcurrentQueue<MeshTraversalCandidate> Candidates = [];
         public EgressStats? Egress => inner.Egress;
         public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile p, Guid a, CancellationToken t) => GatherForPeer(peer, p, a, false, null, 1, t);
@@ -144,8 +184,8 @@ static class NativeIpv6RunnerTests
         public void Shutdown() => Packets.Writer.TryComplete();
         public void Dispose() { Closed = true; Shutdown(); }
     }
-    sealed class OldService(MeshDiscoveryClient inner) : IMeshDiscovery, IMeshChangeDiscovery, IMeshTraversalDiscovery {
-        public Guid BootId => inner.BootId; public bool SupportsTraversal => inner.SupportsTraversal; public bool SupportsFakeTcpIpv6 => false;
+    sealed class OldService(MeshDiscoveryClient inner,bool preserveIpv6=false) : IMeshDiscovery, IMeshChangeDiscovery, IMeshTraversalDiscovery {
+        public Guid BootId => inner.BootId; public bool SupportsTraversal => inner.SupportsTraversal; public bool SupportsFakeTcpIpv6 => preserveIpv6&&inner.SupportsFakeTcpIpv6;
         public bool SupportsLongPolling => inner.SupportsLongPolling;
         public Task SaveDirectory(MeshDirectory d, CancellationToken t) => inner.SaveDirectory(d, t);
         public Task Publish(MeshAnnouncement a, CancellationToken t) => inner.Publish(a, t);

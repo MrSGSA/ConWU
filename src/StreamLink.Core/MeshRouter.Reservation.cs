@@ -4,10 +4,11 @@ public sealed partial class MeshRouter
 {
     // A runner must stop its obsolete legacy client when taking this reservation.
     // A healthy legacy path is never displaced to make room for an experiment.
-    public bool ReserveTraversal(int slot, TraversalProfile? replacement = null)
+    public bool ReserveTraversal(int slot, TraversalProfile? replacement = null, bool standby = false)
     {
         lock (gate) {
             if (!peers.TryGetValue(slot, out var peer)) return false;
+            if (standby) return replacement is {} kind && CanRetainStandby(slot, kind);
             // A healthy negotiated UDP path may keep transporting while one
             // FakeTCP candidate is prepared. No legacy ownership is displaced,
             // and retired references must converge before another candidate.

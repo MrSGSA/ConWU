@@ -37,6 +37,7 @@ public sealed class DeviceProfile
     public bool TcpPeerReflexive { get; set; }
     public bool UdpExploration { get; set; }
     public bool QualityFeedback { get; set; }
+    public bool StandbyPaths { get; set; }
     // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
     // rounds. It does not enable UDP itself or bypass path-quality selection.
     public bool PortControlMapping { get; set; }
@@ -66,6 +67,7 @@ public sealed class DeviceProfile
         if (ManagedEgressMbps is < 0 or > 10000) throw new FormatException("实验链路出口上限需为 0–10000 Mbps（0 为关闭）");
         Selection().Validate();
         if (QualityFeedback && TraversalMode == "legacy") throw new FormatException("路径送达反馈需要实验受管打洞模式");
+        if (StandbyPaths && TraversalMode == "legacy") throw new FormatException("备用路径需要实验受管打洞模式");
         if (UdpExploration && (TraversalMode != "tcp-udp" || !Selection().Allows(TraversalProfile.UdpDirect)))
             throw new FormatException("UDP 多源探索需要 UDP 备用许可与实验 TCP/UDP 打洞");
         if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))

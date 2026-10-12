@@ -4,7 +4,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public enum NominationStage { Checking, Prepared, Nominating, Confirming, Committing, Selected, Cancelled }
+public enum NominationStage { Checking, Prepared, Nominating, Confirming, Committing, Selected, Cancelled, Standby }
 
 // Plain control bodies carried ONLY inside an authenticated MeshLink kind 7.
 // One instance belongs to one actual receiving path, not its advertised endpoint.
@@ -23,14 +23,17 @@ public sealed class PathNomination
     long lastSent;
     bool sent;
     int cancelSends;
-    public NominationStage Stage { get; private set; }
+    readonly StandbyNomination? standby;
+    NominationStage stage;
+    public NominationStage Stage { get => standby?.Stage ?? stage; private set => stage = value; }
     public bool SwitchRequested => Stage is NominationStage.Committing or NominationStage.Selected;
     public bool PeerAdopted => Stage == NominationStage.Selected;
-    public bool NeedsResync => Stage == NominationStage.Cancelled && everSwitch;
+    public bool NeedsResync => standby?.NeedsResync ?? (Stage == NominationStage.Cancelled && everSwitch);
+    public bool StandbyConfirmed => standby?.Confirmed == true;
     public long Revision => revision;
     public Guid PathId => path;
     public Guid AttemptId => context.AttemptId;
-    public TimeSpan TimeLeft => remaining - time.GetElapsedTime(began);
+    public TimeSpan TimeLeft => standby?.TimeLeft ?? (remaining - time.GetElapsedTime(began));
     public PathNomination(TraversalAttemptContext context, Guid path, long revision, TimeSpan remaining,
         bool mtuQualified, TimeProvider? time = null)
     {
@@ -40,6 +43,7 @@ public sealed class PathNomination
         this.context = context; this.path = path; this.revision = revision; this.remaining = remaining;
         this.time = time ?? TimeProvider.System; began = this.time.GetTimestamp(); this.mtuQualified = mtuQualified;
         digest = ContextDigest(context);
+        if (context.Standby) standby = new(context, path, revision, remaining, mtuQualified, this.time);
     }
     public static byte[] ContextDigest(TraversalAttemptContext c)
     {
@@ -47,11 +51,14 @@ public sealed class PathNomination
             string.IsNullOrWhiteSpace(c.RemoteNodeId) || c.RemoteNodeId.Length > 128 || c.LocalNodeId == c.RemoteNodeId || c.LocalBootId == Guid.Empty ||
             c.RemoteBootId == Guid.Empty || c.AttemptId == Guid.Empty || c.LocalCandidateId == Guid.Empty || c.RemoteCandidateId == Guid.Empty ||
             c.LocalCandidateVersion <= 0 || c.RemoteCandidateVersion <= 0 || c.ValidationNonce == Guid.Empty || !Enum.IsDefined(c.Profile) ||
-            c.UdpExploration && c.Profile != TraversalProfile.UdpDirect)
+            c.UdpExploration && c.Profile != TraversalProfile.UdpDirect || c.Standby &&
+                (c.UdpExploration || c.Profile is not (TraversalProfile.FakeTcpHttpSo or TraversalProfile.UdpDirect)))
             throw new ArgumentException("提名上下文不完整");
         object Local() => new { node = c.LocalNodeId, boot = c.LocalBootId, candidate = c.LocalCandidateId, version = c.LocalCandidateVersion, client = c.ProtocolClient, nominator = c.Nominator };
         object Remote() => new { node = c.RemoteNodeId, boot = c.RemoteBootId, candidate = c.RemoteCandidateId, version = c.RemoteCandidateVersion, client = !c.ProtocolClient, nominator = !c.Nominator };
         bool first = string.CompareOrdinal(c.LocalNodeId, c.RemoteNodeId) < 0;
+        if (c.Standby) return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { domain = "streamlink-path-standby-v1", c.NetworkId,
+            a = first ? Local() : Remote(), b = first ? Remote() : Local(), c.AttemptId, c.Profile, c.ValidationNonce }));
         // The ordinary digest remains byte-for-byte compatible. Only negotiated
         // exploration has a distinct domain and its extended shared deadline.
         return SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { domain = c.UdpExploration ? "streamlink-path-nomination-udp-exploration-v1" : "streamlink-path-nomination-v1", c.NetworkId,
@@ -65,13 +72,16 @@ public sealed class PathNomination
         if (echo && peerChallenge != null) peerChallenge.CopyTo(frame, 64);
         return frame;
     }
-    public void QualifyMtu() { if (Stage != NominationStage.Cancelled && TimeLeft > TimeSpan.Zero) mtuQualified = true; }
+    public void QualifyMtu() { if (standby != null) { standby.QualifyMtu(); return; } if (Stage != NominationStage.Cancelled && TimeLeft > TimeSpan.Zero) mtuQualified = true; }
+    public void AllowStandbySelection() => (standby ?? throw new InvalidOperationException("Path did not negotiate standby")).AllowSelection();
+    public bool SelectStandby() => standby?.Select() == true;
     void Prepare()
     {
         if (Stage == NominationStage.Checking && checkedPeer && peerChecked && mtuQualified) Stage = NominationStage.Prepared;
     }
     public byte[][] Tick()
     {
+        if (standby != null) return standby.Tick();
         if (TimeLeft <= TimeSpan.Zero && Stage is not (NominationStage.Selected or NominationStage.Cancelled)) Cancel();
         if (Stage == NominationStage.Cancelled) {
             // Bounded cleanup notices after expiry; must still use global control
@@ -92,9 +102,10 @@ public sealed class PathNomination
             _ => []
         };
     }
-    public void Cancel() { if (Stage == NominationStage.Cancelled) return; everSwitch |= SwitchRequested; Stage = NominationStage.Cancelled; sent = false; }
+    public void Cancel() { if (standby != null) { standby.Cancel(); return; } if (Stage == NominationStage.Cancelled) return; everSwitch |= SwitchRequested; Stage = NominationStage.Cancelled; sent = false; }
     public byte[][] Receive(Guid actualPath, ReadOnlySpan<byte> message)
     {
+        if (standby != null) return standby.Receive(actualPath, message);
         if (actualPath != path || message.Length != FrameSize || !message[..4].SequenceEqual("SLN1"u8) || message[4] is < 1 or > 7 || message[5] != 0 ||
             BinaryPrimitives.ReadUInt16BigEndian(message[6..]) != FrameSize || BinaryPrimitives.ReadInt64BigEndian(message[8..]) != revision ||
             !CryptographicOperations.FixedTimeEquals(message.Slice(16, 32), digest) || message.Slice(48, 16).IndexOfAnyExcept((byte)0) < 0) return [];

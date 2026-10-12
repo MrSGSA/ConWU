@@ -128,6 +128,14 @@ static class Program
             }
             using(var oldFeedback=new SettingsWindow(feedbackProfile,supportsQualityFeedback:false))Check(!Field<CheckBox>(oldFeedback,"qualityFeedback").Enabled,"old backend cannot be opted into receipt traffic from a new frontend");
             Check((await worker.Handle(new("status"))).QualityFeedbackVersion==1,"backend declares its independent receipt IPC capability");
+            using(var standbySettings=new SettingsWindow(feedbackProfile)){
+                var box=Field<CheckBox>(standbySettings,"standbyPaths");Check(box.Enabled&&!box.Checked,"standby starts off behind explicit managed-mode permission");
+                box.Checked=true;standbySettings.Result.Validate();Check(standbySettings.Result.StandbyPaths,"standby checkbox updates actual backend profile opt-in");
+                Field<ComboBox>(standbySettings,"traversal").SelectedIndex=0;
+                Check(!box.Enabled&&!box.Checked&&!standbySettings.Result.StandbyPaths,"compatibility mode clears hidden standby resource permission");
+            }
+            using(var oldStandby=new SettingsWindow(feedbackProfile,supportsStandbyPaths:false))Check(!Field<CheckBox>(oldStandby,"standbyPaths").Enabled,"old service cannot be asked to retain unsupported standby resources");
+            Check((await worker.Handle(new("status"))).StandbyPathsVersion==1,"backend independently advertises standby IPC version");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

@@ -6,7 +6,7 @@ namespace StreamLink.Service;
 // One runner-owned scheduler, never a polling loop per peer. Tick is called by
 // MeshRunner; all mutable negotiation state remains on that loop. Slow endpoint
 // preparation, HTTP and cleanup run independently and are joined on shutdown.
-internal sealed class MeshTraversalManager : IAsyncDisposable
+internal sealed partial class MeshTraversalManager : IAsyncDisposable
 {
     sealed class Entry(MeshMember peer, MeshTraversalCapabilities remote, Guid attempt, TraversalProfile profile, CancellationToken token)
     {
@@ -30,6 +30,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         public Entry? Previous;
         public Task? Retiring;
         public bool Upgrade;
+        public bool Standby, StandbyRetained;
         public bool ExplorationStatsLogged;
         public Guid Acknowledged;
     }
@@ -81,7 +82,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0,
             TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0,
             UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0,
-            QualityFeedback: factory.SupportsQualityFeedback ? 1 : 0);
+            QualityFeedback: factory.SupportsQualityFeedback ? 1 : 0,
+            StandbyPaths: factory.SupportsStandbyPaths ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -135,6 +137,9 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         }
         foreach (var peer in members) {
             var path = router.Paths(peer.Slot).FirstOrDefault(p => p.Active && p.Stage == NominationStage.Selected);
+            if (Healthy(peer.Slot) && path != null) {
+                if (!activeSince.TryGetValue(peer.Slot, out var active) || active.Path != path.PathId) activeSince[peer.Slot] = (path.PathId, now);
+            } else activeSince.Remove(peer.Slot);
             if (Healthy(peer.Slot) && path?.Profile == TraversalProfile.UdpDirect) {
                 if (!degradedSince.TryGetValue(peer.Slot, out var seen) || seen.Path != path.PathId)
                     degradedSince[peer.Slot] = (path.PathId, now);
@@ -143,12 +148,12 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         bool UpgradeDue(int slot, TraversalProfile kind) => kind == TraversalProfile.FakeTcpHttpSo && Healthy(slot) &&
             degradedSince.TryGetValue(slot, out var degraded) && now - degraded.Since >= TraversalLimits.UpgradeResidenceMs &&
             now >= upgradeAt.GetValueOrDefault(slot) && Remote(slot) is { BackgroundUpgrade: 1 } remote && remote.Profiles.Contains(kind) && Capabilities.Profiles.Contains(kind);
-        bool ForegroundWaiting() => entries.Values.Any(e => e.Closing != null || e.Actor?.Phase != MeshAttemptPhase.Selected) ||
+        bool ForegroundWaiting() => entries.Values.Any(e => e.Closing != null || e.Actor?.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Standby)) ||
             members.Any(p => !Healthy(p.Slot) && !entries.ContainsKey(p.Slot) &&
                 opportunities.GetValueOrDefault(p.Slot)?.Next(methods.GetValueOrDefault(p.Slot) ?? [], now) != null &&
                 Remote(p.Slot) is {} remote && remote.Profiles.Intersect(Capabilities.Profiles).Any() && !HasExplicit(p.Slot));
-        bool Eligible(int slot, TraversalProfile kind) => Healthy(slot)
-            ? UpgradeDue(slot, kind) && !ForegroundWaiting()
+        bool Eligible(int slot, TraversalProfile kind, bool standby = false) => Healthy(slot)
+            ? (standby ? StandbyDue(slot, kind, Remote(slot)) : UpgradeDue(slot, kind)) && !ForegroundWaiting()
             : !HasExplicit(slot);
         foreach (var pair in entries.ToArray()) {
             int slot = pair.Key; var e = pair.Value;
@@ -163,12 +168,12 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             try {
                 if (!members.Contains(e.Peer)) { Fail(e, "成员已撤销", PredictionOutcome.Cancelled); continue; }
                 if (e.Actor?.Phase != MeshAttemptPhase.Selected && Remote(slot) is {} current && current.BootId != e.Remote.BootId) { Fail(e, "对端已重启", PredictionOutcome.Cancelled); continue; }
-                if (e.Actor?.Phase != MeshAttemptPhase.Selected && now >= e.Deadline) { Fail(e, "本轮超时"); continue; }
+                if (e.Actor?.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Standby) && now >= e.Deadline) { Fail(e, "本轮超时"); continue; }
                 if (e.Gathering?.IsCompleted == true) {
                     e.Resource = e.Gathering.GetAwaiter().GetResult(); e.Gathering = null;
                     e.Actor = e.Offer == null
-                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt, discovery.SupportsQualityFeedback)
-                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence), discovery.SupportsQualityFeedback);
+                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt, discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths)
+                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence), discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths);
                 }
                 if (e.Actor?.Phase == MeshAttemptPhase.Reserving && e.Resource!.PredictionControlReady(8)) e.Actor.Reserved(e.Resource.PredictionReady);
                 if (e.Measuring?.IsCompleted == true) { e.Actor!.Measured(e.Measuring.GetAwaiter().GetResult()); e.Measuring = null; }
@@ -184,6 +189,13 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 }
                 if (e.Activating?.IsCompleted == true) { e.Activating.GetAwaiter().GetResult(); e.Activating = null; }
                 e.Actor?.ObserveRouter();
+                if (e.Actor?.Phase == MeshAttemptPhase.Standby && !e.StandbyRetained) {
+                    e.Stop.CancelAfter(Timeout.InfiniteTimeSpan); e.StandbyRetained = true;
+                    log($"设备 {slot} 独立备用已双向认证，最多保留120秒；当前业务路径继续使用；attempt={e.Attempt:N}");
+                }
+                if (e.Actor?.Phase == MeshAttemptPhase.Standby && !Healthy(slot)) {
+                    Fail(e, "原路径失效，备用尚无质量批准；重新执行前台直连", PredictionOutcome.Cancelled); continue;
+                }
                 if (e.Actor?.Phase == MeshAttemptPhase.Cancelled) { Fail(e, "路径验证失败"); continue; }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected && !Healthy(slot)) { Fail(e, "已选路径失效，重新收集端点"); continue; }
                 if (e.Actor?.Phase == MeshAttemptPhase.Selected) { failures[slot] = 0; e.Resource?.FinishPrediction(PredictionOutcome.PathAuthenticated); LogExploration(e); }
@@ -196,7 +208,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         }
         foreach (int slot in owned.Where(s => !entries.ContainsKey(s)).ToArray())
             if (router.ReleaseTraversalReservation(slot)) owned.Remove(slot);
-        foreach (int slot in received.Keys.Concat(explicitPriority.Keys).Concat(degradedSince.Keys).Concat(upgradeAt.Keys).Concat(opportunities.Keys).Distinct().Where(s => !members.Any(m => m.Slot == s)).ToArray()) { received.Remove(slot); inbox.Remove(slot); retryAt.Remove(slot); failures.Remove(slot); explicitPriority.Remove(slot); degradedSince.Remove(slot); upgradeAt.Remove(slot); opportunities.Remove(slot); methods.Remove(slot); legacyPending.Remove(slot); }
+        foreach (int slot in received.Keys.Concat(explicitPriority.Keys).Concat(degradedSince.Keys).Concat(upgradeAt.Keys).Concat(opportunities.Keys).Concat(activeSince.Keys).Distinct().Where(s => !members.Any(m => m.Slot == s)).ToArray()) { received.Remove(slot); inbox.Remove(slot); retryAt.Remove(slot); failures.Remove(slot); explicitPriority.Remove(slot); degradedSince.Remove(slot); upgradeAt.Remove(slot); opportunities.Remove(slot); methods.Remove(slot); legacyPending.Remove(slot); activeSince.Remove(slot); standbyNext.Remove(slot); }
 
         // Process signed messages before starting fresh work. An Offer waiting
         // for admission stays in the bounded per-peer inbox, not another task.
@@ -207,6 +219,9 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             if (peer == null || remote == null || remote.BootId != m.FromBoot) continue;
             if (received.TryGetValue(slot, out var seen) && seen.Boot == m.FromBoot && seen.Sequence >= m.Sequence) { inbox.Remove(slot); continue; }
             try {
+                bool standby = m.Candidate?.Standby == true;
+                if (standby && (!discovery.SupportsStandbyPaths || Capabilities.StandbyPaths != 1 || remote.StandbyPaths != 1))
+                    throw new IOException("协调服务或双方未授权独立备用路径");
                 if (m.Stage is not (MeshTraversalStage.Cancel or MeshTraversalStage.Selected) &&
                     (m.Candidate?.PeerReflexive == true || m.PeerCandidate?.PeerReflexive == true) &&
                     (!discovery.SupportsTcpPeerReflexive || Capabilities.TcpPeerReflexive != 1 || remote.TcpPeerReflexive != 1))
@@ -221,12 +236,12 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                         // A newer authenticated leader Offer supersedes its old
                         // attempt even if the old Cancel was coalesced in transit.
                         // Keep the Offer queued until all losing resources close.
-                        MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
+                        MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m, discovery.SupportsStandbyPaths);
                         Fail(e, "对端已开始下一候选，先释放上一轮资源", PredictionOutcome.Cancelled); continue;
                     }
                     if (m.AttemptId != e.Attempt && m.Stage == MeshTraversalStage.Offer && e.Actor?.Phase == MeshAttemptPhase.Selected) {
-                        MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
-                        if (e.Previous != null || !CanAdmit(slot, m.Profile) || !Eligible(slot, m.Profile) || !router.ReserveTraversal(slot, m.Profile)) continue;
+                        MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m, discovery.SupportsStandbyPaths);
+                        if (e.Previous != null || !CanAdmit(slot, m.Profile, standby) || !Eligible(slot, m.Profile, standby) || !router.ReserveTraversal(slot, m.Profile, standby)) continue;
                         Start(peer, remote, m.AttemptId, m.Profile, m, e); cursor = slot + 1;
                     }
                     else if (m.AttemptId == e.Attempt && e.Actor != null) {
@@ -239,8 +254,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                         if (e.Actor.Phase == MeshAttemptPhase.Cancelled) Fail(e, "对端取消本轮", PredictionOutcome.Cancelled);
                     }
                 } else if (m.Stage == MeshTraversalStage.Offer) {
-                    MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m);
-                    if (!CanAdmit(slot, m.Profile) || !Eligible(slot, m.Profile) || !router.ReserveTraversal(slot, m.Profile)) continue;
+                    MeshTraversalAttempt.ValidateOffer(mesh, peer, Capabilities, remote, m, discovery.SupportsStandbyPaths);
+                    if (!CanAdmit(slot, m.Profile, standby) || !Eligible(slot, m.Profile, standby) || !router.ReserveTraversal(slot, m.Profile, standby)) continue;
                     Start(peer, remote, m.AttemptId, m.Profile, m); cursor = slot + 1;
                 }
                 received[slot] = (m.FromBoot, m.Sequence); inbox.Remove(slot);
@@ -252,16 +267,17 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         if (discovery.SupportsTraversal) foreach (var peer in members.OrderBy(p => Healthy(p.Slot)).ThenBy(p => (p.Slot - cursor + 256) % 256)) {
             var remote = Remote(peer.Slot);
             entries.TryGetValue(peer.Slot, out var previous);
-            if (peer.Slot < mesh.Self.Slot || !CanAdmit(peer.Slot) || remote == null ||
+            if (peer.Slot < mesh.Self.Slot || remote == null ||
                 previous != null && (previous.Closing != null || previous.Actor?.Phase != MeshAttemptPhase.Selected || previous.Previous != null)) continue;
             if (previous != null && !Healthy(peer.Slot)) continue;
             var common = Capabilities.Profiles.Where(p => remote.Profiles.Contains(p)).OrderBy(p => p == TraversalProfile.FakeTcpHttpSo ? 0 : 1).ToArray();
             if (common.Length == 0) continue;
-            var next = Healthy(peer.Slot) ? TraversalProfile.FakeTcpHttpSo : opportunities.GetValueOrDefault(peer.Slot)?.Next(methods.GetValueOrDefault(peer.Slot) ?? common, now);
+            bool standby = Healthy(peer.Slot) && !UpgradeDue(peer.Slot, TraversalProfile.FakeTcpHttpSo);
+            var next = Healthy(peer.Slot) ? standby ? StandbyProfile(peer.Slot, remote) : TraversalProfile.FakeTcpHttpSo : opportunities.GetValueOrDefault(peer.Slot)?.Next(methods.GetValueOrDefault(peer.Slot) ?? common, now);
             if (next == null || next == TraversalProfile.LegacyExplicit) continue;
             var kind = next.Value;
-            if (!CanAdmit(peer.Slot, kind) || !Eligible(peer.Slot, kind) || !router.ReserveTraversal(peer.Slot, kind)) continue;
-            Start(peer, remote, Guid.NewGuid(), kind, null, previous); cursor = peer.Slot + 1;
+            if (!CanAdmit(peer.Slot, kind, standby) || !Eligible(peer.Slot, kind, standby) || !router.ReserveTraversal(peer.Slot, kind, standby)) continue;
+            Start(peer, remote, Guid.NewGuid(), kind, null, previous, standby); cursor = peer.Slot + 1;
         }
         foreach (var peer in members) if (!Healthy(peer.Slot) && !entries.ContainsKey(peer.Slot) && !legacyPending.Contains(peer.Slot) &&
             opportunities.TryGetValue(peer.Slot, out var window) && window.Open &&
@@ -275,6 +291,7 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 MeshAttemptPhase.Ready => "等待双方启动",
                 MeshAttemptPhase.Starting => "正在验证直连路径",
                 MeshAttemptPhase.Selected => "已验证直连",
+                MeshAttemptPhase.Standby => "已直连，独立备用已认证（未切换）",
                 MeshAttemptPhase.Cancelled => "本轮未找到直连，等待重试",
                 MeshAttemptPhase.Reserving or MeshAttemptPhase.AwaitMeasure => "正在预约预测源端点",
                 MeshAttemptPhase.Measuring or MeshAttemptPhase.AwaitMeasured => "正在交换新鲜 TCP 观察",
@@ -282,18 +299,21 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 _ => "正在探测可用端点"
             });
     }
-    bool CanAdmit(int slot, TraversalProfile? kind = null) => discovery.SupportsTraversal &&
-        (degradedSince.ContainsKey(slot) ? Environment.TickCount64 >= retryAt.GetValueOrDefault(slot) :
+    bool CanAdmit(int slot, TraversalProfile? kind = null, bool standby = false) => discovery.SupportsTraversal &&
+        (standby ? discovery.SupportsStandbyPaths && !entries.Values.Any(e => e.Standby && e.Actor?.Phase != MeshAttemptPhase.Selected) :
+            degradedSince.ContainsKey(slot) ? Environment.TickCount64 >= retryAt.GetValueOrDefault(slot) :
             opportunities.TryGetValue(slot, out var window) && (kind is {} profile ? window.CanBegin(profile, Environment.TickCount64) : window.Open)) &&
-        entries.Values.Count(e => e.Actor?.Phase != MeshAttemptPhase.Selected) < TraversalLimits.LightPeers &&
-        (kind != TraversalProfile.FakeTcpHttpSo || entries.Values.All(e => e.Profile != kind || e.Actor?.Phase == MeshAttemptPhase.Selected));
-    void Start(MeshMember peer, MeshTraversalCapabilities remote, Guid attempt, TraversalProfile kind, MeshTraversalMessage? offer, Entry? previous = null)
+        entries.Values.Count(e => e.Actor?.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Standby)) < TraversalLimits.LightPeers &&
+        (kind != TraversalProfile.FakeTcpHttpSo || entries.Values.All(e => e.Profile != kind || e.Actor?.Phase is MeshAttemptPhase.Selected or MeshAttemptPhase.Standby));
+    void Start(MeshMember peer, MeshTraversalCapabilities remote, Guid attempt, TraversalProfile kind, MeshTraversalMessage? offer, Entry? previous = null, bool standby = false)
     {
-        var e = new Entry(peer, remote, attempt, kind, token) { Offer = offer, RemoteCandidate = offer?.Candidate, Previous = previous, Upgrade = degradedSince.ContainsKey(peer.Slot) };
-        if (!e.Upgrade && (!opportunities.TryGetValue(peer.Slot, out var window) || !window.Begin(kind, Environment.TickCount64))) {
+        standby |= offer?.Candidate?.Standby == true;
+        var e = new Entry(peer, remote, attempt, kind, token) { Offer = offer, RemoteCandidate = offer?.Candidate, Previous = previous, Standby = standby, Upgrade = !standby && degradedSince.ContainsKey(peer.Slot) };
+        if (!e.Upgrade && !e.Standby && (!opportunities.TryGetValue(peer.Slot, out var window) || !window.Begin(kind, Environment.TickCount64))) {
             e.Stop.Dispose(); throw new InvalidOperationException("当前直连机会窗没有可用轮次或剩余时间");
         }
-        e.Deadline = e.Upgrade ? e.Began + TraversalLimits.PairOpportunityMs : opportunities[peer.Slot].Deadline;
+        e.Deadline = e.Upgrade || e.Standby ? e.Began + TraversalLimits.PairOpportunityMs : opportunities[peer.Slot].Deadline;
+        if (e.Standby) standbyNext[peer.Slot] = e.Began + TraversalLimits.UpgradeCooldownMs;
         if (e.Upgrade) upgradeAt[peer.Slot] = Environment.TickCount64 + TraversalLimits.UpgradeCooldownMs;
         e.Stop.CancelAfter(TimeSpan.FromMilliseconds(Math.Max(1, e.Deadline - Environment.TickCount64))); owned.Add(peer.Slot); entries[peer.Slot] = e;
         try {
@@ -303,6 +323,11 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 : discovery.SupportsFakeTcpIpv6 && remote.FakeTcpIpv6 == 1 && Capabilities.FakeTcpIpv6 == 1;
             if (endpoint?.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6 && !allow6)
                 throw new IOException("协调服务不支持 IPv6 候选");
+            if (e.Standby) {
+                if (!discovery.SupportsStandbyPaths || Capabilities.StandbyPaths != 1 || remote.StandbyPaths != 1) throw new IOException("备用路径权限未齐备");
+                e.Gathering = factory.GatherStandby(peer, kind, attempt, allow6, offer?.Candidate, e.Stop.Token);
+            }
+            else {
             bool prediction = !e.Upgrade && discovery.SupportsTcpPrediction && Capabilities.TcpPrediction == 1 && remote.TcpPrediction == 1;
             if (offer?.Candidate?.Prediction != null && !prediction) throw new IOException("协调服务或双方未授权预测扩展");
             bool sourceLearning = discovery.SupportsTcpPeerReflexive && Capabilities.TcpPeerReflexive == 1 && remote.TcpPeerReflexive == 1;
@@ -312,10 +337,11 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             if (offer?.Candidate?.Exploration != null && !exploration) throw new IOException("协调服务、双方或机会窗未授权 UDP 探索");
             e.Gathering = factory.GatherEnhanced(peer, kind, attempt, allow6, offer?.Candidate,
                 e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, exploration, () => !router.Status().Any(s => s.Slot == peer.Slot && s.Connected), e.Stop.Token);
+            }
         }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
-        log($"设备 {peer.Slot} " + (e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +
-            $"；attempt={attempt:N}；机会窗={(e.Upgrade ? "background-upgrade" : opportunities[peer.Slot].Id.ToString("N"))}；剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms");
+        log($"设备 {peer.Slot} " + (e.Standby ? $"保留当前直连，后台准备独立 {kind} 备用" : e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +
+            $"；attempt={attempt:N}；机会窗={(e.Standby ? "standby-prepare" : e.Upgrade ? "background-upgrade" : opportunities[peer.Slot].Id.ToString("N"))}；剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms");
     }
     void BeginPreparation(Entry e)
     {
@@ -397,7 +423,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         int count = failures[e.Peer.Slot] = failures.GetValueOrDefault(e.Peer.Slot) + 1;
         if (e.Upgrade) retryAt[e.Peer.Slot] = Environment.TickCount64 + Math.Min(300000, 30000L << Math.Min(count - 1, 4)) + Random.Shared.Next(0, 2000);
         if (e.Upgrade) upgradeAt[e.Peer.Slot] = Math.Max(upgradeAt.GetValueOrDefault(e.Peer.Slot), Environment.TickCount64 + TraversalLimits.UpgradeCooldownMs);
-        log($"设备 {e.Peer.Slot} " + (e.Upgrade ? $"FakeTCP 升级未完成，保留原路径：{reason}" : $"{e.Profile} 候选失败：{reason}；机会窗剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms"));
+        if (e.Standby) standbyNext[e.Peer.Slot] = Environment.TickCount64 + TraversalLimits.UpgradeCooldownMs;
+        log($"设备 {e.Peer.Slot} " + (e.Standby ? $"备用已结束，保留原路径：{reason}" : e.Upgrade ? $"FakeTCP 升级未完成，保留原路径：{reason}" : $"{e.Profile} 候选失败：{reason}；机会窗剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms"));
         e.Closing = Close(e);
     }
     static async Task Close(Entry e)

@@ -29,6 +29,10 @@ internal interface IMeshCandidateFactory
     bool SupportsTcpPeerReflexive => false;
     bool SupportsUdpExploration => false;
     bool SupportsQualityFeedback => false;
+    bool SupportsStandbyPaths => false;
+    bool SupportsStandbyProfile(TraversalProfile profile) => SupportsStandbyPaths;
+    Task<IMeshCandidateResource> GatherStandby(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, CancellationToken token) => throw new NotSupportedException("Factory does not support retained standby");
     EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
@@ -99,6 +103,9 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public bool SupportsTcpPrediction => options.TcpPortPrediction && options.TcpPortCalibration && options.TcpSynObservation && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public bool SupportsTcpPeerReflexive => options.TcpPeerReflexive && peerSourceNative && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public bool SupportsQualityFeedback => options.QualityFeedback && options.TraversalMode != "legacy";
+    public bool SupportsStandbyPaths => options.StandbyPaths && options.TraversalMode != "legacy";
+    public bool SupportsStandbyProfile(TraversalProfile profile) => SupportsStandbyPaths && profiles.Contains(profile) &&
+        (profile == TraversalProfile.UdpDirect || profile == TraversalProfile.FakeTcpHttpSo && countWireControl);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();
@@ -163,13 +170,13 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile kind, Guid attempt,
         bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => GatherScoped(peer, kind, attempt, allowIpv6, remote, round, false, token);
     async Task<IMeshCandidateResource> GatherScoped(MeshMember peer, TraversalProfile kind, Guid attempt,
-        bool allowIpv6, IPEndPoint? remote, int round, bool peerSource, CancellationToken token)
+        bool allowIpv6, IPEndPoint? remote, int round, bool peerSource, CancellationToken token, bool standby = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
         bool supported6 = kind == TraversalProfile.UdpDirect ? SupportsUdpIpv6 : SupportsFakeTcpIpv6;
         if (remote?.AddressFamily == AddressFamily.InterNetworkV6) {
             if (!allowIpv6 || !supported6) throw new IOException("本轮未协商该承载的 IPv6 能力");
-            return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, deadline.Token);
+            return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, deadline.Token, standby: standby);
         }
         // The Offer selects one family; the responder must follow it. A failed
         // first IPv6 check leaves the second existing profile round for IPv4.
@@ -178,25 +185,25 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         if (try6 && !available6) diagnostic?.Invoke("IPv6Unavailable：未找到可用的原生物理 IPv6 源地址，继续 IPv4");
         if (available6) {
             using var fast = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); fast.CancelAfter(3500);
-            try { return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, fast.Token); }
+            try { return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetworkV6, fast.Token, standby: standby); }
             catch (Exception ex) when (!deadline.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) {
                 diagnostic?.Invoke("本轮未获得 IPv6 候选，继续 IPv4 同端点观察");
             }
         }
-        return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetwork, deadline.Token, peerSource);
+        return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetwork, deadline.Token, peerSource, standby);
     }
-    async Task<IMeshCandidateResource> GatherFamily(MeshMember peer, TraversalProfile kind, Guid attempt, AddressFamily family, CancellationToken token, bool peerSource = false)
+    async Task<IMeshCandidateResource> GatherFamily(MeshMember peer, TraversalProfile kind, Guid attempt, AddressFamily family, CancellationToken token, bool peerSource = false, bool standby = false)
     {
         if (!Profiles.Contains(kind)) throw new NotSupportedException();
         bool useGateway = false;
-        if (family == AddressFamily.InterNetwork && kind == TraversalProfile.UdpDirect && options.PortControlMapping) lock (poolGate) {
+        if (!standby && family == AddressFamily.InterNetwork && kind == TraversalProfile.UdpDirect && options.PortControlMapping) lock (poolGate) {
             var prior = udpMethods.GetValueOrDefault(peer.Slot);
             useGateway = prior.Device == peer.Device && prior.GatewayNext;
             udpMethods[peer.Slot] = (peer.Device, !useGateway);
         }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
         if (useGateway) return await GatherUdpGateway(peer, attempt, deadline.Token);
-        bool independentFallback = family == AddressFamily.InterNetwork && kind == TraversalProfile.UdpDirect && options.PortControlMapping;
+        bool independentFallback = !standby && family == AddressFamily.InterNetwork && kind == TraversalProfile.UdpDirect && options.PortControlMapping;
         using var observing = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
         if (independentFallback) observing.CancelAfter(4500); // reserve time inside this same twelve-second gather
         var servers = kind == TraversalProfile.UdpDirect ? options.UdpStun : options.OrderedTcp();
@@ -215,7 +222,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     finally { CryptographicOperations.ZeroMemory(shared); }
                     mapped = (await udp.Observe(target, observing.Token)).Mapped;
                 } else if (captureBroker) {
-                    pooled = await Pool.Acquire(local.Address, target, deadline.Token, peerSource ? peer.Device : null); tcp = pooled.Lease; mapped = pooled.Observed;
+                    pooled = await Pool.Acquire(local.Address, target, deadline.Token, peerSource || standby ? peer.Device : null, standby); tcp = pooled.Lease; mapped = pooled.Observed;
                     if (family == AddressFamily.InterNetwork) ObserveInBackground(pooled.Owner, peer); // observer wire protocol is still IPv4-only
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);

@@ -27,6 +27,7 @@ public sealed partial class MeshRouter
         public long LastReceive, LastHello, LastPing, ProofAt, ReceiveUntil = long.MaxValue, ReleaseAt = long.MaxValue, CancelledAt;
         public long LastRoundTrip;
         public double? RttMs;
+        public long StandbyAt;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
         public readonly Dictionary<long, (long Sent, bool Activity)> PendingRoundTrips = [];
@@ -41,7 +42,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -49,7 +50,8 @@ public sealed partial class MeshRouter
             var original = transport.Identity;
             var identity = original with { ActualLocal = new IPEndPoint(IPAddress.Parse(original.ActualLocal.Address.ToString()), original.ActualLocal.Port),
                 ActualRemote = new IPEndPoint(IPAddress.Parse(original.ActualRemote.Address.ToString()), original.ActualRemote.Port) };
-            if (negotiatedControlVersion != 1 || negotiatedQualityFeedbackVersion is < 0 or > 1 || context.NetworkId != profile.Pair.Network || context.LocalNodeId != profile.Self.Device ||
+            if (negotiatedControlVersion != 1 || negotiatedQualityFeedbackVersion is < 0 or > 1 || negotiatedStandbyVersion is < 0 or > 1 ||
+                context.Standby && negotiatedStandbyVersion != 1 || context.NetworkId != profile.Pair.Network || context.LocalNodeId != profile.Self.Device ||
                 context.RemoteNodeId != peer.Member.Device || context.LocalBootId != BootId || identity.AttemptId != context.AttemptId ||
                 identity.Profile != context.Profile || identity.PathId == Guid.Empty || identity.LeaseId == Guid.Empty || identity.NetworkGeneration == Guid.Empty ||
                 identity.ActualLocal.Port == 0 || identity.ActualRemote.Port == 0 || !Enum.IsDefined(identity.Qualification) || transport.Failed)
@@ -59,7 +61,11 @@ public sealed partial class MeshRouter
             if (managed.Candidate != null || managed.Paths.Count >= 2) throw new IOException("等待上一候选及退役引用收敛");
             if (nominationRevision <= managed.LastRevision || managed.Paths.ContainsKey(identity.PathId)) throw new IOException("候选提名版本已过期");
             if (identity.Qualification < PathQualification.MtuQualified) throw new IOException("候选尚未通过实际包长验证");
-            if (Selection.Reject(identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer)) is {} reason) throw new IOException(reason);
+            if (context.Standby) {
+                if (managed.Active == null || !ManagedHealthy(peer) || !Selection.Allows(identity.Profile)) throw new IOException("备用资源需要健康Active与本机承载许可");
+                if (identity.Profile == TraversalProfile.FakeTcpHttpSo && transport is not IWireControlPath { CountsWireControl: true }) throw new IOException("TCP 备用需要实际捕获计账");
+            }
+            else if (Selection.Reject(identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer)) is {} reason) throw new IOException(reason);
             if (identity.Profile != TraversalProfile.UdpDirect && peers.Values.Where(p => p.Managed != null).SelectMany(p => p.Managed!.Paths.Values).Any(p =>
                 !p.Closing && p.Identity.Profile != TraversalProfile.UdpDirect && p.Identity.ActualLocal.Equals(identity.ActualLocal) && p.Identity.ActualRemote.Equals(identity.ActualRemote)))
                 throw new IOException("同一 TCP 四元组已由另一握手或 Active 占用");
@@ -79,7 +85,7 @@ public sealed partial class MeshRouter
                 p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs) {
                     WireControl = (p.Transport as IWireControlPath)?.WireControl,
                     SendQueue = (p.Transport as IMeshSendDiagnostics)?.SendQueue,
-                    Traffic = p.Traffic.Snapshot(Environment.TickCount64), Delivery = p.Delivery?.Snapshot()
+                    Traffic = p.Traffic.Snapshot(Environment.TickCount64), Delivery = p.Delivery?.Snapshot(), StandbyReady = p.Nomination.StandbyConfirmed && p.Nomination.Stage == NominationStage.Standby
                 }).ToArray() : [];
     }
     public void CancelPath(int slot, Guid path)
@@ -94,6 +100,7 @@ public sealed partial class MeshRouter
     static bool SendManaged(byte[]? packet, ManagedPath? path) => packet != null && path != null && !path.Closing && !path.Transport.Failed && path.Transport.TrySend(packet);
     void ControlManaged(Peer peer, ManagedPath path, byte[] packet, bool completion)
     {
+        if (path.Nomination.StandbyConfirmed) { if (AdmitMaintenance(path, packet.Length)) SendManaged(packet, path); return; }
         if (path.Transport is not IWireControlPath { CountsWireControl: true } && !path.Budget.TrySend(packet.Length, completion)) return;
         // Wire-aware native paths charge the actual IP frame at injection.
         // Other adapters retain their existing control-datagram accounting.
@@ -163,6 +170,17 @@ public sealed partial class MeshRouter
     void ReconcileManaged(Peer peer, ManagedPath path, long now)
     {
         var managed = peer.Managed!;
+        if (path.Nomination.StandbyConfirmed && path.StandbyAt == 0) {
+            try {
+                if (path.Transport is IWireControlPath { CountsWireControl: true } wire) wire.HoldStandbyWireBudget();
+                path.StandbyAt = now; path.LastRoundTrip = Stopwatch.GetTimestamp();
+            } catch (InvalidOperationException) {
+                // A delayed scheduler may miss the actual wire deadline even
+                // when a queued authentication reply has just been decoded.
+                // Fail this candidate, never the runner or unrelated Active.
+                path.Failure = "standby-wire-deadline"; path.Nomination.Cancel();
+            }
+        }
         if (path.Nomination.Stage == NominationStage.Cancelled) {
             if (path.CancelledAt == 0) path.CancelledAt = now;
             if (ReferenceEquals(managed.Active, path)) {
@@ -226,7 +244,7 @@ public sealed partial class MeshRouter
             if (path.CancelledAt != 0 && now - path.CancelledAt >= 1000 || path.Retired && now >= path.ReleaseAt) {
                 RetireManaged(managed, path); continue;
             }
-            if (ReferenceEquals(managed.Active, path) && now - path.LastPing >= 1500) {
+            if ((ReferenceEquals(managed.Active, path) || path.Nomination.StandbyConfirmed && path.Nomination.Stage == NominationStage.Standby) && now - path.LastPing >= 1500) {
                 path.LastPing = now;
                 long nonce = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
                 byte[]? ping = peer.Link.ProbePath(nonce);

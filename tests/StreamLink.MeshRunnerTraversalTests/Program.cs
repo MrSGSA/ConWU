@@ -26,8 +26,10 @@ bool predictionRunnerOnly = args.Length == 7 && args[6] == "--prediction-runner-
 bool sourceOnly = args.Length == 7 && args[6] == "--source-only";
 bool explorationOnly = args.Length == 7 && args[6] == "--exploration-only";
 bool feedbackOnly = args.Length == 7 && args[6] == "--feedback-only";
+bool standbyOnly = args.Length == 7 && args[6] == "--standby-only";
+bool udpStandbyOnly = args.Length == 7 && args[6] == "--udp-standby-only";
 bool poolOnly = args.Length == 7 && args[6] == "--pool-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -55,7 +57,9 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (feedbackOnly) {
+    if (udpStandbyOnly) rows.Add(await Ipv6Tests.RunStandby(root,url,pin,Check,token));
+    else if (standbyOnly) rows.Add(await NativeIpv6RunnerTests.RunStandby(binary,root,url,pin,Check,token));
+    else if (feedbackOnly) {
         rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token, feedback: true));
         rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token, feedback: true));
     }

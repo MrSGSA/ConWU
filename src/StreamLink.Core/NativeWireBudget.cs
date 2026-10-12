@@ -5,7 +5,7 @@ namespace StreamLink.Core;
 // Local broker metadata, never added to the public FakeTCP/HTTP packet.
 public enum NativeWireKind { Handshake = 0, Maintenance = 1, Business = 2, Completion = 3 }
 public sealed record NativeWireStats(long HandshakePackets, long HandshakeBytes, long MaintenancePackets,
-    long MaintenanceBytes, long BusinessPackets, long BusinessBytes, long Denied, bool Selected);
+    long MaintenanceBytes, long BusinessPackets, long BusinessBytes, long Denied, bool Selected, bool Standby = false);
 
 // The public-IP frame is charged at its final injection point. Upper-layer
 // bridge/nomination enqueue attempts must not charge the same packet again.
@@ -14,6 +14,12 @@ public sealed class NativeWireBudget(TraversalControlRound round, NativeAttemptG
     readonly object gate = new();
     long started, handshakePackets, handshakeBytes, maintenancePackets, maintenanceBytes, businessPackets, businessBytes, denied;
     bool selected;
+    long standbyAt;
+    public void HoldStandby() { lock (gate) {
+        if (started == 0 || selected || group != null || standbyAt == 0 && Stopwatch.GetElapsedTime(started).TotalMilliseconds >= TraversalLimits.SoRoundMs)
+            throw new InvalidOperationException("Only an authenticated independent round can enter standby within its original deadline");
+        if (standbyAt == 0) standbyAt = Stopwatch.GetTimestamp();
+    } }
     public long Start(long timestamp)
     {
         lock (gate) {
@@ -24,11 +30,16 @@ public sealed class NativeWireBudget(TraversalControlRound round, NativeAttemptG
         }
     }
     public void Select() { lock (gate) { if (started == 0 || group != null && !group.Claimed) throw new InvalidOperationException("Wire round has not started or acquired its first-probe permit"); selected = true; } }
-    public NativeWireStats Snapshot() { lock (gate) return new(handshakePackets, handshakeBytes, maintenancePackets, maintenanceBytes, businessPackets, businessBytes, denied, selected); }
+    public NativeWireStats Snapshot() { lock (gate) return new(handshakePackets, handshakeBytes, maintenancePackets, maintenanceBytes, businessPackets, businessBytes, denied, selected, standbyAt != 0 && !selected); }
     public bool Admit(NativeWireKind kind, int bytes)
     {
         if (!Enum.IsDefined(kind) || bytes is < 40 or > 65535) throw new ArgumentException("Invalid native wire frame metadata");
         lock (gate) {
+            if (!selected && standbyAt != 0) {
+                if (kind == NativeWireKind.Business || Stopwatch.GetElapsedTime(standbyAt).TotalMilliseconds >= StandbyNomination.HoldMs + StandbyNomination.SelectMs ||
+                    !round.TryMaintenance(bytes)) { denied++; return false; }
+                maintenancePackets++; maintenanceBytes += bytes; return true;
+            }
             // Before authenticated joint nomination, even a Business label is
             // only an attempt packet and cannot bypass the shared round budget.
             if (!selected) {
@@ -48,4 +59,5 @@ public interface IWireControlPath
     bool CountsWireControl { get; }
     NativeWireStats? WireControl { get; }
     void SelectWireBudget();
+    void HoldStandbyWireBudget() => throw new NotSupportedException("Native standby budget not supported");
 }

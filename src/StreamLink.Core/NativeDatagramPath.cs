@@ -52,6 +52,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public bool CountsWireControl => wireBudget != null;
     public NativeWireStats? WireControl => wireBudget?.Snapshot();
     public void SelectWireBudget() => wireBudget?.Select();
+    public void HoldStandbyWireBudget() => (wireBudget ?? throw new NotSupportedException("Native standby requires accounted capture")).HoldStandby();
     public TraversalAttemptContext Context { get; }
     public ValidatedPathIdentity Identity => Volatile.Read(ref qualified) != 0 && native != null
         ? identity with { AttachId = native.AttachId, ActualLocal = Copy(identity.ActualLocal), ActualRemote = Copy(native.ActualPeer) }

@@ -98,8 +98,8 @@ static class EndpointPoolTests
         var mesh = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var peers = Enumerable.Range(0, 7).Select(_ => MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self).ToArray();
         var captures = new System.Collections.Concurrent.ConcurrentBag<Io>();
-        var profile = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", TcpStun = ["fixture.invalid:3478"] };
-        await using var factory = new MeshCandidateFactory(profile, "unused", "unused", [TraversalProfile.FakeTcpHttpSo], captureBroker: true) {
+        var profile = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", TcpStun = ["fixture.invalid:3478"], StandbyPaths=true };
+        await using var factory = new MeshCandidateFactory(profile, "unused", "unused", [TraversalProfile.FakeTcpHttpSo], captureBroker: true,wireControl:true) {
             ResolveTarget = (_, _, _) => Task.FromResult(reflector.Endpoint), RouteCheckForTest = (_, _, _) => { }, EndpointTimeForTest = clock,
             OpenCaptureForTest = (_, _) => { var capture = new Io(); captures.Add(capture); return capture; }
         };
@@ -113,6 +113,12 @@ static class EndpointPoolTests
             await using var cached = await factory.Gather(peers[0], TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), token);
             check(reflector.Requests == 1 && cached.Candidate.ObservedAt == first.ObservedAt && cached.Candidate.Expires == first.Expires,
                 "formal candidate publication preserves original observation and expiry across a cached borrow");
+            await using var standby=await factory.GatherStandby(peers[0],TraversalProfile.FakeTcpHttpSo,Guid.NewGuid(),false,null,token);
+            check(standby.Candidate.Standby&&standby.Candidate.Endpoint!=first.Endpoint&&reflector.Accepted==2&&captures.Count==2,
+                "formal standby source is isolated from the seven-peer shared source without granting another handshake on its tuple");
+            await using var coalesced=await factory.GatherStandby(peers[0],TraversalProfile.FakeTcpHttpSo,Guid.NewGuid(),false,null,token);
+            check(coalesced.Candidate.Endpoint==standby.Candidate.Endpoint&&coalesced.Candidate.Id!=standby.Candidate.Id&&reflector.Accepted==2,
+                "same authenticated peer standby partition coalesces observations instead of manufacturing a source per AttemptId");
         } finally { foreach (var resource in resources) await resource.DisposeAsync(); }
         await factory.DisposeAsync();
         check(captures.All(c => c.Closed), "formal factory closes its shared owner after all peer candidates release");

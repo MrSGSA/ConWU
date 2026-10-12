@@ -25,7 +25,8 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true)
+    readonly CheckBox standbyPaths = new() { AutoSize = true, Text = "保留独立备用路径（实验，最多120秒；需双方与服务器支持，未自动选路）" };
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -108,6 +109,13 @@ public sealed class SettingsWindow : Form
             if (!qualityFeedback.Enabled && supportsQualityFeedback) qualityFeedback.Checked = false;
         }
         traversal.SelectedIndexChanged += (_, _) => FeedbackAvailability(); FeedbackAvailability(); extra.Controls.Add(qualityFeedback);
+        standbyPaths.Checked = profile.StandbyPaths;
+        standbyPaths.CheckedChanged += (_, _) => { if (supportsStandbyPaths) profile.StandbyPaths = standbyPaths.Checked; };
+        void StandbyAvailability() {
+            standbyPaths.Enabled = supportsStandbyPaths && traversal.SelectedIndex != 0;
+            if (!standbyPaths.Enabled && supportsStandbyPaths) standbyPaths.Checked = false;
+        }
+        traversal.SelectedIndexChanged += (_, _) => StandbyAvailability(); StandbyAvailability(); extra.Controls.Add(standbyPaths);
         pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
         traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
         pacing.ValueChanged += (_, _) => { if (supportsPacing) profile.ManagedEgressMbps = (int)pacing.Value; };

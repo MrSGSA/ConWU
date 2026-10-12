@@ -49,12 +49,13 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
     // Cancellation while queued has not touched the helper stream. Cancelling
     // an actual query makes ONLY that flow unusable; active raw sessions retain
     // their original lease and capture references until their own retirement.
-    public async Task<Use> Acquire(IPAddress source, IPEndPoint reflector, CancellationToken token, string? isolation = null)
+    public async Task<Use> Acquire(IPAddress source, IPEndPoint reflector, CancellationToken token, string? isolation = null, bool standby = false)
     {
         token.ThrowIfCancellationRequested();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
         if (isolation != null && !Guid.TryParseExact(isolation, "N", out _)) throw new ArgumentException("A source partition requires the authenticated peer device ID");
-        string key = source + "/" + reflector + "/" + isolation;
+        if (standby && isolation == null) throw new ArgumentException("Standby partition requires the authenticated peer ID");
+        string key = source + "/" + reflector + "/" + isolation + (standby ? "/standby" : "");
         Slot slot;
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed, this);
