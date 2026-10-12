@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Threading.Channels;
 using StreamLink.Core;
@@ -10,12 +11,24 @@ static class EndpointPoolTests
     public static async Task Run(Action<bool, string> check, CancellationToken token)
     {
         await using var reflector = new Reflector(); var generation = Guid.NewGuid();
-        var opened = new List<Io>();
-        await using var pool = new MeshTcpEndpointPool(generation, (_, _) => { var io = new Io(); opened.Add(io); return io; }, new());
-        var uses = await Task.WhenAll(Enumerable.Range(0, 3).Select(_ => pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token)));
+        var opened = new List<Io>(); var clock = new Clock();
+        await using var pool = new MeshTcpEndpointPool(generation, (_, _) => { var io = new Io(); opened.Add(io); return io; }, new(), time: clock);
+        var uses = await Task.WhenAll(Enumerable.Range(0, 7).Select(_ => pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token)));
         var lease = uses[0].Lease; var owner = uses[0].Owner; var io = opened.Single();
         check(uses.All(u => ReferenceEquals(u.Lease, lease) && ReferenceEquals(u.Owner, owner) && u.Observed.Equals(lease.Local)) && reflector.Accepted == 1,
             "production pool: concurrent candidates retain one actual source/helper and capture owner");
+        check(reflector.Requests == 1 && uses.All(u => u.ObservedAt == uses[0].ObservedAt),
+            "seven concurrent candidates coalesce into one real STUN transaction without refreshing observation time");
+        clock.Advance(1999);
+        using (var cached = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token)) {
+            var altered = cached.Observed; altered.Port = 1;
+            check(reflector.Requests == 1 && cached.ObservedAt == uses[0].ObservedAt && cached.Observed.Port == lease.Local.Port,
+                "recent result keeps real timestamp and cannot be mutated by another borrower");
+        }
+        clock.Advance(1);
+        using (var fresh = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token))
+            check(reflector.Requests == 2 && fresh.Lease.Id == lease.Id && fresh.ObservedAt > uses[0].ObservedAt,
+                "at two-second boundary the exact held source is reobserved, never rebound");
         using var a = owner.Register(generation, new(IPAddress.Loopback, 43001));
         using var b = owner.Register(generation, new(IPAddress.Loopback, 43002));
         bool refused = false; try { using var stale = owner.Register(Guid.NewGuid(), new(IPAddress.Loopback, 43003)); } catch (IOException) { refused = true; }
@@ -44,7 +57,7 @@ static class EndpointPoolTests
         check(!lease.Closed && b.Send(Packet(lease.Local, b.Peer)), "ending all candidate references preserves native worker and source");
         // A genuine failed helper transaction must retire query capability, not
         // kill the still-working authorized raw path.
-        reflector.Silent = true;
+        clock.Advance(2000); reflector.Silent = true;
         bool timedOut = false;
         using (var shortWait = CancellationTokenSource.CreateLinkedTokenSource(token)) {
             shortWait.CancelAfter(180);
@@ -58,8 +71,97 @@ static class EndpointPoolTests
             "replacement observation uses a distinct held endpoint while retired source remains in use");
         a.Dispose(); b.Dispose(); await owner.Closed.WaitAsync(token);
         check(lease.Closed && io.Closed, "final worker release joins capture and then closes retired helper");
+        opened.Last().Shutdown(); await Wait(() => replacement.Owner.Failed, token);
+        using var renewed = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token);
+        check(renewed.Lease.Id != replacement.Lease.Id && !renewed.Owner.Failed,
+            "failed capture invalidates even a recent cached observation and requires another owned source");
+        renewed.Dispose();
         replacement.Dispose(); await pool.DisposeAsync();
         check(replacement.Lease.Closed && opened.All(i => i.Closed), "pool shutdown closes all final owned endpoints");
+        await Isolation(check, token);
+        await Shutdown(check, token);
+        await Factory(check, token);
+    }
+    static async Task Factory(Action<bool, string> check, CancellationToken token)
+    {
+        await using var reflector = new Reflector(); var clock = new Clock();
+        var mesh = MeshIdentity.Create("https://example.com/", "", "faketcp");
+        var peers = Enumerable.Range(0, 7).Select(_ => MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self).ToArray();
+        var captures = new System.Collections.Concurrent.ConcurrentBag<Io>();
+        var profile = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", TcpStun = ["fixture.invalid:3478"] };
+        await using var factory = new MeshCandidateFactory(profile, "unused", "unused", [TraversalProfile.FakeTcpHttpSo], captureBroker: true) {
+            ResolveTarget = (_, _, _) => Task.FromResult(reflector.Endpoint), RouteCheckForTest = (_, _, _) => { }, EndpointTimeForTest = clock,
+            OpenCaptureForTest = (_, _) => { var capture = new Io(); captures.Add(capture); return capture; }
+        };
+        var resources = await Task.WhenAll(peers.Select(p => factory.Gather(p, TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), token)));
+        try {
+            var first = resources[0].Candidate;
+            check(reflector.Accepted == 1 && reflector.Requests == 1 && captures.Count == 1 &&
+                resources.Select(r => r.Candidate.Id).Distinct().Count() == 7 && resources.All(r => r.Candidate.Endpoint == first.Endpoint),
+                "formal seven-peer candidate factory uses independent candidate IDs with one held source and one STUN observation");
+            clock.Advance(1500);
+            await using var cached = await factory.Gather(peers[0], TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), token);
+            check(reflector.Requests == 1 && cached.Candidate.ObservedAt == first.ObservedAt && cached.Candidate.Expires == first.Expires,
+                "formal candidate publication preserves original observation and expiry across a cached borrow");
+        } finally { foreach (var resource in resources) await resource.DisposeAsync(); }
+        await factory.DisposeAsync();
+        check(captures.All(c => c.Closed), "formal factory closes its shared owner after all peer candidates release");
+    }
+    static async Task Isolation(Action<bool, string> check, CancellationToken token)
+    {
+        await using var blocked = new Reflector { Silent = true };
+        await using var healthy = new Reflector();
+        var captures = new System.Collections.Concurrent.ConcurrentBag<Io>();
+        await using var pool = new MeshTcpEndpointPool(Guid.NewGuid(), (_, _) => { var io = new Io(); captures.Add(io); return io; }, new());
+        using var held = CancellationTokenSource.CreateLinkedTokenSource(token);
+        var pending = pool.Acquire(IPAddress.Loopback, blocked.Endpoint, held.Token);
+        await Wait(() => blocked.Requests == 1, token);
+        using (var waiting = CancellationTokenSource.CreateLinkedTokenSource(token)) {
+            var cancelled = pool.Acquire(IPAddress.Loopback, blocked.Endpoint, waiting.Token);
+            waiting.Cancel(); bool removed = false;
+            try { using var ignored = await cancelled; } catch (OperationCanceledException) { removed = true; }
+            check(removed && blocked.Requests == 1 && !pending.IsCompleted,
+                "cancelling a queued same-source candidate neither queries nor cancels its active borrower");
+        }
+        var elapsed = Stopwatch.StartNew();
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(1000);
+        using var other = await pool.Acquire(IPAddress.Loopback, healthy.Endpoint, limit.Token);
+        check(!pending.IsCompleted && healthy.Requests == 1 && elapsed.ElapsedMilliseconds < 1000,
+            "another source completes real helper query while the first STUN flow is still unanswered");
+        held.Cancel(); bool firstCancelled = false;
+        try { using var ignored = await pending; } catch (OperationCanceledException) { firstCancelled = true; }
+        check(firstCancelled && other.Lease.QueryUsable && !other.Owner.Failed,
+            "in-flight query cancellation is isolated to that source, preserving unrelated capture");
+        other.Dispose(); await pool.DisposeAsync();
+        check(captures.All(c => c.Closed) && other.Lease.Closed, "independent source operations all join during shutdown");
+    }
+    static async Task Shutdown(Action<bool, string> check, CancellationToken token)
+    {
+        await using var reflector = new Reflector { Silent = true };
+        var captures = new System.Collections.Concurrent.ConcurrentBag<Io>();
+        var pool = new MeshTcpEndpointPool(Guid.NewGuid(), (_, _) => { var io = new Io(); captures.Add(io); return io; }, new());
+        var requests = Enumerable.Range(0, 7).Select(_ => pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token)).ToArray();
+        await Wait(() => reflector.Requests == 1, token);
+        await Task.WhenAll(pool.DisposeAsync().AsTask(), pool.DisposeAsync().AsTask()).WaitAsync(TimeSpan.FromSeconds(3), token);
+        int cancelled = 0;
+        foreach (var pending in requests) try { using var unexpected = await pending; } catch (OperationCanceledException) { cancelled++; }
+        check(cancelled == 7 && captures.All(c => c.Closed), "shutdown cancels in-flight and six queued borrowers without orphan capture or duplicate disposal");
+        bool rejected = false; try { using var unexpected = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token); } catch (ObjectDisposedException) { rejected = true; }
+        check(rejected, "disposed source pool rejects later acquisition");
+    }
+    static async Task Wait(Func<bool> ready, CancellationToken token)
+    {
+        var clock = Stopwatch.StartNew();
+        while (!ready()) { if (clock.ElapsedMilliseconds >= 2000) throw new TimeoutException("Helper query never arrived"); await Task.Delay(5, token); }
+    }
+    sealed class Clock : TimeProvider
+    {
+        long tick;
+        readonly DateTimeOffset origin = DateTimeOffset.UtcNow;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => Interlocked.Read(ref tick);
+        public override DateTimeOffset GetUtcNow() => origin.AddMilliseconds(GetTimestamp());
+        public void Advance(int ms) => Interlocked.Add(ref tick, ms);
     }
     static byte[] Packet(IPEndPoint from, IPEndPoint to)
     {

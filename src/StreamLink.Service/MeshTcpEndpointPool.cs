@@ -1,104 +1,177 @@
-using System.Diagnostics;
 using System.Net;
 using StreamLink.Core;
 
 namespace StreamLink.Service;
 
 // One retained helper/capture owner per actual source address and reflector.
-// Candidate references and native worker references have separate lifetimes.
+// Only that resource's I/O is serialized: an unresponsive reflector must not
+// block candidates or keepalives that use a different retained source.
 internal sealed class MeshTcpEndpointPool(Guid generation,
     Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open,
-    TraversalResources? resources = null, EgressPacer? pacer = null) : IAsyncDisposable
+    TraversalResources? resources = null, EgressPacer? pacer = null, TimeProvider? time = null) : IAsyncDisposable
 {
-    readonly SemaphoreSlim gate = new(1);
-    readonly Dictionary<string, Entry> entries = [];
+    readonly object gate = new();
+    readonly Dictionary<string, Slot> slots = [];
     readonly List<TcpCaptureOwner> retiring = [];
     readonly CancellationTokenSource stop = new();
     readonly TraversalResources budget = resources ?? TraversalResources.Shared;
+    readonly TimeProvider clock = time ?? TimeProvider.System;
     Task maintenance = Task.CompletedTask;
+    Task? closing;
     bool started, disposed;
+    sealed class Slot(IPAddress source, IPEndPoint reflector)
+    {
+        public readonly IPAddress Source = source;
+        public readonly IPEndPoint Reflector = new(reflector.Address, reflector.Port);
+        public readonly SemaphoreSlim Io = new(1);
+        public Entry? Current;
+        public int Users;
+    }
     sealed class Entry(TcpEndpointLease lease, TcpCaptureOwner owner)
     {
-        public TcpEndpointLease Lease = lease;
-        public TcpCaptureOwner Owner = owner;
-        public long ObservedAt;
+        public readonly TcpEndpointLease Lease = lease;
+        public readonly TcpCaptureOwner Owner = owner;
+        public IPEndPoint? Observed;
+        public long ObservedTick;
+        public DateTimeOffset ObservedAt;
     }
-    public sealed class Use(TcpEndpointLease lease, TcpCaptureOwner owner, TcpEndpointLease.Reference reference, IPEndPoint observed) : IDisposable
+    public sealed class Use(TcpEndpointLease lease, TcpCaptureOwner owner, TcpEndpointLease.Reference reference,
+        IPEndPoint observed, DateTimeOffset observedAt) : IDisposable
     {
         public TcpEndpointLease Lease => lease;
         public TcpCaptureOwner Owner => owner;
-        public IPEndPoint Observed { get; } = new(observed.Address, observed.Port);
+        public IPEndPoint Observed => new(observed.Address, observed.Port);
+        // A cached candidate keeps the real query timestamp, not borrow time.
+        public DateTimeOffset ObservedAt => observedAt;
         public void Dispose() => reference.Dispose();
     }
-    // Caller cancellation invalidates only a started/ambiguous STUN transaction,
-    // never a healthy native path using that source resource.
+    // Cancellation while queued has not touched the helper stream. Cancelling
+    // an actual query makes ONLY that flow unusable; active raw sessions retain
+    // their original lease and capture references until their own retirement.
     public async Task<Use> Acquire(IPAddress source, IPEndPoint reflector, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
-        await gate.WaitAsync(linked.Token);
-        try {
+        string key = source + "/" + reflector;
+        Slot slot;
+        lock (gate) {
             ObjectDisposedException.ThrowIf(disposed, this);
-            string key = source + "/" + reflector;
-            entries.TryGetValue(key, out var entry);
+            if (!slots.TryGetValue(key, out slot!)) {
+                if (slots.Count >= TraversalLimits.TcpResources) throw new IOException("BudgetExhausted：TCP 源端点池已满");
+                slots[key] = slot = new(source, reflector);
+            }
+            slot.Users++;
+            if (!started) { started = true; maintenance = Maintain(); }
+        }
+        bool entered = false;
+        try {
+            await slot.Io.WaitAsync(linked.Token); entered = true;
+            linked.Token.ThrowIfCancellationRequested();
+            var entry = slot.Current;
             if (entry != null && (!entry.Lease.QueryUsable || entry.Owner.Failed)) {
-                entries.Remove(key); await Retire(entry); entry = null;
+                slot.Current = null; await Retire(entry); entry = null;
             }
             if (entry == null) {
                 using var connect = CancellationTokenSource.CreateLinkedTokenSource(linked.Token); connect.CancelAfter(3500);
-                var lease = await TcpEndpointLease.Open(new(source, 0), reflector, generation, connect.Token);
-                try { entry = new(lease, new(lease, generation, open, pacer)); await entry.Owner.Ready; }
-                catch { lease.Dispose(); throw; }
-                entries.Add(key, entry);
+                var lease = await TcpEndpointLease.Open(new(slot.Source, 0), slot.Reflector, generation, connect.Token);
+                TcpCaptureOwner? owner = null;
+                try {
+                    owner = new(lease, generation, open, pacer); await owner.Ready.WaitAsync(linked.Token);
+                    slot.Current = entry = new(lease, owner);
+                } catch {
+                    try { if (owner != null) await owner.DisposeAsync(); }
+                    finally { lease.Dispose(); }
+                    throw;
+                }
             }
-            if (!started) { started = true; maintenance = Maintain(); }
             var reference = entry.Lease.AcquireAttempt(generation);
             try {
-                while (!budget.TrySend(20)) await Task.Delay(25, linked.Token);
-                var observation = await reference.Observe(linked.Token); entry.ObservedAt = Stopwatch.GetTimestamp();
-                return new(entry.Lease, entry.Owner, reference, observation.Public);
+                if (entry.Observed == null || clock.GetElapsedTime(entry.ObservedTick).TotalMilliseconds >= TraversalLimits.TcpCandidateReuseMs) {
+                    while (!budget.TrySend(20)) await Task.Delay(25, linked.Token);
+                    await Observe(entry, reference, linked.Token);
+                }
+                linked.Token.ThrowIfCancellationRequested();
+                return new(entry.Lease, entry.Owner, reference, entry.Observed!, entry.ObservedAt);
             } catch { reference.Dispose(); throw; }
-        } finally { gate.Release(); }
+        } finally {
+            if (entered) slot.Io.Release();
+            lock (gate) {
+                slot.Users--;
+                if (slot.Users == 0 && slot.Current == null) slots.Remove(key);
+            }
+        }
+    }
+    async Task Observe(Entry entry, TcpEndpointLease.Reference reference, CancellationToken token)
+    {
+        var observation = await reference.Observe(token);
+        entry.Observed = observation.Public; entry.ObservedTick = clock.GetTimestamp(); entry.ObservedAt = clock.GetUtcNow();
     }
     async Task Retire(Entry entry)
     {
-        retiring.RemoveAll(o => o.Closed.IsCompleted);
-        retiring.Add(entry.Owner);
-        await entry.Owner.DisposeAsync(); // Existing workers retain capture and tuple ownership.
-        entry.Lease.Dispose();
+        lock (gate) {
+            retiring.RemoveAll(o => o.Closed.IsCompletedSuccessfully);
+            retiring.Add(entry.Owner);
+        }
+        try { await entry.Owner.DisposeAsync(); } // Active workers keep exact tuple ownership.
+        finally { entry.Lease.Dispose(); }
+    }
+    async Task MaintainSlot(Slot slot)
+    {
+        await slot.Io.WaitAsync(stop.Token);
+        try {
+            var entry = slot.Current;
+            if (entry == null) return;
+            if (!entry.Lease.QueryUsable || entry.Owner.Failed) { slot.Current = null; await Retire(entry); return; }
+            if (entry.Observed != null && clock.GetElapsedTime(entry.ObservedTick).TotalSeconds < 15 || !budget.TrySend(20, maintenance: true)) return;
+            using var reference = entry.Lease.AcquireAttempt(generation);
+            try { await Observe(entry, reference, stop.Token); }
+            catch (Exception ex) when (ex is IOException or OperationCanceledException or System.Net.Sockets.SocketException) {
+                slot.Current = null; await Retire(entry);
+            }
+        } finally {
+            slot.Io.Release();
+            lock (gate) {
+                if (slot.Users == 0 && slot.Current == null) {
+                    string key = slot.Source + "/" + slot.Reflector;
+                    if (slots.GetValueOrDefault(key) == slot) slots.Remove(key);
+                }
+            }
+        }
     }
     async Task Maintain()
     {
         try {
             while (true) {
-                await Task.Delay(1000, stop.Token); await gate.WaitAsync(stop.Token);
-                try {
-                    foreach (var item in entries.ToArray()) {
-                        var entry = item.Value;
-                        if (!entry.Lease.QueryUsable || entry.Owner.Failed) { entries.Remove(item.Key); await Retire(entry); continue; }
-                        if (Stopwatch.GetElapsedTime(entry.ObservedAt).TotalSeconds < 15 || !budget.TrySend(20, maintenance: true)) continue;
-                        using var reference = entry.Lease.AcquireAttempt(generation);
-                        try { await reference.Observe(stop.Token); entry.ObservedAt = Stopwatch.GetTimestamp(); }
-                        catch (Exception ex) when (ex is IOException or OperationCanceledException or System.Net.Sockets.SocketException) {
-                            entries.Remove(item.Key); await Retire(entry);
-                        }
-                    }
-                } finally { gate.Release(); }
+                await Task.Delay(1000, stop.Token);
+                Slot[] snapshot; lock (gate) snapshot = slots.Values.ToArray();
+                // Per-source serialization also coalesces maintenance with a
+                // foreground query; different sources share only the budget.
+                await Task.WhenAll(snapshot.Select(MaintainSlot));
             }
         } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
     }
-    public async ValueTask DisposeAsync()
+    public ValueTask DisposeAsync()
+    {
+        lock (gate) {
+            disposed = true;
+            return new(closing ??= Close());
+        }
+    }
+    async Task Close()
     {
         stop.Cancel();
-        await maintenance;
-        await gate.WaitAsync();
-        try {
-            if (disposed) return;
-            disposed = true;
-            foreach (var entry in entries.Values) await Retire(entry);
-            entries.Clear();
-        } finally { gate.Release(); }
-        // MeshRunner disposes paths before its factory; no worker may survive
-        // service shutdown. Retiring capture stays owned until workers really exit.
-        await Task.WhenAll(retiring.Select(o => o.Closed));
+        try { await maintenance; }
+        finally {
+            Slot[] snapshot; lock (gate) snapshot = slots.Values.ToArray();
+            await Task.WhenAll(snapshot.Select(async slot => {
+                await slot.Io.WaitAsync();
+                try { if (slot.Current is {} entry) { slot.Current = null; await Retire(entry); } }
+                finally { slot.Io.Release(); }
+            }));
+            TcpCaptureOwner[] owners; lock (gate) { slots.Clear(); owners = retiring.ToArray(); }
+            // Runner closes paths before its factory; no capture worker may
+            // outlive shutdown. An unproven capture close remains a failure.
+            await Task.WhenAll(owners.Select(o => o.Closed));
+        }
     }
 }

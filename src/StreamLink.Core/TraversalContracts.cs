@@ -49,4 +49,7 @@ public static class TraversalLimits
     // <= two retained observer tickets/member in a sixty-second interval.
     public const int CalibrationWindowIntervalMs = 31000, CalibrationDeadlineMs = 900000;
     public const int CalibrationInterruptedCooldownMs = 90000; // signed request lifetime + server ticket retention
+    // Ordinary candidates on the same retained helper/capture resource only.
+    // This is not stable NAT evidence or the independent prediction age rule.
+    public const int TcpCandidateReuseMs = 2000;
 }

@@ -75,12 +75,13 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     internal Action<IPEndPoint, IPAddress?, bool>? RouteCheckForTest { get; init; }
     internal Func<bool>? Ipv6AvailableForTest { get; init; }
     internal Func<IPEndPoint, IPEndPoint, IEndpointPacketIo>? OpenCaptureForTest { get; init; }
+    internal TimeProvider? EndpointTimeForTest { get; init; }
     internal Func<string, AddressFamily, CancellationToken, Task<IPEndPoint>> ResolveTarget { get; init; } = Stun.Resolve;
     internal Func<IPAddress, int, CancellationToken, Task<PortControlLease>> OpenUdpGateway { get; init; } =
         (local, port, ct) => PortControlLease.Create(local, port, port, PortMappingProtocol.Udp, ct);
     internal Func<IPAddress[]> GatewaySources { get; init; } = PortControlRoute.LocalSources;
     MeshTcpEndpointPool Pool { get { lock (poolGate) return pool ??= new(generation,
-        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer); } }
+        (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer, time: EndpointTimeForTest); } }
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
@@ -205,7 +206,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     using var reference = tcp.AcquireAttempt(generation); mapped = (await reference.Observe(deadline.Token)).Public;
                 }
                 CheckRoute(mapped, gatewayCandidate: useGateway);
-                long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                long now = (pooled?.ObservedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
                 var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), observation, now, now + (long)lifetime,
                     kind == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen);
                 var resource = new Resource(this, peer, candidate, tcp, udp, pooled); transferred = true; return resource;
