@@ -42,6 +42,10 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Same-path receipt authentication/range/history/budget regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --standby-only --output (Join-Path $root "artifacts/standby-router-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Retained standby phase / later nomination / rollback regression failed'}
+        & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --diagnostic-control-only --output (Join-Path $root "artifacts/diagnostic-control-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Bounded diagnostic control parser regression failed'}
+        & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --diagnostic-session-model-only --output (Join-Path $root "artifacts/diagnostic-session-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Diagnostic common lifetime/role/duplicate/loss/cancel regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
@@ -76,6 +80,12 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Formal retained native standby / independent source / old permission regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/standby-udp-runner-$releaseVersion.json") --udp-standby-only
         if($LASTEXITCODE -ne 0) {throw 'Formal same-socket UDP standby continuity / failure preservation regression failed'}
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/diagnostic-udp-product-$releaseVersion.json") --diagnostic-runner-only
+        if($LASTEXITCODE -ne 0) {throw 'Formal diagnostic same-socket/negotiation/receipt product regression failed'}
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/diagnostic-native-product-$releaseVersion.json") --native-diagnostic-runner-only
+        if($LASTEXITCODE -ne 0) {throw 'Formal native diagnostic grant/receipt/common completion regression failed'}
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/diagnostic-business-protection-$releaseVersion.json") --diagnostic-busy-only
+        if($LASTEXITCODE -ne 0) {throw 'Formal diagnostic abort on real application business regression failed'}
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-endpoint-pool-$releaseVersion.json") --pool-only
         if($LASTEXITCODE -ne 0) {throw 'Shared TCP source observation / cancellation isolation regression failed'}
         & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")

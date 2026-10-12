@@ -136,6 +136,15 @@ static class Program
             }
             using(var oldStandby=new SettingsWindow(feedbackProfile,supportsStandbyPaths:false))Check(!Field<CheckBox>(oldStandby,"standbyPaths").Enabled,"old service cannot be asked to retain unsupported standby resources");
             Check((await worker.Handle(new("status"))).StandbyPathsVersion==1,"backend independently advertises standby IPC version");
+            var diagnosticProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(feedbackProfile))!;
+            diagnosticProfile.TraversalMode="tcp";diagnosticProfile.StandbyPaths=true;diagnosticProfile.ManagedEgressMbps=70;
+            using(var diagnostics=new SettingsWindow(diagnosticProfile)){
+                var box=Field<CheckBox>(diagnostics,"pathDiagnostics");Check(box.Enabled&&!box.Checked,"explicit paced standby can opt into idle-only diagnostic, initially off");
+                box.Checked=true;diagnostics.Result.Validate();Check(diagnostics.Result.PathDiagnostics,"diagnostic opt-in updates actual profile with a bounded goal");
+                Field<CheckBox>(diagnostics,"standbyPaths").Checked=false;Check(!box.Enabled&&!box.Checked&&!diagnostics.Result.PathDiagnostics,"removing standby permission clears hidden high-rate diagnostic permission");
+            }
+            using(var oldDiagnostics=new SettingsWindow(diagnosticProfile,supportsDiagnostics:false))Check(!Field<CheckBox>(oldDiagnostics,"pathDiagnostics").Enabled,"old backend cannot enable unsupported diagnostic from new UI");
+            Check((await worker.Handle(new("status"))).PathDiagnosticsVersion==1,"backend declares independent diagnostic IPC version");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

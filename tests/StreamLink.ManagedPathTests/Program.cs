@@ -14,6 +14,14 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+if(args.Contains("--diagnostic-session-model-only")){
+    var diagnostic=DiagnosticSessionModels.Run(Check);
+    await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,diagnostic},new JsonSerializerOptions{WriteIndented=true}));return;
+}
+if(args.Contains("--diagnostic-control-only")){
+    var diagnostic=DiagnosticControlTests.Run(Check);
+    await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,diagnostic},new JsonSerializerOptions{WriteIndented=true}));return;
+}
 if(args.Contains("--diagnostic-budget-only")){
     var diagnostic=DiagnosticBudgetTests.Run(Check);
     await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,diagnostic},new JsonSerializerOptions{WriteIndented=true}));return;

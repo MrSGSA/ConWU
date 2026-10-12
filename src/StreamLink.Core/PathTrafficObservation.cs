@@ -79,6 +79,7 @@ internal sealed class PathTrafficObservation(ValidatedPathIdentity identity)
         if (!running) return; Tick(now); receivedPackets++; receivedBytes += bytes; lastActivity = now;
     }
     public bool RecentlyBusy(long now) => running && lastActivity != 0 && now - lastActivity is >= 0 and <= 1000;
+    public bool BusyWithin(long now,int milliseconds)=>running&&lastActivity!=0&&now-lastActivity>=0&&now-lastActivity<=milliseconds;
     public void RoundTrip(double milliseconds, long now, bool? activityAtSend = null)
     {
         if (!running || !double.IsFinite(milliseconds) || milliseconds < 0 || milliseconds > 12000) return;

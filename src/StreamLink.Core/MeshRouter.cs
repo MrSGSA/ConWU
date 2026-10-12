@@ -14,6 +14,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public PathTrafficSnapshot? Traffic { get; init; }
     public PathDeliverySnapshot? Delivery { get; init; }
     public MeshStandbyStatus? Standby { get; init; }
+    public PathDiagnosticSessionStatus? Diagnostics{get;init;}
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -121,7 +122,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
-                    Delivery = p.Managed?.Active?.Delivery?.Snapshot(), Standby = StandbyStatus(p) };
+                    Delivery = p.Managed?.Active?.Delivery?.Snapshot(), Standby = StandbyStatus(p),Diagnostics=p.Managed?.Diagnostic?.Status() };
         }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
@@ -225,6 +226,6 @@ public sealed partial class MeshRouter : IAsyncDisposable
         Task[] pathPumps;
         lock (gate) { foreach (var peer in peers.Values) CloseManaged(peer); pathPumps = managedPumps.ToArray(); }
         try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (OperationCanceledException) { }
-        finally { await Task.WhenAll(pathPumps); lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
+        finally { await Task.WhenAll(pathPumps);await Task.WhenAll(diagnosticTasks.ToArray()); lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
     }
 }

@@ -12,6 +12,9 @@ public sealed partial class MeshRouter
         public readonly Dictionary<Guid, ManagedPath> Paths = [];
         public ManagedPath? Active, Candidate;
         public long LastRevision;
+        public PathDiagnosticSession? Diagnostic;
+        public long NextDiagnostic;
+        public Guid DiagnosticAttempt;
     }
     sealed class ManagedPath(IMeshDatagramPath transport, ValidatedPathIdentity identity, PathNomination nomination, CancellationToken stop)
     {
@@ -28,6 +31,8 @@ public sealed partial class MeshRouter
         public long LastRoundTrip;
         public double? RttMs;
         public long StandbyAt;
+        public int DiagnosticMbps;
+        public TraversalAttemptContext? Context;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
         public readonly Dictionary<long, (long Sent, bool Activity)> PendingRoundTrips = [];
@@ -42,7 +47,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0,int negotiatedDiagnosticMbps=0)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -70,7 +75,10 @@ public sealed partial class MeshRouter
                 !p.Closing && p.Identity.Profile != TraversalProfile.UdpDirect && p.Identity.ActualLocal.Equals(identity.ActualLocal) && p.Identity.ActualRemote.Equals(identity.ActualRemote)))
                 throw new IOException("同一 TCP 四元组已由另一握手或 Active 占用");
             var nomination = new PathNomination(context, identity.PathId, nominationRevision, remaining, identity.Qualification >= PathQualification.MtuQualified);
+            if(negotiatedDiagnosticMbps is<0 or>50||negotiatedDiagnosticMbps>0&&(!context.Standby||transport is not IPathDiagnosticWire{SupportsDiagnosticWire:true}))
+                throw new IOException("诊断目标未协商或实际路径不支持有界诊断");
             var state = new ManagedPath(transport, identity, nomination, stop.Token);
+            state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;
             if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
             peer.Detail = "正在验证并协商直连路径";
@@ -139,10 +147,12 @@ public sealed partial class MeshRouter
                     if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out var probe) && Stopwatch.GetElapsedTime(probe.Sent).TotalSeconds < 12) {
                         path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(probe.Sent, path.LastRoundTrip).TotalMilliseconds;
                         path.Traffic.RoundTrip(path.RttMs.Value, Environment.TickCount64, probe.Activity);
+                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value);
                     }
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
-                    if (message.Control != null && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
+                    if(message.Diagnostic!=null)peer.Managed!.Diagnostic?.Data(path.Identity.PathId,message.Diagnostic);
+                    if (message.Control != null && !DiagnosticControl(peer,path,message.Control,Environment.TickCount64) && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
                         path.Delivery?.Control(message.Control, new Guid(packet.Span.Slice(8, 16)), Environment.TickCount64) == true))
                         NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
                     if (message.Packet != null) {
@@ -257,6 +267,7 @@ public sealed partial class MeshRouter
             if (ReferenceEquals(managed.Active, path) && path.Nomination.PeerAdopted && ManagedHealthy(peer))
                 path.Delivery?.Tick(now, body => SendFeedback(peer, path, body, now));
         }
+        TickDiagnostic(peer,now);
     }
     static void RetireManaged(ManagedPeer peer, ManagedPath path)
     {
@@ -272,6 +283,7 @@ public sealed partial class MeshRouter
     }
     static void CloseManaged(Peer peer)
     {
+        peer.Managed?.Diagnostic?.Dispose();
         if (peer.Managed is {} managed) foreach (var path in managed.Paths.Values.ToArray()) RetireManaged(managed, path);
     }
 }

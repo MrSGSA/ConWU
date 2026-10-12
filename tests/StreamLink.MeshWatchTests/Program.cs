@@ -118,6 +118,7 @@ try {
     Check(client.SupportsUdpExploration, "HTTPS watch independently negotiates UDP exploration without inferring it from traversal version");
     Check(client.SupportsQualityFeedback, "HTTPS watch independently negotiates receipt capability without granting it from traversal version");
     Check(client.SupportsStandbyPaths, "HTTPS watch independently authorizes bounded retained standby paths");
+    Check(client.SupportsPathDiagnostics,"HTTPS watch independently grants diagnostic transactions, not implied by standby permission");
     var clock = Stopwatch.StartNew();
     var idle = await client.WaitForChanges(all.Token);
     clock.Stop();
@@ -135,6 +136,7 @@ try {
     Check(!oldServer.SupportsUdpExploration, "old-server read fallback cannot retain UDP source-expansion permission");
     Check(!oldServer.SupportsQualityFeedback, "old server fallback clears delivery-feedback permission");
     Check(!oldServer.SupportsStandbyPaths, "old server fallback cannot preserve retained-standby permission");
+    Check(!oldServer.SupportsPathDiagnostics,"old server fallback clears independent diagnostic permission");
     int attempts = watches;
     await oldServer.WaitForChanges(all.Token);
     Check(watches == attempts && reads >= 2, "fallback is remembered rather than retrying unsupported route every poll");

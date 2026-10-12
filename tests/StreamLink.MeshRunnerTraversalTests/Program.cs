@@ -30,8 +30,11 @@ bool standbyOnly = args.Length == 7 && args[6] == "--standby-only";
 bool udpStandbyOnly = args.Length == 7 && args[6] == "--udp-standby-only";
 bool diagnosticOnly=args.Length==7&&args[6]=="--diagnostic-only";
 bool diagnosticLoadOnly=args.Length==7&&args[6]=="--diagnostic-load-only";
+bool diagnosticRunnerOnly=args.Length==7&&args[6]=="--diagnostic-runner-only";
+bool nativeDiagnosticRunnerOnly=args.Length==7&&args[6]=="--native-diagnostic-runner-only";
+bool diagnosticBusyOnly=args.Length==7&&args[6]=="--diagnostic-busy-only";
 bool poolOnly = args.Length == 7 && args[6] == "--pool-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && !diagnosticRunnerOnly && !nativeDiagnosticRunnerOnly && !diagnosticBusyOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -59,7 +62,10 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if(diagnosticLoadOnly)rows.Add(await NativeDiagnosticTests.Run(binary,root,Check,token,load:true));
+    if(diagnosticBusyOnly)rows.Add(await Ipv6Tests.RunDiagnostics(root,url,pin,Check,token,interruptBusy:true));
+    else if(nativeDiagnosticRunnerOnly)rows.Add(await NativeIpv6RunnerTests.RunDiagnostics(binary,root,url,pin,Check,token));
+    else if(diagnosticRunnerOnly)rows.Add(await Ipv6Tests.RunDiagnostics(root,url,pin,Check,token));
+    else if(diagnosticLoadOnly)rows.Add(await NativeDiagnosticTests.Run(binary,root,Check,token,load:true));
     else if(diagnosticOnly)rows.Add(await NativeDiagnosticTests.Run(binary,root,Check,token));
     else if (udpStandbyOnly) rows.Add(await Ipv6Tests.RunStandby(root,url,pin,Check,token));
     else if (standbyOnly) rows.Add(await NativeIpv6RunnerTests.RunStandby(binary,root,url,pin,Check,token));

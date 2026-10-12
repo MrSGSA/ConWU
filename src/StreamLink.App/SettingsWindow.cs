@@ -26,7 +26,9 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
     public DeviceProfile Result => profile;
     readonly CheckBox standbyPaths = new() { AutoSize = true, Text = "保留独立备用路径（实验，最多120秒；需双方与服务器支持，未自动选路）" };
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true)
+    readonly CheckBox pathDiagnostics=new(){AutoSize=true,Text="空闲时比较路径负载（实验，需双方与服务器支持；约80秒，可能用至256MiB；不自动换路）"};
+    readonly NumericUpDown diagnosticMbps=new(){Minimum=1,Maximum=50,Width=85};
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -122,6 +124,17 @@ public sealed class SettingsWindow : Form
         var paceRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
         paceRow.Controls.AddRange([new Label { Text = "实验链路出口上限（Mbps）", AutoSize = true }, pacing, new Label { Text = "0 关闭；兼容入口不受此限速", AutoSize = true }]);
         extra.Controls.Add(paceRow);
+        pathDiagnostics.Checked=profile.PathDiagnostics;diagnosticMbps.Value=profile.DiagnosticMbps;
+        pathDiagnostics.CheckedChanged+=(_,_)=>{if(supportsDiagnostics)profile.PathDiagnostics=pathDiagnostics.Checked;};
+        diagnosticMbps.ValueChanged+=(_,_)=>{if(supportsDiagnostics)profile.DiagnosticMbps=(int)diagnosticMbps.Value;};
+        void DiagnosticAvailability(){
+            pathDiagnostics.Enabled=supportsDiagnostics&&supportsPacing&&standbyPaths.Enabled&&standbyPaths.Checked&&pacing.Value>=Math.Ceiling(diagnosticMbps.Value*1.4m);
+            if(!pathDiagnostics.Enabled&&supportsDiagnostics)pathDiagnostics.Checked=false;diagnosticMbps.Enabled=supportsDiagnostics&&standbyPaths.Enabled&&standbyPaths.Checked;
+        }
+        standbyPaths.CheckedChanged+=(_,_)=>DiagnosticAvailability();standbyPaths.EnabledChanged+=(_,_)=>DiagnosticAvailability();
+        pacing.ValueChanged+=(_,_)=>DiagnosticAvailability();diagnosticMbps.ValueChanged+=(_,_)=>DiagnosticAvailability();DiagnosticAvailability();
+        extra.Controls.Add(pathDiagnostics);var diagnosticRow=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};
+        diagnosticRow.Controls.AddRange([new Label{AutoSize=true,Text="双方诊断目标（Mbps，需一致）"},diagnosticMbps]);extra.Controls.Add(diagnosticRow);
         var ports = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill }; source.Value = profile.SourcePort; listen.Value = profile.ListenPort;
         ports.Controls.AddRange([new Label { Text = "探测源端口", AutoSize = true }, source, new Label { Text = "本机传输端口", AutoSize = true }, listen]); layout.Controls.Add(ports);
         manual.Text = profile.ManualEndpoint; layout.Controls.Add(manual);

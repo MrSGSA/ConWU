@@ -11,6 +11,8 @@ using StreamLink.Service;
 
 static class NativeIpv6RunnerTests
 {
+    public static Task<object> RunDiagnostics(string binary,string root,string url,string pin,Action<bool,string> check,CancellationToken token)=>
+        Pair(binary,root,url,pin,"ipv6",check,token,false,false,true,true);
     public static async Task<object> Run(string binary, string root, string url, string pin, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
     {
         CaptureFilterTests.Run(Path.Combine(Path.GetDirectoryName(binary)!, "..", "downloads", "WinDivert-2.2.2-A", "x64", "WinDivert.dll"), check);
@@ -38,15 +40,16 @@ static class NativeIpv6RunnerTests
         check(rejected, "UDP IPv6 capability cannot authorize a FakeTCP IPv6 Offer");
         check(!new DeviceProfile().FakeTcpIpv6, "FakeTCP IPv6 remains disabled in default/existing device profiles");
     }
-    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false)
+    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false)
     {
         await using var v4 = new Reflector(); await using var v6 = new Reflector(new(IPAddress.IPv6Loopback, 0));
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var profiles = new[] { a, b }.Select(m => new DeviceProfile { Mesh = m, TraversalMode = "tcp", PathSelection = "faketcp-only", FakeTcpIpv6 = true, TcpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0, QualityFeedback = feedback }).ToArray();
         for(int i=0;i<profiles.Length;i++)profiles[i].StandbyPaths=standby&&(i==0||mode!="standby-old-peer");
+        if(diagnostics)foreach(var profile in profiles){profile.PathDiagnostics=true;profile.DiagnosticMbps=1;profile.ManagedEgressMbps=10;}
         var wire = new Wire(mode == "ipv6-unreachable"); var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select((p, i) => new Inspect(new MeshCandidateFactory(p, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true,
-            diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0, wireControl: true) {
+            diagnostic: logs.Enqueue, ipv6Native: mode != "old-native-abi" || i == 0, wireControl: true,diagnosticNative:diagnostics) {
             Ipv6AvailableForTest = () => true,
             ResolveTarget = (_, family, _) => Task.FromResult(family == AddressFamily.InterNetworkV6 ? v6.Endpoint : v4.Endpoint),
             OpenCaptureForTest = (local, _) => wire.Open(local),
@@ -88,7 +91,21 @@ static class NativeIpv6RunnerTests
             check(factories.All(f => f.Transports.Single().WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 }), mode + ": formal factory enables native wire accounting and only selected business bypasses control limits");
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");
             if (feedback) await DeliveryRunnerChecks.Run(states, mode != "old-service", "native/" + mode, check, token);
-            if (standby) {
+            if(diagnostics){
+                long due=clock.ElapsedMilliseconds+145000;
+                while(!states.All(s=>s?.Peers?.Single().Diagnostics is{State:"Done"})){
+                    foreach(var task in tasks)if(task.IsCompleted)await task;
+                    if(states.Any(s=>s?.Peers?.Single().Diagnostics is{State:"Cancelled"}))throw new IOException("native formal diagnostic cancelled: "+string.Join('\n',states.Select(s=>System.Text.Json.JsonSerializer.Serialize(s?.Peers?.Single().Diagnostics))));
+                    if(clock.ElapsedMilliseconds>due)throw new TimeoutException("native formal diagnostic exchange: "+string.Join('\n',logs));await Task.Delay(50,token);
+                }
+                check(states.All(s=>s!.Peers!.Single().Diagnostics!.Windows.Length==12),"formal native Router completes twelve authenticated directional active/standby windows");
+                check(factories.All(f=>f.Transports.Count==2&&f.Transports.Last().WireControl is{Standby:true,Selected:false,BusinessPackets:0,DiagnosticPackets:>0}),
+                    "formal native standby sends diagnostic labels under exact resource grant without gaining ordinary business permission");
+                check(adapters.All(x=>x.Incoming.Count==1)&&states.All(s=>s?.Connected==true),"native formal measurement leaves original virtual IP path active and never writes synthetic samples to adapter");
+                adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));while(adapters[1].Incoming.Count<2)await Task.Delay(10,token);
+                check(factories[0].Transports.First().WireControl is{BusinessPackets:>0,Selected:true},"native original Active resumes ordinary business after the comparison transaction");
+            }
+            else if (standby) {
                 if (mode=="ipv6") {
                     long due=clock.ElapsedMilliseconds+45000;
                     while(!factories.All(f=>f.Transports.Count==2&&f.Transports.Last().WireControl is{Standby:true,Selected:false})){
@@ -125,7 +142,7 @@ static class NativeIpv6RunnerTests
         if (paced) check(factories.All(f => f.Egress?.Accounting is { Conserved: true, Queued.Packets: 0, InFlight.Packets: 0 }), mode + ": final native broker egress accounts for every local raw submission");
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, wire.Packets, wire.MaximumBytes,
             paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, p.AttachId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(),
-            wireControl = factories.Select(f => f.Transports.Select(p => p.WireControl)).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
+            wireControl = factories.Select(f => f.Transports.Select(p => p.WireControl)).ToArray(), egress = factories.Select(f => f.Egress).ToArray(),diagnostics=states.Select(s=>s?.Peers?.Single().Diagnostics).ToArray() };
     }
     internal sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
@@ -136,6 +153,8 @@ static class NativeIpv6RunnerTests
         public bool SupportsUdpExploration => inner.SupportsUdpExploration;
         public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
         public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
+        public bool SupportsPathDiagnostics=>inner.SupportsPathDiagnostics;
+        public int DiagnosticMbps=>inner.DiagnosticMbps;
         public bool SupportsStandbyProfile(TraversalProfile p) => inner.SupportsStandbyProfile(p);
         public async Task<IMeshCandidateResource> GatherStandby(MeshMember peer,TraversalProfile p,Guid attempt,bool v6,MeshTraversalCandidate? remote,CancellationToken t)
         {Interlocked.Increment(ref Gathers);var gathered=await inner.GatherStandby(peer,p,attempt,v6,remote,t);Candidates.Enqueue(gathered.Candidate);return new Resource(gathered,this);}

@@ -33,6 +33,7 @@ try {
     await UdpExplorationTests.Run(Check);
     await QualityFeedbackNegotiationTests.Run(Check);
     await StandbyNegotiationTests.Run(Check);
+    await DiagnosticNegotiationTests.Run(Check);
     int oldIndex=Array.IndexOf(args,"--released-core");
     if(oldIndex>=0){if(oldIndex+1>=args.Length)throw new ArgumentException("--released-core requires retained DLL path");rows.Add(ReleasedCoreCompatibilityTests.Run(args[oldIndex+1],Check));}
     var registry = new MeshRegistry(root);

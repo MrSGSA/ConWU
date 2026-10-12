@@ -10,6 +10,8 @@ using StreamLink.Service;
 
 static class Ipv6Tests
 {
+    public static Task<object> RunDiagnostics(string root,string url,string pin,Action<bool,string> check,CancellationToken token,bool interruptBusy=false)=>
+        Runners(root,url,pin,"ipv6",check,token,false,false,true,true,interruptBusy);
     public static Task<object> RunStandby(string root,string url,string pin,Action<bool,string> check,CancellationToken token) =>
         Runners(root,url,pin,"ipv6",check,token,false,false,true);
     public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
@@ -114,12 +116,13 @@ static class Ipv6Tests
         public ValueTask<TraversalDatagram> Receive(CancellationToken t) => inner.Receive(t);
         public void Dispose() => inner.Dispose();
     }
-    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false)
+    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false,bool interruptBusy=false)
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
         var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0,
             QualityFeedback = feedback && (i == 0 || mode != "old-peer"), StandbyPaths=standby }).ToArray();
+        if(diagnostics)foreach(var profile in profiles){profile.PathDiagnostics=true;profile.DiagnosticMbps=1;profile.ManagedEgressMbps=10;}
         var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select(p => new Inspect(new MeshCandidateFactory(p, "unused", root, [TraversalProfile.UdpDirect], diagnostic: logs.Enqueue) {
             Ipv6AvailableForTest = () => true,
@@ -163,7 +166,34 @@ static class Ipv6Tests
             if (paced) check(states.All(s => s!.Peers!.Where(p => p.Connected).All(p => p.SendQueue is { Owner: "SharedEgress", ByteUnit: "OuterIpBytes", Accounting.Conserved: true })) &&
                 factories.All(f => f.Egress?.Accounting?.Conserved == true), mode + ": formal Runner exposes the same sole UDP egress queue and conserved local outcomes");
             if (feedback) await DeliveryRunnerChecks.Run(states, !mode.StartsWith("old-"), "UDP/" + mode, check, token);
-            if(standby){
+            if(diagnostics&&interruptBusy){
+                long due=clock.ElapsedMilliseconds+60000;
+                while(!states.Any(s=>s?.Peers?.Single().Diagnostics is{State:"Sending"})){
+                    if(clock.ElapsedMilliseconds>due)throw new TimeoutException("busy case diagnostic did not start");await Task.Delay(20,token);
+                }
+                adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));due=clock.ElapsedMilliseconds+12000;
+                while(!states.All(s=>s?.Peers?.Single().Diagnostics is{State:"Cancelled"})){
+                    if(clock.ElapsedMilliseconds>due)throw new TimeoutException("busy diagnostic did not cancel: "+string.Join('\n',states.Select(s=>System.Text.Json.JsonSerializer.Serialize(s?.Peers?.Single().Diagnostics))));await Task.Delay(20,token);
+                }
+                check(states.All(s=>s!.Peers!.Single().Diagnostics!.Cost.Active==false),"actual business arrival cancels both negotiated diagnostics and revokes their machine permits");
+                check(adapters[1].Incoming.Count==2&&states.All(s=>s?.Connected==true),"busy abort preserves real application delivery on original Active instead of replacing it");
+                check(factories.All(f=>f.Paths.Count==2),"busy diagnostic abort neither recreates socket resources nor starts a new candidate");
+            }
+            else if(diagnostics){
+                long due=clock.ElapsedMilliseconds+145000;
+                while(!states.All(s=>s?.Peers?.Single().Diagnostics is{State:"Done"})){
+                    foreach(var task in tasks)if(task.IsCompleted)await task;
+                    if(states.Any(s=>s?.Peers?.Single().Diagnostics is{State:"Cancelled"}failed))throw new IOException("formal diagnostic cancelled: "+string.Join('\n',states.Select(s=>System.Text.Json.JsonSerializer.Serialize(s?.Peers?.Single().Diagnostics))));
+                    if(clock.ElapsedMilliseconds>due)throw new TimeoutException("formal diagnostic exchange: "+string.Join('\n',logs));await Task.Delay(50,token);
+                }
+                check(states.All(s=>s!.Peers!.Single().Diagnostics!.Windows.Length==12),"formal Router exchanges all twelve active/standby directional windows and both peers agree on completion");
+                check(states.All(s=>s!.Peers!.Single().Diagnostics!.Windows.All(w=>w.TargetMbps==1&&w.Receipt.Result=="ReportedAtCutoff"&&w.Source.Accepted>0)),
+                    "real same-socket production diagnostic reports match the configured low-impact test target without fabricated no-data capacity");
+                check(adapters.All(x=>x.Incoming.Count==1)&&states.All(s=>s?.Connected==true),"formal diagnostics never write synthetic payloads to the virtual IP adapter and preserve Active");
+                adapters[0].Outgoing.Add(Packet(a.LocalIp,b.LocalIp));while(adapters[1].Incoming.Count<2)await Task.Delay(10,token);
+                check(states.All(s=>s?.Connected==true),"ordinary business continues after negotiated diagnostic completion");
+            }
+            else if(standby){
                 long due=clock.ElapsedMilliseconds+45000;
                 while(!states.All(s=>s?.Peers?.Single().Standby is{Ready:true,BidirectionalFresh:true})){
                     foreach(var task in tasks)if(task.IsCompleted)await task;
@@ -191,7 +221,7 @@ static class Ipv6Tests
         check(adapters.All(x => x.Disposed), mode + ": Runner stops and joins its adapters and candidate paths");
         if (paced) check(factories.All(f => f.Egress?.QueuedBytes == 0), mode + ": UDP pacing drains cancelled resources at shutdown");
         if (paced) check(factories.All(f => f.Egress?.Accounting is { Conserved: true, Queued.Packets: 0, InFlight.Packets: 0 }), mode + ": final formal UDP egress ledger has no unclassified accepted datagrams");
-        return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray() };
+        return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray(),diagnostics=states.Select(s=>s?.Peers?.Single().Diagnostics).ToArray() };
     }
     sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
     {
@@ -201,6 +231,8 @@ static class Ipv6Tests
         public EgressStats? Egress => inner.Egress;
         public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
         public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
+        public bool SupportsPathDiagnostics=>inner.SupportsPathDiagnostics;
+        public int DiagnosticMbps=>inner.DiagnosticMbps;
         public bool SupportsStandbyProfile(TraversalProfile p)=>inner.SupportsStandbyProfile(p);
         public async Task<IMeshCandidateResource> GatherStandby(MeshMember p,TraversalProfile k,Guid a,bool allow,MeshTraversalCandidate? remote,CancellationToken t)
         {Interlocked.Increment(ref Gathers);return new Resource(await inner.GatherStandby(p,k,a,allow,remote,t),this);}

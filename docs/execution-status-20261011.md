@@ -1,5 +1,7 @@
 # 下一版执行状态
 
+最新接线：[M6有界诊断正式产品流程](m6-diagnostic-product-20261012.md)。独立双端/服务授权、12个方向窗口、共同准备/摘要/结束及业务忙碌撤销已正式进入Factory/Actor/Router/Runner；真实UDP和C++1Mbps低影响联调、390轮控制模型、设置/IPC通过。自动质量判定和共同选择仍缺，AutoQuality拒绝启用；没有更新已发布包或现用部署。全M0—M9发布Gate继续。
+
 当前后续进展：[M6有界负载诊断底层](m6-diagnostic-foundation-20261012.md)。真实UDP及C++诊断额度/发送/接收适配通过，三段5秒原生受控诊断约50Mbps；有一段截止缺口0.033%，不报告公网零丢失。正式诊断协商/Router控制、自动质量比较和共同批准尚缺，AutoQuality仍拒绝启用；整体发布Gate不变。现用服务及已发布0.5.3包未更新。
 
 规格：[执行计划](StreamLink-Codex-Execution-Plan-20261011.md)，版本 1.0。

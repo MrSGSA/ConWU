@@ -25,6 +25,8 @@ public sealed class MeshLink : IDisposable
     long lastReceive, pendingPing;
     bool disposed;
     public double? RttMs { get; private set; }
+    internal Guid SendEpoch{get{lock(gate)return new(epoch);}}
+    internal Guid? ReceiveEpoch{get{lock(gate)return remoteEpoch==null?null:new Guid(remoteEpoch);}}
     public bool Connected { get { lock (gate) return !disposed && remoteEpoch != null && lastReceive != 0 && Stopwatch.GetElapsedTime(lastReceive).TotalSeconds < 12; } }
     public MeshLink(int localSlot, int remoteSlot, byte[] sharedKey)
     {

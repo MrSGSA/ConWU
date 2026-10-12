@@ -38,6 +38,8 @@ public sealed class DeviceProfile
     public bool UdpExploration { get; set; }
     public bool QualityFeedback { get; set; }
     public bool StandbyPaths { get; set; }
+    public bool PathDiagnostics { get; set; }
+    public int DiagnosticMbps { get; set; }=50;
     // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
     // rounds. It does not enable UDP itself or bypass path-quality selection.
     public bool PortControlMapping { get; set; }
@@ -68,6 +70,9 @@ public sealed class DeviceProfile
         Selection().Validate();
         if (QualityFeedback && TraversalMode == "legacy") throw new FormatException("路径送达反馈需要实验受管打洞模式");
         if (StandbyPaths && TraversalMode == "legacy") throw new FormatException("备用路径需要实验受管打洞模式");
+        if (DiagnosticMbps is < 1 or > 50) throw new FormatException("诊断目标需为1–50Mbps");
+        if (PathDiagnostics && (!StandbyPaths || TraversalMode == "legacy" || ManagedEgressMbps < Math.Ceiling(DiagnosticMbps * 1.4)))
+            throw new FormatException("路径诊断需开启独立备用，并设置至少目标1.4倍的共享出口额度；诊断仅在业务空闲时进行");
         if (UdpExploration && (TraversalMode != "tcp-udp" || !Selection().Allows(TraversalProfile.UdpDirect)))
             throw new FormatException("UDP 多源探索需要 UDP 备用许可与实验 TCP/UDP 打洞");
         if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))
