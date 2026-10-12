@@ -38,6 +38,12 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'TCP selection / mesh recovery regression failed'}
         & dotnet run --project tests/StreamLink.HelperLedgerTests -c Release -- --output (Join-Path $root "artifacts/kernel-helper-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Kernel helper and explicit compatibility resource accounting regression failed'}
+        # Fail short resource/freshness checks before the long load diagnostics.
+        # Every case still runs on this exact committed source; no gate is skipped.
+        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-endpoint-pool-$releaseVersion.json") --pool-only
+        if($LASTEXITCODE -ne 0) {throw 'Shared TCP source observation / cancellation isolation regression failed'}
+        & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Authenticated TCP observation regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release -- --output (Join-Path $root "artifacts/managed-recovery-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Managed/legacy recovery observation and nomination regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --feedback-only --output (Join-Path $root "artifacts/delivery-feedback-$releaseVersion.json")
@@ -108,10 +114,6 @@ try {
         }
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/network-scope-$releaseVersion.json") --network-only
         if($LASTEXITCODE -ne 0) {throw 'Network epoch / stale candidate / retained path ownership regression failed'}
-        & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/tcp-endpoint-pool-$releaseVersion.json") --pool-only
-        if($LASTEXITCODE -ne 0) {throw 'Shared TCP source observation / cancellation isolation regression failed'}
-        & dotnet run --project tests/StreamLink.TcpObserverTests -c Release -- --output (Join-Path $root "artifacts/tcp-observer-$releaseVersion.json")
-        if($LASTEXITCODE -ne 0) {throw 'Authenticated TCP observation regression failed'}
         & dotnet run --project tests/StreamLink.MeshTests -c Release -- --raw out/native/udp2raw-protocol-test.exe
         if($LASTEXITCODE -ne 0) {throw 'Native multi-client protocol regression failed'}
         if($IncludeLegacy) { & dotnet run --project tests/StreamLink.MappingTests -c Release -- (Join-Path $EasyTierDirectory 'easytier-core.exe') } else { & dotnet run --project tests/StreamLink.MappingTests -c Release }

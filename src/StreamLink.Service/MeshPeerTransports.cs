@@ -26,7 +26,12 @@ internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTr
             log($"设备 {slot} 新路径暂不可用，保留已有路径");
         }
         if (pending != null && endpoint.Length > 0 && endpoint != pending.Value.Endpoint) { Close(pending); pending = null; nextAttempt = 0; }
-        if (pending == null && endpoint.Length > 0 && endpoint != active?.Endpoint && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
+        // A live native process can have a dead wire path (NAT state cleared,
+        // sleep or source-route change). An unchanged authenticated announcement
+        // is still eligible for a NEW independently bound client. Do not stop
+        // the retained transport merely because its health window elapsed.
+        bool replaceDisconnected = active != null && !router.HasHealthyPath(slot);
+        if (pending == null && endpoint.Length > 0 && (endpoint != active?.Endpoint || replaceDisconnected) && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
             try { pending = (endpoint, create(endpoint)); started = now; }
             catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
         }

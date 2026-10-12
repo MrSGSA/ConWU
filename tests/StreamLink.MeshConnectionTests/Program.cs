@@ -24,6 +24,10 @@ static class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--alive-recovery-only",var recoveryReport]){
+            await AliveProcessRecovery(Path.GetFullPath(recoveryReport));
+            Console.WriteLine($"PASS {checks} unchanged-endpoint compatibility recovery checks");return;
+        }
         if (args is ["--contend", var contenderPort]) {
             using var rival = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = false };
             rival.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
@@ -33,6 +37,7 @@ static class Program
         }
         await TcpTests.Run();
         await Migration();
+        await AliveProcessRecovery();
         await Scheduler();
         Console.WriteLine($"{checks} TCP / mesh connection checks passed; loopback only, no installed service or network configuration changes.");
     }
@@ -78,6 +83,47 @@ static class Program
         await Until(() => newPath.DataPackets == 1, "business packet uses the validated replacement");
         paths.Update(2, "", "peer", "expired announcement");
         Check(!newTransport.Disposed, "expired discovery metadata does not tear down a proven path");
+    }
+    static async Task AliveProcessRecovery(string? output=null)
+    {
+        var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
+        byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var peer=new MeshLink(2,1,key);CryptographicOperations.ZeroMemory(key);
+        await using var endpoint=new PeerEndpoint(peer);var adapter=new MemoryAdapter();await using var router=new MeshRouter(owner,adapter);
+        var transports=new List<ForwardingTransport>();bool admit=true;int admissions=0;
+        using var paths=new MeshPeerTransports(router,_=>{var t=new ForwardingTransport(endpoint.Endpoint);transports.Add(t);return t;},Console.WriteLine);
+        bool Begin(){admissions++;return admit;}
+        void Tick()=>paths.Update(2,endpoint.Endpoint.ToString(),"same peer","",Begin);
+        Tick();await Until(()=>router.UsesPath(2,transports[0].ClientEndpoint),"initial compatibility client proves its retained path");Tick();
+        int healthyAdmissions=admissions;
+        for(int i=0;i<10;i++){Tick();await Task.Delay(50);}
+        Check(transports.Count==1&&admissions==healthyAdmissions,"healthy unchanged peer does not allocate a replacement or consume attempt admission");
+        var recoveryClock=Stopwatch.StartNew();transports[0].Muted=true;admit=false;
+        await Until(()=>!router.HasHealthyPath(2),"actual unresponsive path expires the unchanged twelve-second health window",15000);
+        long lostAt=recoveryClock.ElapsedMilliseconds;
+        Tick();Check(transports.Count==1&&!transports[0].Disposed&&!transports[0].Exited,"deferred recovery keeps live old ownership while respecting shared attempt admission");
+        admit=true;endpoint.SuppressPong=true;Tick();
+        long replacementAt=recoveryClock.ElapsedMilliseconds;
+        Check(transports.Count==2&&paths.HasPending&&transports[0].ClientEndpoint.Port!=transports[1].ClientEndpoint.Port,
+            "unchanged public endpoint receives an independently bound replacement despite its old live process");
+        await Task.Delay(1300);Tick();
+        Check(!transports[0].Disposed&&!adapter.Disposed&&!router.UsesPath(2,transports[1].ClientEndpoint),
+            "new authenticated traffic without a returned path challenge cannot retire old ownership");
+        endpoint.SuppressPong=false;
+        await Until(()=>router.UsesPath(2,transports[1].ClientEndpoint),"same-public-endpoint replacement must return its own authenticated challenge");Tick();
+        long selectedAt=recoveryClock.ElapsedMilliseconds;
+        Check(transports[0].Disposed&&!transports[1].Disposed&&!paths.HasPending&&!adapter.Disposed,
+            "only after validation does recovery retire the old transport and preserve the adapter");
+        adapter.Outgoing.Add(Packet(owner.LocalIp,guest.LocalIp));
+        await Until(()=>endpoint.DataPackets==1,"full-MTU application data traverses the recovered compatibility path");
+        long businessAt=recoveryClock.ElapsedMilliseconds;
+        for(int i=0;i<10;i++){Tick();await Task.Delay(50);}
+        Check(transports.Count==2,"successful recovery does not repeatedly allocate new clients for the same endpoint");
+        if(output!=null){Directory.CreateDirectory(Path.GetDirectoryName(output)!);await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{
+            status="Pass",checks,healthTimeoutMs=12000,detectedMs=lostAt,replacementPreparedMs=replacementAt,
+            candidateSelectedMs=selectedAt,firstCompleteIpAtPeerMs=businessAt,fromPreparationToFirstCompleteIpMs=businessAt-replacementAt,
+            nativeProcessExitTriggered=false,publicEndpointChanged=false,adapterRecreated=false,
+            scope="production Router and compatibility path manager over real loopback UDP forwarding and memory IP adapter; live transport flag, not an actual native process or Windows suspend/WAN",
+            stableBusiness="NotMeasured",relay=false},new JsonSerializerOptions{WriteIndented=true}));}
     }
     static async Task Scheduler()
     {
@@ -222,12 +268,13 @@ static class Program
         readonly UdpClient socket = new(new IPEndPoint(IPAddress.Loopback, 0));
         readonly CancellationTokenSource stop = new(); readonly Task pump; readonly IPEndPoint remote; IPEndPoint? local;
         public IPEndPoint ClientEndpoint { get; }
-        public bool Exited { get; set; } public bool Disposed; public int Packets;
+        public bool Exited { get; set; } public bool Disposed; public int Packets; public volatile bool Muted;
         public ForwardingTransport(IPEndPoint remote) { this.remote = remote; ClientEndpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
         async Task Pump()
         {
             while (!stop.IsCancellationRequested) {
                 var packet = await socket.ReceiveAsync(stop.Token); Interlocked.Increment(ref Packets);
+                if(Muted)continue;
                 if (packet.RemoteEndPoint.Equals(remote)) { if (local != null) await socket.SendAsync(packet.Buffer, local, stop.Token); }
                 else { local = packet.RemoteEndPoint; await socket.SendAsync(packet.Buffer, remote, stop.Token); }
             }

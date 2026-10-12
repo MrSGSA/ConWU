@@ -63,8 +63,12 @@ static class EndpointPoolTests
         clock.Advance(2000); reflector.Silent = true;
         bool timedOut = false;
         using (var shortWait = CancellationTokenSource.CreateLinkedTokenSource(token)) {
-            shortWait.CancelAfter(180);
-            try { using var failed = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, shortWait.Token); }
+            int beforeQuery = Volatile.Read(ref reflector.Requests);
+            var partial = pool.Acquire(IPAddress.Loopback, reflector.Endpoint, shortWait.Token);
+            await Wait(() => Volatile.Read(ref reflector.Requests) > beforeQuery, token);
+            check(reflector.Requests == beforeQuery + 1, "failed-helper negative case reaches the real reflection stream before cancellation");
+            shortWait.Cancel();
+            try { using var failed = await partial; }
             catch (OperationCanceledException) { timedOut = true; }
         }
         reflector.Silent = false;

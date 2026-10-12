@@ -98,6 +98,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         }
     }
     static bool Healthy(Peer peer) => peer.Managed != null ? ManagedHealthy(peer) : peer.Link.Connected && peer.Active != null && peer.ActiveReceived != 0 && Stopwatch.GetElapsedTime(peer.ActiveReceived).TotalSeconds < 12;
+    public bool HasHealthyPath(int slot) { lock (gate) return peers.TryGetValue(slot, out var peer) && Healthy(peer); }
     public bool UsesPath(int slot, IPEndPoint? endpoint)
     {
         lock (gate) return endpoint != null && peers.TryGetValue(slot, out var peer) && peer.Managed == null && Healthy(peer) && endpoint.Equals(peer.Active);
