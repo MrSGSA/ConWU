@@ -17,9 +17,11 @@ static class PolicyTests
         restored.Validate(); check(!restored.Selection().Allows(TraversalProfile.UdpDirect), "persisted FakeTcpOnly overrides a previously enabled fallback checkbox");
         restored.TransportMode = "udp"; Reject(restored.Validate, "FakeTcpOnly rejects a contradictory UDP network configuration");
         restored.TransportMode = "faketcp"; restored.PathSelection = "auto-quality";
-        Reject(restored.Validate, "unimplemented AutoQuality cannot bypass healthy-path protection through a profile");
+        Reject(restored.Validate, "AutoQuality cannot omit retained resources and explicit diagnostic consent");
         Reject(() => new PathSelection((PathPolicy)999).Validate(), "undefined enum cannot disable selection guards");
-        Reject(() => new PathSelection(PathPolicy.AutoQuality, true).Validate(), "direct router API also rejects AutoQuality until actual quality evidence is integrated");
+        new PathSelection(PathPolicy.AutoQuality,true).Validate();
+        check(new PathSelection(PathPolicy.AutoQuality,true).Reject(TraversalProfile.UdpDirect,TraversalProfile.FakeTcpHttpSo,true)!=null,
+            "AutoQuality enum alone cannot bypass healthy FakeTCP protection without a verified comparison vote");
 
         var a = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;

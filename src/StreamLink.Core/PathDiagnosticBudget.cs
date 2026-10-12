@@ -46,6 +46,7 @@ internal sealed class PathDiagnosticPermit(Guid session,TimeProvider time):IDisp
             packets++;bytes+=length;return true;
         }
     }
+    internal void Reject(){lock(gate)denied++;}
     public void Dispose(){lock(gate)disposed=true;}
 }
 
@@ -62,13 +63,15 @@ internal sealed class PathDiagnosticAllowance(PathDiagnosticPermit owner,Guid pa
     bool disposed;
     public Guid PathId=>path;
     public Guid SessionId=>owner.SessionId;
+    internal int MaximumSourceCredit => Math.Max(4,(int)(burst/1536));
     public bool Active=>!Volatile.Read(ref disposed)&&owner.Active&&time.GetElapsedTime(began).TotalMilliseconds<durationMs;
     public bool Admit(int length)
     {
         lock(gate){
-            if(!Active||length is<512 or>1536||length>maximumBytes-bytes)return false;
+            if(!Active||length is<512 or>1536||length>maximumBytes-bytes){owner.Reject();return false;}
             long now=time.GetTimestamp();tokens=Math.Min(burst,tokens+time.GetElapsedTime(at,now).TotalMilliseconds*wireMbps*125d);at=now;
-            if(tokens<length||!owner.Admit(this,length))return false;
+            if(tokens<length){owner.Reject();return false;}
+            if(!owner.Admit(this,length))return false;
             tokens-=length;bytes+=length;return true;
         }
     }

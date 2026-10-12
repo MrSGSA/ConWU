@@ -73,6 +73,7 @@ public sealed class DeviceProfile
         if (DiagnosticMbps is < 1 or > 50) throw new FormatException("诊断目标需为1–50Mbps");
         if (PathDiagnostics && (!StandbyPaths || TraversalMode == "legacy" || ManagedEgressMbps < Math.Ceiling(DiagnosticMbps * 1.4)))
             throw new FormatException("路径诊断需开启独立备用，并设置至少目标1.4倍的共享出口额度；诊断仅在业务空闲时进行");
+        if (PathSelection == "auto-quality" && !PathDiagnostics) throw new FormatException("自动质量选路需显式开启独立备用与空闲负载诊断");
         if (UdpExploration && (TraversalMode != "tcp-udp" || !Selection().Allows(TraversalProfile.UdpDirect)))
             throw new FormatException("UDP 多源探索需要 UDP 备用许可与实验 TCP/UDP 打洞");
         if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))

@@ -15,6 +15,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public PathDeliverySnapshot? Delivery { get; init; }
     public MeshStandbyStatus? Standby { get; init; }
     public PathDiagnosticSessionStatus? Diagnostics{get;init;}
+    public PathQualityAssessment? Quality { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -122,7 +123,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
-                    Delivery = p.Managed?.Active?.Delivery?.Snapshot(), Standby = StandbyStatus(p),Diagnostics=p.Managed?.Diagnostic?.Status() };
+                    Delivery = p.Managed?.Active?.Delivery?.Snapshot(), Standby = StandbyStatus(p),Diagnostics=p.Managed?.Diagnostic?.Status(),Quality=p.Managed?.Quality };
         }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)

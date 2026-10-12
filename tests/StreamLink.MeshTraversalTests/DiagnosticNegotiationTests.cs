@@ -27,5 +27,19 @@ static class DiagnosticNegotiationTests
         rejected=false;try{new DeviceProfile{TraversalMode="tcp",StandbyPaths=true,PathDiagnostics=true,ManagedEgressMbps=50}.Validate();}catch(FormatException){rejected=true;}
         check(rejected,"50Mbps target cannot silently overbook a 50Mbps whole-IP shared egress budget");
         new DeviceProfile{TraversalMode="tcp",StandbyPaths=true,PathDiagnostics=true,ManagedEgressMbps=70}.Validate();check(true,"validated opt-in has explicit shared wire headroom");
+        mine=mine with{AutoQuality=1};theirs=theirs with{AutoQuality=1};
+        foreach(string mode in new[]{"both","diagnostics-only-peer","old-quality-server","goal-mismatch","ordinary"}){
+            var remote=mode=="diagnostics-only-peer"?theirs with{AutoQuality=0}:mode=="goal-mismatch"?theirs with{DiagnosticMbps=40}:theirs;
+            var c=candidate with{Standby=mode!="ordinary"};
+            await using var offer=MeshTraversalAttempt.Offer(a,b.Self,mine,remote,TraversalProfile.FakeTcpHttpSo,c,2,()=>++sequence,
+                coordinatorStandby:true,coordinatorDiagnostics:true,coordinatorAutoQuality:mode!="old-quality-server");
+            await using var answer=MeshTraversalAttempt.Answer(b,a.Self,remote,mine,offer.Outbound!,c with{Id=Guid.NewGuid(),Endpoint="127.0.0.1:40002"},()=>++sequence,
+                coordinatorStandby:true,coordinatorDiagnostics:true,coordinatorAutoQuality:mode!="old-quality-server");
+            check(offer.AutoQualityNegotiated==(mode=="both")&&answer.AutoQualityNegotiated==(mode=="both"),mode+": AutoQuality has an independent matching bilateral and server grant");
+        }
+        rejected=false;try{MeshTraversal.ValidateCapabilities(mine with{PathDiagnostics=0,DiagnosticMbps=0});}catch(FormatException){rejected=true;}
+        check(rejected,"automatic selection cannot omit required diagnostic evidence capability");
+        new DeviceProfile{TraversalMode="tcp",StandbyPaths=true,PathDiagnostics=true,ManagedEgressMbps=70,PathSelection="auto-quality"}.Validate();
+        check(!JsonSerializer.Serialize(mine with{AutoQuality=0}).Contains("AutoQuality"),"old signed capability shape does not acquire automatic selection permission");
     }
 }

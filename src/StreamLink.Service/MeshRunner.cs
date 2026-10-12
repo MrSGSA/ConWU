@@ -62,6 +62,7 @@ public sealed class MeshRunner
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
+        var qualityReports = new Dictionary<int, (Guid Session,string Result,string Reason)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
         long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0, nextTrafficReport = 0;
         int probeFailures = 0, readFailures = 0, serverFailures = 0;
@@ -212,6 +213,14 @@ public sealed class MeshRunner
                     traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
+                    foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);
+                    foreach(var peer in statuses)if(peer.Quality is{}assessment){
+                        var key=(assessment.SessionId,assessment.Result,assessment.Reason);
+                        if(qualityReports.GetValueOrDefault(peer.Slot)!=key){
+                            log($"PathQuality peer={peer.Slot} session={assessment.SessionId:N} targetMbps={assessment.TargetMbps} result={assessment.Result} reason={assessment.Reason} candidateQualified={assessment.CandidateQualified} benefit={assessment.StableBenefit}；诊断截止送达与加载往返，不代表应用帧时限");
+                            qualityReports[peer.Slot]=key;
+                        }
+                    }
                     foreach (int slot in recoveryReports.Keys.Where(slot => !statuses.Any(p => p.Slot == slot)).ToArray()) recoveryReports.Remove(slot);
                     foreach (var peer in statuses) if (peer.Recovery is {} recovery) {
                         var prior = recoveryReports.GetValueOrDefault(peer.Slot);

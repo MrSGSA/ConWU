@@ -16,6 +16,10 @@ public sealed partial class MeshRouter
         var permit=diagnosticResources.TryBegin(id);if(permit==null)return null;
         try{
             Guid localEpoch=peer.Link.SendEpoch;Guid? peerEpoch=peer.Link.ReceiveEpoch;
+            var managed=peer.Managed!;
+            managed.DiagnosticActive=active;managed.DiagnosticStandby=standby;
+            managed.DiagnosticLocalEpoch=localEpoch;managed.DiagnosticPeerEpoch=peerEpoch;
+            managed.Quality=null;managed.Agreement=null;
             bool Valid()=>DiagnosticPair(peer,active,standby)&&peer.Link.SendEpoch==localEpoch&&peer.Link.ReceiveEpoch==peerEpoch;
             PathDiagnosticTarget Target(int i){var path=i==0?active:standby;return new(path.Identity,(IPathDiagnosticWire)path.Transport,
                 packet=>{lock(gate)return Valid()&&DiagnosticIdle(Environment.TickCount64,1000)&&SendManaged(packet,path);},

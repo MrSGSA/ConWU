@@ -29,9 +29,11 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     readonly bool qualityNegotiated;
     readonly bool standbyNegotiated;
     readonly int diagnosticMbps;
+    readonly bool autoQualityNegotiated;
     public bool QualityFeedbackNegotiated => qualityNegotiated;
     public bool StandbyNegotiated => standbyNegotiated;
     public int DiagnosticMbpsNegotiated=>diagnosticMbps;
+    public bool AutoQualityNegotiated => autoQualityNegotiated;
     readonly long revision;
     readonly Func<long> nextSequence;
     MeshTraversalCandidate localCandidate;
@@ -63,7 +65,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             remoteCandidate.Id, remoteCandidate.Version, profile, leader, leader, nonce, Exploring, standbyNegotiated);
     } } }
     MeshTraversalAttempt(MeshProfile local, MeshMember peer, Guid localBoot, Guid remoteBoot, TraversalProfile profile,
-        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated, bool explorationNegotiated, bool qualityNegotiated, bool standbyNegotiated,int diagnosticMbps)
+        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated, bool explorationNegotiated, bool qualityNegotiated, bool standbyNegotiated,int diagnosticMbps,bool autoQualityNegotiated)
     {
         this.local = local; this.peer = peer; this.localBoot = localBoot; this.remoteBoot = remoteBoot; this.profile = profile;
         localReservation = localCandidate = candidate; this.attempt = attempt; this.nonce = nonce; this.revision = revision; nextSequence = sequence;
@@ -73,6 +75,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
         this.qualityNegotiated = qualityNegotiated;
         this.standbyNegotiated = standbyNegotiated;
         this.diagnosticMbps=diagnosticMbps;
+        this.autoQualityNegotiated=autoQualityNegotiated && diagnosticMbps > 0;
     }
     static void Membership(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs, TraversalProfile profile)
     {
@@ -82,7 +85,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     }
     public static MeshTraversalAttempt Offer(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine,
         MeshTraversalCapabilities theirs, TraversalProfile profile, MeshTraversalCandidate candidate, long revision, Func<long> sequence,
-        Guid? attemptId = null, bool coordinatorQuality = false, bool coordinatorStandby = false,bool coordinatorDiagnostics=false)
+        Guid? attemptId = null, bool coordinatorQuality = false, bool coordinatorStandby = false,bool coordinatorDiagnostics=false,bool coordinatorAutoQuality=false)
     {
         Membership(local, peer, mine, theirs, profile);
         RequireFamily(candidate, mine, theirs, profile);
@@ -91,7 +94,8 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, profile, candidate, attemptId ?? Guid.NewGuid(), Guid.NewGuid(), revision, sequence,
             mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1,
             coordinatorQuality && mine.QualityFeedback == 1 && theirs.QualityFeedback == 1, candidate.Standby,
-            candidate.Standby&&coordinatorDiagnostics&&mine.PathDiagnostics==1&&theirs.PathDiagnostics==1&&mine.DiagnosticMbps==theirs.DiagnosticMbps?mine.DiagnosticMbps:0);
+            candidate.Standby&&coordinatorDiagnostics&&mine.PathDiagnostics==1&&theirs.PathDiagnostics==1&&mine.DiagnosticMbps==theirs.DiagnosticMbps?mine.DiagnosticMbps:0,
+            coordinatorAutoQuality&&mine.AutoQuality==1&&theirs.AutoQuality==1);
         try { result.phase = MeshAttemptPhase.Offering; result.outbound = result.Message(MeshTraversalStage.Offer); return result; }
         catch { result.stop.Dispose(); throw; }
     }
@@ -117,7 +121,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             throw new CryptographicException("双方尚未协商该承载的原生 IPv6 能力");
     }
     public static MeshTraversalAttempt Answer(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine,
-        MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence, bool coordinatorQuality = false, bool coordinatorStandby = false,bool coordinatorDiagnostics=false)
+        MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence, bool coordinatorQuality = false, bool coordinatorStandby = false,bool coordinatorDiagnostics=false,bool coordinatorAutoQuality=false)
     {
         ValidateOffer(local, peer, mine, theirs, offer, coordinatorStandby);
         RequireFamily(candidate, mine, theirs, offer.Profile);
@@ -126,7 +130,8 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, offer.Profile, candidate, offer.AttemptId, offer.ValidationNonce, offer.NominationRevision, sequence,
             mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1,
             coordinatorQuality && mine.QualityFeedback == 1 && theirs.QualityFeedback == 1, candidate.Standby,
-            candidate.Standby&&coordinatorDiagnostics&&mine.PathDiagnostics==1&&theirs.PathDiagnostics==1&&mine.DiagnosticMbps==theirs.DiagnosticMbps?mine.DiagnosticMbps:0);
+            candidate.Standby&&coordinatorDiagnostics&&mine.PathDiagnostics==1&&theirs.PathDiagnostics==1&&mine.DiagnosticMbps==theirs.DiagnosticMbps?mine.DiagnosticMbps:0,
+            coordinatorAutoQuality&&mine.AutoQuality==1&&theirs.AutoQuality==1);
         try {
             result.remoteReservation = result.remoteCandidate = offer.Candidate; result.remoteSequence = offer.Sequence;
             result.phase = result.Predicting ? MeshAttemptPhase.Reserving : MeshAttemptPhase.Preparing;
@@ -202,7 +207,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             lock (gate) {
                 transport = path;
                 if (disposed || phase == MeshAttemptPhase.Cancelled) throw new OperationCanceledException();
-                target.RegisterPath(peer.Slot, path, Context, revision, prepared.RemainingAttemptTime, MeshTraversal.Version, qualityNegotiated ? 1 : 0, standbyNegotiated ? 1 : 0,diagnosticMbps);
+                target.RegisterPath(peer.Slot, path, Context, revision, prepared.RemainingAttemptTime, MeshTraversal.Version, qualityNegotiated ? 1 : 0, standbyNegotiated ? 1 : 0,diagnosticMbps,autoQualityNegotiated?1:0);
                 router = target; transferred = true;
             }
         } catch { lock (gate) if (!disposed) CancelLocked(); throw; }

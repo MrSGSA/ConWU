@@ -15,6 +15,12 @@ public sealed partial class MeshRouter
         public PathDiagnosticSession? Diagnostic;
         public long NextDiagnostic;
         public Guid DiagnosticAttempt;
+        public ManagedPath? DiagnosticActive, DiagnosticStandby;
+        public Guid DiagnosticLocalEpoch;
+        public Guid? DiagnosticPeerEpoch;
+        public PathQualityAssessment? Quality;
+        public PathQualityAgreement? Agreement;
+        public long NextQualitySelection;
     }
     sealed class ManagedPath(IMeshDatagramPath transport, ValidatedPathIdentity identity, PathNomination nomination, CancellationToken stop)
     {
@@ -32,6 +38,7 @@ public sealed partial class MeshRouter
         public double? RttMs;
         public long StandbyAt;
         public int DiagnosticMbps;
+        public bool AutoQuality;
         public TraversalAttemptContext? Context;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
@@ -47,7 +54,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0,int negotiatedDiagnosticMbps=0)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0,int negotiatedDiagnosticMbps=0,int negotiatedAutoQualityVersion=0)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -77,8 +84,10 @@ public sealed partial class MeshRouter
             var nomination = new PathNomination(context, identity.PathId, nominationRevision, remaining, identity.Qualification >= PathQualification.MtuQualified);
             if(negotiatedDiagnosticMbps is<0 or>50||negotiatedDiagnosticMbps>0&&(!context.Standby||transport is not IPathDiagnosticWire{SupportsDiagnosticWire:true}))
                 throw new IOException("诊断目标未协商或实际路径不支持有界诊断");
+            if (negotiatedAutoQualityVersion is < 0 or > 1 || negotiatedAutoQualityVersion == 1 &&
+                (negotiatedDiagnosticMbps == 0 || Selection.Policy != PathPolicy.AutoQuality)) throw new IOException("自动质量选路尚未获得独立协商许可");
             var state = new ManagedPath(transport, identity, nomination, stop.Token);
-            state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;
+            state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;state.AutoQuality=negotiatedAutoQualityVersion==1;
             if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
             peer.Detail = "正在验证并协商直连路径";
@@ -103,6 +112,7 @@ public sealed partial class MeshRouter
         }
     }
     static bool ManagedHealthy(Peer peer) => peer.Link.Connected && peer.Managed?.Active is {} path &&
+        (!path.AutoQuality || path.ProofAt != 0 && path.Nomination.PeerAdopted) &&
         !path.Closing && !path.Transport.Failed && path.LastReceive != 0 && Stopwatch.GetElapsedTime(path.LastReceive).TotalSeconds < 12 && RoundTripFresh(path);
     static bool RoundTripFresh(ManagedPath path) => path.LastRoundTrip != 0 && Stopwatch.GetElapsedTime(path.LastRoundTrip).TotalSeconds < 12;
     static bool SendManaged(byte[]? packet, ManagedPath? path) => packet != null && path != null && !path.Closing && !path.Transport.Failed && path.Transport.TrySend(packet);
@@ -152,11 +162,12 @@ public sealed partial class MeshRouter
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                     if(message.Diagnostic!=null)peer.Managed!.Diagnostic?.Data(path.Identity.PathId,message.Diagnostic);
-                    if (message.Control != null && !DiagnosticControl(peer,path,message.Control,Environment.TickCount64) && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
+                    if (message.Control != null && !QualityControl(peer,path,message.Control,Environment.TickCount64) && !DiagnosticControl(peer,path,message.Control,Environment.TickCount64) && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
                         path.Delivery?.Control(message.Control, new Guid(packet.Span.Slice(8, 16)), Environment.TickCount64) == true))
                         NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
                     if (message.Packet != null) {
-                        bool allowed = ReferenceEquals(peer.Managed!.Active, path) || path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
+                        bool allowed = ReferenceEquals(peer.Managed!.Active, path) && (!path.AutoQuality || path.ProofAt != 0 && path.Nomination.PeerAdopted) ||
+                            path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
                         if (allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot) && adapter.Write(message.Packet)) {
                             peer.Received += message.Packet.Length;
                             path.Traffic.Receive(message.Packet.Length, Environment.TickCount64);
@@ -211,16 +222,24 @@ public sealed partial class MeshRouter
         if (path.Nomination.SwitchRequested && !path.Switched && ReferenceEquals(managed.Candidate, path)) {
             // A formerly silent FakeTCP can recover while UDP is negotiating.
             // Recheck at the actual switch, not only at registration time.
-            if (Selection.Reject(path.Identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer)) is {} reason) {
+            bool approved = QualityAuthorized(peer, path, now);
+            string? reason = path.AutoQuality && !approved ? "质量批准已失效" : Selection.Reject(path.Identity.Profile, managed.Active?.Identity.Profile, ManagedHealthy(peer), approved);
+            if (reason != null) {
                 path.Failure = reason; path.Nomination.Cancel(); ReconcileManaged(peer, path, now); return;
             }
             path.Previous = managed.Active;
             if (path.Previous != null) { path.Previous.Retired = true; path.Previous.Traffic.Suspend("Replaced", now); path.Previous.Delivery?.Reset(); }
             managed.Active = path; path.Switched = true;
+            if (approved) managed.NextQualitySelection = now + TraversalLimits.UpgradeCooldownMs;
         }
         if (path.Switched && path.Nomination.PeerAdopted && path.ProofAt == 0) {
+            if (path.AutoQuality && !QualityAuthorized(peer,path,now)) {
+                path.Failure = "共同提名完成前质量批准已失效"; path.Nomination.Cancel(); ReconcileManaged(peer,path,now); return;
+            }
             if (path.Transport is IWireControlPath wire) wire.SelectWireBudget();
             path.ProofAt = now;
+            if (path.AutoQuality && managed.Quality is {} selectedQuality)
+                managed.Quality = selectedQuality with { Result = "QualitySelectedDiagnostic", Reason = "SelectedFromQualifiedComparison" };
             path.Traffic.Start(now);
             // The authenticated nomination itself proved a round trip on this
             // actual resource. Duplicate final messages cannot keep refreshing it.
@@ -268,6 +287,7 @@ public sealed partial class MeshRouter
                 path.Delivery?.Tick(now, body => SendFeedback(peer, path, body, now));
         }
         TickDiagnostic(peer,now);
+        TickQuality(peer,now);
     }
     static void RetireManaged(ManagedPeer peer, ManagedPath path)
     {

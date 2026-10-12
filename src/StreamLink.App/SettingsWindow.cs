@@ -28,7 +28,7 @@ public sealed class SettingsWindow : Form
     readonly CheckBox standbyPaths = new() { AutoSize = true, Text = "保留独立备用路径（实验，最多120秒；需双方与服务器支持，未自动选路）" };
     readonly CheckBox pathDiagnostics=new(){AutoSize=true,Text="空闲时比较路径负载（实验，需双方与服务器支持；约80秒，可能用至256MiB；不自动换路）"};
     readonly NumericUpDown diagnosticMbps=new(){Minimum=1,Maximum=50,Width=85};
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -41,11 +41,12 @@ public sealed class SettingsWindow : Form
         traversal.SelectedIndex = profile.TraversalMode == "tcp" ? 1 : profile.TraversalMode == "tcp-udp" ? 2 : 0;
         layout.Controls.Add(traversal); layout.Controls.Add(new Label { AutoSize = true, Text = "实验打洞需新版协调服务及双方启用。保留有效 FakeTCP；UDP 直连质量需另测。" });
         selection.Items.AddRange(["优先 FakeTCP（推荐）", "仅 FakeTCP（不使用 UDP 降级）"]);
-        selection.SelectedIndex = profile.PathSelection == "faketcp-only" ? 1 : 0;
+        if(supportsAutoQuality)selection.Items.Add("按负载质量共同选路（实验，需先启用备用与诊断）");
+        selection.SelectedIndex = profile.PathSelection == "faketcp-only" ? 1 : profile.PathSelection=="auto-quality"&&supportsAutoQuality?2:0;
         selection.Enabled = supportsSelection;
-        udpFallback.Checked = profile.AllowUdpFallback; udpFallback.Enabled = supportsSelection && selection.SelectedIndex == 0;
+        udpFallback.Checked = profile.AllowUdpFallback; udpFallback.Enabled = supportsSelection && selection.SelectedIndex != 1;
         if (!supportsSelection) udpFallback.Text = "当前后台不支持选路设置，请先更新后台组件。";
-        selection.SelectedIndexChanged += (_, _) => udpFallback.Enabled = supportsSelection && selection.SelectedIndex == 0;
+        selection.SelectedIndexChanged += (_, _) => udpFallback.Enabled = supportsSelection && selection.SelectedIndex != 1;
         layout.Controls.Add(selection); layout.Controls.Add(udpFallback);
         tcpObservation.Checked = profile.TcpSynObservation;
         tcpObservation.Enabled = supportsObserver && traversal.SelectedIndex != 0;
@@ -58,7 +59,7 @@ public sealed class SettingsWindow : Form
         if (!supportsPortControl) portControl.Text = "PCP / NAT-PMP 映射需更新后台组件。";
         portControl.CheckedChanged += (_, _) => { if (supportsPortControl) profile.PortControlMapping = portControl.Checked; };
         udpIpv6.Checked = profile.UdpIpv6;
-        void Ipv6Availability() => udpIpv6.Enabled = supportsUdpIpv6 && supportsSelection && traversal.SelectedIndex == 2 && selection.SelectedIndex == 0 && udpFallback.Checked;
+        void Ipv6Availability() => udpIpv6.Enabled = supportsUdpIpv6 && supportsSelection && traversal.SelectedIndex == 2 && selection.SelectedIndex != 1 && udpFallback.Checked;
         Ipv6Availability();
         traversal.SelectedIndexChanged += (_, _) => Ipv6Availability(); selection.SelectedIndexChanged += (_, _) => Ipv6Availability(); udpFallback.CheckedChanged += (_, _) => Ipv6Availability();
         udpIpv6.CheckedChanged += (_, _) => { if (supportsUdpIpv6) profile.UdpIpv6 = udpIpv6.Checked; };
@@ -97,7 +98,7 @@ public sealed class SettingsWindow : Form
         udpExploration.Checked = profile.UdpExploration;
         udpExploration.CheckedChanged += (_, _) => { if (supportsUdpExploration) profile.UdpExploration = udpExploration.Checked; };
         void ExplorationAvailability() {
-            udpExploration.Enabled = supportsUdpExploration && supportsSelection && traversal.SelectedIndex == 2 && selection.SelectedIndex == 0 && udpFallback.Checked;
+            udpExploration.Enabled = supportsUdpExploration && supportsSelection && traversal.SelectedIndex == 2 && selection.SelectedIndex != 1 && udpFallback.Checked;
             if (!udpExploration.Enabled && supportsUdpExploration) udpExploration.Checked = false;
         }
         if (!supportsUdpExploration) udpExploration.Text = "UDP 多源探索需更新后台组件。";
@@ -135,6 +136,13 @@ public sealed class SettingsWindow : Form
         pacing.ValueChanged+=(_,_)=>DiagnosticAvailability();diagnosticMbps.ValueChanged+=(_,_)=>DiagnosticAvailability();DiagnosticAvailability();
         extra.Controls.Add(pathDiagnostics);var diagnosticRow=new FlowLayoutPanel{AutoSize=true,Dock=DockStyle.Fill};
         diagnosticRow.Controls.AddRange([new Label{AutoSize=true,Text="双方诊断目标（Mbps，需一致）"},diagnosticMbps]);extra.Controls.Add(diagnosticRow);
+        void AutoQualityAvailability(){
+            if(selection.SelectedIndex==2&&(!supportsAutoQuality||!supportsSelection||!pathDiagnostics.Enabled||!pathDiagnostics.Checked))selection.SelectedIndex=0;
+            profile.PathSelection=selection.SelectedIndex==2?"auto-quality":selection.SelectedIndex==1?"faketcp-only":"prefer-faketcp";
+            pathDiagnostics.Text=selection.SelectedIndex==2?"空闲时比较负载，并在双方批准后选路（实验）":"空闲时比较路径负载（约80秒，最多256MiB，不自动换路）";
+        }
+        selection.SelectedIndexChanged+=(_,_)=>AutoQualityAvailability();pathDiagnostics.CheckedChanged+=(_,_)=>AutoQualityAvailability();
+        pathDiagnostics.EnabledChanged+=(_,_)=>AutoQualityAvailability();AutoQualityAvailability();
         var ports = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill }; source.Value = profile.SourcePort; listen.Value = profile.ListenPort;
         ports.Controls.AddRange([new Label { Text = "探测源端口", AutoSize = true }, source, new Label { Text = "本机传输端口", AutoSize = true }, listen]); layout.Controls.Add(ports);
         manual.Text = profile.ManualEndpoint; layout.Controls.Add(manual);
@@ -148,7 +156,7 @@ public sealed class SettingsWindow : Form
         void Lists() { DeviceProfile.ValidateServers(Lines(tcp)); DeviceProfile.ValidateServers(Lines(udp)); }
         import.Click += (_, _) => { using var dialog = new OpenFileDialog { Filter = "STUN 列表|*.json" }; if (dialog.ShowDialog(this) != DialogResult.OK) return; try { var data = JsonSerializer.Deserialize<StunLists>(File.ReadAllText(dialog.FileName))!; DeviceProfile.ValidateServers(data.Tcp); DeviceProfile.ValidateServers(data.Udp); tcp.Lines = data.Tcp; udp.Lines = data.Udp; } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         export.Click += (_, _) => { try { Lists(); using var dialog = new SaveFileDialog { Filter = "STUN 列表|*.json", FileName = "streamlink-stun.json" }; if (dialog.ShowDialog(this) == DialogResult.OK) File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(new StunLists(Lines(tcp), Lines(udp)), new JsonSerializerOptions { WriteIndented = true })); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
-        save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.PathSelection = selection.SelectedIndex == 1 ? "faketcp-only" : "prefer-faketcp"; profile.AllowUdpFallback = udpFallback.Checked; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
+        save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.PathSelection = selection.SelectedIndex == 2 ? "auto-quality" : selection.SelectedIndex == 1 ? "faketcp-only" : "prefer-faketcp"; profile.AllowUdpFallback = udpFallback.Checked; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         for (int i = 0; i < 16; i++) layout.RowStyles.Add(new RowStyle(i == 11 || i == 13 ? SizeType.Percent : SizeType.AutoSize, i == 11 || i == 13 ? 50 : 0));
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
     }

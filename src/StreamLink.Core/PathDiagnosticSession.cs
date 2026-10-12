@@ -29,7 +29,7 @@ internal sealed class PathDiagnosticSession:IDisposable
     readonly long began;
     Phase phase;
     int leg,controls,cleanupSends;
-    long stageAt,sendAt,completedAt,settleAt,beforeDenied;
+    long stageAt,sendAt,completedAt,settleAt;
     bool pendingStart,disposed;
     string failure="";
     PathDiagnosticMessage? outgoing;
@@ -68,7 +68,7 @@ internal sealed class PathDiagnosticSession:IDisposable
     void Source()
     {
         if(sending!=null||current==null||!IsLocalSource)return;
-        before=permit.Snapshot();beforeDenied=current.Denied();allowance=permit.Open(current.Identity.PathId,(int)Math.Ceiling(target*1.4),5500);
+        before=permit.Snapshot();allowance=permit.Open(current.Identity.PathId,(int)Math.Ceiling(target*1.4),5500);
         current.Wire.GrantDiagnosticWire(allowance);var path=current;int round=leg;
         sending=source(allowance,target*1.05,5000,(index,elapsed)=>{
             byte[]? encoded=path.Encode(PathDiagnosticFrames.Encode(SessionId,round,index,elapsed));return encoded!=null&&path.Send(encoded);
@@ -84,7 +84,7 @@ internal sealed class PathDiagnosticSession:IDisposable
         if(phase==Phase.Draining&&now-completedAt>=500){
             var sent=sending!.GetAwaiter().GetResult();var cost=permit.Snapshot();double? p95=rtts.Count==0?null:rtts.Order().ElementAt((int)Math.Ceiling(rtts.Count*.95)-1);
             summary=new(sent.AcceptedPackets,sent.RejectedOffers,(long)(sent.ElapsedMs*1000),cost.WirePackets-before!.WirePackets,cost.WireBytes-before.WireBytes,
-                Math.Max(0,current!.Denied()-beforeDenied),rtts.Count,p95,sent.Result=="Completed"?1:sent.Result=="Cancelled"?2:3);
+                Math.Max(0,cost.Denied-before.Denied),rtts.Count,p95,sent.Result=="Completed"?1:sent.Result=="Cancelled"?2:3);
             allowance!.Dispose();phase=Phase.WaitReport;Set(PathDiagnosticStep.End,summary);
         }
         if(phase==Phase.Settling&&now-settleAt>=1000){

@@ -83,7 +83,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0,
             UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0,
             QualityFeedback: factory.SupportsQualityFeedback ? 1 : 0,
-            StandbyPaths: factory.SupportsStandbyPaths ? 1 : 0,PathDiagnostics:factory.SupportsPathDiagnostics?1:0,DiagnosticMbps:factory.DiagnosticMbps);
+            StandbyPaths: factory.SupportsStandbyPaths ? 1 : 0,PathDiagnostics:factory.SupportsPathDiagnostics?1:0,DiagnosticMbps:factory.DiagnosticMbps,AutoQuality:factory.SupportsAutoQuality?1:0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -172,8 +172,8 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
                 if (e.Gathering?.IsCompleted == true) {
                     e.Resource = e.Gathering.GetAwaiter().GetResult(); e.Gathering = null;
                     e.Actor = e.Offer == null
-                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt, discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths,discovery.SupportsPathDiagnostics)
-                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence), discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths,discovery.SupportsPathDiagnostics);
+                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt, discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths,discovery.SupportsPathDiagnostics,discovery.SupportsAutoQuality)
+                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence), discovery.SupportsQualityFeedback, discovery.SupportsStandbyPaths,discovery.SupportsPathDiagnostics,discovery.SupportsAutoQuality);
                 }
                 if (e.Actor?.Phase == MeshAttemptPhase.Reserving && e.Resource!.PredictionControlReady(8)) e.Actor.Reserved(e.Resource.PredictionReady);
                 if (e.Measuring?.IsCompleted == true) { e.Actor!.Measured(e.Measuring.GetAwaiter().GetResult()); e.Measuring = null; }
@@ -193,7 +193,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
                     e.Stop.CancelAfter(Timeout.InfiniteTimeSpan); e.StandbyRetained = true;
                     log($"设备 {slot} 独立备用已双向认证，最多保留120秒；当前业务路径继续使用；attempt={e.Attempt:N}");
                 }
-                if (e.Actor?.Phase == MeshAttemptPhase.Standby && !Healthy(slot)) {
+                if (e.Actor?.Phase == MeshAttemptPhase.Standby && !Healthy(slot) && !router.CanRecoverQualifiedStandby(slot)) {
                     Fail(e, "原路径失效，备用尚无质量批准；重新执行前台直连", PredictionOutcome.Cancelled); continue;
                 }
                 if (e.Actor?.Phase == MeshAttemptPhase.Cancelled) { Fail(e, "路径验证失败"); continue; }

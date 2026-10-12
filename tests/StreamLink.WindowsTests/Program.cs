@@ -145,6 +145,31 @@ static class Program
             }
             using(var oldDiagnostics=new SettingsWindow(diagnosticProfile,supportsDiagnostics:false))Check(!Field<CheckBox>(oldDiagnostics,"pathDiagnostics").Enabled,"old backend cannot enable unsupported diagnostic from new UI");
             Check((await worker.Handle(new("status"))).PathDiagnosticsVersion==1,"backend declares independent diagnostic IPC version");
+            using(var qualitySettings=new SettingsWindow(diagnosticProfile)){
+                var choice=Field<ComboBox>(qualitySettings,"selection");choice.SelectedIndex=2;
+                Check(choice.SelectedIndex==0,"AutoQuality cannot be enabled from UI without explicit diagnostic consent");
+                Field<CheckBox>(qualitySettings,"pathDiagnostics").Checked=true;choice.SelectedIndex=2;
+                qualitySettings.Result.Validate();Check(qualitySettings.Result.PathSelection=="auto-quality","UI stores explicit automatic quality policy after all prerequisites");
+                Field<CheckBox>(qualitySettings,"standbyPaths").Checked=false;
+                Check(choice.SelectedIndex==0&&qualitySettings.Result.PathSelection=="prefer-faketcp","removing standby permission restores conservative selection and clears probes");
+            }
+            using(var oldQuality=new SettingsWindow(diagnosticProfile,supportsAutoQuality:false))Check(Field<ComboBox>(oldQuality,"selection").Items.Count==2,"old backend cannot opt into the new quality selection contract");
+            Check((await worker.Handle(new("status"))).AutoQualityVersion==1,"backend independently declares automatic quality selection IPC capability");
+            Guid diagnosticId=Guid.NewGuid();
+            var fullWindows=Enumerable.Range(0,12).Select(i=>new PathDiagnosticWindow(diagnosticId,i,i<6?1:2,Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),50,
+                new(25000,0,5000,25000,35000000,0,4,10,"Completed"),new(diagnosticId,i,25000,25000,32000000,0,0,0,0,0,1,0,1000,"ReportedAtCutoff"),100000)).ToArray();
+            var fullStatus=new SessionStatus("connected","10.1.1.1","","faketcp",true,10,"",Peers:Enumerable.Range(2,7).Select(i=>new MeshPeerStatus(i,"10.1.1."+i,"node-"+i,true,10,""){
+                Diagnostics=new(diagnosticId,"Done",11,50,"",new(diagnosticId,100000,150000000,0,85000,false),fullWindows)}).ToArray());
+            Check(JsonSerializer.SerializeToUtf8Bytes(fullStatus).Length>65536,"seven full diagnostic transcripts would exceed the unchanged IPC envelope");
+            var display=(SessionStatus)typeof(ControlWorker).GetMethod("DisplayStatus",System.Reflection.BindingFlags.Static|System.Reflection.BindingFlags.NonPublic)!.Invoke(null,[fullStatus])!;
+            await using(var wire=new MemoryStream()){
+                var compact=(await worker.Handle(new("status"))) with{Status=display};
+                await ServiceProtocol.Write(wire,compact,CancellationToken.None);wire.Position=0;
+                var decoded=await ServiceProtocol.Read<ControlReply>(wire,CancellationToken.None);
+                Check(decoded.Status!.Peers!.Length==7&&decoded.Status.Peers.All(p=>p.Diagnostics is{Windows.Length:0,State:"Done"}),
+                    "actual bounded pipe serialization carries seven diagnostic summaries without enlarging the protocol");
+            }
+            Check(fullStatus.Peers!.All(p=>p.Diagnostics!.Windows.Length==12),"desktop snapshot cannot discard runner evidence needed for current selection");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

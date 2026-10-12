@@ -20,17 +20,22 @@ internal static class PathDiagnosticSender
             try{
                 using var wake=new AutoResetEvent(false);using var cancelled=token.Register(()=>wake.Set());using var timer=new EgressPacer.PreciseTimer();
                 var clock=Stopwatch.StartNew();int accepted=0,rejected=0;long waits=0;double waiting=0;
-                double rate=payloadMbps*1e6/8/PathDiagnosticFrames.PayloadBytes;
+                double rate=payloadMbps*1e6/8/PathDiagnosticFrames.PayloadBytes,credit=0,lastCredit=0;
                 while(clock.Elapsed.TotalMilliseconds<durationMs&&allowance.Active&&!token.IsCancellationRequested){
-                    int due=(int)(clock.Elapsed.TotalSeconds*rate);int count=Math.Min(8,Math.Max(0,due-accepted));bool backpressure=false;
+                    double elapsed=clock.Elapsed.TotalSeconds;
+                    // A delayed wake cannot replay every missed deadline into
+                    // a fast outer pacer. Retain at most the final gate's
+                    // bounded jitter envelope (four frames at low rates).
+                    credit=Math.Min(allowance.MaximumSourceCredit,credit+Math.Max(0,elapsed-lastCredit)*rate);lastCredit=elapsed;
+                    int count=Math.Min(8,(int)credit);bool backpressure=false;
                     for(int i=0;i<count;i++){
                         if(!allowance.Active||token.IsCancellationRequested||clock.Elapsed.TotalMilliseconds>=durationMs)break;
-                        if(send(accepted,(int)clock.Elapsed.TotalMilliseconds))accepted++;
+                        if(send(accepted,(int)clock.Elapsed.TotalMilliseconds)){accepted++;credit--;}
                         else{rejected++;backpressure=true;break;}
                     }
                     // The next sample, or a short wait after bounded queue
                     // rejection. Never spin through repeated rejected offers.
-                    double wait=backpressure ? .001 : Math.Clamp((accepted+1)/rate-clock.Elapsed.TotalSeconds,.0001,.001);
+                    double wait=backpressure ? .001 : Math.Clamp((1-credit)/rate,.0001,.001);
                     long before=Stopwatch.GetTimestamp();timer.Wait(wake,wait);waits++;waiting+=Stopwatch.GetElapsedTime(before).TotalMilliseconds;
                 }
                 string result=token.IsCancellationRequested?"Cancelled":!allowance.Active?"AllowanceEnded":"Completed";

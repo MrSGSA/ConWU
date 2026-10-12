@@ -14,7 +14,8 @@ public sealed record MeshTraversalCapabilities(int Version, int NativeAbi, Guid 
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int QualityFeedback = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int StandbyPaths = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int PathDiagnostics = 0,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int DiagnosticMbps = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int DiagnosticMbps = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int AutoQuality = 0);
 public enum MeshTraversalStage { Offer = 1, Ready = 2, Start = 3, Cancel = 4, Selected = 5, Reserved = 6, Measure = 7, Measured = 8, Standby = 9 }
 // Public observations only. Local lease/attachment IDs and socket handles never
 // leave the endpoint. Both TCP and UDP retain their own profile and observations.
@@ -43,6 +44,7 @@ public static class MeshTraversal
     {
         if (c == null) return;
         if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.FakeTcpIpv6 is < 0 or > 1 || c.TcpPrediction is < 0 or > 1 || c.TcpPeerReflexive is < 0 or > 1 || c.UdpExploration is < 0 or > 1 || c.QualityFeedback is < 0 or > 1 || c.StandbyPaths is < 0 or > 1 || c.PathDiagnostics is < 0 or > 1 ||
+            c.AutoQuality is < 0 or > 1 || c.AutoQuality == 1 && c.PathDiagnostics != 1 ||
             c.PathDiagnostics == 0 && c.DiagnosticMbps != 0 || c.PathDiagnostics == 1 && (c.StandbyPaths != 1 || c.DiagnosticMbps is < 1 or > 50) || c.BootId == Guid.Empty ||
             c.Profiles is not { Length: >= 1 and <= 2 } || c.Profiles.Distinct().Count() != c.Profiles.Length ||
             c.UdpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.UdpDirect) ||
@@ -141,5 +143,6 @@ public interface IMeshTraversalDiscovery
     bool SupportsQualityFeedback => false;
     bool SupportsStandbyPaths => false;
     bool SupportsPathDiagnostics => false;
+    bool SupportsAutoQuality => false;
     Task PublishTraversal(MeshTraversalMessage[] messages, CancellationToken token);
 }

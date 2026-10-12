@@ -31,6 +31,7 @@ internal interface IMeshCandidateFactory
     bool SupportsQualityFeedback => false;
     bool SupportsStandbyPaths => false;
     bool SupportsPathDiagnostics=>false;
+    bool SupportsAutoQuality=>false;
     int DiagnosticMbps=>0;
     bool SupportsStandbyProfile(TraversalProfile profile) => SupportsStandbyPaths;
     Task<IMeshCandidateResource> GatherStandby(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
@@ -110,6 +111,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public bool SupportsPathDiagnostics=>options.PathDiagnostics&&SupportsStandbyPaths&&pacer!=null&&
         (profiles.Contains(TraversalProfile.UdpDirect)||diagnosticTransport);
     public int DiagnosticMbps=>SupportsPathDiagnostics?options.DiagnosticMbps:0;
+    public bool SupportsAutoQuality=>SupportsPathDiagnostics&&options.PathSelection=="auto-quality";
     public bool SupportsStandbyProfile(TraversalProfile profile) => SupportsStandbyPaths && profiles.Contains(profile) &&
         (profile == TraversalProfile.UdpDirect || profile == TraversalProfile.FakeTcpHttpSo && countWireControl);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)

@@ -7,7 +7,8 @@ public sealed partial class MeshRouter
 {
     static MeshStandbyStatus? StandbyStatus(Peer peer) => peer.Managed?.Candidate is {} path && path.Nomination.Stage == NominationStage.Standby
         ? new(path.Identity.PathId,path.Identity.LeaseId,path.Identity.Profile,path.Nomination.StandbyConfirmed,
-            RoundTripFresh(path),Math.Max(0,(long)path.Nomination.TimeLeft.TotalMilliseconds)) : null;
+            RoundTripFresh(path),Math.Max(0,(long)path.Nomination.TimeLeft.TotalMilliseconds),
+            peer.Managed.Quality is { CandidateQualified: true } q && q.CandidatePathId == path.Identity.PathId ? "QualityObservedDiagnostic" : "QualityUnknown") : null;
     internal bool CanRetainStandby(int slot, TraversalProfile profile)
     {
         lock (gate) return peers.TryGetValue(slot, out var peer) && ManagedHealthy(peer) && Selection.Allows(profile) &&
