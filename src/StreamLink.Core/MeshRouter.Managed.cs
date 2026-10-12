@@ -39,10 +39,11 @@ public sealed partial class MeshRouter
         public long StandbyAt;
         public int DiagnosticMbps;
         public bool AutoQuality;
+        public int DiagnosticTiming;
         public TraversalAttemptContext? Context;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
-        public readonly Dictionary<long, (long Sent, bool Activity)> PendingRoundTrips = [];
+        public readonly Dictionary<long, (long Sent, bool Activity,int BaselineLeg)> PendingRoundTrips = [];
         public int ControlPackets => Budget.Packets;
         public int ControlBytes => Budget.Bytes;
         public string Failure = "";
@@ -54,7 +55,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0,int negotiatedDiagnosticMbps=0,int negotiatedAutoQualityVersion=0)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0, int negotiatedStandbyVersion = 0,int negotiatedDiagnosticMbps=0,int negotiatedAutoQualityVersion=0,int negotiatedDiagnosticTiming=0)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -87,6 +88,8 @@ public sealed partial class MeshRouter
             if (negotiatedAutoQualityVersion is < 0 or > 1 || negotiatedAutoQualityVersion == 1 &&
                 (negotiatedDiagnosticMbps == 0 || Selection.Policy != PathPolicy.AutoQuality)) throw new IOException("自动质量选路尚未获得独立协商许可");
             var state = new ManagedPath(transport, identity, nomination, stop.Token);
+            if(negotiatedDiagnosticTiming is<0 or>1||negotiatedDiagnosticTiming==1&&negotiatedDiagnosticMbps==0)throw new IOException("诊断空载时序未协商");
+            state.DiagnosticTiming=negotiatedDiagnosticTiming;
             state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;state.AutoQuality=negotiatedAutoQualityVersion==1;
             if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
@@ -157,7 +160,7 @@ public sealed partial class MeshRouter
                     if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out var probe) && Stopwatch.GetElapsedTime(probe.Sent).TotalSeconds < 12) {
                         path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(probe.Sent, path.LastRoundTrip).TotalMilliseconds;
                         path.Traffic.RoundTrip(path.RttMs.Value, Environment.TickCount64, probe.Activity);
-                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value);
+                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value,probe.BaselineLeg);
                     }
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
@@ -279,7 +282,7 @@ public sealed partial class MeshRouter
                 byte[]? ping = peer.Link.ProbePath(nonce);
                 if (ping != null && AdmitMaintenance(path, ping.Length) && SendManaged(ping, path)) {
                     if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value.Sent).Key);
-                    path.PendingRoundTrips[nonce] = (Stopwatch.GetTimestamp(), path.Traffic.RecentlyBusy(now));
+                    path.PendingRoundTrips[nonce] = (Stopwatch.GetTimestamp(), path.Traffic.RecentlyBusy(now),-1);
                     if (path.ProofAt != 0) peer.Recovery.KeepaliveSent(nonce, now);
                 }
             }

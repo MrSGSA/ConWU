@@ -1,19 +1,24 @@
+using System.Text.Json.Serialization;
 namespace StreamLink.Core;
 
 public sealed record PathDiagnosticWindow(Guid SessionId,int Leg,int SourceSlot,Guid PathId,Guid ResourceId,Guid NetworkGeneration,
     int TargetMbps,PathDiagnosticSummaryView Source,PathDiagnosticReceipt Receipt,long ObservedMs);
 public sealed record PathDiagnosticSummaryView(int Accepted,int Rejected,double ElapsedMs,long AdmittedPackets,long AdmittedBytes,
-    long WireDenied,int LoadedRttSamples,double? LoadedRttP95Ms,string Result);
+    long WireDenied,int LoadedRttSamples,double? LoadedRttP95Ms,string Result,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)]int IdleRttSamples=0,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingNull)]double? IdleRttP95Ms=null,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)]int IdleAgeMs=0);
 public sealed record PathDiagnosticSessionStatus(Guid SessionId,string State,int Leg,int TargetMbps,string Failure,
-    PathDiagnosticCost Cost,PathDiagnosticWindow[] Windows);
+    PathDiagnosticCost Cost,PathDiagnosticWindow[] Windows,
+    [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)]int TimingVersion=0);
 internal sealed record PathDiagnosticTarget(ValidatedPathIdentity Identity,IPathDiagnosticWire Wire,Func<byte[],bool> Send,
-    Func<byte[],byte[]?> Encode,Func<long> Denied);
+    Func<byte[],byte[]?> Encode,Func<long> Denied,Func<int,bool>? BaselineProbe=null);
 
 // Serialized by the Router gate, with one existing receiver. One source worker
 // invokes the callback under that same gate; no second socket or reader exists.
 internal sealed class PathDiagnosticSession:IDisposable
 {
-    enum Phase{WaitReady,WaitPrepared,WaitStart,Sending,Draining,Receiving,Settling,WaitReport,WaitAck,WaitCompleted,Done,Cancelled}
+    enum Phase{WaitReady,WaitPrepared,WaitStart,Baseline,Sending,Draining,Receiving,Settling,WaitReport,WaitAck,WaitCompleted,Done,Cancelled}
     readonly byte[] scope;
     readonly bool leader;
     readonly int own,remote,target;
@@ -26,6 +31,10 @@ internal sealed class PathDiagnosticSession:IDisposable
     readonly CancellationTokenSource stop=new();
     readonly List<PathDiagnosticWindow> windows=[];
     readonly List<double> rtts=[];
+    readonly List<double> idleRtts=[];
+    readonly int timingVersion;
+    long idleAt,nextIdleProbe;
+    int idleProbes;
     readonly long began;
     Phase phase;
     int leg,controls,cleanupSends;
@@ -46,19 +55,20 @@ internal sealed class PathDiagnosticSession:IDisposable
     public int Leg=>leg;
     public bool IsLocalSource=>(leg<6)==leader;
     public int TargetIndex=>leg%6<3?0:1;
-    public PathDiagnosticSessionStatus Status()=>new(SessionId,phase.ToString(),leg,target,failure,permit.Snapshot(),windows.ToArray());
+    public PathDiagnosticSessionStatus Status()=>new(SessionId,phase.ToString(),leg,target,failure,permit.Snapshot(),windows.ToArray(),timingVersion);
     public PathDiagnosticSession(byte[] scope,bool leader,int own,int remote,int target,PathDiagnosticPermit permit,
         Func<int,PathDiagnosticTarget> getTarget,Func<byte[],bool> control,Func<bool> healthy,TimeProvider? clockForTest=null,
-        Func<PathDiagnosticAllowance,double,int,Func<int,int,bool>,CancellationToken,Task<PathDiagnosticSendResult>>? sourceForTest=null)
+        Func<PathDiagnosticAllowance,double,int,Func<int,int,bool>,CancellationToken,Task<PathDiagnosticSendResult>>? sourceForTest=null,int timingVersion=0)
     {
-        if(scope.Length!=32||target is<1 or>50||own==remote)throw new ArgumentException("Invalid diagnostic session");
+        if(scope.Length!=32||target is<1 or>50||own==remote||timingVersion is<0 or>1)throw new ArgumentException("Invalid diagnostic session");
+        this.timingVersion=timingVersion;
         this.scope=scope.ToArray();this.leader=leader;this.own=own;this.remote=remote;this.target=target;this.permit=permit;
         this.getTarget=getTarget;this.control=control;this.healthy=healthy;phase=leader?Phase.WaitReady:Phase.WaitStart;
         clockNow=clockForTest==null?()=>Environment.TickCount64:()=>(long)(clockForTest.GetTimestamp()*1000d/clockForTest.TimestampFrequency);
         source=sourceForTest??PathDiagnosticSender.Send;began=clockNow();
         Set(leader?PathDiagnosticStep.Begin:PathDiagnosticStep.Ready);stageAt=began;
     }
-    PathDiagnosticMessage Message(PathDiagnosticStep step,PathDiagnosticSummary? s=null,PathDiagnosticReceipt? r=null)=>new(step,SessionId,leg,target,s,r);
+    PathDiagnosticMessage Message(PathDiagnosticStep step,PathDiagnosticSummary? s=null,PathDiagnosticReceipt? r=null)=>new(step,SessionId,leg,target,s,r,timingVersion);
     void Set(PathDiagnosticStep step,PathDiagnosticSummary? s=null,PathDiagnosticReceipt? r=null){outgoing=Message(step,s,r);sendAt=0;}
     void Prepare(int next)
     {
@@ -68,6 +78,12 @@ internal sealed class PathDiagnosticSession:IDisposable
     void Source()
     {
         if(sending!=null||current==null||!IsLocalSource)return;
+        if(timingVersion==1&&leg%3==0){phase=Phase.Baseline;idleRtts.Clear();idleAt=clockNow();nextIdleProbe=idleAt;idleProbes=0;return;}
+        StartSource();
+    }
+    void StartSource()
+    {
+        if(current==null||sending!=null)return;
         before=permit.Snapshot();allowance=permit.Open(current.Identity.PathId,(int)Math.Ceiling(target*1.4),5500);
         current.Wire.GrantDiagnosticWire(allowance);var path=current;int round=leg;
         sending=source(allowance,target*1.05,5000,(index,elapsed)=>{
@@ -78,13 +94,20 @@ internal sealed class PathDiagnosticSession:IDisposable
     {
         if(disposed)return;
         if(!Finished&&(!healthy()||!permit.Active||now-began>=PathDiagnosticPermit.SessionMs||now-stageAt>=12000))Cancel("ResourcesOrDeadline");
+        if(phase==Phase.Baseline){
+            if(idleRtts.Count>=4&&now-idleAt>=800)StartSource();
+            else if(now-idleAt>=3500)Cancel("IdleBaselineUnavailable");
+            else if(now>=nextIdleProbe&&idleProbes<8){if(current!.BaselineProbe?.Invoke(leg)==true)idleProbes++;nextIdleProbe=now+200;}
+        }
         if(phase==Phase.Sending&&sending!.IsCompleted){
             try{_ = sending.GetAwaiter().GetResult();phase=Phase.Draining;completedAt=now;}catch(Exception){Cancel("SourceFailed");}
         }
         if(phase==Phase.Draining&&now-completedAt>=500){
             var sent=sending!.GetAwaiter().GetResult();var cost=permit.Snapshot();double? p95=rtts.Count==0?null:rtts.Order().ElementAt((int)Math.Ceiling(rtts.Count*.95)-1);
             summary=new(sent.AcceptedPackets,sent.RejectedOffers,(long)(sent.ElapsedMs*1000),cost.WirePackets-before!.WirePackets,cost.WireBytes-before.WireBytes,
-                Math.Max(0,cost.Denied-before.Denied),rtts.Count,p95,sent.Result=="Completed"?1:sent.Result=="Cancelled"?2:3);
+                Math.Max(0,cost.Denied-before.Denied),rtts.Count,p95,sent.Result=="Completed"?1:sent.Result=="Cancelled"?2:3,
+                timingVersion==1?idleRtts.Count:0,timingVersion==1?idleRtts.Order().ElementAt((int)Math.Ceiling(idleRtts.Count*.95)-1):null,
+                timingVersion==1?(int)Math.Min(30000,now-idleAt):0);
             allowance!.Dispose();phase=Phase.WaitReport;Set(PathDiagnosticStep.End,summary);
         }
         if(phase==Phase.Settling&&now-settleAt>=1000){
@@ -98,7 +121,7 @@ internal sealed class PathDiagnosticSession:IDisposable
     }
     public bool Receive(PathDiagnosticMessage m,long now)
     {
-        if(disposed||m.Session!=SessionId||m.TargetMbps!=target)return false;
+        if(disposed||m.Session!=SessionId||m.TargetMbps!=target||m.TimingVersion!=timingVersion)return false;
         if(m.Step==PathDiagnosticStep.Cancel){Cancel("PeerCancelled");return true;}
         if(Finished){if(phase==Phase.Done&&m.Step==PathDiagnosticStep.Done&&controls<256){cleanupSends=0;Set(PathDiagnosticStep.Completed);}return true;}
         if(!healthy()||!permit.Active){Cancel("ResourcesUnavailable");return true;}
@@ -136,7 +159,7 @@ internal sealed class PathDiagnosticSession:IDisposable
         if(windows.Any(w=>w.Leg==leg))return;var s=summary!;
         windows.Add(new(SessionId,leg,IsLocalSource?own:remote,current!.Identity.PathId,current.Identity.LeaseId,current.Identity.NetworkGeneration,target,
             new(s.Accepted,s.Rejected,s.ElapsedMicroseconds/1000d,s.AdmittedPackets,s.AdmittedBytes,s.WireDenied,s.RttSamples,s.LoadedRttP95,
-                s.Result==1?"Completed":s.Result==2?"Cancelled":"AllowanceEnded"),report!,now));
+                s.Result==1?"Completed":s.Result==2?"Cancelled":"AllowanceEnded",s.IdleRttSamples,s.IdleRttP95,s.IdleAgeMs),report!,now));
     }
     void Next(long now)
     {
@@ -149,9 +172,11 @@ internal sealed class PathDiagnosticSession:IDisposable
         if(!Finished&&!IsLocalSource&&current?.Identity.PathId==path&&phase is Phase.WaitStart or Phase.Receiving or Phase.Settling)
             receiver?.Record(payload);
     }
-    public void RoundTrip(Guid path,double milliseconds)
+    public void RoundTrip(Guid path,double milliseconds,int baselineLeg=-1)
     {
-        if(IsLocalSource&&current?.Identity.PathId==path&&phase==Phase.Sending&&rtts.Count<32&&double.IsFinite(milliseconds)&&milliseconds is>=0 and<12000)rtts.Add(milliseconds);
+        if(!IsLocalSource||current?.Identity.PathId!=path||!double.IsFinite(milliseconds)||milliseconds is<0 or>=12000)return;
+        if(timingVersion==1&&phase==Phase.Baseline&&baselineLeg==leg&&idleRtts.Count<8)idleRtts.Add(milliseconds);
+        else if(phase==Phase.Sending&&baselineLeg<0&&rtts.Count<32)rtts.Add(milliseconds);
     }
     public void Cancel(string reason)
     {

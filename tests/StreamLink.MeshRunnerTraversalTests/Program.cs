@@ -36,9 +36,11 @@ bool diagnosticBusyOnly=args.Length==7&&args[6]=="--diagnostic-busy-only";
 bool qualityUdpOnly=args.Length==7&&args[6]=="--quality-udp-retain-only";
 bool qualityNativeOnly=args.Length==7&&args[6]=="--quality-native-benefit-only";
 bool qualityFaultOnly=args.Length==7&&args[6]=="--quality-native-fault-only";
+bool relativeNativeOnly=args.Length==7&&args[6]=="--relative-quality-native-only";
+bool relativeUdpOnly=args.Length==7&&args[6]=="--relative-quality-udp-only";
 bool networkOnly = args.Length == 7 && args[6] == "--network-only";
 bool poolOnly = args.Length == 7 && args[6] == "--pool-only";
-if ((!networkOnly && !upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && !diagnosticRunnerOnly && !nativeDiagnosticRunnerOnly && !diagnosticBusyOnly && !qualityUdpOnly && !qualityNativeOnly && !qualityFaultOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
+if ((!relativeNativeOnly && !relativeUdpOnly && !networkOnly && !upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && !diagnosticRunnerOnly && !nativeDiagnosticRunnerOnly && !diagnosticBusyOnly && !qualityUdpOnly && !qualityNativeOnly && !qualityFaultOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -66,7 +68,9 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if(networkOnly) rows.Add(await NetworkScopeTests.Run(binary,root,url,pin,rounds,Check,token));
+    if(relativeNativeOnly) rows.Add(await NativeIpv6RunnerTests.RunRelativeQuality(binary,root,url,pin,Check,token));
+    else if(relativeUdpOnly) rows.Add(await Ipv6Tests.RunRelativeQuality(root,url,pin,Check,token));
+    else if(networkOnly) rows.Add(await NetworkScopeTests.Run(binary,root,url,pin,rounds,Check,token));
     else if(qualityUdpOnly)rows.Add(await Ipv6Tests.RunQualityRetain(root,url,pin,Check,token));
     else if(qualityNativeOnly||qualityFaultOnly)rows.Add(await NativeIpv6RunnerTests.RunQuality(binary,root,url,pin,qualityFaultOnly?"hard-failure":"benefit",Check,token));
     else if(diagnosticBusyOnly)rows.Add(await Ipv6Tests.RunDiagnostics(root,url,pin,Check,token,interruptBusy:true));

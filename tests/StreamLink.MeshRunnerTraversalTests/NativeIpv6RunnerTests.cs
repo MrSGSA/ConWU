@@ -15,6 +15,8 @@ static class NativeIpv6RunnerTests
         Pair(binary,root,url,pin,"ipv6",check,token,false,false,true,true);
     public static Task<object> RunQuality(string binary,string root,string url,string pin,string qualityMode,Action<bool,string> check,CancellationToken token)=>
         Pair(binary,root,url,pin,"ipv6",check,token,false,false,true,true,qualityMode);
+    public static Task<object> RunRelativeQuality(string binary,string root,string url,string pin,Action<bool,string> check,CancellationToken token)=>
+        Pair(binary,root,url,pin,"ipv6",check,token,false,false,true,true,"benefit",timing:true);
     public static async Task<object> Run(string binary, string root, string url, string pin, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
     {
         CaptureFilterTests.Run(Path.Combine(Path.GetDirectoryName(binary)!, "..", "downloads", "WinDivert-2.2.2-A", "x64", "WinDivert.dll"), check);
@@ -42,7 +44,7 @@ static class NativeIpv6RunnerTests
         check(rejected, "UDP IPv6 capability cannot authorize a FakeTCP IPv6 Offer");
         check(!new DeviceProfile().FakeTcpIpv6, "FakeTCP IPv6 remains disabled in default/existing device profiles");
     }
-    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false,string qualityMode="")
+    static async Task<object> Pair(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false,string qualityMode="",bool timing=false)
     {
         await using var v4 = new Reflector(); await using var v6 = new Reflector(new(IPAddress.IPv6Loopback, 0));
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
@@ -59,7 +61,7 @@ static class NativeIpv6RunnerTests
             RouteCheckForTest = (remote, expected, _) => {
                 if (!IPAddress.IsLoopback(remote.Address) || expected != null && (!IPAddress.IsLoopback(expected) || expected.AddressFamily != remote.AddressFamily)) throw new IOException("fixture remains family-matched loopback");
             }
-        })).ToArray();
+        },timing)).ToArray();
         var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
         using var running = CancellationTokenSource.CreateLinkedTokenSource(token); int legacy = 0;
         MeshRuntimeServices Services(int i) => new(m => mode == "old-service" || mode=="standby-old-service" ? new OldService(new MeshDiscoveryClient(m),mode=="standby-old-service") : new MeshDiscoveryClient(m),
@@ -197,7 +199,7 @@ static class NativeIpv6RunnerTests
             quality=states.Select(s=>s?.Peers?.Single().Quality).ToArray(),qualityMode,controlledDrops,recovery,
             scope="formal Runner/Factory/Actor/native C++, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee" };
     }
-    internal sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
+    internal sealed class Inspect(MeshCandidateFactory inner,bool timing=false) : IMeshCandidateFactory, IAsyncDisposable
     {
         public bool PollNetworkChange() => inner.PollNetworkChange();
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
@@ -209,6 +211,7 @@ static class NativeIpv6RunnerTests
         public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
         public bool SupportsPathDiagnostics=>inner.SupportsPathDiagnostics;
         public bool SupportsAutoQuality=>inner.SupportsAutoQuality;
+        public bool SupportsDiagnosticTiming=>timing&&inner.SupportsDiagnosticTiming;
         public int DiagnosticMbps=>inner.DiagnosticMbps;
         public bool SupportsStandbyProfile(TraversalProfile p) => inner.SupportsStandbyProfile(p);
         public async Task<IMeshCandidateResource> GatherStandby(MeshMember peer,TraversalProfile p,Guid attempt,bool v6,MeshTraversalCandidate? remote,CancellationToken t)

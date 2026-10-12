@@ -5,9 +5,9 @@ namespace StreamLink.Core;
 
 internal enum PathDiagnosticStep:byte{Begin=1,Ready=2,Prepare=3,Prepared=4,Start=5,End=6,Report=7,Ack=8,Cancel=9,Done=10,Completed=11}
 internal sealed record PathDiagnosticSummary(int Accepted,int Rejected,long ElapsedMicroseconds,long AdmittedPackets,long AdmittedBytes,long WireDenied,
-    int RttSamples,double? LoadedRttP95,int Result);
+    int RttSamples,double? LoadedRttP95,int Result,int IdleRttSamples=0,double? IdleRttP95=null,int IdleAgeMs=0);
 internal sealed record PathDiagnosticMessage(PathDiagnosticStep Step,Guid Session,int Leg,int TargetMbps,
-    PathDiagnosticSummary? Source=null,PathDiagnosticReceipt? Receipt=null);
+    PathDiagnosticSummary? Source=null,PathDiagnosticReceipt? Receipt=null,int TimingVersion=0);
 
 internal static class PathDiagnosticControl
 {
@@ -16,7 +16,7 @@ internal static class PathDiagnosticControl
     public static bool IsControl(ReadOnlySpan<byte> p)=>p.StartsWith("SQD2"u8);
     public static byte[] Encode(PathDiagnosticMessage m,ReadOnlySpan<byte> scope)
     {
-        byte[] p=new byte[Size];"SQD2"u8.CopyTo(p);p[4]=1;p[5]=(byte)m.Step;p[6]=(byte)m.Leg;m.Session.TryWriteBytes(p.AsSpan(8));scope.CopyTo(p.AsSpan(24,32));
+        byte[] p=new byte[Size];"SQD2"u8.CopyTo(p);p[4]=(byte)(m.TimingVersion+1);p[5]=(byte)m.Step;p[6]=(byte)m.Leg;m.Session.TryWriteBytes(p.AsSpan(8));scope.CopyTo(p.AsSpan(24,32));
         BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(56),m.TargetMbps);BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(60),PathDiagnosticFrames.PayloadBytes);
         BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(64),5000);BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(68),PathDiagnosticPermit.SessionMs);
         BinaryPrimitives.WriteInt64BigEndian(p.AsSpan(72),PathDiagnosticPermit.MaximumBytes);
@@ -25,6 +25,7 @@ internal static class PathDiagnosticControl
             BinaryPrimitives.WriteInt64BigEndian(p.AsSpan(88),s.ElapsedMicroseconds);BinaryPrimitives.WriteInt64BigEndian(p.AsSpan(96),s.AdmittedPackets);
             BinaryPrimitives.WriteInt64BigEndian(p.AsSpan(104),s.AdmittedBytes);BinaryPrimitives.WriteInt64BigEndian(p.AsSpan(112),s.WireDenied);
             BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(120),s.RttSamples);BinaryPrimitives.WriteDoubleBigEndian(p.AsSpan(124),s.LoadedRttP95??-1);p[168]=(byte)s.Result;
+            if(m.TimingVersion==1){BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(172),s.IdleRttSamples);BinaryPrimitives.WriteDoubleBigEndian(p.AsSpan(176),s.IdleRttP95??-1);BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(184),s.IdleAgeMs);}
         }
         if(m.Receipt is{}r){
             BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(80),r.ExpectedPackets);BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(132),r.ReceivedPackets);
@@ -33,16 +34,17 @@ internal static class PathDiagnosticControl
             BinaryPrimitives.WriteDoubleBigEndian(p.AsSpan(152),r.RelativeArrivalP95Ms??-1);BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(160),r.RelativelyDelayedOver20Ms);
             BinaryPrimitives.WriteInt32BigEndian(p.AsSpan(164),r.ReceiverSettleMs);p[168]=(byte)(r.Result=="ReportedAtCutoff"?1:r.Result=="NoOfferedSamples"?2:3);
         }
-        if(!TryParse(p,scope,m.TargetMbps,out _))throw new ArgumentException("Diagnostic control fields invalid");return p;
+        if(!TryParse(p,scope,m.TargetMbps,out _,m.TimingVersion))throw new ArgumentException("Diagnostic control fields invalid");return p;
     }
-    public static bool TryParse(ReadOnlySpan<byte> p,ReadOnlySpan<byte> scope,int target,out PathDiagnosticMessage? m)
+    public static bool TryParse(ReadOnlySpan<byte> p,ReadOnlySpan<byte> scope,int target,out PathDiagnosticMessage? m,int timingVersion=0)
     {
         m=null;
-        if(p.Length!=Size||!IsControl(p)||p[4]!=1||p[5] is<1 or>11||p[6]>11||p[7]!=0||scope.Length!=32||
+        if(timingVersion is<0 or>1||p.Length!=Size||!IsControl(p)||p[4]!=timingVersion+1||p[5] is<1 or>11||p[6]>11||p[7]!=0||scope.Length!=32||
             !CryptographicOperations.FixedTimeEquals(p.Slice(24,32),scope)||new Guid(p.Slice(8,16))==Guid.Empty||target is<1 or>50||
             BinaryPrimitives.ReadInt32BigEndian(p[56..])!=target||BinaryPrimitives.ReadInt32BigEndian(p[60..])!=1280||
             BinaryPrimitives.ReadInt32BigEndian(p[64..])!=5000||BinaryPrimitives.ReadInt32BigEndian(p[68..])!=PathDiagnosticPermit.SessionMs||
-            BinaryPrimitives.ReadInt64BigEndian(p[72..])!=PathDiagnosticPermit.MaximumBytes||p[169..].IndexOfAnyExcept((byte)0)>=0)return false;
+            BinaryPrimitives.ReadInt64BigEndian(p[72..])!=PathDiagnosticPermit.MaximumBytes||p.Slice(169,3).IndexOfAnyExcept((byte)0)>=0||p[188..].IndexOfAnyExcept((byte)0)>=0||
+            (timingVersion==0||p[5]!=(byte)PathDiagnosticStep.End)&&p[172..].IndexOfAnyExcept((byte)0)>=0)return false;
         var step=(PathDiagnosticStep)p[5];PathDiagnosticSummary? source=null;PathDiagnosticReceipt? receipt=null;
 
         if(step==PathDiagnosticStep.End){
@@ -50,7 +52,9 @@ internal static class PathDiagnosticControl
             long elapsed=BinaryPrimitives.ReadInt64BigEndian(p[88..]),packets=BinaryPrimitives.ReadInt64BigEndian(p[96..]),bytes=BinaryPrimitives.ReadInt64BigEndian(p[104..]),denied=BinaryPrimitives.ReadInt64BigEndian(p[112..]);
             if(I(p,80) is<0 or>65536||I(p,84) is<0 or>1000000||elapsed is<0 or>8000000||packets is<0 or>65536||bytes is<0 or>100663296||
                 denied is<0 or>1000000||n is<0 or>32||!double.IsFinite(rtt)||n==0&&rtt!=-1||n>0&&rtt is<0 or>12000||result is<1 or>3||p.Slice(132,36).IndexOfAnyExcept((byte)0)>=0)return false;
-            source=new(I(p,80),I(p,84),elapsed,packets,bytes,denied,n,n==0?null:rtt,result);
+            int idle=timingVersion==1?I(p,172):0,age=timingVersion==1?I(p,184):0;double baseline=timingVersion==1?BinaryPrimitives.ReadDoubleBigEndian(p[176..]):-1;
+            if(idle is<0 or>8||age is<0 or>30000||!double.IsFinite(baseline)||idle==0&&baseline!=-1||idle>0&&baseline is<0 or>12000)return false;
+            source=new(I(p,80),I(p,84),elapsed,packets,bytes,denied,n,n==0?null:rtt,result,idle,idle==0?null:baseline,age);
         }else if(step==PathDiagnosticStep.Report){
             double relative=BinaryPrimitives.ReadDoubleBigEndian(p[152..]);int expected=I(p,80),received=I(p,132),result=p[168];
             if(expected is<0 or>65536||received is<0 or>65536||I(p,136) is<0 or>1000000||I(p,140)<0||I(p,140)>received||I(p,144) is<0 or>65535||
@@ -60,6 +64,6 @@ internal static class PathDiagnosticControl
             receipt=new(new Guid(p.Slice(8,16)),p[6],expected,received,(long)received*1280,result==1?100d*(expected-received)/expected:null,
                 I(p,136),I(p,140),I(p,144),I(p,148),relative<0?null:relative,I(p,160),I(p,164),result==1?"ReportedAtCutoff":result==2?"NoOfferedSamples":"InvalidSummary");
         }else if(p[80..].IndexOfAnyExcept((byte)0)>=0)return false;
-        m=new(step,new Guid(p.Slice(8,16)),p[6],target,source,receipt);return true;
+        m=new(step,new Guid(p.Slice(8,16)),p[6],target,source,receipt,timingVersion);return true;
     }
 }

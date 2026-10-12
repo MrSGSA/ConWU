@@ -29,5 +29,22 @@ static class QualityFeedbackNegotiationTests
         check(!new DeviceProfile().QualityFeedback&&new ControlReply(true,"",null,null,"",[]).QualityFeedbackVersion==0,"old profile/IPC defaults are off rather than silently approving control overhead");
         rejected=false;try{new DeviceProfile{QualityFeedback=true}.Validate();}catch(FormatException){rejected=true;}
         check(rejected,"compatible unmanaged mode cannot hold an invisible receipt experiment");
+        var timed=mine with{StandbyPaths=1,PathDiagnostics=1,DiagnosticMbps=50,DiagnosticTiming=1};
+        var timedRemote=timed with{BootId=theirs.BootId};var standby=candidate with{Standby=true};
+        foreach(string mode in new[]{"both","old-peer","old-local","old-server"}){
+            var local=mode=="old-local"?timed with{DiagnosticTiming=0}:timed;
+            var remote=mode=="old-peer"?timedRemote with{DiagnosticTiming=0}:timedRemote;
+            await using var offer=MeshTraversalAttempt.Offer(a,b.Self,local,remote,TraversalProfile.FakeTcpHttpSo,standby,2,()=>++seq,
+                coordinatorStandby:true,coordinatorDiagnostics:true,coordinatorTiming:mode!="old-server");
+            await using var answer=MeshTraversalAttempt.Answer(b,a.Self,remote,local,offer.Outbound!,standby with{Id=Guid.NewGuid(),Endpoint="192.0.2.2:43001"},()=>++seq,
+                coordinatorStandby:true,coordinatorDiagnostics:true,coordinatorTiming:mode!="old-server");
+            check(offer.DiagnosticTimingNegotiated==(mode=="both"?1:0)&&answer.DiagnosticTimingNegotiated==offer.DiagnosticTimingNegotiated,
+                "authenticated bilateral/coordinator baseline timing permission: "+mode);
+        }
+        var timedEnvelope=MeshMetadata.Seal(a,announcement with{Traversal=timed});
+        check(MeshMetadata.Open(b,a.Self,timedEnvelope).Traversal!.DiagnosticTiming==1,"baseline timing permission is encrypted and signed in the member announcement");
+        rejected=false;try{MeshTraversal.ValidateCapabilities(timed with{PathDiagnostics=0,DiagnosticMbps=0});}catch(FormatException){rejected=true;}
+        check(rejected,"baseline permission cannot exist without the separately authorized diagnostic profile");
+        check(!JsonSerializer.Serialize(timed with{DiagnosticTiming=0}).Contains("DiagnosticTiming"),"absent timing capability preserves legacy metadata canonical shape");
     }
 }

@@ -52,6 +52,10 @@ try {
             & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- "--$case-only" --output (Join-Path $root "artifacts/$case-$releaseVersion.json")
             if($LASTEXITCODE -ne 0){throw "$case regression failed"}
         }
+        foreach($case in @('relative-quality','relative-session')){
+            & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- "--$case-only" --output (Join-Path $root "artifacts/$case-$releaseVersion.json")
+            if($LASTEXITCODE -ne 0){throw "$case regression failed"}
+        }
         & dotnet run --project tests/StreamLink.MeshTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
@@ -93,6 +97,10 @@ try {
         & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/diagnostic-business-protection-$releaseVersion.json") --diagnostic-busy-only
         if($LASTEXITCODE -ne 0) {throw 'Formal diagnostic abort on real application business regression failed'}
         foreach($case in @('quality-udp-retain','quality-native-benefit','quality-native-fault')){
+            & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/$case-$releaseVersion.json") "--$case-only"
+            if($LASTEXITCODE -ne 0){throw "Formal $case regression failed"}
+        }
+        foreach($case in @('relative-quality-udp','relative-quality-native')){
             & dotnet run --project tests/StreamLink.MeshRunnerTraversalTests -c Release --no-build -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --rounds 1 --output (Join-Path $root "artifacts/$case-$releaseVersion.json") "--$case-only"
             if($LASTEXITCODE -ne 0){throw "Formal $case regression failed"}
         }

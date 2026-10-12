@@ -14,6 +14,8 @@ static class Ipv6Tests
         Runners(root,url,pin,"ipv6",check,token,false,false,true,true,interruptBusy);
     public static Task<object> RunQualityRetain(string root,string url,string pin,Action<bool,string> check,CancellationToken token)=>
         Runners(root,url,pin,"ipv6",check,token,false,false,true,true,false,true);
+    public static Task<object> RunRelativeQuality(string root,string url,string pin,Action<bool,string> check,CancellationToken token)=>
+        Runners(root,url,pin,"ipv6",check,token,false,false,true,true,false,true,true);
     public static Task<object> RunStandby(string root,string url,string pin,Action<bool,string> check,CancellationToken token) =>
         Runners(root,url,pin,"ipv6",check,token,false,false,true);
     public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
@@ -118,7 +120,7 @@ static class Ipv6Tests
         public ValueTask<TraversalDatagram> Receive(CancellationToken t) => inner.Receive(t);
         public void Dispose() => inner.Dispose();
     }
-    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false,bool interruptBusy=false,bool autoQuality=false)
+    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback, bool standby=false,bool diagnostics=false,bool interruptBusy=false,bool autoQuality=false,bool timing=false)
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
@@ -133,7 +135,7 @@ static class Ipv6Tests
             RouteCheckForTest = (endpoint, expected, _) => {
                 if (!IPAddress.IsLoopback(endpoint.Address) || expected != null && (!IPAddress.IsLoopback(expected) || expected.AddressFamily != endpoint.AddressFamily)) throw new IOException("fixture stays loopback in one address family");
             }
-        })).ToArray();
+        },timing)).ToArray();
         var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2]; int legacy = 0;
         using var stopping = CancellationTokenSource.CreateLinkedTokenSource(token);
         MeshRuntimeServices Services(int i) => new(mesh => mode == "old-service" ? new OldService(new MeshDiscoveryClient(mesh)) : new MeshDiscoveryClient(mesh), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
@@ -234,7 +236,7 @@ static class Ipv6Tests
         if (paced) check(factories.All(f => f.Egress?.Accounting is { Conserved: true, Queued.Packets: 0, InFlight.Packets: 0 }), mode + ": final formal UDP egress ledger has no unclassified accepted datagrams");
         return new { mode, connectedMs = connected, elapsedMs = clock.ElapsedMilliseconds, paths = factories.Select(f => f.Paths.Select(p => new { p.LeaseId, local = p.ActualLocal.ToString(), remote = p.ActualRemote.ToString() })).ToArray(), egress = factories.Select(f => f.Egress).ToArray(),diagnostics=states.Select(s=>s?.Peers?.Single().Diagnostics).ToArray(),quality=states.Select(s=>s?.Peers?.Single().Quality).ToArray(),scope="formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline" };
     }
-    sealed class Inspect(MeshCandidateFactory inner) : IMeshCandidateFactory, IAsyncDisposable
+    sealed class Inspect(MeshCandidateFactory inner,bool timing=false) : IMeshCandidateFactory, IAsyncDisposable
     {
         public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = []; public int Gathers;
         public readonly ConcurrentQueue<IMeshDatagramPath> Transports=[];
@@ -244,6 +246,7 @@ static class Ipv6Tests
         public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
         public bool SupportsPathDiagnostics=>inner.SupportsPathDiagnostics;
         public bool SupportsAutoQuality=>inner.SupportsAutoQuality;
+        public bool SupportsDiagnosticTiming=>timing&&inner.SupportsDiagnosticTiming;
         public int DiagnosticMbps=>inner.DiagnosticMbps;
         public bool SupportsStandbyProfile(TraversalProfile p)=>inner.SupportsStandbyProfile(p);
         public async Task<IMeshCandidateResource> GatherStandby(MeshMember p,TraversalProfile k,Guid a,bool allow,MeshTraversalCandidate? remote,CancellationToken t)

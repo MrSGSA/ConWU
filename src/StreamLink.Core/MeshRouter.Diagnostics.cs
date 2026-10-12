@@ -15,6 +15,14 @@ public sealed partial class MeshRouter
     readonly PathDiagnosticResources diagnosticResources=new();
     readonly HashSet<Task> diagnosticTasks=[];
     bool DiagnosticIdle(long now,int horizon)=>!peers.Values.Any(p=>p.Managed?.Active?.Traffic.BusyWithin(now,horizon)==true);
+    bool BaselineProbe(Peer peer,ManagedPath path,int leg)
+    {
+        if(!DiagnosticIdle(Environment.TickCount64,1000)||path.PendingRoundTrips.Count>=8)return false;
+        long nonce=BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
+        byte[]? ping=peer.Link.ProbePath(nonce);
+        if(ping==null||!AdmitMaintenance(path,ping.Length)||!SendManaged(ping,path))return false;
+        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,leg);return true;
+    }
     bool DiagnosticPair(Peer peer,ManagedPath active,ManagedPath standby)=>peer.Managed is{}managed&&ReferenceEquals(managed.Active,active)&&
         ReferenceEquals(managed.Candidate,standby)&&!active.Closing&&!standby.Closing&&!active.Transport.Failed&&!standby.Transport.Failed&&
         active.Nomination.Stage==NominationStage.Selected&&standby.Nomination.StandbyConfirmed&&standby.Nomination.Stage==NominationStage.Standby&&
@@ -35,10 +43,11 @@ public sealed partial class MeshRouter
                 packet=>{lock(gate)return Valid()&&DiagnosticIdle(Environment.TickCount64,1000)&&SendManaged(packet,path);},
                 body=>{lock(gate)return Valid()&&DiagnosticIdle(Environment.TickCount64,1000)?peer.Link.Diagnostic(body):null;},
                 ()=>path.Transport is IWireControlPath wire?wire.WireControl?.Denied??0:
-                    (path.Transport as IMeshSendDiagnostics)?.SendQueue.Accounting.Failed.Packets??0);}
+                    (path.Transport as IMeshSendDiagnostics)?.SendQueue.Accounting.Failed.Packets??0,
+                leg=>{lock(gate)return Valid()&&BaselineProbe(peer,path,leg);});}
             return new(PathNomination.ContextDigest(standby.Context!),standby.Context!.Nominator,profile.Self.Slot,peer.Member.Slot,standby.DiagnosticMbps,permit,Target,
                 body=>SendFeedback(peer,standby,body,Environment.TickCount64),
-                ()=>Valid()&&DiagnosticIdle(Environment.TickCount64,1000));
+                ()=>Valid()&&DiagnosticIdle(Environment.TickCount64,1000),timingVersion:standby.DiagnosticTiming);
         }catch{permit.Dispose();throw;}
     }
     bool DiagnosticControl(Peer peer,ManagedPath path,byte[] payload,long now)
@@ -46,14 +55,20 @@ public sealed partial class MeshRouter
         if(!PathDiagnosticControl.IsControl(payload))return false;
         var managed=peer.Managed;
         if(managed?.Candidate is not{}standby||!ReferenceEquals(standby,path)||standby.DiagnosticMbps==0||standby.Context==null)return true;
-        if(!PathDiagnosticControl.TryParse(payload,PathNomination.ContextDigest(standby.Context),standby.DiagnosticMbps,out var message))return true;
+        if(!PathDiagnosticControl.TryParse(payload,PathNomination.ContextDigest(standby.Context),standby.DiagnosticMbps,out var message,standby.DiagnosticTiming))return true;
         if(managed.Diagnostic==null&&message!.Step==PathDiagnosticStep.Begin&&managed.Active is{}active&&!standby.Context.Nominator&&now>=managed.NextDiagnostic&&
             managed.DiagnosticAttempt!=standby.Identity.AttemptId){
             managed.Diagnostic=OpenDiagnostic(peer,active,standby,message.Session);
             if(managed.Diagnostic!=null){managed.DiagnosticAttempt=standby.Identity.AttemptId;managed.NextDiagnostic=now+300000;}
         }
         if(managed.Diagnostic is{}session){
-            try{session.Receive(message!,now);}catch(Exception ex)when(ex is IOException or ArgumentException or InvalidOperationException){session.Cancel("ControlBoundary:"+ex.GetType().Name);}
+            try{
+                session.Receive(message!,now);
+                // The v2 baseline costs real time. Advance its authenticated
+                // response on this event instead of adding a heartbeat wait
+                // to every Prepare/Start/End/Report/Ack transition.
+                if(message!.TimingVersion==1)session.Tick(now);
+            }catch(Exception ex)when(ex is IOException or ArgumentException or InvalidOperationException){session.Cancel("ControlBoundary:"+ex.GetType().Name);}
             TrackDiagnostic(session);
         }
         return true;
