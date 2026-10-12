@@ -24,6 +24,7 @@ internal interface IMeshCandidateFactory
     bool SupportsUdpIpv6 => false;
     bool SupportsFakeTcpIpv6 => false;
     bool SupportsTcpPrediction => false;
+    bool SupportsTcpPeerReflexive => false;
     EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
@@ -31,6 +32,9 @@ internal interface IMeshCandidateFactory
     Task<IMeshCandidateResource> GatherCoordinated(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, CancellationToken token) =>
         GatherForPeer(peer, profile, attempt, allowIpv6, remote == null ? null : IPEndPoint.Parse(remote.Endpoint), round, token);
+    Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token) =>
+        GatherCoordinated(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, token);
 }
 
 // One request budget for all discovery operations of this running device.
@@ -61,7 +65,7 @@ internal sealed class MeshRequestBudget(int burst = 6)
 }
 
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
-    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false) : IMeshCandidateFactory, IAsyncDisposable
+    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly Guid generation = Guid.NewGuid();
     readonly DeviceProfile options = profile;
@@ -86,12 +90,13 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public bool SupportsTcpPrediction => options.TcpPortPrediction && options.TcpPortCalibration && options.TcpSynObservation && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
+    public bool SupportsTcpPeerReflexive => options.TcpPeerReflexive && peerSourceNative && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();
         if (profile.TraversalMode == "legacy") return null;
         var supported = new List<TraversalProfile>();
-        bool broker = false, ipv6 = false, wireControl = false;
+        bool broker = false, ipv6 = false, wireControl = false, peerSource = false;
         try {
             var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             info.ArgumentList.Add("--native-info");
@@ -104,6 +109,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 using var document = JsonDocument.Parse(json); var r = document.RootElement;
                 broker = r.TryGetProperty("captureBroker", out var capture) && capture.GetInt32() == 1;
                 wireControl = broker && r.TryGetProperty("wireControl", out var wire) && wire.GetInt32() == 1;
+                peerSource = wireControl && r.TryGetProperty("tcpPeerReflexive", out var reflexive) && reflexive.GetInt32() == 1;
                 ipv6 = broker && r.TryGetProperty("ipv6", out var v6) && v6.GetBoolean() && r.TryGetProperty("ipv6Abi", out var abi6) && abi6.GetInt32() == 2 &&
                     r.TryGetProperty("ipv6Attach", out var attach6) && attach6.GetString() == "broker-only";
                 if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == "windivert" &&
@@ -118,7 +124,8 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             throw new IOException("实验出口调度要求受管捕获后端，请升级原生组件或关闭出口上限");
         if (profile.ManagedEgressMbps > 0) log($"实验链路共享 {profile.ManagedEgressMbps} Mbps 外层 IP 出口预算；兼容入口、内核反射与 HTTPS 控制流不在此范围");
         if (supported.Contains(TraversalProfile.FakeTcpHttpSo) && !wireControl) log("原生组件未提供线上控制报文计账，当前仅统计上层检查消息");
-        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl);
+        if (profile.TcpPeerReflexive && !peerSource) log("TCP 来源学习暂未启用：原生组件需独立声明 IPv4 来源学习及线上计账能力");
+        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl, peerSource);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
@@ -145,8 +152,10 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     }
     public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token)
         => GatherForPeer(peer, kind, attempt, false, null, 1, token);
-    public async Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile kind, Guid attempt,
-        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token)
+    public Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile kind, Guid attempt,
+        bool allowIpv6, IPEndPoint? remote, int round, CancellationToken token) => GatherScoped(peer, kind, attempt, allowIpv6, remote, round, false, token);
+    async Task<IMeshCandidateResource> GatherScoped(MeshMember peer, TraversalProfile kind, Guid attempt,
+        bool allowIpv6, IPEndPoint? remote, int round, bool peerSource, CancellationToken token)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(12000);
         bool supported6 = kind == TraversalProfile.UdpDirect ? SupportsUdpIpv6 : SupportsFakeTcpIpv6;
@@ -166,9 +175,9 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 diagnostic?.Invoke("本轮未获得 IPv6 候选，继续 IPv4 同端点观察");
             }
         }
-        return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetwork, deadline.Token);
+        return await GatherFamily(peer, kind, attempt, AddressFamily.InterNetwork, deadline.Token, peerSource);
     }
-    async Task<IMeshCandidateResource> GatherFamily(MeshMember peer, TraversalProfile kind, Guid attempt, AddressFamily family, CancellationToken token)
+    async Task<IMeshCandidateResource> GatherFamily(MeshMember peer, TraversalProfile kind, Guid attempt, AddressFamily family, CancellationToken token, bool peerSource = false)
     {
         if (!Profiles.Contains(kind)) throw new NotSupportedException();
         bool useGateway = false;
@@ -198,7 +207,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                     finally { CryptographicOperations.ZeroMemory(shared); }
                     mapped = (await udp.Observe(target, observing.Token)).Mapped;
                 } else if (captureBroker) {
-                    pooled = await Pool.Acquire(local.Address, target, deadline.Token); tcp = pooled.Lease; mapped = pooled.Observed;
+                    pooled = await Pool.Acquire(local.Address, target, deadline.Token, peerSource ? peer.Device : null); tcp = pooled.Lease; mapped = pooled.Observed;
                     if (family == AddressFamily.InterNetwork) ObserveInBackground(pooled.Owner, peer); // observer wire protocol is still IPv4-only
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);
@@ -208,7 +217,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 CheckRoute(mapped, gatewayCandidate: useGateway);
                 long now = (pooled?.ObservedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();
                 var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), observation, now, now + (long)lifetime,
-                    kind == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen);
+                    kind == TraversalProfile.UdpDirect ? CandidatePurpose.UdpDirect : CandidatePurpose.SimultaneousOpen, PeerReflexive: peerSource);
                 var resource = new Resource(this, peer, candidate, tcp, udp, pooled); transferred = true; return resource;
             } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) { last = ex; }
             finally { // Success transfers both resources into Resource.
@@ -267,7 +276,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
             byte[] shared = MeshIdentity.SharedKey(owner.options.Mesh!, peer);
             try {
                 var result = await NativeDatagramPath.Prepare(owner.binary, owner.root, tcp!, owner.generation, context, remote, shared, token,
-                    captureOwner: pooled?.Owner, countWireControl: owner.countWireControl);
+                    captureOwner: pooled?.Owner, countWireControl: owner.countWireControl, peerReflexive: candidate.PeerReflexive);
                 prepared = true; return result;
             } finally { CryptographicOperations.ZeroMemory(shared); }
         }

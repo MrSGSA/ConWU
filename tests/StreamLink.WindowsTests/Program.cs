@@ -23,10 +23,12 @@ static class Program
             Check(initial.PathSelectionVersion == 1, "Backend must advertise implemented policy capability independently of release number");
             Check(initial.TcpCalibrationVersion == 1 && !initial.Profile.TcpPortCalibration, "Calibration capability is explicit and new profiles remain opted out");
             Check(initial.TcpPredictionVersion == 1 && !initial.Profile.TcpPortPrediction, "Conditional TCP prediction is separately advertised and default off");
+            Check(initial.TcpPeerReflexiveVersion == 1 && !initial.Profile.TcpPeerReflexive, "Source learning has independent backend capability and remains default off");
             var legacy = JsonSerializer.Deserialize<ControlReply>("{\"Ok\":true,\"Version\":\"0.4.1\"}")!;
             Check(legacy.PathSelectionVersion == 0, "Old same-version backend must not imply support for new policy fields");
             Check(legacy.TcpCalibrationVersion == 0, "Old backend JSON does not imply support for calibration");
             Check(legacy.TcpPredictionVersion == 0, "Old backend JSON does not imply support for predicted paths");
+            Check(legacy.TcpPeerReflexiveVersion == 0, "Old backend JSON does not imply support for source learning");
             Check(!(await worker.Handle(new("start"))).Ok, "Unpaired start accepted");
             var reply = await worker.Handle(new("create", Service: "https://example.com/", Mode: "udp"));
             Check(reply.Ok && reply.Profile!.Pair!.Mode == "udp" && !reply.Profile.Enabled, "Create must persist without starting network");
@@ -93,6 +95,16 @@ static class Program
                 Check(!Field<CheckBox>(oldCalibration, "tcpCalibration").Enabled, "New frontend cannot enable calibration on an old backend");
             using (var oldPrediction = new SettingsWindow(calibrationProfile, supportsPrediction: false))
                 Check(!Field<CheckBox>(oldPrediction, "tcpPrediction").Enabled, "New frontend cannot enable predicted paths on a backend without capability");
+            using (var sourceSettings = new SettingsWindow(calibrationProfile)) {
+                var sourceBox = Field<CheckBox>(sourceSettings, "tcpPeerSource");
+                Check(sourceBox.Enabled && !sourceBox.Checked, "Source learning UI is available only in explicit TCP mode and starts unchecked");
+                sourceBox.Checked = true;
+                Check(sourceSettings.Result.TcpPeerReflexive, "Checking the source-learning option updates the actual saved profile");
+                Field<ComboBox>(sourceSettings, "traversal").SelectedIndex = 0;
+                Check(!sourceBox.Enabled && !sourceBox.Checked && !sourceSettings.Result.TcpPeerReflexive, "Compatible mode removes hidden source-learning opt-in");
+            }
+            using (var oldSource = new SettingsWindow(calibrationProfile, supportsPeerSource: false))
+                Check(!Field<CheckBox>(oldSource, "tcpPeerSource").Enabled, "Old backend cannot be opted into source learning from the new frontend");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");

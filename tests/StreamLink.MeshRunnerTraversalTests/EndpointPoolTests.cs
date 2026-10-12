@@ -19,6 +19,8 @@ static class EndpointPoolTests
             "production pool: concurrent candidates retain one actual source/helper and capture owner");
         check(reflector.Requests == 1 && uses.All(u => u.ObservedAt == uses[0].ObservedAt),
             "seven concurrent candidates coalesce into one real STUN transaction without refreshing observation time");
+        await pool.PruneUnused(token);
+        check(!lease.Closed && reflector.Accepted == 1, "quota reclamation cannot evict borrowed candidate sources");
         clock.Advance(1999);
         using (var cached = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token)) {
             var altered = cached.Observed; altered.Port = 1;
@@ -54,6 +56,7 @@ static class EndpointPoolTests
         refused = false; try { a.Start(); } catch (IOException) { refused = true; }
         check(refused, "late Start cannot revive a revoked worker");
         foreach (var use in uses) use.Dispose();
+        await pool.PruneUnused(token);
         check(!lease.Closed && b.Send(Packet(lease.Local, b.Peer)), "ending all candidate references preserves native worker and source");
         // A genuine failed helper transaction must retire query capability, not
         // kill the still-working authorized raw path.
@@ -76,7 +79,14 @@ static class EndpointPoolTests
         check(renewed.Lease.Id != replacement.Lease.Id && !renewed.Owner.Failed,
             "failed capture invalidates even a recent cached observation and requires another owned source");
         renewed.Dispose();
-        replacement.Dispose(); await pool.DisposeAsync();
+        replacement.Dispose();
+        await pool.PruneUnused(token);
+        check(renewed.Lease.Closed && opened.All(i => i.Closed),
+            "unused source reclamation joins capture and releases the final real helper after every borrower ends");
+        using var reopened = await pool.Acquire(IPAddress.Loopback, reflector.Endpoint, token);
+        check(reopened.Lease.Id != renewed.Lease.Id && !reopened.Lease.Closed && !reopened.Owner.Failed,
+            "reacquiring a reclaimed slot creates a new owned resource instead of reviving its retired generation");
+        reopened.Dispose(); await pool.DisposeAsync();
         check(replacement.Lease.Closed && opened.All(i => i.Closed), "pool shutdown closes all final owned endpoints");
         await Isolation(check, token);
         await Shutdown(check, token);

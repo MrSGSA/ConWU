@@ -19,8 +19,9 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
     Task maintenance = Task.CompletedTask;
     Task? closing;
     bool started, disposed;
-    sealed class Slot(IPAddress source, IPEndPoint reflector)
+    sealed class Slot(string key, IPAddress source, IPEndPoint reflector)
     {
+        public readonly string Key = key;
         public readonly IPAddress Source = source;
         public readonly IPEndPoint Reflector = new(reflector.Address, reflector.Port);
         public readonly SemaphoreSlim Io = new(1);
@@ -48,17 +49,18 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
     // Cancellation while queued has not touched the helper stream. Cancelling
     // an actual query makes ONLY that flow unusable; active raw sessions retain
     // their original lease and capture references until their own retirement.
-    public async Task<Use> Acquire(IPAddress source, IPEndPoint reflector, CancellationToken token)
+    public async Task<Use> Acquire(IPAddress source, IPEndPoint reflector, CancellationToken token, string? isolation = null)
     {
         token.ThrowIfCancellationRequested();
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
-        string key = source + "/" + reflector;
+        if (isolation != null && !Guid.TryParseExact(isolation, "N", out _)) throw new ArgumentException("A source partition requires the authenticated peer device ID");
+        string key = source + "/" + reflector + "/" + isolation;
         Slot slot;
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed, this);
             if (!slots.TryGetValue(key, out slot!)) {
                 if (slots.Count >= TraversalLimits.TcpResources) throw new IOException("BudgetExhausted：TCP 源端点池已满");
-                slots[key] = slot = new(source, reflector);
+                slots[key] = slot = new(key, source, reflector);
             }
             slot.Users++;
             if (!started) { started = true; maintenance = Maintain(); }
@@ -92,7 +94,13 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
                 }
                 linked.Token.ThrowIfCancellationRequested();
                 return new(entry.Lease, entry.Owner, reference, entry.Observed!, entry.ObservedAt);
-            } catch { reference.Dispose(); throw; }
+            } catch {
+                reference.Dispose();
+                // Do not keep a failed, unused helper occupying a scarce slot
+                // until the next maintenance tick before trying another server.
+                if (!entry.Lease.QueryUsable || entry.Owner.Failed) { slot.Current = null; await Retire(entry); }
+                throw;
+            }
         } finally {
             if (entered) slot.Io.Release();
             lock (gate) {
@@ -105,6 +113,22 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
     {
         var observation = await reference.Observe(token);
         entry.Observed = observation.Public; entry.ObservedTick = clock.GetTimestamp(); entry.ObservedAt = clock.GetUtcNow();
+    }
+    // Make room for a different strategy without evicting a borrowed candidate,
+    // active native worker or in-flight query. No extra TCP quota is invented.
+    internal async Task PruneUnused(CancellationToken token)
+    {
+        Slot[] snapshot; lock (gate) snapshot = slots.Values.Where(s => s.Users == 0).ToArray();
+        foreach (var slot in snapshot) {
+            token.ThrowIfCancellationRequested(); if (!slot.Io.Wait(0)) continue;
+            try {
+                if (slot.Current is {} entry && entry.Lease.ReferenceCount == 2 && entry.Owner.Status.Sessions == 0) {
+                    slot.Current = null; await Retire(entry);
+                }
+            } finally {
+                slot.Io.Release(); lock (gate) if (slot.Users == 0 && slot.Current == null && slots.GetValueOrDefault(slot.Key) == slot) slots.Remove(slot.Key);
+            }
+        }
     }
     async Task Retire(Entry entry)
     {
@@ -132,7 +156,7 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
             slot.Io.Release();
             lock (gate) {
                 if (slot.Users == 0 && slot.Current == null) {
-                    string key = slot.Source + "/" + slot.Reflector;
+                    string key = slot.Key;
                     if (slots.GetValueOrDefault(key) == slot) slots.Remove(key);
                 }
             }

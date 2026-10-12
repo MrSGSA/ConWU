@@ -10,7 +10,7 @@ public sealed record MeshAnnouncement(int Slot, string Device, long Revision, lo
     MeshTraversalCapabilities? Traversal = null);
 public sealed record MeshEnvelope(int Slot, string Device, long Revision, string Data, string Signature);
 public sealed record MeshSnapshot(MeshDirectory Directory, MeshEnvelope[] Nodes,
-    MeshTraversalMessage[]? Traversal = null, int TraversalVersion = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0, int TcpPrediction = 0);
+    MeshTraversalMessage[]? Traversal = null, int TraversalVersion = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0, int TcpPrediction = 0, int TcpPeerReflexive = 0);
 public static class MeshMetadata
 {
     static byte[] SignedData(string network, MeshEnvelope e) => JsonSerializer.SerializeToUtf8Bytes(new { domain = "streamlink-metadata-v4", network, e.Slot, e.Device, e.Revision, e.Data });
@@ -68,6 +68,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     public bool SupportsUdpIpv6 { get; private set; }
     public bool SupportsFakeTcpIpv6 { get; private set; }
     public bool SupportsTcpPrediction { get; private set; }
+    public bool SupportsTcpPeerReflexive { get; private set; }
     public MeshDiscoveryClient(MeshProfile profile)
     {
         profile.Validate(); this.profile = profile;
@@ -114,19 +115,20 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
             if (response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.MethodNotAllowed) {
                 // Only an explicit old-server route response enables fallback.
                 // Auth failures, rate limiting and malformed data are not downgraded.
-                SupportsLongPolling = false; SupportsTraversal = false; SupportsUdpIpv6 = false; SupportsFakeTcpIpv6 = false; SupportsTcpPrediction = false; return await Read(token);
+                SupportsLongPolling = false; SupportsTraversal = false; SupportsUdpIpv6 = false; SupportsFakeTcpIpv6 = false; SupportsTcpPrediction = false; SupportsTcpPeerReflexive = false; return await Read(token);
             }
             response.EnsureSuccessStatusCode();
             var change = await response.Content.ReadFromJsonAsync<MeshWatchResponse>(token) ?? throw new IOException("协调通知为空");
             if (change.ServerEpoch == Guid.Empty || change.Cursor < 0 || change.Changes is null || change.Changes.Length > TraversalLimits.EventQueueSize || change.Snapshot is null ||
                 change.ServerEpoch == serverEpoch && change.Cursor < cursor || change.ServerEpoch != serverEpoch && !change.Reset ||
-                change.Snapshot.TraversalVersion is not (0 or MeshTraversal.Version) || change.Snapshot.UdpIpv6 is < 0 or > 1 || change.Snapshot.FakeTcpIpv6 is < 0 or > 1 || change.Snapshot.TcpPrediction is < 0 or > 1 || change.Snapshot.Traversal is { Length: > MeshTraversal.MaxInbox })
+                change.Snapshot.TraversalVersion is not (0 or MeshTraversal.Version) || change.Snapshot.UdpIpv6 is < 0 or > 1 || change.Snapshot.FakeTcpIpv6 is < 0 or > 1 || change.Snapshot.TcpPrediction is < 0 or > 1 || change.Snapshot.TcpPeerReflexive is < 0 or > 1 || change.Snapshot.Traversal is { Length: > MeshTraversal.MaxInbox })
                 throw new IOException("协调通知游标无效");
             // Membership and every announcement are still verified by MeshRunner.
             SupportsTraversal = change.Snapshot.TraversalVersion == MeshTraversal.Version;
             SupportsUdpIpv6 = SupportsTraversal && change.Snapshot.UdpIpv6 == 1;
             SupportsFakeTcpIpv6 = SupportsTraversal && change.Snapshot.FakeTcpIpv6 == 1;
             SupportsTcpPrediction = SupportsTraversal && change.Snapshot.TcpPrediction == 1;
+            SupportsTcpPeerReflexive = SupportsTraversal && change.Snapshot.TcpPeerReflexive == 1;
             serverEpoch = change.ServerEpoch; cursor = change.Cursor; return change.Snapshot;
         } finally { Volatile.Write(ref waiting, 0); }
     }
@@ -134,6 +136,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     {
         if (!SupportsTraversal) throw new NotSupportedException("协调服务未声明打洞控制能力");
         if (!SupportsTcpPrediction && messages.Any(m => m.Candidate?.Prediction != null || m.PeerCandidate?.Prediction != null)) throw new NotSupportedException("协调服务未声明预测协商能力");
+        if (!SupportsTcpPeerReflexive && messages.Any(m => m.Candidate?.PeerReflexive == true || m.PeerCandidate?.PeerReflexive == true)) throw new NotSupportedException("协调服务未声明 TCP 来源学习协商能力");
         if (messages.Length is < 1 or > MeshTraversal.MaxBatch || messages.Select(m => m.ToSlot).Distinct().Count() != messages.Length)
             throw new ArgumentException("每个批次最多包含每个对端的一条状态");
         foreach (var message in messages) {

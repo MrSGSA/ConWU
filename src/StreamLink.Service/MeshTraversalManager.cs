@@ -77,7 +77,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
         Capabilities = new(1, allowed.Contains(TraversalProfile.FakeTcpHttpSo) ? 1 : 0, router.BootId, allowed, BackgroundUpgrade: 1,
             UdpIpv6: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpIpv6 ? 1 : 0,
             FakeTcpIpv6: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsFakeTcpIpv6 ? 1 : 0,
-            TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0);
+            TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0,
+            TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -198,6 +199,10 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             if (peer == null || remote == null || remote.BootId != m.FromBoot) continue;
             if (received.TryGetValue(slot, out var seen) && seen.Boot == m.FromBoot && seen.Sequence >= m.Sequence) { inbox.Remove(slot); continue; }
             try {
+                if (m.Stage is not (MeshTraversalStage.Cancel or MeshTraversalStage.Selected) &&
+                    (m.Candidate?.PeerReflexive == true || m.PeerCandidate?.PeerReflexive == true) &&
+                    (!discovery.SupportsTcpPeerReflexive || Capabilities.TcpPeerReflexive != 1 || remote.TcpPeerReflexive != 1))
+                    throw new IOException("协调服务或双方未授权本轮 TCP 来源学习消息");
                 if (entries.TryGetValue(slot, out var e)) {
                     if (e.Closing != null) continue;
                     if (m.AttemptId != e.Attempt && m.Stage == MeshTraversalStage.Offer && e.Actor?.Phase != MeshAttemptPhase.Selected) {
@@ -288,8 +293,10 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 throw new IOException("协调服务不支持 IPv6 候选");
             bool prediction = !e.Upgrade && discovery.SupportsTcpPrediction && Capabilities.TcpPrediction == 1 && remote.TcpPrediction == 1;
             if (offer?.Candidate?.Prediction != null && !prediction) throw new IOException("协调服务或双方未授权预测扩展");
-            e.Gathering = factory.GatherCoordinated(peer, kind, attempt, allow6, offer?.Candidate,
-                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, e.Stop.Token);
+            bool sourceLearning = discovery.SupportsTcpPeerReflexive && Capabilities.TcpPeerReflexive == 1 && remote.TcpPeerReflexive == 1;
+            if (offer?.Candidate?.PeerReflexive == true && !sourceLearning) throw new IOException("协调服务或双方未授权 TCP 来源学习");
+            e.Gathering = factory.GatherSourceAware(peer, kind, attempt, allow6, offer?.Candidate,
+                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, e.Stop.Token);
         }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
         log($"设备 {peer.Slot} " + (e.Upgrade ? "保留 UDP 直连，后台尝试 FakeTCP" : $"开始 {kind} 同端点候选观察") +

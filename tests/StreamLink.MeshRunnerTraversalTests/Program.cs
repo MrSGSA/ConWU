@@ -23,8 +23,9 @@ bool lifecycleOnly = args.Length == 7 && args[6] == "--lifecycle-only";
 bool wireOnly = args.Length == 7 && args[6] == "--wire-only";
 bool predictionOnly = args.Length == 7 && args[6] == "--prediction-only";
 bool predictionRunnerOnly = args.Length == 7 && args[6] == "--prediction-runner-only";
+bool sourceOnly = args.Length == 7 && args[6] == "--source-only";
 bool poolOnly = args.Length == 7 && args[6] == "--pool-only";
-if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
+if ((!upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -52,7 +53,8 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if (poolOnly) { await PeerSourceBoundaryTests.Run(Check, token); for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
+    if (sourceOnly) { await PeerSourceAdmissionTests.Run(binary, root, Check, token); foreach (string mode in new[] { "client-role", "server-role", "same-public-ip", "old-peer", "old-server", "old-native" }) rows.Add(await PeerSourceRunnerTests.Run(binary, root, url, pin, mode, Check, token)); }
+    else if (poolOnly) { await PeerSourceBoundaryTests.Run(Check, token); for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
     else if (predictionRunnerOnly) {
         await PredictionRunnerTests.Admission(binary, root, Check, token);
         for (int round = 0; round < rounds; round++) rows.Add(await PredictionRunnerTests.Run(binary, Path.Combine(root, "prediction-round-" + round), url, pin, predictionObserver, Check, token, round % 2, helperFallback: round % 2 == 1));
@@ -125,7 +127,7 @@ try {
     }
     }
     }
-    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = poolOnly ? "formal endpoint pool and seven-peer candidate factory; real Windows TCP helpers; clock injection for cache age, memory capture; no native worker, MeshRunner, physical WinDivert/Wintun or NAT" : predictionRunnerOnly ? "formal Runner/factory/actor, signed HTTPS observer/coordination, real TCP helpers and C++ protocol; controlled NAT/raw/IP and synthetic qualified training fixtures, no WinDivert/Wintun/public NAT" : predictionOnly ? "formal candidate factory and TcpShapeProbe, real loopback TCP helper; controlled observer API and raw I/O; no MeshRunner/native worker, Wintun, public NAT or real multiple devices" : lifecycleOnly ? "production TCP factory/Runner/native; real HTTPS connection abort for 360 seconds, TCP helper query outage, signed revocation; memory raw/IP adapters, no physical driver, WAN, Wintun or gateway lease" : egressOnly ? "production paced native and UDP factories/Runner; real timer, native, TCP helpers, UDP, HTTPS; memory raw/IP adapters, no physical driver or WAN" : nativeIpv6Only
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, scope = sourceOnly ? "formal source-aware factory/Runner/actor over real HTTPS, helpers and C++; raw/mapping/filter/IP adapters and absent-capability cases are controlled fixtures, no physical Windows driver or public NAT" : poolOnly ? "formal endpoint pool and seven-peer candidate factory; real Windows TCP helpers; clock injection for cache age, memory capture; no native worker, MeshRunner, physical WinDivert/Wintun or NAT" : predictionRunnerOnly ? "formal Runner/factory/actor, signed HTTPS observer/coordination, real TCP helpers and C++ protocol; controlled NAT/raw/IP and synthetic qualified training fixtures, no WinDivert/Wintun/public NAT" : predictionOnly ? "formal candidate factory and TcpShapeProbe, real loopback TCP helper; controlled observer API and raw I/O; no MeshRunner/native worker, Wintun, public NAT or real multiple devices" : lifecycleOnly ? "production TCP factory/Runner/native; real HTTPS connection abort for 360 seconds, TCP helper query outage, signed revocation; memory raw/IP adapters, no physical driver, WAN, Wintun or gateway lease" : egressOnly ? "production paced native and UDP factories/Runner; real timer, native, TCP helpers, UDP, HTTPS; memory raw/IP adapters, no physical driver or WAN" : nativeIpv6Only
         ? "production FakeTCP IPv6 factory/Runner, actual native workers/helpers/HTTPS; pure WinDivert filter evaluation; memory raw and IP adapters, not physical WinDivert/Wintun or WAN"
         : ipv6Only
         ? "production UDP gathering/Runner over real IPv6/IPv4 loopback sockets and HTTPS; memory IP adapters; not Internet IPv6, native FakeTCP IPv6, wire fragmentation capture or Wintun"

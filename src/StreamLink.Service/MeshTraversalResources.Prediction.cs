@@ -13,10 +13,16 @@ internal sealed partial class MeshCandidateFactory
         if (model.Scope.NetworkGeneration != generation) throw new ArgumentException("Model generation differs");
         CalibratedTcpModel = model;
     }
-    public async Task<IMeshCandidateResource> GatherCoordinated(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
-        MeshTraversalCandidate? remote, int round, bool predictionAllowed, CancellationToken token)
+    public Task<IMeshCandidateResource> GatherCoordinated(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, CancellationToken token) =>
+        GatherSourceAware(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, false, token);
+    public async Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token)
     {
         bool requested = remote?.Prediction != null;
+        if (remote?.PeerReflexive == true && (!peerSourceAllowed || !SupportsTcpPeerReflexive || profile != TraversalProfile.FakeTcpHttpSo || remote.Prediction != null ||
+            IPEndPoint.Parse(remote.Endpoint).AddressFamily != AddressFamily.InterNetwork))
+            throw new IOException("TCP 来源学习未获本地、双方和协调服务授权");
         if (requested && (!predictionAllowed || !SupportsTcpPrediction || profile != TraversalProfile.FakeTcpHttpSo))
             throw new IOException("预测协商能力未获双方和协调服务授权");
         // Ordinary attempts precede inferred prediction. A normal remote Offer
@@ -26,7 +32,8 @@ internal sealed partial class MeshCandidateFactory
             if (remote?.Prediction is { StableModel: false } && !CalibratedTcpModel.StableModel) throw new IOException("PredictionNotSupported：双方模型均不稳定");
             return await GatherPrediction(peer, CalibratedTcpModel, token);
         }
-        return await GatherForPeer(peer, profile, attempt, allowIpv6, remote == null ? null : IPEndPoint.Parse(remote.Endpoint), round, token);
+        bool learn = peerSourceAllowed && SupportsTcpPeerReflexive && profile == TraversalProfile.FakeTcpHttpSo;
+        return await GatherScoped(peer, profile, attempt, allowIpv6, remote == null ? null : IPEndPoint.Parse(remote.Endpoint), round, learn, token);
     }
     async Task<IMeshCandidateResource> GatherPrediction(MeshMember peer, NatPortPrediction model, CancellationToken token)
     {
@@ -39,6 +46,7 @@ internal sealed partial class MeshCandidateFactory
             // Refill before holding a new source; this does not precharge,
             // refund or bypass the shared HTTP token bucket.
             while (!observationBudget.Available(8)) await Task.Delay(100, token);
+            if (pool != null) await pool.PruneUnused(token);
             var source = IPAddress.Parse(model.Scope.SourceAddress);
             if (model.Scope.NetworkGeneration != generation) throw new IOException("PredictionInvalidated：出口代次不符");
             var helper = await OpenPredictionHelper(source, token);

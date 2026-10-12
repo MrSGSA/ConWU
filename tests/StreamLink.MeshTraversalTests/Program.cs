@@ -29,6 +29,7 @@ using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(220)); var
 var rows = new List<object>();
 try {
     await PredictionTests.Run(Check);
+    await PeerSourceTests.Run(Check);
     var registry = new MeshRegistry(root);
     {
         var (a, b) = Pair(); var ca = Caps(); var cb = Caps(); long seqA = 0, seqB = 0;
