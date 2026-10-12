@@ -103,7 +103,7 @@ static class BrokerLoadPoc
                         nativeCpuMs = children.Select((p, i) => (p.TotalProcessorTime - childCpu[i]).TotalMilliseconds).ToArray(),
                         managedWorkingSet = self.WorkingSet64, nativeWorkingSet = children.Select(p => p.WorkingSet64).ToArray(),
                         egressMbps, egressStart, egressEnd = pacers.Select(p => p.Snapshot()).ToArray(),
-                        recovery = routers.Select(r => r.Status().Select(p => new { p.Slot, p.Connected, p.Recovery }).ToArray()).ToArray(),
+                        recovery = routers.Select(r => r.Status().Select(p => new { p.Slot, p.Connected, p.Recovery, p.Traffic }).ToArray()).ToArray(),
                         allPairsHealthy = routers[0].Status().All(p => p.Connected) && routers.Skip(1).All(r => r.Status().Single(p => p.Slot == 1).Connected) };
                     rows.Add(row); Console.WriteLine(JsonSerializer.Serialize(row));
                     foreach (var adapter in adapters) adapter.Sink = null;

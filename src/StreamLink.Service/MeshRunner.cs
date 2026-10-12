@@ -63,7 +63,7 @@ public sealed class MeshRunner
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
-        long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0;
+        long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0, nextTrafficReport = 0;
         int probeFailures = 0, readFailures = 0, serverFailures = 0;
         string publishedEndpoint = "\0", publishingEndpoint = "";
         string firewallMembers = "";
@@ -238,6 +238,13 @@ public sealed class MeshRunner
                         nextEgressReport = now + 30000;
                     }
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);
+                    if (now >= nextTrafficReport) {
+                        foreach (var peer in statuses) if (peer.Traffic?.Windows.LastOrDefault(w => w.Complete) is {} window &&
+                            (window.AcceptedSendBytes > 0 || window.DeliveredReceiveBytes > 0))
+                            log($"设备 {peer.Slot} 路径业务窗口 {window.Seconds:F2} 秒：接受发送 {window.AcceptedSendMbps:F3} Mbps，已交付接收 {window.DeliveredReceiveMbps:F3} Mbps，拒绝 {window.SendRejectedPackets}；" +
+                                $"业务活动 RTT 样本 {window.ActivityRtt.Samples}，P95 {(window.ActivityRtt.P95Ms?.ToString("F2") ?? "Unknown")} ms；对端送达/发送损失 Unknown");
+                        nextTrafficReport = now + 30000;
+                    }
                     int degraded = statuses.Count(p => p.Degraded);
                     report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) {

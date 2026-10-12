@@ -71,6 +71,12 @@ static class NativeIpv6RunnerTests
             adapters[0].Outgoing.Add(Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(Packet(b.LocalIp, a.LocalIp));
             while (adapters.Any(x => x.Incoming.Count == 0)) await Task.Delay(20, token);
             check(adapters[0].Incoming.Single().SequenceEqual(Packet(b.LocalIp, a.LocalIp)) && adapters[1].Incoming.Single().SequenceEqual(Packet(a.LocalIp, b.LocalIp)), mode + ": authenticated MeshLink transports full inner IPv4 through actual native workers in both directions");
+            using (var reporting = CancellationTokenSource.CreateLinkedTokenSource(token)) {
+                reporting.CancelAfter(3000);
+                while (!states.All(s => s?.Peers?.Single().Traffic?.Current is { AcceptedSendBytes: 1280, DeliveredReceiveBytes: 1280 })) await Task.Delay(10, reporting.Token);
+            }
+            check(states.All(s => s!.Peers!.Single().Traffic is { Qualification: "QualityUnknown", SendLossPercent: null, PeerDeliveredSendBytes: null, OneWayDelayMs: null }),
+                mode + ": formal native Runner exposes actual directional IP observations without inventing peer receipt or loss");
             check(wire.Packets > 0 && wire.MaximumBytes >= 1392, mode + ": native serialized packet length is measured separately from UDP framing");
             check(factories.All(f => f.Transports.Single().WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 }), mode + ": formal factory enables native wire accounting and only selected business bypasses control limits");
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": formal native broker uses shared per-member pacing and reports it through Runner status");

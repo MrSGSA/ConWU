@@ -18,4 +18,5 @@ public sealed record MeshPathStatus(Guid PathId, Guid ResourceId, Guid AttemptId
 {
     public NativeWireStats? WireControl { get; init; }
     public DatagramQueueStats? SendQueue { get; init; }
+    public PathTrafficSnapshot? Traffic { get; init; }
 }

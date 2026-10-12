@@ -14,6 +14,11 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+if (args.Contains("--traffic-only")) {
+    var traffic = await TrafficObservationTests.Run(Check, Packet);
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, traffic }, new JsonSerializerOptions { WriteIndented = true }));
+    return;
+}
 if (args.Contains("--recovery-budget-only")) {
     var floodOnly = await RecoveryBudgetTests.ControlFlood(Check, Packet);
     var result = await RecoveryBudgetTests.Run(Check, Packet);
@@ -21,6 +26,7 @@ if (args.Contains("--recovery-budget-only")) {
     return;
 }
 var recoveryRows = await RecoveryTests.Run(Check, Packet);
+var trafficRows = await TrafficObservationTests.Run(Check, Packet);
 var controlFlood = await RecoveryBudgetTests.ControlFlood(Check, Packet);
 var recoveryBudget = await RecoveryBudgetTests.Run(Check, Packet);
 await PolicyTests.Run(Check);
@@ -123,7 +129,7 @@ await Until(() => final.A.Closed && ra.Paths(2).Length == 0, "revocation stops t
 await rb.DisposeAsync(); await ra.DisposeAsync();
 Check(final.B.Closed && aa.Disposed && ab.Disposed, "shutdown releases remaining path references and packet adapters");
 await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, routers = 2, realLoopbackSockets = true, recoveryRows, recoveryBudget, controlFlood,
-    scope = "production MeshRouter/MeshLink/nomination with retained test UDP adapters; profile labels exercise policy only, no actual FakeTCP or Wintun", nativeDriver = false, realNat = false }, new JsonSerializerOptions { WriteIndented = true }));
+    scope = "production MeshRouter/MeshLink/nomination with retained test UDP adapters; profile labels exercise policy only, no actual FakeTCP or Wintun", trafficRows, nativeDriver = false, realNat = false }, new JsonSerializerOptions { WriteIndented = true }));
 Console.WriteLine($"PASS {checks} managed Router checks. No installed service or driver changes.");
 } catch (Exception ex) {
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, failure = ex.ToString() })); throw;
