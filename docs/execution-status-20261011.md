@@ -3,6 +3,8 @@
 规格：[执行计划](StreamLink-Codex-Execution-Plan-20261011.md)，版本 1.0。
 开发起点：`aa4023b`；现有工作树干净。此文件随实现更新，未执行的测试不会标记通过。
 
+最新实际交付：[0.5.3 私有 GitHub 开发预发行](m9-0.5.3-candidate-20261012.md)，绑定 `02e233e`，约51.84MiB；完整Package、本机/Akane实际EXE281文件、四附件远端digest及版本标签核对通过。包含下述UDP探索正式接入与队列修复，两端现用0.3.2服务及协调服务器未升级。构建源码中的“尚未打包”是当时状态；总发布Gate仍为NotPassed，完整M0—M9目标继续。
+
 最新源码进展：[UDP 探索正式产品接入](m5-udp-exploration-product-20261012.md)。独立能力/签名候选、正式 Factory/Runner、同 socket seed 接管、共享准入及设置已完成，默认关闭；90 个本地接入案例和最终准入短回归通过。生产自动资格限于经同源独立目标观察的物理公网 IPv4；私网 peer-port 资格仍缺生产提供者，两端四项 STUN 只作局部观察。没有重打包或替换现用服务，已发布 0.5.2 包不包含本次新增能力。下表 M5 中“正式资格/协商/Runner 尚缺”为该局部实现前的历史状态；整体发布 Gate 不变。
 
 | 工作包 | 实现/接入状态 | 本轮验证 | 默认启用 |
@@ -16,7 +18,7 @@
 | M6 质量/效率 | 选路、恢复、队列观测与受管pacing已接产品；新增业务三阶段时间、真实首包路径和复用普通保活的StablePath。兼容 pacing、完整队列、AutoQuality待完成 | 最终Router203、服务69、基础35检查及Release构建通过；单Router七邻居维护竞争全部完成，确认约4.52–5.86秒，仅本地回环。既有原生负载约49.96Mbps、统计丢失0与paced失败证据均保留；整体质量/WAN Gate未通过。详见 [空闲诊断](m6-idle-path-observation-20261012.md)、[业务恢复](m6-recovery-observations-20261012.md) 与 [pacing](m6-pacing-wakeup-20261012.md) | 新版默认有界恢复观测；pacing默认0、UDP降级独立许可、AutoQuality拒绝启用；a24f657候选已含业务恢复、空闲诊断与兼容控制准入，现用服务未升级 |
 | M7 映射/IPv6 | PCP/NAT-PMP TCP/UDP、同 socket UDP IPv6、ABI 2/broker-only FakeTCP IPv6 已接入；有界单播/IPv4组播、共享端口、可让位配额，以及独立于STUN成功的TCP/UDP网关收集完成 | 10月12日最终网关356、正式UDP Runner44、TCP连接46检查通过；全部STUN DNS失败的两个受控Runner约8.798秒直连，真实回环HTTPS/UDP，IP适配器为内存。另有 [组播及配额证据](m7-gateway-multicast-20261012.md)。真实路由器、物理多接口、公网/WinDivert/Wintun/无分片Gate待实测。详见 [独立入口记录](m7-independent-gateway-20261012.md) | 映射、UDP及FakeTCP IPv6均默认关闭；已开启映射的新版尝试通知与独立入口。保留旧成功路线及真实对端认证；现用部署未替换；a24f657 候选已包含 |
 | M8 安全/恢复 | 随各模块实现；升级候选与原Active所有者链；新增watch 403后下一预算轮询验证签名撤销 | 10月12日正式工厂/Runner/C++本地集成：360.13秒双端HTTPS中断，692包持续；STUN查询超时后持续；签名撤销5.28秒退出，10检查通过；watch34、基线65通过。raw/IP模拟，真实Wintun/网关/系统生命周期Gate待完成 | 撤销修复无需开关；a24f657 候选已包含；保留既有密码不变量 |
-| M9 包/真机/回滚 | 已发布私有GitHub的0.5.2-preview，源码绑定9775de2；旧0.5.1/0.5.0包独立保留。后续UDP探索未重新打包 | 0.5.2完整Package、本机/Akane实际EXE281文件预检、四附件远端SHA-256核对通过；未做真实安装/冷启动/回滚/八真机Gate。详见 [0.5.2候选](m9-0.5.2-candidate-20261012.md) | 51.82MiB开发预发行，总发布等级NotPassed；Akane独立候选目录，原0.3.2服务未替换 |
+| M9 包/真机/回滚 | 已发布私有GitHub的0.5.3-preview，源码绑定02e233e，含UDP探索接入与队列修复；旧0.5.2/0.5.1/0.5.0包独立保留 | 0.5.3完整Package、本机/Akane实际EXE281文件、四附件远端SHA-256与标签核对通过；安装/冷启动/回滚/八真机Gate未完成。详见 [0.5.3候选](m9-0.5.3-candidate-20261012.md) | 51.84MiB开发预发行，总发布等级NotPassed；Akane独立候选目录，原0.3.2服务未替换 |
 
 本次新增：[M5 有界 UDP 多源探索机制](m5-udp-exploration-mechanism-20261012.md)。确定性模型和真实回环各 30 轮、26 项边界检查、四组各 10,000 种子的纯相交实验通过；普通 UDP 87、Router 206、服务 70、原生计账 74 项回归通过。它尚未接入正式 Runner 资格与协商，不提升 M5/M9 发布等级。
 
