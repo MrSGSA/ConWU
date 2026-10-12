@@ -116,7 +116,15 @@ static class NativeIpv6RunnerTests
                     long failureAt=clock.ElapsedMilliseconds;
                     if(qualityMode=="hard-failure"){
                         check(states.All(s=>s!.Peers!.Single().Quality!.StableBenefit==false),"equally good native paths do not switch before a hard worker fault");
-                        await Task.Delay(13000,token);
+                        long expires=states.Max(s=>s!.Peers!.Single().Diagnostics!.Windows.Where(w=>w.Leg%6<3).Min(w=>w.ObservedMs))+90000+750;
+                        int wait=(int)Math.Max(0,expires-Environment.TickCount64);
+                        if(wait>30000)throw new IOException("unexpected diagnostic timing; cannot borrow extra standby lifetime");
+                        await Task.Delay(wait,token);
+                        using(var reporting=CancellationTokenSource.CreateLinkedTokenSource(token)){
+                            reporting.CancelAfter(2000);
+                            while(!states.All(s=>s!.Peers!.Single().Quality!.Reason.StartsWith("ActiveEvidenceUnavailable:ExpiredObservation",StringComparison.Ordinal)))
+                                await Task.Delay(20,reporting.Token);
+                        }
                         check(states.All(s=>s!.Peers!.Single().Quality is{CandidateQualified:true,StableBenefit:false}&&s.Peers!.Single().Quality!.Reason.StartsWith("ActiveEvidenceUnavailable:ExpiredObservation",StringComparison.Ordinal)),
                             "older Active windows expire without discarding the still-fresh retained candidate or authorizing a healthy-path switch");
                         failureAt=clock.ElapsedMilliseconds;
