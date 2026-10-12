@@ -101,7 +101,8 @@ static class Program
             (_, _, token) => Task.Delay(Timeout.Infinite, token), (_, _, remote) => { if (remote.Length == 0) cleanups++; }, (_, _) => { }, folder);
         var profile = new DeviceProfile { Mesh = owner };
         SessionStatus? status = null;
-        var runner = new MeshRunner(profile, Console.WriteLine, s => status = s, _ => { }, _ => { }, services);
+        var logs = new ConcurrentQueue<string>();
+        var runner = new MeshRunner(profile, line => { logs.Enqueue(line); Console.WriteLine(line); }, s => status = s, _ => { }, _ => { }, services);
         using var stop = new CancellationTokenSource(); Task running = runner.Run(stop.Token);
         try {
             await Until(() => discovery.Reads > 0 && discovery.Published.Count > 0, "coordination starts while adapter and local TCP mapping are still pending");
@@ -124,16 +125,27 @@ static class Program
             Check(discovery.WaitingReads > 0 && status?.Connected == true && !adapter.Disposed, "HTTP stall preserves the working encrypted peer path");
             int data = endpoint.DataPackets; adapter.Outgoing.Add(Packet(owner.LocalIp, guest.LocalIp));
             await Until(() => endpoint.DataPackets > data, "real encrypted datagram delivery continues through a coordination stall");
+            endpoint.ReplyPacket = Packet(guest.LocalIp, owner.LocalIp);
+            using (var sampling = new CancellationTokenSource()) {
+                var feeding = Task.Run(async () => { try { while (true) { adapter.Outgoing.Add(Packet(owner.LocalIp, guest.LocalIp)); await Task.Delay(100, sampling.Token); } } catch (OperationCanceledException) when (sampling.IsCancellationRequested) { } });
+                try {
+                    await Until(() => status?.Peers?.Single().Recovery?.StableBusinessConfirmedMs != null,
+                        "formal Runner status carries actual legacy business recovery evidence while coordination is blocked", 10000);
+                    await Until(() => logs.Any(l => l.StartsWith("StableBusiness ")), "formal Runner emits stable confirmation event", 1500);
+                    Check(logs.Count(l => l.StartsWith("FirstBusiness ")) == 1 && logs.Count(l => l.StartsWith("StableBusiness ")) == 1,
+                        "first and stable business are logged once per episode, without every-frame logging");
+                } finally { sampling.Cancel(); await feeding; endpoint.ReplyPacket = null; }
+            }
             var previous = transports.OfType<ForwardingTransport>().Single(); previous.Exited = true;
             await Until(() => transports.OfType<ForwardingTransport>().Count() == 2, "outbound transport also restarts while HTTP is blocked", 1500);
             await Until(() => transports.OfType<ForwardingTransport>().LastOrDefault(t => !t.Exited)?.Packets > 0 && status?.Connected == true, "restarted transport is authenticated without recreating the adapter");
             Check(adapterCount == 1 && !adapter.Disposed, "mapping and per-peer recovery retain one adapter");
             mapping.ReleaseGate = new(TaskCreationOptions.RunContinuationsAsynchronously);
             var retainedServer = transports.OfType<StubTransport>().Single(t => !t.Disposed);
+            long beforeWithdrawal = discovery.Published.Last().Revision;
             mapping.Failed.SetException(new IOException("simulated mapping failure"));
             await Until(() => mapping.Removing, "failed TCP mapping starts asynchronous lease cleanup");
             Check(!retainedServer.Disposed, "candidate lease failure preserves the listening FakeTCP process and its accepted sessions");
-            long beforeWithdrawal = discovery.Published.Last().Revision;
             await Until(() => discovery.Published.Any(p => p.Revision > beforeWithdrawal && p.Endpoint.Length == 0),
                 "expired mapping is withdrawn even while the listening process remains", 4000);
             var latest = transports.OfType<ForwardingTransport>().Single(t => !t.Disposed); latest.Exited = true;
@@ -223,6 +235,7 @@ static class Program
         readonly CancellationTokenSource stop = new(); readonly Task pump; readonly MeshLink link;
         public IPEndPoint Endpoint { get; }
         public bool SuppressPong; public int Received, DataPackets;
+        public byte[]? ReplyPacket;
         public Func<byte[], IPEndPoint, Task>? RedirectPong;
         public PeerEndpoint(MeshLink link) { this.link = link; Endpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
         public Task Send(byte[] bytes, IPEndPoint to) => socket.SendAsync(bytes, to, stop.Token).AsTask();
@@ -230,7 +243,10 @@ static class Program
         {
             while (!stop.IsCancellationRequested) {
                 var packet = await socket.ReceiveAsync(stop.Token); var message = link.Receive(packet.Buffer); Interlocked.Increment(ref Received);
-                if (message.Packet != null) Interlocked.Increment(ref DataPackets);
+                if (message.Packet != null) {
+                    Interlocked.Increment(ref DataPackets);
+                    if (ReplyPacket is {} reply && link.Data(reply) is {} encoded) await socket.SendAsync(encoded, packet.RemoteEndPoint, stop.Token);
+                }
                 if (message.Reply != null && !(SuppressPong && message.Reply[4] == 6)) {
                     if (message.Reply[4] == 6 && RedirectPong is {} redirect) await redirect(message.Reply, packet.RemoteEndPoint);
                     else await socket.SendAsync(message.Reply, packet.RemoteEndPoint, stop.Token);

@@ -61,6 +61,7 @@ public sealed class MeshRunner
         var clients = new Dictionary<int, MeshPeerTransports>();
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
+        var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
         long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0;
         int probeFailures = 0, readFailures = 0, serverFailures = 0;
@@ -211,6 +212,20 @@ public sealed class MeshRunner
                     traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
+                    foreach (int slot in recoveryReports.Keys.Where(slot => !statuses.Any(p => p.Slot == slot)).ToArray()) recoveryReports.Remove(slot);
+                    foreach (var peer in statuses) if (peer.Recovery is {} recovery) {
+                        var prior = recoveryReports.GetValueOrDefault(peer.Slot);
+                        if (prior.Episode != recovery.EpisodeId) prior = (recovery.EpisodeId, false, false);
+                        if (!prior.First && recovery.FirstBusinessMs is {} firstBusiness) {
+                            log($"FirstBusiness peer={peer.Slot} episode={recovery.EpisodeId:N} path={recovery.FirstBusinessPathId:N} elapsedMs={firstBusiness}；已收到认证业务包，尚不代表稳定恢复");
+                            prior.First = true;
+                        }
+                        if (!prior.Stable && recovery.StableBusinessConfirmedMs is {} confirmed) {
+                            log($"StableBusiness peer={peer.Slot} episode={recovery.EpisodeId:N} path={recovery.PathId:N} startMs={recovery.StableBusinessStartMs} confirmedMs={confirmed} probes={recovery.ConsecutiveProbes} restarts={recovery.WindowRestarts}；本地业务进展与同路径往返验证，不代表目标吞吐或零丢包");
+                            prior.Stable = true;
+                        }
+                        recoveryReports[peer.Slot] = prior;
+                    }
                     var egress = factory?.Egress;
                     if (egress != null && now >= nextEgressReport) {
                         log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，突发上限 {egress.BurstBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" + (egress.Failure.Length > 0 ? "；调度失败 " + egress.Failure : ""));

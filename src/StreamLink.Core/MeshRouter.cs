@@ -8,6 +8,7 @@ namespace StreamLink.Core;
 public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0)
 {
     public bool Degraded { get; init; }
+    public PathRecoverySnapshot? Recovery { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -26,6 +27,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public string Name = "", Detail = "等待对端上线";
         public long Sent, Received, Dropped;
         public ManagedPeer? Managed;
+        public readonly PathRecovery Recovery = new(Environment.TickCount64);
+        public Guid LegacyPathId;
     }
     readonly object gate = new();
     readonly MeshProfile profile;
@@ -109,7 +112,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
-                p.Sent, p.Received, p.Dropped) { Degraded = degraded };
+                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64) };
         }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
@@ -126,7 +129,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peers.TryGetValue(slot, out var peer)) {
                 bool delivered = Healthy(peer) && (peer.Managed != null ? SendManaged(peer.Link.Data(packet), peer.Managed.Active) : Send(peer.Link.Data(packet), peer.Active));
-                if (delivered) peer.Sent += count; else peer.Dropped++;
+                if (delivered) peer.Sent += count;
+                else { peer.Dropped++; peer.Recovery.Break("BusinessSendRejected", Environment.TickCount64); }
             }
         }
     }
@@ -143,16 +147,21 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
-                Send(result.Reply, endpoint);
+                if (result.Reply != null && (buffer[4] != 5 || TraversalResources.Shared.TrySend(result.Reply.Length, maintenance: true))) Send(result.Reply, endpoint);
                 if (buffer[4] != 1) {
                     if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
                         if (peer.Active != null) { peer.Retired.Enqueue(peer.Active); while (peer.Retired.Count > 8) peer.Retired.Dequeue(); }
                         peer.Active = endpoint; peer.ActiveReceived = Stopwatch.GetTimestamp(); peer.Probes.Clear();
+                        peer.LegacyPathId = Guid.NewGuid(); peer.Recovery.Select(peer.LegacyPathId, Environment.TickCount64);
                     } else if (endpoint.Equals(peer.Candidate) || !Healthy(peer) || !peer.Retired.Contains(endpoint)) Challenge(peer, endpoint);
                 }
+                if (endpoint.Equals(peer.Active) && result.PongToken is long recoveryNonce) peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                 if (result.Packet != null) {
-                    if (MeshPackets.Accept(result.Packet, local, peer.Member.Slot) && adapter.Write(result.Packet)) peer.Received += result.Packet.Length; else peer.Dropped++;
+                    if (MeshPackets.Accept(result.Packet, local, peer.Member.Slot) && adapter.Write(result.Packet)) {
+                        peer.Received += result.Packet.Length;
+                        if (endpoint.Equals(peer.Active)) peer.Recovery.Business(Environment.TickCount64);
+                    } else peer.Dropped++;
                 }
             }
         }
@@ -166,7 +175,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
             var order = peers.Values.ToArray();
             for (int i = 0; i < order.Length; i++) {
                 var peer = order[(i + cursor) % order.Length];
-                if (peer.Managed != null) { TickManaged(peer, now); continue; }
+                if (peer.Managed != null) { TickManaged(peer, now); TickRecovery(peer, now); continue; }
+                TickRecovery(peer, now);
                 if (now < nextLegacy) continue;
                 if (Healthy(peer)) Send(peer.Link.Ping(), peer.Active);
                 else {

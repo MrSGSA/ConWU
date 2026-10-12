@@ -124,10 +124,15 @@ public sealed partial class MeshRouter
                     if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out long sent) && Stopwatch.GetElapsedTime(sent).TotalSeconds < 12) {
                         path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(sent, path.LastRoundTrip).TotalMilliseconds;
                     }
+                    if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
+                        peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                     if (message.Control != null) NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) || path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
-                        if (allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot) && adapter.Write(message.Packet)) peer.Received += message.Packet.Length;
+                        if (allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot) && adapter.Write(message.Packet)) {
+                            peer.Received += message.Packet.Length;
+                            if (ReferenceEquals(peer.Managed!.Active, path) && path.ProofAt != 0) peer.Recovery.Business(Environment.TickCount64);
+                        }
                         else peer.Dropped++;
                     }
                 }
@@ -171,6 +176,8 @@ public sealed partial class MeshRouter
             // The authenticated nomination itself proved a round trip on this
             // actual resource. Duplicate final messages cannot keep refreshing it.
             path.LastRoundTrip = Stopwatch.GetTimestamp();
+            peer.Recovery.Select(path.Identity.PathId, now);
+            peer.Recovery.Health(ManagedHealthy(peer), now);
             if (path.Previous != null) {
                 path.Previous.ReceiveUntil = now + 2000;
                 // Keep the resource (not business reception) long enough to

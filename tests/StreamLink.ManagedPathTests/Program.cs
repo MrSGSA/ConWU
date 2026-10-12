@@ -13,6 +13,7 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+var recoveryRows = await RecoveryTests.Run(Check, Packet);
 await PolicyTests.Run(Check);
 var a = MeshIdentity.Create("https://example.com/", "", "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
 var aa = new Adapter(); var ab = new Adapter();
@@ -112,7 +113,7 @@ MeshIdentity.Revoke(a, 2); ra.ApplyDirectory(a.Directory!);
 await Until(() => final.A.Closed && ra.Paths(2).Length == 0, "revocation stops the peer pump before releasing its resource");
 await rb.DisposeAsync(); await ra.DisposeAsync();
 Check(final.B.Closed && aa.Disposed && ab.Disposed, "shutdown releases remaining path references and packet adapters");
-await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, routers = 2, realLoopbackSockets = true,
+await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, routers = 2, realLoopbackSockets = true, recoveryRows,
     scope = "production MeshRouter/MeshLink/nomination with retained test UDP adapters; profile labels exercise policy only, no actual FakeTCP or Wintun", nativeDriver = false, realNat = false }, new JsonSerializerOptions { WriteIndented = true }));
 Console.WriteLine($"PASS {checks} managed Router checks. No installed service or driver changes.");
 } catch (Exception ex) {
