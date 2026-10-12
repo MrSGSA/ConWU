@@ -47,6 +47,7 @@ public sealed class MeshRunner
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
         using var discovery = services.Discovery(mesh);
+        using var networkWake = services.NetworkWake();
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
         IMeshCandidateFactory? factory = null;
@@ -81,6 +82,14 @@ public sealed class MeshRunner
             opening = services.Adapter(mesh);
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
+                if (networkWake.Take(now)) {
+                    nextProbe = nextRead = nextServer = now;
+                    probeFailures = readFailures = serverFailures = 0;
+                    lastPublish = 0;
+                    foreach (var client in clients.Values) client.WakeRetry();
+                    (mapping as IMappingRefresh)?.RequestRefresh();
+                    log("网络变化或系统唤醒，正在复核入口和发现信息；保留已验证的直连路径");
+                }
                 if (gatheringFactory?.IsCompleted == true) {
                     try { factory = await gatheringFactory; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("新增打洞能力暂不可用：" + ex.Message); }
                     gatheringFactory = null;

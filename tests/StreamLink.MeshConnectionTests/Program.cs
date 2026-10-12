@@ -10,7 +10,7 @@ using StreamLink.Service;
 
 namespace StreamLink.MeshConnectionTests;
 
-static class Program
+static partial class Program
 {
     static int checks;
     public static void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; Console.WriteLine("PASS " + message); }
@@ -24,6 +24,10 @@ static class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if (args is ["--network-wake-only", var wakeReport]) {
+            await NetworkWake(Path.GetFullPath(wakeReport));
+            Console.WriteLine($"PASS {checks} compatibility network wake checks"); return;
+        }
         if(args is ["--alive-recovery-only",var recoveryReport]){
             await AliveProcessRecovery(Path.GetFullPath(recoveryReport));
             Console.WriteLine($"PASS {checks} unchanged-endpoint compatibility recovery checks");return;
@@ -232,7 +236,7 @@ static class Program
         public IPEndPoint? ClientEndpoint => endpoint; public bool Exited { get; set; } public bool Disposed;
         public void Dispose() { Disposed = true; Exited = true; }
     }
-    sealed class Mapping : IMapping
+    sealed class Mapping : IMapping, IMappingRefresh
     {
         public IPAddress LocalAddress => IPAddress.Loopback;
         public bool IsValid => !Disposed && !Failed.Task.IsCompleted;
@@ -240,6 +244,9 @@ static class Program
         public event Action<IPEndPoint>? Changed; public bool Disposed;
         public readonly TaskCompletionSource Failed = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public TaskCompletionSource? ReleaseGate; public bool Removing;
+        int refreshes;
+        public int Refreshes => Volatile.Read(ref refreshes);
+        public void RequestRefresh() => Interlocked.Increment(ref refreshes);
         public void Change(IPEndPoint endpoint) { PublicEndpoint = endpoint; Changed?.Invoke(endpoint); }
         public Task Maintain(CancellationToken token) => Failed.Task.WaitAsync(token);
         public async ValueTask DisposeAsync() { Removing = true; if (ReleaseGate != null) await ReleaseGate.Task; Disposed = true; }

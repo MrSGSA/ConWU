@@ -36,6 +36,14 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
         & dotnet run --project tests/StreamLink.MeshConnectionTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'TCP selection / mesh recovery regression failed'}
+        & dotnet run --project tests/StreamLink.MeshConnectionTests -c Release --no-build -- --network-wake-only (Join-Path $root "artifacts/network-wake-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'SCM resume / network notification and retained legacy resource regression failed'}
+        & dotnet run --project tests/StreamLink.MappingTests -c Release -- --tcp-mapping-wake-only (Join-Path $root "artifacts/tcp-mapping-wake-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Same held TCP helper refresh / explicit gateway candidate regression failed'}
+        & python tests/legacy_wire_loopback.py --output (Join-Path $root "artifacts/legacy-native-wire-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Actual compatibility native injection report / failed sink isolation regression failed'}
+        & dotnet run --project tests/StreamLink.LegacyWireTests -c Release -- --native-report (Join-Path $root "artifacts/legacy-native-wire-$releaseVersion.json") --output (Join-Path $root "artifacts/legacy-parent-wire-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Compatibility native report parser / parent resource ledger regression failed'}
         & dotnet run --project tests/StreamLink.HelperLedgerTests -c Release -- --output (Join-Path $root "artifacts/kernel-helper-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Kernel helper and explicit compatibility resource accounting regression failed'}
         # Fail short resource/freshness checks before the long load diagnostics.

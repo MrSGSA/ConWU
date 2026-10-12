@@ -21,6 +21,7 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
+    public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
     public static MeshRuntimeServices Default => new(

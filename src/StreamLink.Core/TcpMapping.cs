@@ -2,7 +2,7 @@ using System.Net;
 
 namespace StreamLink.Core;
 
-public sealed class TcpMapping : IMapping
+public sealed class TcpMapping : IMapping, IMappingRefresh
 {
     readonly Upnp? router;
     readonly RouterMapping? rule;
@@ -11,6 +11,7 @@ public sealed class TcpMapping : IMapping
     readonly int sourcePort;
     readonly object lifecycle = new();
     readonly CancellationTokenSource stopping = new();
+    readonly SemaphoreSlim refresh = new(0, 1);
     Task maintenance = Task.CompletedTask;
     bool disposed, maintaining;
     TcpBinding binding;
@@ -126,6 +127,10 @@ public sealed class TcpMapping : IMapping
             maintaining = true; return maintenance = MaintainCore(token);
         }
     }
+    public void RequestRefresh()
+    {
+        lock (lifecycle) { if (!disposed && refresh.CurrentCount == 0) refresh.Release(); }
+    }
     async Task MaintainCore(CancellationToken token)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stopping.Token); token = linked.Token;
@@ -136,10 +141,10 @@ public sealed class TcpMapping : IMapping
             finally { stop.Cancel(); try { await Task.WhenAll(leaseTask, helperTask); } catch { } }
             return;
         }
-        int tick = 0;
+        long nextRouterRenew = Environment.TickCount64 + 60000;
         while (true)
         {
-            await Task.Delay(TimeSpan.FromSeconds(10), token);
+            await refresh.WaitAsync(TimeSpan.FromSeconds(10), token);
             StunResult result;
             try { result = await binding.Pulse(token); }
             catch (Exception) when (!token.IsCancellationRequested)
@@ -156,14 +161,16 @@ public sealed class TcpMapping : IMapping
                 log("公网映射已变化，发布更新后的端点");
                 Changed?.Invoke(PublicEndpoint);
             }
-            if (++tick % 6 == 0) await router!.Add(rule!, token);
+            // An address-notification burst must not turn six quick helper
+            // pulses into an early gateway renewal storm.
+            if (Environment.TickCount64 >= nextRouterRenew) { await router!.Add(rule!, token); nextRouterRenew = Environment.TickCount64 + 60000; }
         }
     }
     async Task MaintainHelper(CancellationToken token)
     {
         bool connected = true;
         while (true) {
-            await Task.Delay(10000, token);
+            await refresh.WaitAsync(TimeSpan.FromSeconds(10), token);
             try {
                 if (connected) HelperObservation = await binding.Pulse(token);
                 else {
@@ -184,9 +191,9 @@ public sealed class TcpMapping : IMapping
         lock (lifecycle) { if (disposed) return; disposed = true; }
         stopping.Cancel(); try { await maintenance; } catch { }
         binding.Dispose();
-        if (gateway != null) { try { await gateway.DisposeAsync(); log("端口控制资源已回收；网关清理状态：" + gateway.Snapshot.Cleanup); } finally { stopping.Dispose(); } return; }
+        if (gateway != null) { try { await gateway.DisposeAsync(); log("端口控制资源已回收；网关清理状态：" + gateway.Snapshot.Cleanup); } finally { stopping.Dispose(); refresh.Dispose(); } return; }
         try { await router!.RemoveOwned(rule!, CancellationToken.None); log("已移除本软件的路由器租约"); }
         catch (Exception ex) { log("租约删除未确认，将按租期到期：" + ex.Message); }
-        router!.Dispose(); stopping.Dispose();
+        router!.Dispose(); stopping.Dispose(); refresh.Dispose();
     }
 }

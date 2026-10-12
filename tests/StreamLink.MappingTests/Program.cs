@@ -7,6 +7,10 @@ using StreamLink.Core;
 
 int checks = 0;
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; }
+if (args is ["--tcp-mapping-wake-only", var wakeOutput]) {
+    await PortControlTests.TcpMappingWake(Path.GetFullPath(wakeOutput), Check);
+    Console.WriteLine($"PASS {checks} real TCP helper mapping refresh checks"); return;
+}
 string Descriptor(string control = "/control") => $"<root><device><serviceList><service><serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType><controlURL>{control}</controlURL></service></serviceList></device></root>";
 
 // All discovery and description traffic stays on loopback. Multicast notice

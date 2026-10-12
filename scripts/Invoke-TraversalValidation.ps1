@@ -20,6 +20,10 @@ try {
  }
  # Rebuild before evidence collection. The test backend never loads WinDivert.
  Invoke-Check 'native-build' 'pwsh' @('-NoProfile','-File','scripts\Build.ps1')
+ Invoke-Check 'network-wake' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release','--','--network-wake-only',(Join-Path $OutputDirectory 'network-wake.json'))
+ Invoke-Check 'tcp-mapping-wake' 'dotnet' @('run','--project','tests\StreamLink.MappingTests','-c','Release','--','--tcp-mapping-wake-only',(Join-Path $OutputDirectory 'tcp-mapping-wake.json'))
+ Invoke-Check 'legacy-native-wire' 'python' @('tests\legacy_wire_loopback.py','--output',(Join-Path $OutputDirectory 'legacy-native-wire.json'))
+ Invoke-Check 'legacy-parent-wire' 'dotnet' @('run','--project','tests\StreamLink.LegacyWireTests','-c','Release','--','--native-report',(Join-Path $OutputDirectory 'legacy-native-wire.json'),'--output',(Join-Path $OutputDirectory 'legacy-parent-wire.json'))
  Invoke-Check 'endpoint-lifetime' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--','--output',(Join-Path $OutputDirectory 'lease.json'))
  Invoke-Check 'native-managed' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--managed',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--output',(Join-Path $OutputDirectory 'attach.json'))
  Invoke-Check 'native-negative' 'dotnet' @('run','--project','tests\StreamLink.EndpointPoc','-c','Release','--no-build','--','--reject-attach',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--output',(Join-Path $OutputDirectory 'attach-negative.json'))

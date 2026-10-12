@@ -11,6 +11,12 @@ public interface IMapping : IAsyncDisposable
     event Action<IPEndPoint>? Changed;
     Task Maintain(CancellationToken token);
 }
+// Coalesced scheduling hint. It neither relinquishes port ownership nor
+// claims that a network event invalidates an authenticated business path.
+public interface IMappingRefresh
+{
+    void RequestRefresh();
+}
 
 public sealed class UdpMapping : IMapping
 {

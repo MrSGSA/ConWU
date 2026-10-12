@@ -11,6 +11,7 @@ internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTr
     int failures;
     string requested = "";
     public bool HasPending => pending != null;
+    public void WakeRetry() { nextAttempt = 0; failures = 0; }
     public void Update(int slot, string endpoint, string name, string detail, Func<bool>? beginAttempt = null, bool keepPending = true)
     {
         long now = Environment.TickCount64;
