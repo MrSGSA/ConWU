@@ -76,7 +76,7 @@ public sealed class PacedTraversalSocket : ITraversalSocket, IQueuedTraversalSoc
     {
         if(Failed||token.IsCancellationRequested||!IsDiagnostic(packet)||!allowance.Active)return false;
         int overhead=Local.AddressFamily==AddressFamily.InterNetworkV6?48:28;
-        return flow.TrySend(packet,packet.Length+overhead,new DiagnosticContext(new(remote.Address,remote.Port),allowance),token:token);
+        return flow.TrySendWhenReady(packet,packet.Length+overhead,new DiagnosticContext(new(remote.Address,remote.Port),allowance),allowance.DelaySeconds,token);
     }
     public ValueTask<TraversalDatagram> Receive(CancellationToken token) => inner.Receive(token);
     public void Dispose()

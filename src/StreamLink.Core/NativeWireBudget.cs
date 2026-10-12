@@ -20,6 +20,7 @@ public sealed class NativeWireBudget(TraversalControlRound round, NativeAttemptG
     PathDiagnosticAllowance? diagnostic;
     bool DiagnosticPathLive=>started!=0&&(selected||standbyAt!=0&&Stopwatch.GetElapsedTime(standbyAt).TotalMilliseconds<StandbyNomination.HoldMs);
     internal bool DiagnosticActive{get{lock(gate)return diagnosticNative&&DiagnosticPathLive&&diagnostic?.Active==true;}}
+    internal double DiagnosticDelay(int bytes){lock(gate)return diagnosticNative&&DiagnosticPathLive&&diagnostic!=null?diagnostic.DelaySeconds(bytes):0;}
     internal void GrantDiagnostic(PathDiagnosticAllowance allowance){lock(gate){
         if(!diagnosticNative||!DiagnosticPathLive||pathId==Guid.Empty||allowance.PathId!=pathId||!allowance.Active||diagnostic?.Active==true)
             throw new InvalidOperationException("Diagnostic requires a capable, authenticated exact path and a new bounded window");

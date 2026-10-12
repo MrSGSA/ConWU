@@ -14,6 +14,10 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+if(args.Contains("--diagnostic-readiness-only")){
+    var readiness=await DiagnosticReadinessTests.Run(Check);
+    await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,readiness},new JsonSerializerOptions{WriteIndented=true}));return;
+}
 if(Array.IndexOf(args,"--quality-replay") is var replayIndex&&replayIndex>=0){
     var replay=QualityAssessmentTests.Replay(args[replayIndex+1]);
     await File.WriteAllTextAsync(output,JsonSerializer.Serialize(replay,new JsonSerializerOptions{WriteIndented=true}));return;

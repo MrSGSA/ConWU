@@ -41,7 +41,7 @@ public sealed class EgressPacer : IDisposable
     double maximumAge;
     long timerWaits; double timerWaitMs, tokenOverrun;
     int cursor, bytes, peak, flowCount;
-    bool stopping, disposed;
+    bool stopping, disposed, waitingForReadiness;
     string failure = "";
     public int Mbps { get; }
     internal sealed class Peer(string key)
@@ -52,7 +52,7 @@ public sealed class EgressPacer : IDisposable
         public long Sent, Packets, Overflow, Cancelled, Failures;
     }
     internal sealed record Item(Flow Flow, byte[] Packet, int Bytes, object? Context, long At, bool Priority,
-        CancellationToken Token, TaskCompletionSource? Completion);
+        CancellationToken Token, TaskCompletionSource? Completion, Func<int,double>? Readiness);
     // 50 Mbps Windows A/B: a ~2ms credit ceiling plus one AboveNormal sender
     // avoids losing capacity to wakeup jitter, without spin or process-wide
     // priority/timer changes. Retain the old four-packet floor at low rates,
@@ -115,7 +115,7 @@ public sealed class EgressPacer : IDisposable
         else item.Completion?.TrySetException(new IOException(capacity ? "egress-queue-full" : "egress-flow-closed"));
     }
     bool Enqueue(Flow flow, ReadOnlySpan<byte> packet, int wireBytes, object? context, bool priority,
-        CancellationToken token, TaskCompletionSource? completion)
+        CancellationToken token, TaskCompletionSource? completion, Func<int,double>? readiness = null)
     {
         if (wireBytes < packet.Length || wireBytes is < 28 or > MaximumDatagram || packet.Length == 0) throw new ArgumentOutOfRangeException(nameof(wireBytes));
         lock (gate) {
@@ -135,11 +135,11 @@ public sealed class EgressPacer : IDisposable
                 var tail = victim.Data.Last!; victim.Data.RemoveLast(); Drop(tail.Value, true);
             }
             bool wasEmpty = bytes == 0;
-            var item = new Item(flow, packet.ToArray(), wireBytes, context, Stopwatch.GetTimestamp(), priority, token, completion);
+            var item = new Item(flow, packet.ToArray(), wireBytes, context, Stopwatch.GetTimestamp(), priority, token, completion,readiness);
             (priority ? flow.peer.Control : flow.peer.Data).AddLast(item);
             accounting.Accept(wireBytes); flow.accounting.Accept(wireBytes);
             bytes += wireBytes; flow.peer.Bytes += wireBytes; peak = Math.Max(peak, bytes);
-            if (wasEmpty) changed.Set(); return true;
+            if (wasEmpty||waitingForReadiness) changed.Set(); return true;
         }
     }
     void Refill()
@@ -149,9 +149,9 @@ public sealed class EgressPacer : IDisposable
         tokens = Math.Min(burst, tokens + elapsed * rate);
         priorityTokens = Math.Min(2 * Quantum, priorityTokens + elapsed * priorityRate);
     }
-    Item? Select(out bool priority)
+    Item? Select(out bool priority,out double blockedWait)
     {
-        priority = false;
+        priority = false;blockedWait=double.PositiveInfinity;
         if (order.Count == 0) return null;
         // Priority remains in the SAME rate/queue budget and has its own small
         // allowance. Exhausted priority flows join normal deficit scheduling.
@@ -161,6 +161,15 @@ public sealed class EgressPacer : IDisposable
         }
         for (int i = 0; i < order.Count * 5; i++) {
             var p = order[cursor]; var item = p.Data.First?.Value ?? p.Control.First?.Value;
+            if(item!=null&&!item.Token.IsCancellationRequested&&item.Readiness is{}ready){
+                double delay=ready(item.Bytes);
+                if(delay>0){
+                    blockedWait=Math.Min(blockedWait,delay);
+                    // Diagnostics must not delay ordinary maintenance queued
+                    // on the same peer after priority credit is exhausted.
+                    item=p.Control.First?.Value;
+                }
+            }
             if (item != null) {
                 if (p.Deficit < item.Bytes) p.Deficit += Quantum;
                 if (p.Deficit >= item.Bytes) return item;
@@ -176,7 +185,9 @@ public sealed class EgressPacer : IDisposable
                 Item? item; bool priority; double wait = -1;
                 lock (gate) {
                     if (stopping) return;
-                    Refill(); item = Select(out priority);
+                    Refill(); item = Select(out priority,out var blockedWait);
+                    waitingForReadiness=item==null&&double.IsFinite(blockedWait);
+                    if(waitingForReadiness)wait=blockedWait;
                     if (item != null) {
                         // Wake when the next packet is eligible. Artificially
                         // waiting for a larger batch plus the real timer's
@@ -253,6 +264,8 @@ public sealed class EgressPacer : IDisposable
         public bool TrySend(ReadOnlySpan<byte> packet, int wireBytes, object? context = null, bool priority = false,
             CancellationToken token = default, TaskCompletionSource? completion = null)
             => owner.Enqueue(this, packet, wireBytes, context, priority, token, completion);
+        internal bool TrySendWhenReady(ReadOnlySpan<byte> packet,int wireBytes,object? context,Func<int,double> readiness,CancellationToken token=default)
+            => owner.Enqueue(this,packet,wireBytes,context,false,token,null,readiness);
         public void Dispose() => owner.Close(this);
     }
     // No global timer-resolution changes and no busy spin. Unsupported systems

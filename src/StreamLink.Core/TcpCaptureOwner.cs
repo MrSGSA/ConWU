@@ -217,7 +217,9 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
             // Only actual small TCP shape controls get priority. Encrypted
             // udp2raw payloads cannot be classified by guessed application data.
             bool control = packet.Length <= 256 && (packet.Length == ip + tcp || (packet[ip + 13] & 7) != 0);
-            return outbound.TrySend(packet, packet.Length, context: kind, priority: control);
+            return kind==NativeWireKind.Diagnostic&&wireBudget is{}budget
+                ?outbound.TrySendWhenReady(packet,packet.Length,kind,budget.DiagnosticDelay)
+                :outbound.TrySend(packet, packet.Length, context: kind, priority: control);
         }
         bool SendNow(ReadOnlySpan<byte> packet, NativeWireKind kind)
         {

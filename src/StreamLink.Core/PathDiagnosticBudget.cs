@@ -65,6 +65,14 @@ internal sealed class PathDiagnosticAllowance(PathDiagnosticPermit owner,Guid pa
     public Guid SessionId=>owner.SessionId;
     internal int MaximumSourceCredit => Math.Max(4,(int)(burst/1536));
     public bool Active=>!Volatile.Read(ref disposed)&&owner.Active&&time.GetElapsedTime(began).TotalMilliseconds<durationMs;
+    internal double DelaySeconds(int length)
+    {
+        lock(gate){
+            if(!Active||length is<512 or>1536||length>maximumBytes-bytes)return 0;
+            double available=Math.Min(burst,tokens+time.GetElapsedTime(at).TotalMilliseconds*wireMbps*125d);
+            return Math.Max(0,(length-available)/(wireMbps*125000d));
+        }
+    }
     public bool Admit(int length)
     {
         lock(gate){

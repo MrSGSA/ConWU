@@ -44,6 +44,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Retained standby phase / later nomination / rollback regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --diagnostic-control-only --output (Join-Path $root "artifacts/diagnostic-control-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Bounded diagnostic control parser regression failed'}
+        & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --diagnostic-readiness-only --output (Join-Path $root "artifacts/diagnostic-readiness-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0){throw 'Diagnostic allowance readiness/fairness/expiry regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --diagnostic-session-model-only --output (Join-Path $root "artifacts/diagnostic-session-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Diagnostic common lifetime/role/duplicate/loss/cancel regression failed'}
         foreach($case in @('quality-assessment','quality-agreement')){
