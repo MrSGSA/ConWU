@@ -42,6 +42,12 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Mesh regression failed'}
         & dotnet run --project tests/StreamLink.TraversalTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'Traversal foundation regression failed'}
+        & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --probability-smoke (Join-Path $root "artifacts/udp-exploration-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Experimental UDP shared-source / winning-path regression failed'}
+        & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --probability-boundaries (Join-Path $root "artifacts/udp-exploration-boundaries-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Experimental UDP authentication / resource budget regression failed'}
+        & dotnet run --project tests/StreamLink.TraversalTests -c Release --no-build -- --probability-model (Join-Path $root "artifacts/udp-exploration-model-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Uniform port-set intersection model regression failed'}
         & dotnet run --project tests/StreamLink.EgressTests -c Release -- (Join-Path $root "artifacts/egress-correctness-$releaseVersion.json") --correctness-only
         if($LASTEXITCODE -ne 0) {throw 'Egress lifecycle / same-socket / queue regression failed'}
         & dotnet run --project tests/StreamLink.PredictionTests -c Release -- --output (Join-Path $root "artifacts/prediction-$releaseVersion.json")

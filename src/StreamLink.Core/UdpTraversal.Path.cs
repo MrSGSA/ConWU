@@ -41,7 +41,7 @@ public sealed partial class UdpTraversal
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0 || resourceClosed, this);
             if (expectedGeneration != generation || pathId == Guid.Empty || pathAttached || payloadReaders != 0 ||
-                selected == null || receiving.IsCompleted || RemainingAttemptTime <= TimeSpan.Zero || !socket.DontFragment || !GatewayEligible)
+                selected == null || group != null && !group.IsWinner(probeSource) || receiving.IsCompleted || RemainingAttemptTime <= TimeSpan.Zero || !socket.DontFragment || !GatewayEligible)
                 throw new InvalidOperationException("UDP 路径尚未通过同 socket 无分片检查，或接收者已被占用");
             var identity = new ValidatedPathIdentity(pathId, new Guid(attempt), SocketId, null, generation,
                 new IPEndPoint(Local.Address, Local.Port), new IPEndPoint(selected.Address, selected.Port), TraversalProfile.UdpDirect, PathQualification.MtuQualified);

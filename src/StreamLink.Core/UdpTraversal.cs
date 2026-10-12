@@ -67,6 +67,7 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     double byteTokens = TraversalLimits.ControlBytesPerSecond, searchTokens = burst, maintenanceTokens = burst;
     long tick = Stopwatch.GetTimestamp();
     int sockets, peakSockets;
+    bool exploring;
     long searchAdmitted, maintenanceAdmitted, searchDeferred, maintenanceDeferred, admittedBytes;
     readonly HashSet<OptionalSocket> optionalSockets = [];
     public IDisposable Acquire()
@@ -74,7 +75,7 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
         while (true) {
             OptionalSocket victim;
             lock (gate) {
-                if (sockets < maximumSockets) { sockets++; peakSockets = Math.Max(peakSockets, sockets); return new Lease(this); }
+                if (sockets < (exploring ? TraversalLimits.ExperimentalResources : maximumSockets)) { sockets++; peakSockets = Math.Max(peakSockets, sockets); return new Lease(this); }
                 victim = optionalSockets.FirstOrDefault() ?? throw new IOException("打洞资源已满，请等待其他尝试结束");
                 optionalSockets.Remove(victim);
             }
@@ -87,7 +88,7 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     {
         OptionalSocket result;
         lock (gate) {
-            if (sockets >= maximumSockets) return null;
+            if (sockets >= maximumSockets) return null; // optional listeners never consume exploration slots
             sockets++; peakSockets = Math.Max(peakSockets, sockets); result = new(this); optionalSockets.Add(result);
         }
         try { result.Open(open); return result; }
@@ -116,7 +117,9 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
             }
         }
     }
-    public bool TrySend(int bytes = 128, bool maintenance = false)
+    public bool TrySend(int bytes = 128, bool maintenance = false) => TrySendCore(bytes, maintenance, false);
+    internal bool TryControlSend(int bytes, bool completion) => TrySendCore(bytes, false, completion);
+    bool TrySendCore(int bytes, bool maintenance, bool completion)
     {
         if (bytes is < 1 or > TraversalLimits.ControlBytesPerSecond) return false;
         lock (gate) {
@@ -125,13 +128,13 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
             searchTokens = Math.Min(burst, searchTokens + seconds * Math.Min(48, packetsPerSecond));
             maintenanceTokens = Math.Min(burst, maintenanceTokens + seconds * Math.Min(TraversalLimits.MaintenancePps, packetsPerSecond));
             byteTokens = Math.Min(TraversalLimits.ControlBytesPerSecond, byteTokens + seconds * TraversalLimits.ControlBytesPerSecond);
-            if (tokens < 1 || byteTokens < bytes || (maintenance ? maintenanceTokens : searchTokens) < 1) {
+            if (tokens < 1 || byteTokens < bytes || maintenance && maintenanceTokens < 1 || !maintenance && !completion && searchTokens < 1) {
                 if (maintenance) maintenanceDeferred++; else searchDeferred++;
                 return false;
             }
             tokens--; byteTokens -= bytes;
             if (maintenance) { maintenanceTokens--; maintenanceAdmitted++; }
-            else { searchTokens--; searchAdmitted++; }
+            else { if (!completion) searchTokens--; searchAdmitted++; }
             admittedBytes += bytes; return true;
         }
     }
@@ -142,6 +145,21 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     {
         lock (gate) return new(sockets, peakSockets, searchAdmitted, maintenanceAdmitted,
             searchDeferred, maintenanceDeferred, admittedBytes);
+    }
+    // Explicit experimental ownership, on this same ledger. Releasing the
+    // expansion never closes an Active resource; it prevents further growth
+    // above the normal limit until outstanding references return their quota.
+    internal IDisposable BeginUdpExploration()
+    {
+        lock (gate) {
+            if (exploring || maximumSockets > TraversalLimits.ExperimentalResources) throw new IOException("UDP 高成本探索资源已被占用");
+            exploring = true; return new ExplorationLease(this);
+        }
+    }
+    sealed class ExplorationLease(TraversalResources owner) : IDisposable
+    {
+        int disposed;
+        public void Dispose() { if (Interlocked.Exchange(ref disposed, 1) == 0) lock (owner.gate) owner.exploring = false; }
     }
     sealed class Lease(TraversalResources owner) : IDisposable
     {
@@ -160,7 +178,7 @@ public sealed record PunchResult(bool Success, string Endpoint, string Failure, 
 public sealed partial class UdpTraversal : IAsyncDisposable
 {
     const int CheckSize = 96, ProbeSize = TraversalLimits.UdpRequiredPayload, MacSize = 32;
-    sealed class Candidate(IPEndPoint endpoint, bool learned) { public IPEndPoint Endpoint = endpoint; public byte[] Nonce = RandomNumberGenerator.GetBytes(16); public bool Learned = learned, Triggered, Checked; }
+    sealed class Candidate(IPEndPoint endpoint, bool learned) { public IPEndPoint Endpoint = endpoint; public byte[] Nonce = RandomNumberGenerator.GetBytes(16); public Guid PeerSource; public bool Learned = learned, Triggered, Checked; }
     sealed record Pending(IPEndPoint Target, byte[] Request, TaskCompletionSource<IPEndPoint> Reply);
     readonly ITraversalSocket socket;
     readonly TraversalResources resources;
@@ -181,9 +199,12 @@ public sealed partial class UdpTraversal : IAsyncDisposable
     long started;
     int sent, authenticated, learned, begun, disposed;
     string failure = "";
+    UdpProbeGroup? group;
+    readonly Guid probeSource = Guid.NewGuid(); // per-resource wire token, never the local SocketResourceId
     public Guid SocketId => socket.Id;
     public IPEndPoint Local => socket.Local;
-    public IPEndPoint? Selected { get { lock (gate) return selected; } }
+    internal bool ReceiveReady => !Closed && !receiving.IsCompleted;
+    public IPEndPoint? Selected { get { lock (gate) return group == null || group.IsWinner(probeSource) ? selected : null; } }
 
     public UdpTraversal(ITraversalSocket socket, Guid networkGeneration, Guid attemptId, int localSlot, int remoteSlot, byte[] sharedKey, TraversalResources? resources = null)
         : this(socket, networkGeneration, attemptId, localSlot, remoteSlot, sharedKey, resources ?? TraversalResources.Shared, null) { }
@@ -228,12 +249,15 @@ public sealed partial class UdpTraversal : IAsyncDisposable
             ObjectDisposedException.ThrowIf(disposed != 0, this);
             byte[] request = Stun.Request(); string id = Convert.ToHexString(request.AsSpan(8, 12));
             var completion = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
+            if (group != null && group.Remaining <= TimeSpan.Zero) throw new IOException("UDP 探索共同期限已结束");
+            deadline.CancelAfter(group == null ? TimeSpan.FromMilliseconds(3500) : TimeSpan.FromMilliseconds(Math.Clamp(group.Remaining.TotalMilliseconds, 0, 3500)));
             queries[id] = new(server, request, completion);
-            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token); deadline.CancelAfter(3500);
             long probeStarted = Stopwatch.GetTimestamp(); // conservative age, includes any send admission/queue delay
             try {
                 for (;;) {
-                    if (resources.TrySend(request.Length)) await socket.Send(request, server, deadline.Token);
+                    deadline.Token.ThrowIfCancellationRequested();
+                    if (group != null ? group.Round.TrySend(request.Length, false) : resources.TrySend(request.Length)) await socket.Send(request, server, deadline.Token);
                     var finished = await Task.WhenAny(completion.Task, Task.Delay(700, deadline.Token));
                     deadline.Token.ThrowIfCancellationRequested();
                     if (finished == completion.Task) return new(socket.Id, generation, "udp", Local, server, await completion.Task, DateTimeOffset.UtcNow, probeStarted);
@@ -260,19 +284,23 @@ public sealed partial class UdpTraversal : IAsyncDisposable
         byte[] packet = RandomNumberGenerator.GetBytes(size); "SLP2"u8.CopyTo(packet);
         packet[4] = kind; packet[5] = localSlot; packet[6] = remoteSlot; packet[7] = 0;
         attempt.CopyTo(packet, 8); nonce.CopyTo(packet, 24);
+        if (group != null) { "SLG3"u8.CopyTo(packet); packet[7] = group.Stable ? (byte)1 : (byte)2; probeSource.TryWriteBytes(packet.AsSpan(40, 16)); }
         HMACSHA256.HashData(key, packet.AsSpan(0, size - MacSize), packet.AsSpan(size - MacSize)); return packet;
     }
-    bool ValidProbe(byte[] packet) => packet.Length is CheckSize or ProbeSize && packet.AsSpan(0, 4).SequenceEqual("SLP2"u8) && packet[4] is >= 1 and <= 4 &&
+    bool ValidProbe(byte[] packet) => packet.Length is CheckSize or ProbeSize &&
+        (group == null ? packet.AsSpan(0, 4).SequenceEqual("SLP2"u8) && packet[4] is >= 1 and <= 4 && packet[7] == 0 :
+            packet.AsSpan(0, 4).SequenceEqual("SLG3"u8) && packet[4] is >= 1 and <= 6 && packet[7] == (group.Stable ? 2 : 1) && new Guid(packet.AsSpan(40, 16)) != Guid.Empty) &&
         packet.Length == (packet[4] >= 3 ? ProbeSize : CheckSize) &&
-        packet[5] == remoteSlot && packet[6] == localSlot && packet[7] == 0 && packet.AsSpan(8, 16).SequenceEqual(attempt) &&
+        packet[5] == remoteSlot && packet[6] == localSlot && packet.AsSpan(8, 16).SequenceEqual(attempt) &&
         CryptographicOperations.FixedTimeEquals(packet.AsSpan(packet.Length - MacSize), HMACSHA256.HashData(key, packet.AsSpan(0, packet.Length - MacSize)));
     async Task Check(byte kind, byte[] nonce, IPEndPoint remote)
     {
         lock (gate) {
-            if (!InWindow() || !round.TrySend(kind >= 3 ? ProbeSize : CheckSize, kind >= 3)) return;
+            if (!InWindow() || group != null && !group.Allows(remote) || !round.TrySend(kind >= 3 ? ProbeSize : CheckSize, kind >= 3)) return;
             sent++;
+            group?.Admitted(kind, remote);
         }
-        try { await socket.Send(Encode(kind, nonce), remote, stop.Token); }
+        try { await socket.Send(Encode(kind, nonce), remote, stop.Token); group?.Sent(probeSource); }
         catch (SocketException ex) { lock (gate) failure = ex.SocketErrorCode == SocketError.MessageSize && kind >= 3 ? "mtu-too-small" : "send-" + ex.SocketErrorCode; }
     }
     async Task Receive()
@@ -291,28 +319,44 @@ public sealed partial class UdpTraversal : IAsyncDisposable
                     } catch (IOException) { } }
                     continue;
                 }
-                if (packet.Length >= 4 && packet.AsSpan(0, 4).SequenceEqual("SLP2"u8)) {
+                if (packet.Length >= 4 && (packet.AsSpan(0, 4).SequenceEqual("SLP2"u8) || packet.AsSpan(0, 4).SequenceEqual("SLG3"u8))) {
                     Candidate? candidate; bool trigger = false;
+                    bool selectionReply = false;
                     lock (gate) {
-                        if (!InWindow() || !ValidProbe(packet)) continue;
+                        if (!InWindow() || !ValidProbe(packet) || group != null && !group.Allows(message.Source)) continue;
                         authenticated++;
-                        if (packet[4] is 2 or 4) {
-                            if (candidates.TryGetValue(message.Source.ToString(), out candidate) && packet.AsSpan(24, 16).SequenceEqual(candidate.Nonce)) {
+                        Guid sender = group == null ? Guid.Empty : new Guid(packet.AsSpan(40, 16));
+                        if (packet[4] is 5 or 6) {
+                            if (group == null || !message.Source.Equals(selected) || new Guid(packet.AsSpan(24, 16)) != probeSource ||
+                                !candidates.TryGetValue(message.Source.ToString(), out candidate) || candidate.PeerSource != sender ||
+                                packet[4] != (group.Stable ? 6 : 5) || !group.Commit(probeSource)) continue;
+                            selectionReply = packet[4] == 5;
+                        } else if (packet[4] is 2 or 4) {
+                            candidates.TryGetValue(message.Source.ToString(), out candidate);
+                            bool blind = packet[4] == 2 && group?.BlindResponse(message.Source, packet.AsSpan(24, 16)) == true;
+                            if (blind) candidate ??= Add(message.Source, true);
+                            if (candidate != null && (candidate.PeerSource == Guid.Empty || candidate.PeerSource == sender) &&
+                                (blind || packet.AsSpan(24, 16).SequenceEqual(candidate.Nonce))) {
+                                candidate.PeerSource = sender;
                                 if (packet[4] == 2) candidate.Checked = true;
                                 else if (candidate.Checked) selected ??= message.Source;
                             }
                             continue;
+                        } else {
+                            candidate = Add(message.Source, true);
+                            if (candidate != null && candidate.PeerSource != Guid.Empty && candidate.PeerSource != sender) continue;
+                            if (candidate != null) candidate.PeerSource = sender;
+                            if (candidate != null && !candidate.Triggered) { candidate.Triggered = true; trigger = true; }
                         }
-                        candidate = Add(message.Source, true);
-                        if (candidate != null && !candidate.Triggered) { candidate.Triggered = true; trigger = true; }
                     }
+                    if (packet[4] is 5 or 6) { if (selectionReply) await Check(6, packet.AsSpan(40, 16).ToArray(), message.Source); continue; }
                     if (candidate != null) {
                         await Check(packet[4] == 3 ? (byte)4 : (byte)2, packet.AsSpan(24, 16).ToArray(), message.Source);
                         if (trigger) await Check(1, candidate.Nonce, candidate.Endpoint);
                     }
                     continue;
                 }
-                lock (gate) if (selected != null && message.Source.Equals(selected) && packet.Length <= ProbeSize) payloads.Writer.TryWrite(message);
+                lock (gate) if (selected != null && (group == null || group.IsWinner(probeSource)) && message.Source.Equals(selected) && packet.Length <= ProbeSize) payloads.Writer.TryWrite(message);
             }
         } catch (Exception ex) when (stop.IsCancellationRequested && ex is OperationCanceledException or ObjectDisposedException or SocketException) { }
         catch (Exception ex) {
@@ -329,21 +373,35 @@ public sealed partial class UdpTraversal : IAsyncDisposable
     async Task<PunchResult> PunchCore(IEnumerable<IPEndPoint> endpoints, PunchBudget? limits, CancellationToken token)
     {
         var input = endpoints.ToArray(); var settings = limits ?? new();
-        if (settings.DurationMs is < 100 or > 10000 || settings.MaximumPackets is < 2 or > 256 || settings.MaximumCandidates is < 1 or > 8 || input.Length > settings.MaximumCandidates || input.Any(ep => !ValidEndpoint(ep))) throw new ArgumentException("打洞预算或候选无效");
+        if (group == null && (settings.DurationMs is < 100 or > 10000 || settings.MaximumPackets is < 2 or > 256) ||
+            group != null && (settings.DurationMs != UdpProbeGroup.DurationMs || settings.MaximumPackets != UdpProbeGroup.PacketLimit) ||
+            settings.MaximumCandidates is < 1 or > 8 || input.Length > settings.MaximumCandidates || input.Any(ep => !ValidEndpoint(ep) || group != null && !group.Allows(ep))) throw new ArgumentException("打洞预算或候选无效");
         if (Interlocked.Exchange(ref begun, 1) != 0) throw new InvalidOperationException("每轮打洞需要新的会话，不能重用过期凭据");
-        lock (gate) { budget = settings; round = new(resources, settings.MaximumPackets); started = Stopwatch.GetTimestamp(); foreach (var endpoint in input) Add(endpoint, false); }
+        lock (gate) { budget = settings; round = group?.Round ?? new(resources, settings.MaximumPackets); started = group?.Started ?? Stopwatch.GetTimestamp(); foreach (var endpoint in input) Add(endpoint, false); }
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
         bool success = false;
+        long nextSelection = 0;
         try { while (true) {
             token.ThrowIfCancellationRequested(); stop.Token.ThrowIfCancellationRequested();
             Candidate[] pending;
             lock (gate) {
-                if (selected != null || !InWindow() || receiving.IsCompleted) { success = selected != null; return new(success, selected?.ToString() ?? "", success ? "" : failure.Length > 0 ? failure : candidates.Values.Any(c => c.Checked) ? "mtu-unverified" : sent >= budget.MaximumPackets ? "probe-budget-exhausted" : "no-verified-path", sent, authenticated, learned, Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
+                if (selected != null && (group == null || group.IsWinner(probeSource)) || group?.Lost(probeSource) == true || group?.Exhausted == true || !InWindow() || receiving.IsCompleted) { success = selected != null && (group == null || group.IsWinner(probeSource)); return new(success, success ? selected!.ToString() : "", success ? "" : failure.Length > 0 ? failure : group?.Lost(probeSource) == true ? "group-not-selected" : group?.Exhausted == true ? "probe-budget-exhausted" : candidates.Values.Any(c => c.Checked) ? "mtu-unverified" : round.Packets >= budget.MaximumPackets ? "probe-budget-exhausted" : "no-verified-path", sent, authenticated, learned, Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
                 pending = candidates.Values.ToArray();
             }
-            foreach (var candidate in pending) await Check(candidate.Checked ? (byte)3 : (byte)1, candidate.Nonce, candidate.Endpoint);
-            await Task.Delay(200, cancellation.Token);
-        } } finally { if (!success) lock (gate) started = 0; }
+            if (group == null || group.Drive(probeSource)) {
+                IPEndPoint? proposed; lock (gate) proposed = selected;
+                if (group != null && proposed != null) {
+                    if (group.Stable && Environment.TickCount64 >= nextSelection) {
+                        nextSelection = Environment.TickCount64 + 200;
+                        var chosen = pending.Single(c => c.Endpoint.Equals(proposed)); await Check(5, chosen.PeerSource.ToByteArray(), proposed);
+                    }
+                } else {
+                    foreach (var candidate in pending) await Check(candidate.Checked ? (byte)3 : (byte)1, candidate.Nonce, candidate.Endpoint);
+                    if (group?.Stable == true && group.NextGuess() is {} guess) await Check(1, group.Nonce(guess), guess);
+                }
+            }
+            await Task.Delay(group == null ? 200 : 25, cancellation.Token);
+        } } finally { group?.Retire(probeSource); if (!success) lock (gate) started = 0; }
     }
     // These methods retain the verified socket. They provide transport, not
     // encryption: production callers must validate their own data protocol.
@@ -359,7 +417,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
     async ValueTask SendPayloadCore(ReadOnlyMemory<byte> packet, CancellationToken token)
     {
         var endpoint = Selected ?? throw new IOException("没有经过验证的直连路径");
-        if (packet.Length is < 1 or > ProbeSize || packet.Span.StartsWith("SLP2"u8)) throw new ArgumentException("负载大小或保留前缀无效");
+        if (packet.Length is < 1 or > ProbeSize || packet.Span.StartsWith("SLP2"u8) || packet.Span.StartsWith("SLG3"u8)) throw new ArgumentException("负载大小或保留前缀无效");
         await socket.Send(packet, endpoint, token);
     }
     public async ValueTask<TraversalDatagram> ReceivePayload(CancellationToken token)

@@ -2,3 +2,4 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshRunnerTraversalTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.EgressTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.ManagedPathTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.TraversalTests")]

@@ -45,6 +45,9 @@ try {
  Invoke-Check 'managed-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'managed-router.json'))
  Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
  Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))
+ Invoke-Check 'udp-exploration' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability',(Join-Path $OutputDirectory 'udp-exploration.json'))
+ Invoke-Check 'udp-exploration-boundaries' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability-boundaries',(Join-Path $OutputDirectory 'udp-exploration-boundaries.json'))
+ Invoke-Check 'udp-exploration-intersection-model' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability-model',(Join-Path $OutputDirectory 'udp-exploration-model.json'))
  Invoke-Check 'egress-correctness' 'dotnet' @('run','--project','tests\StreamLink.EgressTests','-c','Release','--',(Join-Path $OutputDirectory 'egress-correctness.json'),'--correctness-only')
  $completed=$true
 } finally {
