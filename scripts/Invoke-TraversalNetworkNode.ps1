@@ -12,7 +12,8 @@ try {
   if(Test-Path -LiteralPath $path){[pscustomobject]@{file=$_;sha256=(Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash}}
  }
  [pscustomobject]@{planVersion='1.0';startedUtc=[DateTime]::UtcNow;os=[Environment]::OSVersion.VersionString;kind=$node.Kind;route=$node.Route;durationSeconds=$node.LifetimeSeconds;
-  sourcePort=$node.SourcePort;reflectorPort=$node.ReflectorPort;loadMbps=50;loadSeconds=20;controlOnlyOverExistingOverlay=$true;binaries=$hashes;
+  sourcePort=$node.SourcePort;reflectorPort=$node.ReflectorPort;loadMbps=$(if($null -eq $node.MeasureLoad -or $node.MeasureLoad){50}else{0});loadSeconds=$(if($null -eq $node.MeasureLoad -or $node.MeasureLoad){20}else{0});
+  reflectedPortOffset=$node.ReflectedPortOffset;requireLearnedSource=$node.RequireLearnedSource;controlOnlyOverExistingOverlay=$true;binaries=$hashes;
   adapters=@(Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed)
  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath ($Output+'.environment.json')
  if($node.Route -eq 'host') {
