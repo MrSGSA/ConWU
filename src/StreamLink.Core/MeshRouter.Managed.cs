@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Buffers.Binary;
 using System.Net;
 using System.Security.Cryptography;
 
@@ -18,6 +19,7 @@ public sealed partial class MeshRouter
         public readonly ValidatedPathIdentity Identity = identity;
         public readonly PathNomination Nomination = nomination;
         public readonly PathTrafficObservation Traffic = new(identity);
+        public PathDeliveryFeedback? Delivery;
         public readonly TraversalControlRound Budget = transport is ITraversalControlledPath controlled ? controlled.ControlRound : new(TraversalResources.Shared);
         public readonly CancellationTokenSource Stop = CancellationTokenSource.CreateLinkedTokenSource(stop);
         public ManagedPath? Previous;
@@ -39,7 +41,7 @@ public sealed partial class MeshRouter
     // silently mixing the two lifetimes would let the old manager close Active.
     // On exception ownership stays with the caller; on success it moves here.
     public void RegisterPath(int slot, IMeshDatagramPath transport, TraversalAttemptContext context,
-        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion)
+        long nominationRevision, TimeSpan remaining, int negotiatedControlVersion, int negotiatedQualityFeedbackVersion = 0)
     {
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
@@ -47,7 +49,7 @@ public sealed partial class MeshRouter
             var original = transport.Identity;
             var identity = original with { ActualLocal = new IPEndPoint(IPAddress.Parse(original.ActualLocal.Address.ToString()), original.ActualLocal.Port),
                 ActualRemote = new IPEndPoint(IPAddress.Parse(original.ActualRemote.Address.ToString()), original.ActualRemote.Port) };
-            if (negotiatedControlVersion != 1 || context.NetworkId != profile.Pair.Network || context.LocalNodeId != profile.Self.Device ||
+            if (negotiatedControlVersion != 1 || negotiatedQualityFeedbackVersion is < 0 or > 1 || context.NetworkId != profile.Pair.Network || context.LocalNodeId != profile.Self.Device ||
                 context.RemoteNodeId != peer.Member.Device || context.LocalBootId != BootId || identity.AttemptId != context.AttemptId ||
                 identity.Profile != context.Profile || identity.PathId == Guid.Empty || identity.LeaseId == Guid.Empty || identity.NetworkGeneration == Guid.Empty ||
                 identity.ActualLocal.Port == 0 || identity.ActualRemote.Port == 0 || !Enum.IsDefined(identity.Qualification) || transport.Failed)
@@ -63,6 +65,7 @@ public sealed partial class MeshRouter
                 throw new IOException("同一 TCP 四元组已由另一握手或 Active 占用");
             var nomination = new PathNomination(context, identity.PathId, nominationRevision, remaining, identity.Qualification >= PathQualification.MtuQualified);
             var state = new ManagedPath(transport, identity, nomination, stop.Token);
+            if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
             peer.Detail = "正在验证并协商直连路径";
             managedPumps.RemoveWhere(t => t.IsCompleted);
@@ -76,7 +79,7 @@ public sealed partial class MeshRouter
                 p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs) {
                     WireControl = (p.Transport as IWireControlPath)?.WireControl,
                     SendQueue = (p.Transport as IMeshSendDiagnostics)?.SendQueue,
-                    Traffic = p.Traffic.Snapshot(Environment.TickCount64)
+                    Traffic = p.Traffic.Snapshot(Environment.TickCount64), Delivery = p.Delivery?.Snapshot()
                 }).ToArray() : [];
     }
     public void CancelPath(int slot, Guid path)
@@ -132,12 +135,16 @@ public sealed partial class MeshRouter
                     }
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
-                    if (message.Control != null) NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
+                    if (message.Control != null && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
+                        path.Delivery?.Control(message.Control, new Guid(packet.Span.Slice(8, 16)), Environment.TickCount64) == true))
+                        NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) || path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
                         if (allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot) && adapter.Write(message.Packet)) {
                             peer.Received += message.Packet.Length;
                             path.Traffic.Receive(message.Packet.Length, Environment.TickCount64);
+                            if (ReferenceEquals(peer.Managed!.Active, path)) path.Delivery?.Receive(new Guid(packet.Span.Slice(8, 16)),
+                                BinaryPrimitives.ReadUInt64BigEndian(packet.Span[40..]), message.Packet.Length);
                             if (ReferenceEquals(peer.Managed!.Active, path) && path.ProofAt != 0) peer.Recovery.Business(Environment.TickCount64);
                         }
                         else peer.Dropped++;
@@ -164,8 +171,10 @@ public sealed partial class MeshRouter
                 if (managed.Active != null) {
                     managed.Active.Retired = false; managed.Active.ReceiveUntil = managed.Active.ReleaseAt = long.MaxValue;
                     managed.Active.Traffic.Start(now);
+                    managed.Active.Delivery?.Reset();
                 }
                 path.Traffic.Suspend("Cancelled", now);
+                path.Delivery?.Reset();
                 path.Previous = null;
             }
             peer.Detail = path.Nomination.NeedsResync ? "候选提交未收敛，已回退并等待重新协商" : "候选取消或超时，保留原直连";
@@ -178,7 +187,7 @@ public sealed partial class MeshRouter
                 path.Failure = reason; path.Nomination.Cancel(); ReconcileManaged(peer, path, now); return;
             }
             path.Previous = managed.Active;
-            if (path.Previous != null) { path.Previous.Retired = true; path.Previous.Traffic.Suspend("Replaced", now); }
+            if (path.Previous != null) { path.Previous.Retired = true; path.Previous.Traffic.Suspend("Replaced", now); path.Previous.Delivery?.Reset(); }
             managed.Active = path; path.Switched = true;
         }
         if (path.Switched && path.Nomination.PeerAdopted && path.ProofAt == 0) {
@@ -227,12 +236,15 @@ public sealed partial class MeshRouter
                     if (path.ProofAt != 0) peer.Recovery.KeepaliveSent(nonce, now);
                 }
             }
+            if (ReferenceEquals(managed.Active, path) && path.Nomination.PeerAdopted && ManagedHealthy(peer))
+                path.Delivery?.Tick(now, body => SendFeedback(peer, path, body, now));
         }
     }
     static void RetireManaged(ManagedPeer peer, ManagedPath path)
     {
         if (path.Closing) return;
         path.Traffic.Suspend("Retired", Environment.TickCount64);
+        path.Delivery?.Reset();
         path.Closing = true; path.Stop.Cancel(); peer.Paths.Remove(path.Identity.PathId);
         if (path.PumpFinished) path.Stop.Dispose();
         if (ReferenceEquals(peer.Active, path)) peer.Active = null;

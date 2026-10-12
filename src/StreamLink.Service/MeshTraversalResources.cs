@@ -28,6 +28,7 @@ internal interface IMeshCandidateFactory
     bool SupportsTcpPrediction => false;
     bool SupportsTcpPeerReflexive => false;
     bool SupportsUdpExploration => false;
+    bool SupportsQualityFeedback => false;
     EgressStats? Egress => null;
     Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token);
     Task<IMeshCandidateResource> GatherForPeer(MeshMember peer, TraversalProfile profile, Guid attempt,
@@ -97,6 +98,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public bool SupportsFakeTcpIpv6 => options.FakeTcpIpv6 && captureBroker && ipv6Native && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public bool SupportsTcpPrediction => options.TcpPortPrediction && options.TcpPortCalibration && options.TcpSynObservation && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
     public bool SupportsTcpPeerReflexive => options.TcpPeerReflexive && peerSourceNative && countWireControl && profiles.Contains(TraversalProfile.FakeTcpHttpSo);
+    public bool SupportsQualityFeedback => options.QualityFeedback && options.TraversalMode != "legacy";
     public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
     {
         profile.Selection().Validate();

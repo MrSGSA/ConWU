@@ -47,6 +47,8 @@ try {
  Invoke-Check 'mesh-connections' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release')
  Invoke-Check 'mesh-regression' 'dotnet' @('run','--project','tests\StreamLink.MeshTests','-c','Release')
  Invoke-Check 'managed-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--','--output',(Join-Path $OutputDirectory 'managed-router.json'))
+ Invoke-Check 'delivery-feedback-router' 'dotnet' @('run','--project','tests\StreamLink.ManagedPathTests','-c','Release','--no-build','--','--feedback-only','--output',(Join-Path $OutputDirectory 'delivery-feedback-router.json'))
+ Invoke-Check 'delivery-feedback-runner' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--no-build','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','1','--output',(Join-Path $OutputDirectory 'delivery-feedback-runner.json'),'--feedback-only')
  Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
  Invoke-Check 'shared-enhancement-admission' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--enhancement',(Join-Path $OutputDirectory 'enhancement-admission.json'))
  Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))

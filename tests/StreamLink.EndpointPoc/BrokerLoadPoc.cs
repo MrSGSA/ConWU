@@ -14,7 +14,7 @@ namespace StreamLink.EndpointPoc;
 static class BrokerLoadPoc
 {
     const int Size = 1280;
-    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output, bool countWireControl = false, int egressMbps = 0)
+    public static async Task<int> Run(string binary, int mbps, int seconds, int rounds, string output, bool countWireControl = false, int egressMbps = 0, bool feedback = false)
     {
         if (mbps is < 1 or > 60 || seconds is < 3 or > 20 || rounds is < 1 or > 5) throw new ArgumentException("bounded load: 1..60 Mbps, 3..20 seconds, 1..5 rounds");
         if (egressMbps is < 0 or > 100) throw new ArgumentException("controlled outer pacing: 0..100 Mbps");
@@ -53,8 +53,8 @@ static class BrokerLoadPoc
             await Task.WhenAll(paths.Select(p => p.StartAndQualify(token)));
             for (int peer = 1; peer <= 2; peer++) {
                 int index = (peer - 1) * 2;
-                routers[0].RegisterPath(peer + 1, paths[index], contexts[index], 1, paths[index].RemainingAttemptTime, 1);
-                routers[peer].RegisterPath(1, paths[index + 1], contexts[index + 1], 1, paths[index + 1].RemainingAttemptTime, 1);
+                routers[0].RegisterPath(peer + 1, paths[index], contexts[index], 1, paths[index].RemainingAttemptTime, 1, feedback ? 1 : 0);
+                routers[peer].RegisterPath(1, paths[index + 1], contexts[index + 1], 1, paths[index + 1].RemainingAttemptTime, 1, feedback ? 1 : 0);
             }
             var wait = Stopwatch.StartNew();
             while (!routers[0].Status().All(p => p.Connected) || !routers.Skip(1).All(r => r.Status().Single(p => p.Slot == 1).Connected)) {
@@ -103,7 +103,7 @@ static class BrokerLoadPoc
                         nativeCpuMs = children.Select((p, i) => (p.TotalProcessorTime - childCpu[i]).TotalMilliseconds).ToArray(),
                         managedWorkingSet = self.WorkingSet64, nativeWorkingSet = children.Select(p => p.WorkingSet64).ToArray(),
                         egressMbps, egressStart, egressEnd = pacers.Select(p => p.Snapshot()).ToArray(),
-                        recovery = routers.Select(r => r.Status().Select(p => new { p.Slot, p.Connected, p.Recovery, p.Traffic }).ToArray()).ToArray(),
+                        recovery = routers.Select(r => r.Status().Select(p => new { p.Slot, p.Connected, p.Recovery, p.Traffic, p.Delivery }).ToArray()).ToArray(),
                         allPairsHealthy = routers[0].Status().All(p => p.Connected) && routers.Skip(1).All(r => r.Status().Single(p => p.Slot == 1).Connected) };
                     rows.Add(row); Console.WriteLine(JsonSerializer.Serialize(row));
                     foreach (var adapter in adapters) adapter.Sink = null;
@@ -117,7 +117,7 @@ static class BrokerLoadPoc
             foreach (var pacer in pacers) pacer.Dispose();
         }
         bool completed = failure.Length == 0 && rows.Count == rounds * 2 && owners.All(o => o.Closed.IsCompletedSuccessfully) && leases.All(l => l.Closed) && pacers.All(p => p.Snapshot() is { Failure: "", QueuedBytes: 0 });
-        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure, countWireControl, egressMbps, egressFinal = pacers.Select(p => p.Snapshot()).ToArray(), wireControl = paths.Select(p => p.WireControl).ToArray(),
+        await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = completed ? "Completed" : "Fail", rows, failure, countWireControl, egressMbps, feedback, egressFinal = pacers.Select(p => p.Snapshot()).ToArray(), wireControl = paths.Select(p => p.WireControl).ToArray(),
             hashes = new { core = Hash(typeof(MeshRouter).Assembly.Location), native = Hash(binary), harness = Hash(typeof(BrokerLoadPoc).Assembly.Location) },
             scope = "One Windows host: real protocol workers/pipes/UDP bridge/MeshRouter; synthetic bounded IP adapters and memory raw I/O; no driver, WAN, QoS or Wintun. Completion is not a quality pass. Delay uses one shared monotonic host clock." }, new JsonSerializerOptions { WriteIndented = true }));
         if (!completed) throw new IOException(failure); return 0;

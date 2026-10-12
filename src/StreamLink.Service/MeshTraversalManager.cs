@@ -80,7 +80,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
             FakeTcpIpv6: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsFakeTcpIpv6 ? 1 : 0,
             TcpPrediction: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPrediction ? 1 : 0,
             TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0,
-            UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0);
+            UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0,
+            QualityFeedback: factory.SupportsQualityFeedback ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -166,8 +167,8 @@ internal sealed class MeshTraversalManager : IAsyncDisposable
                 if (e.Gathering?.IsCompleted == true) {
                     e.Resource = e.Gathering.GetAwaiter().GetResult(); e.Gathering = null;
                     e.Actor = e.Offer == null
-                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt)
-                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence));
+                        ? MeshTraversalAttempt.Offer(mesh, e.Peer, Capabilities, e.Remote, e.Profile, e.Resource.Candidate, ++revision, () => Interlocked.Increment(ref sequence), e.Attempt, discovery.SupportsQualityFeedback)
+                        : MeshTraversalAttempt.Answer(mesh, e.Peer, Capabilities, e.Remote, e.Offer, e.Resource.Candidate, () => Interlocked.Increment(ref sequence), discovery.SupportsQualityFeedback);
                 }
                 if (e.Actor?.Phase == MeshAttemptPhase.Reserving && e.Resource!.PredictionControlReady(8)) e.Actor.Reserved(e.Resource.PredictionReady);
                 if (e.Measuring?.IsCompleted == true) { e.Actor!.Measured(e.Measuring.GetAwaiter().GetResult()); e.Measuring = null; }

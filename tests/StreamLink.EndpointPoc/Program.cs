@@ -26,6 +26,8 @@ if (args is ["--capture-broker", var brokerBinary, "--rounds", var brokerRounds,
 if (args is ["--capture-broker-ipv6", var broker6Binary, "--rounds", var broker6Rounds, "--output", var broker6Output]) return await CaptureBrokerPoc.Run(Path.GetFullPath(broker6Binary), int.Parse(broker6Rounds), Path.GetFullPath(broker6Output), ipv6: true);
 if (args is ["--broker-load", var budgetBinary, "--mbps", var budgetMbps, "--seconds", var budgetSeconds, "--rounds", var budgetRounds, "--output", var budgetOutput, "--wire-budget"])
     return await BrokerLoadPoc.Run(Path.GetFullPath(budgetBinary), int.Parse(budgetMbps), int.Parse(budgetSeconds), int.Parse(budgetRounds), Path.GetFullPath(budgetOutput), true);
+if (args is ["--broker-load", var deliveryBinary, "--mbps", var deliveryMbps, "--seconds", var deliverySeconds, "--rounds", var deliveryRounds, "--output", var deliveryOutput, "--delivery-feedback"])
+    return await BrokerLoadPoc.Run(Path.GetFullPath(deliveryBinary), int.Parse(deliveryMbps), int.Parse(deliverySeconds), int.Parse(deliveryRounds), Path.GetFullPath(deliveryOutput), true, feedback: true);
 if (args is ["--broker-load", var pacedBinary, "--mbps", var pacedMbps, "--seconds", var pacedSeconds, "--rounds", var pacedRounds, "--output", var pacedOutput, "--egress-mbps", var egressMbps])
     return await BrokerLoadPoc.Run(Path.GetFullPath(pacedBinary), int.Parse(pacedMbps), int.Parse(pacedSeconds), int.Parse(pacedRounds), Path.GetFullPath(pacedOutput), true, int.Parse(egressMbps));
 if (args is ["--broker-load", var loadBinary, "--mbps", var loadMbps, "--seconds", var loadSeconds, "--rounds", var loadRounds, "--output", var loadOutput])

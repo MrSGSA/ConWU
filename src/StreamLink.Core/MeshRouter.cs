@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Diagnostics;
+using System.Buffers.Binary;
 
 namespace StreamLink.Core;
 
@@ -11,6 +12,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public PathRecoverySnapshot? Recovery { get; init; }
     public DatagramQueueStats? SendQueue { get; init; }
     public PathTrafficSnapshot? Traffic { get; init; }
+    public PathDeliverySnapshot? Delivery { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -117,7 +119,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
-                    Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64) };
+                    Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
+                    Delivery = p.Managed?.Active?.Delivery?.Snapshot() };
         }).ToArray();
     }
     bool Send(byte[]? packet, IPEndPoint? endpoint)
@@ -139,6 +142,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 if (encoded != null) peer.Managed?.Active?.Traffic.Epoch(true, new Guid(encoded.AsSpan(8, 16)), Environment.TickCount64);
                 bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : Send(encoded, peer.Active));
                 peer.Managed?.Active?.Traffic.Send(count, delivered, Environment.TickCount64);
+                if (delivered && encoded != null) peer.Managed?.Active?.Delivery?.Send(new Guid(encoded.AsSpan(8, 16)),
+                    BinaryPrimitives.ReadUInt64BigEndian(encoded.AsSpan(40)), count, Environment.TickCount64);
                 if (delivered) peer.Sent += count;
                 else { peer.Dropped++; peer.Recovery.Break("BusinessSendRejected", Environment.TickCount64); }
             }

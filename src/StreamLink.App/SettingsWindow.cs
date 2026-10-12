@@ -14,6 +14,7 @@ public sealed class SettingsWindow : Form
     readonly CheckBox tcpPrediction = new() { AutoSize = true, Text = "TCP 小窗口预测（实验，校准合格后尝试；需双方和服务器支持）" };
     readonly CheckBox tcpPeerSource = new() { AutoSize = true, Text = "TCP 来源端点学习（实验，适用于对端端口变化；需双方和服务器支持）" };
     readonly CheckBox udpExploration = new() { AutoSize = true, Text = "UDP 多源探索（实验，需稳定端证据；最多 32 源/256 端口，默认关闭）" };
+    readonly CheckBox qualityFeedback = new() { AutoSize = true, Text = "路径送达反馈（实验，需双方及服务器支持；只测量，不自动换路）" };
     readonly CheckBox portControl = new() { AutoSize = true, Text = "TCP PCP / NAT-PMP 后备映射（实验，需网关支持）" };
     readonly CheckBox udpIpv6 = new() { AutoSize = true, Text = "IPv6 UDP 备用（实验，需双方原生 IPv6 与新版服务器）" };
     readonly CheckBox tcpIpv6 = new() { AutoSize = true, Text = "IPv6 FakeTCP（实验，需双方原生 IPv6 与新版服务器）" };
@@ -24,7 +25,7 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
     public DeviceProfile Result => profile;
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -100,6 +101,13 @@ public sealed class SettingsWindow : Form
         traversal.SelectedIndexChanged += (_, _) => ExplorationAvailability(); selection.SelectedIndexChanged += (_, _) => ExplorationAvailability();
         udpFallback.CheckedChanged += (_, _) => ExplorationAvailability(); ExplorationAvailability(); extra.Controls.Add(udpExploration);
         extra.Controls.AddRange([portControl, tcpIpv6, udpIpv6]); layout.Controls.Add(extra);
+        qualityFeedback.Checked = profile.QualityFeedback;
+        qualityFeedback.CheckedChanged += (_, _) => { if (supportsQualityFeedback) profile.QualityFeedback = qualityFeedback.Checked; };
+        void FeedbackAvailability() {
+            qualityFeedback.Enabled = supportsQualityFeedback && traversal.SelectedIndex != 0;
+            if (!qualityFeedback.Enabled && supportsQualityFeedback) qualityFeedback.Checked = false;
+        }
+        traversal.SelectedIndexChanged += (_, _) => FeedbackAvailability(); FeedbackAvailability(); extra.Controls.Add(qualityFeedback);
         pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
         traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
         pacing.ValueChanged += (_, _) => { if (supportsPacing) profile.ManagedEgressMbps = (int)pacing.Value; };

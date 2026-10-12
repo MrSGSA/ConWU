@@ -14,6 +14,11 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+if (args.Contains("--feedback-only")) {
+    var feedback = await DeliveryFeedbackTests.Run(Check, Packet);
+    await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, feedback }, new JsonSerializerOptions { WriteIndented = true }));
+    return;
+}
 if (args.Contains("--traffic-only")) {
     var traffic = await TrafficObservationTests.Run(Check, Packet);
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, traffic }, new JsonSerializerOptions { WriteIndented = true }));

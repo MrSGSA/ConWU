@@ -64,7 +64,7 @@ public sealed partial class MeshRegistry
             .Where(n => n.Envelope != null && n.Expires > DateTimeOffset.UtcNow).Select(n => n.Envelope).ToArray();
         var feed = State(network); PruneControl(feed);
         var messages = feed.Control.Where(p => p.Key.To == slot && p.Key.ToBoot == boot).Select(p => p.Value.Message).ToArray();
-        return new(registration.Directory, found, messages, MeshTraversal.Version, UdpIpv6: 1, FakeTcpIpv6: 1, TcpPrediction: 1, TcpPeerReflexive: 1, UdpExploration: 1);
+        return new(registration.Directory, found, messages, MeshTraversal.Version, UdpIpv6: 1, FakeTcpIpv6: 1, TcpPrediction: 1, TcpPeerReflexive: 1, UdpExploration: 1, QualityFeedback: 1);
     }
     public async Task<IResult> Watch(HttpContext context, string network, MeshWatchRequest request)
     {

@@ -10,7 +10,8 @@ public sealed record MeshTraversalCapabilities(int Version, int NativeAbi, Guid 
     int BackgroundUpgrade = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int TcpPrediction = 0,
     [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int TcpPeerReflexive = 0,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int UdpExploration = 0);
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int UdpExploration = 0,
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)] int QualityFeedback = 0);
 public enum MeshTraversalStage { Offer = 1, Ready = 2, Start = 3, Cancel = 4, Selected = 5, Reserved = 6, Measure = 7, Measured = 8 }
 // Public observations only. Local lease/attachment IDs and socket handles never
 // leave the endpoint. Both TCP and UDP retain their own profile and observations.
@@ -37,7 +38,7 @@ public static class MeshTraversal
     public static void ValidateCapabilities(MeshTraversalCapabilities? c)
     {
         if (c == null) return;
-        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.FakeTcpIpv6 is < 0 or > 1 || c.TcpPrediction is < 0 or > 1 || c.TcpPeerReflexive is < 0 or > 1 || c.UdpExploration is < 0 or > 1 || c.BootId == Guid.Empty ||
+        if (c.Version != Version || c.NativeAbi is < 0 or > TraversalLimits.NativeAbi || c.BackgroundUpgrade is < 0 or > 1 || c.UdpIpv6 is < 0 or > 1 || c.FakeTcpIpv6 is < 0 or > 1 || c.TcpPrediction is < 0 or > 1 || c.TcpPeerReflexive is < 0 or > 1 || c.UdpExploration is < 0 or > 1 || c.QualityFeedback is < 0 or > 1 || c.BootId == Guid.Empty ||
             c.Profiles is not { Length: >= 1 and <= 2 } || c.Profiles.Distinct().Count() != c.Profiles.Length ||
             c.UdpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.UdpDirect) ||
             c.FakeTcpIpv6 == 1 && !c.Profiles.Contains(TraversalProfile.FakeTcpHttpSo) ||
@@ -127,5 +128,6 @@ public interface IMeshTraversalDiscovery
     bool SupportsTcpPrediction => false;
     bool SupportsTcpPeerReflexive => false;
     bool SupportsUdpExploration => false;
+    bool SupportsQualityFeedback => false;
     Task PublishTraversal(MeshTraversalMessage[] messages, CancellationToken token);
 }

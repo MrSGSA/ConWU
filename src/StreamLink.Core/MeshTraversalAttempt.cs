@@ -26,6 +26,8 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     readonly bool leader;
     readonly bool sourceNegotiated;
     readonly bool explorationNegotiated;
+    readonly bool qualityNegotiated;
+    public bool QualityFeedbackNegotiated => qualityNegotiated;
     readonly long revision;
     readonly Func<long> nextSequence;
     MeshTraversalCandidate localCandidate;
@@ -57,13 +59,14 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             remoteCandidate.Id, remoteCandidate.Version, profile, leader, leader, nonce, Exploring);
     } } }
     MeshTraversalAttempt(MeshProfile local, MeshMember peer, Guid localBoot, Guid remoteBoot, TraversalProfile profile,
-        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated, bool explorationNegotiated)
+        MeshTraversalCandidate candidate, Guid attempt, Guid nonce, long revision, Func<long> sequence, bool sourceNegotiated, bool explorationNegotiated, bool qualityNegotiated)
     {
         this.local = local; this.peer = peer; this.localBoot = localBoot; this.remoteBoot = remoteBoot; this.profile = profile;
         localReservation = localCandidate = candidate; this.attempt = attempt; this.nonce = nonce; this.revision = revision; nextSequence = sequence;
         leader = local.Self.Slot < peer.Slot;
         this.sourceNegotiated = sourceNegotiated;
         this.explorationNegotiated = explorationNegotiated;
+        this.qualityNegotiated = qualityNegotiated;
     }
     static void Membership(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine, MeshTraversalCapabilities theirs, TraversalProfile profile)
     {
@@ -73,13 +76,14 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
     }
     public static MeshTraversalAttempt Offer(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine,
         MeshTraversalCapabilities theirs, TraversalProfile profile, MeshTraversalCandidate candidate, long revision, Func<long> sequence,
-        Guid? attemptId = null)
+        Guid? attemptId = null, bool coordinatorQuality = false)
     {
         Membership(local, peer, mine, theirs, profile);
         RequireFamily(candidate, mine, theirs, profile);
         if (local.Self.Slot >= peer.Slot) throw new InvalidOperationException("由较小成员编号统一发起本轮，避免交叉 Offer");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, profile, candidate, attemptId ?? Guid.NewGuid(), Guid.NewGuid(), revision, sequence,
-            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1);
+            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1,
+            coordinatorQuality && mine.QualityFeedback == 1 && theirs.QualityFeedback == 1);
         try { result.phase = MeshAttemptPhase.Offering; result.outbound = result.Message(MeshTraversalStage.Offer); return result; }
         catch { result.stop.Dispose(); throw; }
     }
@@ -103,13 +107,14 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             throw new CryptographicException("双方尚未协商该承载的原生 IPv6 能力");
     }
     public static MeshTraversalAttempt Answer(MeshProfile local, MeshMember peer, MeshTraversalCapabilities mine,
-        MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence)
+        MeshTraversalCapabilities theirs, MeshTraversalMessage offer, MeshTraversalCandidate candidate, Func<long> sequence, bool coordinatorQuality = false)
     {
         ValidateOffer(local, peer, mine, theirs, offer);
         RequireFamily(candidate, mine, theirs, offer.Profile);
         if ((candidate.Prediction != null) != (offer.Candidate!.Prediction != null)) throw new CryptographicException("不能把预约替换为普通候选");
         var result = new MeshTraversalAttempt(local, peer, mine.BootId, theirs.BootId, offer.Profile, candidate, offer.AttemptId, offer.ValidationNonce, offer.NominationRevision, sequence,
-            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1);
+            mine.TcpPeerReflexive == 1 && theirs.TcpPeerReflexive == 1, mine.UdpExploration == 1 && theirs.UdpExploration == 1,
+            coordinatorQuality && mine.QualityFeedback == 1 && theirs.QualityFeedback == 1);
         try {
             result.remoteReservation = result.remoteCandidate = offer.Candidate; result.remoteSequence = offer.Sequence;
             result.phase = result.Predicting ? MeshAttemptPhase.Reserving : MeshAttemptPhase.Preparing;
@@ -185,7 +190,7 @@ public sealed partial class MeshTraversalAttempt : IAsyncDisposable
             lock (gate) {
                 transport = path;
                 if (disposed || phase == MeshAttemptPhase.Cancelled) throw new OperationCanceledException();
-                target.RegisterPath(peer.Slot, path, Context, revision, prepared.RemainingAttemptTime, MeshTraversal.Version);
+                target.RegisterPath(peer.Slot, path, Context, revision, prepared.RemainingAttemptTime, MeshTraversal.Version, qualityNegotiated ? 1 : 0);
                 router = target; transferred = true;
             }
         } catch { lock (gate) if (!disposed) CancelLocked(); throw; }

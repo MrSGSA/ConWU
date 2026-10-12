@@ -31,6 +31,7 @@ try {
     await PredictionTests.Run(Check);
     await PeerSourceTests.Run(Check);
     await UdpExplorationTests.Run(Check);
+    await QualityFeedbackNegotiationTests.Run(Check);
     var registry = new MeshRegistry(root);
     {
         var (a, b) = Pair(); var ca = Caps(); var cb = Caps(); long seqA = 0, seqB = 0;

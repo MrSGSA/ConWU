@@ -10,13 +10,13 @@ using StreamLink.Service;
 
 static class Ipv6Tests
 {
-    public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false)
+    public static async Task<object> Run(string root, string url, string pin, int rounds, Action<bool, string> check, CancellationToken token, bool paced = false, bool feedback = false)
     {
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromMinutes(4)); token = deadline.Token;
         await Encoding(check, token);
         var pmtu = await Sockets(rounds, check, token);
         var rows = new List<object>();
-        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-peer", "old-service" }) rows.Add(await Runners(root, url, pin, mode, check, token, paced));
+        foreach (string mode in new[] { "ipv6", "ipv6-unreachable", "old-peer", "old-service" }) rows.Add(await Runners(root, url, pin, mode, check, token, paced, feedback));
         return new { rounds, pmtu, runners = rows, realIPv6Sockets = true, realHttps = true, realNat = false, wintun = false, nativeFakeTcpIpv6 = false };
     }
     static async Task Encoding(Action<bool, string> check, CancellationToken token)
@@ -112,11 +112,12 @@ static class Ipv6Tests
         public ValueTask<TraversalDatagram> Receive(CancellationToken t) => inner.Receive(t);
         public void Dispose() => inner.Dispose();
     }
-    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced)
+    static async Task<object> Runners(string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, bool paced, bool feedback)
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0 }).ToArray();
+        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0,
+            QualityFeedback = feedback && (i == 0 || mode != "old-peer") }).ToArray();
         var logs = new ConcurrentQueue<string>();
         var factories = profiles.Select(p => new Inspect(new MeshCandidateFactory(p, "unused", root, [TraversalProfile.UdpDirect], diagnostic: logs.Enqueue) {
             Ipv6AvailableForTest = () => true,
@@ -159,6 +160,7 @@ static class Ipv6Tests
             if (paced) check(factories.All(f => f.Egress is { SentBytes: > 0, Failure: "" } && f.Egress.Peers.Length == 1) && states.All(s => s?.Egress?.Mbps == 50), mode + ": same-socket UDP pacing reports actual outer bytes through formal Runner");
             if (paced) check(states.All(s => s!.Peers!.Where(p => p.Connected).All(p => p.SendQueue is { Owner: "SharedEgress", ByteUnit: "OuterIpBytes", Accounting.Conserved: true })) &&
                 factories.All(f => f.Egress?.Accounting?.Conserved == true), mode + ": formal Runner exposes the same sole UDP egress queue and conserved local outcomes");
+            if (feedback) await DeliveryRunnerChecks.Run(states, !mode.StartsWith("old-"), "UDP/" + mode, check, token);
         } finally {
             stopping.Cancel(); foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10)); } catch (OperationCanceledException) { }
         }
@@ -172,6 +174,7 @@ static class Ipv6Tests
         public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = []; public int Gathers;
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsUdpIpv6 => inner.SupportsUdpIpv6;
         public EgressStats? Egress => inner.Egress;
+        public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
         public Task<IMeshCandidateResource> Gather(MeshMember p, TraversalProfile k, Guid a, CancellationToken t) => GatherForPeer(p, k, a, false, null, 1, t);
         public async Task<IMeshCandidateResource> GatherForPeer(MeshMember p, TraversalProfile k, Guid a, bool allow, IPEndPoint? remote, int round, CancellationToken t)
         { Interlocked.Increment(ref Gathers); return new Resource(await inner.GatherForPeer(p, k, a, allow, remote, round, t), this); }

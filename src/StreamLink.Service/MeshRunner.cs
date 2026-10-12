@@ -243,6 +243,10 @@ public sealed class MeshRunner
                             (window.AcceptedSendBytes > 0 || window.DeliveredReceiveBytes > 0))
                             log($"设备 {peer.Slot} 路径业务窗口 {window.Seconds:F2} 秒：接受发送 {window.AcceptedSendMbps:F3} Mbps，已交付接收 {window.DeliveredReceiveMbps:F3} Mbps，拒绝 {window.SendRejectedPackets}；" +
                                 $"业务活动 RTT 样本 {window.ActivityRtt.Samples}，P95 {(window.ActivityRtt.P95Ms?.ToString("F2") ?? "Unknown")} ms；对端送达/发送损失 Unknown");
+                        foreach (var peer in statuses) if (peer.Delivery?.Reports.LastOrDefault() is {} receipt)
+                            log($"设备 {peer.Slot} 路径送达反馈：{receipt.Result}；接受 {receipt.AcceptedPackets} 包/{receipt.AcceptedBytes} B，对端交付 " +
+                                $"{receipt.PeerDeliveredPackets?.ToString() ?? "Unknown"} 包/{receipt.PeerDeliveredBytes?.ToString() ?? "Unknown"} B；" +
+                                $"接收收尾 {receipt.ReceiverSettleMs} ms，截止缺口 {receipt.DeficitAtReceiptPercent?.ToString("F3") ?? "Unknown"}%；此项不代表永久丢失或单向延迟");
                         nextTrafficReport = now + 30000;
                     }
                     int degraded = statuses.Count(p => p.Degraded);

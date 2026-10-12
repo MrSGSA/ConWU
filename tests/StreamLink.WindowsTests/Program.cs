@@ -119,6 +119,15 @@ static class Program
                 Check(!Field<CheckBox>(oldExploration,"udpExploration").Enabled,"old backend cannot silently accept UDP source expansion");
             Check((await worker.Handle(new("status"))).UdpExplorationVersion==1,"backend independently advertises UDP expansion IPC version");
             Check(new ControlReply(true,"",null,null,"",[]).UdpExplorationVersion==0,"old IPC reply defaults to no UDP expansion capability");
+            var feedbackProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;feedbackProfile.TraversalMode="tcp";
+            using(var feedbackSettings=new SettingsWindow(feedbackProfile)){
+                var box=Field<CheckBox>(feedbackSettings,"qualityFeedback");Check(box.Enabled&&!box.Checked,"receipt experiment begins unchecked in explicit managed mode");
+                box.Checked=true;feedbackSettings.Result.Validate();Check(feedbackSettings.Result.QualityFeedback,"receipt checkbox updates the actual profile opt-in");
+                Field<ComboBox>(feedbackSettings,"traversal").SelectedIndex=0;
+                Check(!box.Enabled&&!box.Checked&&!feedbackSettings.Result.QualityFeedback,"returning to compatibility clears hidden receipt overhead permission");
+            }
+            using(var oldFeedback=new SettingsWindow(feedbackProfile,supportsQualityFeedback:false))Check(!Field<CheckBox>(oldFeedback,"qualityFeedback").Enabled,"old backend cannot be opted into receipt traffic from a new frontend");
+            Check((await worker.Handle(new("status"))).QualityFeedbackVersion==1,"backend declares its independent receipt IPC capability");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");
