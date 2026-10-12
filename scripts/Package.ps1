@@ -36,6 +36,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Connection scheduling regression failed'}
         & dotnet run --project tests/StreamLink.MeshConnectionTests -c Release
         if($LASTEXITCODE -ne 0) {throw 'TCP selection / mesh recovery regression failed'}
+        & dotnet run --project tests/StreamLink.HelperLedgerTests -c Release -- --output (Join-Path $root "artifacts/kernel-helper-$releaseVersion.json")
+        if($LASTEXITCODE -ne 0) {throw 'Kernel helper and explicit compatibility resource accounting regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release -- --output (Join-Path $root "artifacts/managed-recovery-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Managed/legacy recovery observation and nomination regression failed'}
         & dotnet run --project tests/StreamLink.ManagedPathTests -c Release --no-build -- --feedback-only --output (Join-Path $root "artifacts/delivery-feedback-$releaseVersion.json")

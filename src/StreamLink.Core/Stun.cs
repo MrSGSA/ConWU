@@ -78,14 +78,17 @@ public static class Stun
         return ((IPEndPoint)route.LocalEndPoint!).Address;
     }
 
-    public static async Task<StunResult> Query(bool tcp, string server, int sourcePort, CancellationToken token, IPAddress? local = null)
+    public static Task<StunResult> Query(bool tcp, string server, int sourcePort, CancellationToken token, IPAddress? local = null)
+        => Query(tcp, server, sourcePort, token, local, TcpHelperPurpose.OneShotQuery);
+    public static async Task<StunResult> Query(bool tcp, string server, int sourcePort, CancellationToken token, IPAddress? local,
+        TcpHelperPurpose purpose)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token);
         timeout.CancelAfter(TimeSpan.FromSeconds(4));
         token = timeout.Token;
         var remote = await Resolve(server, token);
         if (tcp) {
-            using var lease = await TcpEndpointLease.Open(new(local ?? LocalAddress(remote), sourcePort), remote, Guid.NewGuid(), token);
+            using var lease = await TcpEndpointLease.Open(new(local ?? LocalAddress(remote), sourcePort), remote, Guid.NewGuid(), token, purpose);
             using var reference = lease.AcquireAttempt(lease.NetworkGeneration);
             return (await reference.Observe(token)) with { Server = server };
         }

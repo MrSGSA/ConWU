@@ -97,8 +97,15 @@ await using (var reflector = new Reflector { Silent = true }) {
     Guid generation = Guid.NewGuid();
     using var owner = await TcpEndpointLease.Open(new(IPAddress.Loopback, 0), reflector.Endpoint, generation, deadline.Token);
     using var attempt = owner.AcquireAttempt(generation);
-    using var canceled = new CancellationTokenSource(150);
-    try { await attempt.Observe(canceled.Token); } catch (OperationCanceledException) { }
+    using var canceled = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+    var partial = attempt.Observe(canceled.Token);
+    // Transaction admission can wait without touching the stream. This
+    // negative case requires an ACTUAL partial transaction, not just elapsed
+    // wall time while an untouched helper is waiting for its budget.
+    while (Volatile.Read(ref reflector.Requests) == 0) await Task.Delay(10, deadline.Token);
+    Check(reflector.Requests == 1, "Partial transaction reached the actual reflector before cancellation");
+    canceled.Cancel();
+    try { await partial; } catch (OperationCanceledException) { }
     Rejected(() => owner.AcquireAttempt(generation), "Failed partial transaction cannot produce a new candidate");
     Rejected(() => attempt.RetainPath(generation), "Failed stream cannot be retained as a path");
 }

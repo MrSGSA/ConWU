@@ -11,7 +11,7 @@ var b=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));b.Director
 using var ca=new MeshDiscoveryClient(a);using var cb=new MeshDiscoveryClient(b);
 await ca.SaveDirectory(a.Directory!,token);
 var capsA=new MeshTraversalCapabilities(1,1,ca.BootId,[TraversalProfile.FakeTcpHttpSo],
-    StandbyPaths:1,PathDiagnostics:1,DiagnosticMbps:50,AutoQuality:1);
+    StandbyPaths:1,PathDiagnostics:1,DiagnosticMbps:50,AutoQuality:1,DiagnosticTiming:1);
 var capsB=capsA with{BootId=cb.BootId};
 MeshAnnouncement Node(MeshProfile p,MeshTraversalCapabilities caps,int port)=>new(p.Self.Slot,p.Self.Device,1,
     DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(),"192.0.2.1:"+port,"isolated-coordinator-test",caps);
@@ -21,14 +21,17 @@ var sa=await ca.WaitForChanges(token);var sb=await cb.WaitForChanges(token);
 Check(sa!=null&&sb!=null,"real Linux executable exposes authenticated watch over pinned TLS");
 Check(ca.SupportsAutoQuality&&cb.SupportsAutoQuality&&ca.SupportsPathDiagnostics&&cb.SupportsStandbyPaths,
     "actual server independently declares diagnostic/standby/automatic quality permission");
+Check(ca.SupportsDiagnosticTiming&&cb.SupportsDiagnosticTiming,
+    "actual Linux server separately authorizes relative-idle timing capability");
 var theirs=sa!.Nodes.Single(n=>n.Slot==b.Self.Slot);
 var opened=MeshMetadata.Open(a,b.Self,theirs);
-Check(opened.Slot==nb.Slot&&opened.Device==nb.Device&&opened.Endpoint==nb.Endpoint&&opened.Traversal?.BootId==capsB.BootId&&opened.Traversal.AutoQuality==1,
+Check(opened.Slot==nb.Slot&&opened.Device==nb.Device&&opened.Endpoint==nb.Endpoint&&opened.Traversal?.BootId==capsB.BootId&&opened.Traversal.AutoQuality==1&&opened.Traversal.DiagnosticTiming==1,
     "signed encrypted endpoint announcement survives actual Linux persistence/API");
 long seq=0,utc=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
 var candidate=new MeshTraversalCandidate(Guid.NewGuid(),1,"192.0.2.1:41001",null,utc,utc+120,CandidatePurpose.SimultaneousOpen,Standby:true);
 await using var offer=MeshTraversalAttempt.Offer(a,b.Self,capsA,capsB,TraversalProfile.FakeTcpHttpSo,candidate,1,()=>++seq,
-    coordinatorStandby:ca.SupportsStandbyPaths,coordinatorDiagnostics:ca.SupportsPathDiagnostics,coordinatorAutoQuality:ca.SupportsAutoQuality);
+    coordinatorStandby:ca.SupportsStandbyPaths,coordinatorDiagnostics:ca.SupportsPathDiagnostics,coordinatorAutoQuality:ca.SupportsAutoQuality,coordinatorTiming:ca.SupportsDiagnosticTiming);
+Check(offer.DiagnosticTimingNegotiated==1,"Linux signed capability context enables the separate SQD2 timing negotiation");
 await ca.PublishTraversal([offer.Outbound!],token);
 var response=await cb.WaitForChanges(token);
 Check(response?.Traversal?.Any(m=>m.AttemptId==offer.AttemptId&&m.Stage==MeshTraversalStage.Offer)==true,

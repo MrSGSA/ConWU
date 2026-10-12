@@ -28,8 +28,13 @@ public static class TcpShapeProbe
         if (controlRound != null && !ReferenceEquals(controlRound.Machine, resources ?? TraversalResources.Shared)) throw new ArgumentException("Probe round belongs to another machine budget");
         return RunCore(owner, control, takeRequest, checkRoute, token, resources, destinations, preparedCatalog: preparedCatalog, controlRound: controlRound);
     }
+    internal static Task<TcpShapeObservation[]> RunFreshWithInterfaceLookup(TcpCaptureOwner owner, ITcpObservationControl control,
+        Func<bool> takeRequest, CancellationToken token, TraversalResources resources, Func<IPAddress, string> lookup) =>
+        RunCore(owner, control, takeRequest, _ => { }, token, resources, 2, interfaceLookup: lookup);
+    static string SourceInterface(IPAddress source) => System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+        .FirstOrDefault(n => n.GetIPProperties().UnicastAddresses.Any(a => a.Address.Equals(source)))?.Id ?? "Unknown";
     static async Task<TcpShapeObservation[]> RunCore(TcpCaptureOwner owner, ITcpObservationControl control,
-        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations, bool? calibration = null, Action? registrationConfirmed = null, TcpObserverReply? preparedCatalog = null, TraversalControlRound? controlRound = null)
+        Func<bool> takeRequest, Action<IPEndPoint> checkRoute, CancellationToken token, TraversalResources? resources, int freshDestinations, bool? calibration = null, Action? registrationConfirmed = null, TcpObserverReply? preparedCatalog = null, TraversalControlRound? controlRound = null, Func<IPAddress, string>? interfaceLookup = null)
     {
         bool fresh = freshDestinations != 0;
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(20000);
@@ -50,6 +55,12 @@ public static class TcpShapeProbe
             points = calibration.Value ? [points[0], points[1], points[2]] : [points[0], points[2]];
         }
         if (fresh) points = points.Take(freshDestinations).ToArray();
+        // Resolve invariant source metadata once, BEFORE the short registration
+        // and first SYN. Windows interface enumeration may block on virtual
+        // adapters; it cannot be allowed to age already-validated observations
+        // or be repeated for every evidence item after the freshness check.
+        string interfaceId = (interfaceLookup ?? SourceInterface)(owner.Lease.Local.Address);
+        token.ThrowIfCancellationRequested();
         foreach (var point in points) checkRoute(TcpObserverProtocol.Endpoint(point.Endpoint));
         if (points.Length == 0) throw new IOException("观察点与 helper 四元组冲突");
         var output = new List<TcpShapeObservation>();
@@ -102,9 +113,10 @@ public static class TcpShapeProbe
             owner.Lease.Local.ToString(), owner.Lease.Reflector.ToString(), e.ProbeId, e.Target, e.Source,
             e.ObservedAt, (e.ObservedAt ?? result.Expires) + 60000, e.State,
             CaptureOwnerId: owner.OwnerId,
-            InterfaceId: System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
-                .FirstOrDefault(n => n.GetIPProperties().UnicastAddresses.Any(a => a.Address.Equals(owner.Lease.Local.Address)))?.Id ?? "Unknown",
+            InterfaceId: interfaceId,
             ProbeWindowEndsAt: result.Expires, LocalProbeStartedAt: probeStarted.GetValueOrDefault(e.ProbeId)));
+        if (fresh && probeStarted.Values.Any(t => Stopwatch.GetElapsedTime(t).TotalMilliseconds >= TraversalLimits.PredictionAgeMs))
+            throw new IOException("完成观察封装时本机证据已过期");
         return output.ToArray();
     }
     static void Validate(TcpObserverReply r, Guid ticket, Guid epoch, TcpProbeSpec[] specs, TcpObserverPoint[] points, int windowMs)

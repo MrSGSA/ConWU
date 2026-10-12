@@ -78,6 +78,8 @@ public sealed class ControlWorker : BackgroundService
     // Full per-window evidence stays in the runner; the legacy pipe remains
     // 64KiB. This display copy cannot change evidence used for selection.
     static SessionStatus? DisplayStatus(SessionStatus? source) => source == null ? null : source with {
+        TcpHelpers = source.TcpHelpers is {} tcp ? tcp with { Resources = [] } : null,
+        LegacyTransports = source.LegacyTransports is {} legacy ? legacy with { Resources = [] } : null,
         Peers = source.Peers?.Select(p => p with {
             Diagnostics = p.Diagnostics is {} d ? d with { Windows = [] } : null,
             Traffic = null, Delivery = null, SendQueue = null

@@ -39,7 +39,7 @@ public sealed class TcpBinding : IDisposable
                 string candidate = tail[index];
                 try {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(round.Token); timeout.CancelAfter(2000);
-                    await Stun.Query(true, candidate, 0, timeout.Token, local);
+                    await Stun.Query(true, candidate, 0, timeout.Token, local, TcpHelperPurpose.ServerScreening);
                     await ready.Writer.WriteAsync(candidate, round.Token);
                 } catch (Exception ex) when (!round.IsCancellationRequested && ex is SocketException or IOException or OperationCanceledException or ArgumentException) { }
                 await Task.Delay(150, round.Token);
@@ -88,7 +88,7 @@ public sealed class TcpBinding : IDisposable
         try {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(4000);
             var endpoint = await Stun.Resolve(server, timeout.Token);
-            lease = await TcpEndpointLease.Open(new(local ?? Stun.LocalAddress(endpoint), port), endpoint, Guid.NewGuid(), timeout.Token);
+            lease = await TcpEndpointLease.Open(new(local ?? Stun.LocalAddress(endpoint), port), endpoint, Guid.NewGuid(), timeout.Token, TcpHelperPurpose.LegacyEntry);
             connection = new TcpBinding(lease, server);
             return (connection, await connection.Pulse(timeout.Token));
         } catch { connection?.Dispose(); lease?.Dispose(); throw; }

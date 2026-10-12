@@ -23,11 +23,25 @@ static class FreshObservationTests
             int charged = 0, before = io.Sent; long start = Stopwatch.GetTimestamp();
             var observations = await TcpShapeProbe.RunFresh(owner, control, () => { charged++; return true; }, _ => { }, token, budget, destinations: 2, preparedCatalog: cached);
             double maxAgeMs = observations.Max(o => Stopwatch.GetElapsedTime(o.LocalProbeStartedAt).TotalMilliseconds);
+            Console.WriteLine($"FreshWindow round={i + 1} ageMs={maxAgeMs:F2} requests={charged} sends={io.Sent - before} evidence={observations.Length}");
             check(charged == (cached == null ? 3 : 2) && io.Sent - before == 4 && observations.Length == 2 && observations.All(o => o.State == "SynObserved" &&
                 o.Mapped == lease.Local.ToString() && o.ResourceId == lease.Id && o.LocalProbeStartedAt > 0 && o.TcpHandshakeVerified == "NotTested") && maxAgeMs < 2000,
                 $"fresh round {i + 1}: final two-target observations arrive within local freshness limit using the retained source");
             check(owner.Status.Sessions == 0 && helper.Accepted == 1, "short observation releases tuple reservations without rebinding the helper");
             rounds.Add(new { round = i + 1, elapsedMs = Stopwatch.GetElapsedTime(start).TotalMilliseconds, maxAgeMs, charged, catalogRequestsBeforeWindow = cached == null ? 0 : 1, sent = io.Sent - before });
+        }
+        var delayedProfile = MeshIdentity.Create(url, pin, "faketcp");
+        using (var delayedControl = new MeshDiscoveryClient(delayedProfile)) {
+            await delayedControl.SaveDirectory(delayedProfile.Directory!, token);
+            int lookups = 0, sendsBefore = io.Sent; long metadataStarted = Stopwatch.GetTimestamp();
+            var delayed = await TcpShapeProbe.RunFreshWithInterfaceLookup(owner, delayedControl, () => true, token, budget, _ => {
+                lookups++; check(io.Sent == sendsBefore, "slow interface metadata is resolved before the first SYN");
+                Thread.Sleep(2200); return "controlled-slow-interface";
+            });
+            check(lookups == 1 && delayed.Length == 2 && delayed.All(o => o.InterfaceId == "controlled-slow-interface") &&
+                delayed.Max(o => Stopwatch.GetElapsedTime(o.LocalProbeStartedAt).TotalMilliseconds) < 2000 &&
+                Stopwatch.GetElapsedTime(metadataStarted).TotalMilliseconds >= 2200,
+                "slow metadata consumes preparation time without extending the two-second observation validity");
         }
         foreach (string fault in new[] { "legacy-catalog", "wrong-window", "nonfinal-read", "slow-register", "slow-read", "cached-epoch", "cached-legacy" }) {
             var profile = MeshIdentity.Create(url, pin, "faketcp"); using var client = new MeshDiscoveryClient(profile);

@@ -11,6 +11,8 @@ public sealed record SessionStatus(string State, string LocalIp, string PeerIp, 
 {
     public TraversalResourceUsage? ControlAdmission { get; init; }
     public TraversalEnhancementUsage? EnhancementAdmission { get; init; }
+    public TcpHelperUsage? TcpHelpers { get; init; }
+    public LegacyTransportUsage? LegacyTransports { get; init; }
     public bool Degraded => Peers?.Any(p => p.Connected && p.Degraded) == true;
     public EgressStats? Egress { get; init; }
 }
