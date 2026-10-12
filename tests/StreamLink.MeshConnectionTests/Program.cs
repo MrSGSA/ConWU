@@ -111,6 +111,8 @@ static class Program
             opening.SetResult(adapter);
             await Until(() => status?.Connected == true, "peer entry connects while the local mapping probe remains blocked");
             Check(!mapped.Task.IsCompleted, "strict local NAT does not block using another member's entry");
+            Check(status?.ControlAdmission is { SearchAdmitted: > 0, AdmittedBytes: > 0 },
+                "formal Runner status exposes cumulative control admission separately from wire traffic");
             mapped.SetResult(mapping);
             await Until(() => transports.OfType<StubTransport>().Any(), "local entry starts when mapping completes");
             await Until(() => discovery.Published.Any(p => p.Endpoint == mapping.PublicEndpoint.ToString()), "new TCP entry is published promptly");

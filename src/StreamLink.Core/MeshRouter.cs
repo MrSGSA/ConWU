@@ -29,6 +29,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public ManagedPeer? Managed;
         public readonly PathRecovery Recovery = new(Environment.TickCount64);
         public Guid LegacyPathId;
+        public long NextLegacyControl;
     }
     readonly object gate = new();
     readonly MeshProfile profile;
@@ -85,7 +86,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool changed = !Equals(peer.Candidate, candidate);
             peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
             if (changed && candidate != null && !candidate.Equals(peer.Active)) {
-                peer.Probes.Remove(candidate); Send(peer.Link.Hello(), candidate); Challenge(peer, candidate);
+                peer.Probes.Remove(candidate); peer.NextLegacyControl = 0;
             }
         }
     }
@@ -104,7 +105,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         bool reuse = found && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5;
         long nonce = reuse ? probe.Token : BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
         byte[]? frame = peer.Link.ProbePath(nonce);
-        if (frame != null) { peer.Probes[endpoint] = (nonce, reuse ? probe.At : now, now); Send(frame, endpoint); }
+        if (frame != null && SendLegacyControl(frame, endpoint)) peer.Probes[endpoint] = (nonce, reuse ? probe.At : now, now);
     }
     public MeshPeerStatus[] Status()
     {
@@ -121,6 +122,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
         try { return socket.SendTo(packet, endpoint) == packet.Length; }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { return false; }
     }
+    bool SendLegacyControl(byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
+        => packet != null && endpoint != null && TraversalResources.Shared.TrySend(packet.Length, maintenance) && Send(packet, endpoint);
     void Transmit()
     {
         var buffer = new byte[MeshLink.Mtu];
@@ -147,7 +150,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
-                if (result.Reply != null && (buffer[4] != 5 || TraversalResources.Shared.TrySend(result.Reply.Length, maintenance: true))) Send(result.Reply, endpoint);
+                if (result.Reply != null) SendLegacyControl(result.Reply, endpoint, maintenance: buffer[4] == 5 && endpoint.Equals(peer.Active));
                 if (buffer[4] != 1) {
                     if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
@@ -168,30 +171,37 @@ public sealed partial class MeshRouter : IAsyncDisposable
     }
     async Task Heartbeat()
     {
-        long nextLegacy = 0; int cursor = 0;
+        int cursor = 0;
         while (!stop.IsCancellationRequested) {
             long now = Environment.TickCount64;
             lock (gate) {
             var order = peers.Values.ToArray();
+            bool legacyServiced = false;
             for (int i = 0; i < order.Length; i++) {
                 var peer = order[(i + cursor) % order.Length];
                 if (peer.Managed != null) { TickManaged(peer, now); TickRecovery(peer, now); continue; }
                 TickRecovery(peer, now);
-                if (now < nextLegacy) continue;
+                // Spread legacy search/ordinary keepalive over ticks instead
+                // of draining the entire burst before any replies can arrive.
+                // Recovery and managed paths still get their own fair turn.
+                if (legacyServiced || now < peer.NextLegacyControl || peer.Active == null && peer.Candidate == null) continue;
+                legacyServiced = true; peer.NextLegacyControl = now + 1500;
                 if (Healthy(peer)) {
                     byte[]? ping = peer.Link.Ping(out long nonce);
-                    if (ping != null && TraversalResources.Shared.TrySend(ping.Length, maintenance: true) && Send(ping, peer.Active))
+                    if (SendLegacyControl(ping, peer.Active, maintenance: true))
                         peer.Recovery.KeepaliveSent(nonce, now);
+                    if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) {
+                        SendLegacyControl(peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate);
+                    }
                 }
                 else {
-                    byte[] hello = peer.Link.Hello(); Send(hello, peer.Candidate);
-                    if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) Send(hello, peer.Active);
+                    byte[] hello = peer.Link.Hello(); SendLegacyControl(hello, peer.Candidate);
+                    if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) SendLegacyControl(hello, peer.Active);
+                    if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) Challenge(peer, peer.Candidate);
                 }
-                if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) { Send(peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate); }
             }
             cursor = order.Length == 0 ? 0 : (cursor + 1) % order.Length;
             }
-            if (now >= nextLegacy) nextLegacy = now + 1500;
             await Task.Delay(100, stop.Token);
         }
     }

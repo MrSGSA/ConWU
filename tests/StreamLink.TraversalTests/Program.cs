@@ -106,6 +106,19 @@ static partial class Program
     }
     static async Task AuthenticationAndLimits()
     {
+        var counter = new TraversalResources(2, 0, 2);
+        using (var firstLease = counter.Acquire()) {
+            using (counter.Acquire()) Check(counter.Usage().OpenUdpResources == 2 && counter.Usage().PeakUdpResources == 2,
+                "resource snapshots include concurrent ownership without a per-attempt reset");
+            Check(counter.Usage().OpenUdpResources == 1 && counter.Usage().PeakUdpResources == 2, "quota release preserves historical peak");
+            Check(counter.TrySend(32) && counter.TrySend(48, maintenance: true) && !counter.TrySend(32) && !counter.TrySend(48, maintenance: true),
+                "one non-refilling ledger admits exactly its burst across search and maintenance");
+            var observed = counter.Usage();
+            Check(observed.SearchAdmitted == 1 && observed.MaintenanceAdmitted == 1 && observed.AdmittedBytes == 80 &&
+                observed.SearchDeferred == 1 && observed.MaintenanceDeferred == 1,
+                "control snapshots distinguish admission, deferral and bytes without claiming actual wire sends");
+        }
+        Check(counter.Usage().OpenUdpResources == 0, "last release is visible in the same resource ledger");
         var lab = new NatLab(); var left = lab.Add("192.0.2.1", "eim", "eif", 40111); var right = lab.Add("192.0.2.2", "eim", "eif", 50919);
         var attempt = Guid.NewGuid();
         byte[] rememberedKey = Key();

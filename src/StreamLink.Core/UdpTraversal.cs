@@ -56,6 +56,9 @@ public sealed class TraversalSocket : ITraversalSocket
 
 // One shared limiter for all attempts on a machine, not one budget per peer.
 // Data packets do not use this limiter; this bounds control probes only.
+public sealed record TraversalResourceUsage(int OpenUdpResources, int PeakUdpResources, long SearchAdmitted,
+    long MaintenanceAdmitted, long SearchDeferred, long MaintenanceDeferred, long AdmittedBytes);
+
 public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSecond = 60, int burst = 8)
 {
     public static TraversalResources Shared { get; } = new();
@@ -63,14 +66,15 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
     double tokens = burst;
     double byteTokens = TraversalLimits.ControlBytesPerSecond, searchTokens = burst, maintenanceTokens = burst;
     long tick = Stopwatch.GetTimestamp();
-    int sockets;
+    int sockets, peakSockets;
+    long searchAdmitted, maintenanceAdmitted, searchDeferred, maintenanceDeferred, admittedBytes;
     readonly HashSet<OptionalSocket> optionalSockets = [];
     public IDisposable Acquire()
     {
         while (true) {
             OptionalSocket victim;
             lock (gate) {
-                if (sockets < maximumSockets) { sockets++; return new Lease(this); }
+                if (sockets < maximumSockets) { sockets++; peakSockets = Math.Max(peakSockets, sockets); return new Lease(this); }
                 victim = optionalSockets.FirstOrDefault() ?? throw new IOException("打洞资源已满，请等待其他尝试结束");
                 optionalSockets.Remove(victim);
             }
@@ -84,7 +88,7 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
         OptionalSocket result;
         lock (gate) {
             if (sockets >= maximumSockets) return null;
-            sockets++; result = new(this); optionalSockets.Add(result);
+            sockets++; peakSockets = Math.Max(peakSockets, sockets); result = new(this); optionalSockets.Add(result);
         }
         try { result.Open(open); return result; }
         catch { result.Dispose(); throw; }
@@ -121,9 +125,23 @@ public sealed class TraversalResources(int maximumSockets = 8, int packetsPerSec
             searchTokens = Math.Min(burst, searchTokens + seconds * Math.Min(48, packetsPerSecond));
             maintenanceTokens = Math.Min(burst, maintenanceTokens + seconds * Math.Min(TraversalLimits.MaintenancePps, packetsPerSecond));
             byteTokens = Math.Min(TraversalLimits.ControlBytesPerSecond, byteTokens + seconds * TraversalLimits.ControlBytesPerSecond);
-            if (tokens < 1 || byteTokens < bytes || (maintenance ? maintenanceTokens : searchTokens) < 1) return false;
-            tokens--; byteTokens -= bytes; if (maintenance) maintenanceTokens--; else searchTokens--; return true;
+            if (tokens < 1 || byteTokens < bytes || (maintenance ? maintenanceTokens : searchTokens) < 1) {
+                if (maintenance) maintenanceDeferred++; else searchDeferred++;
+                return false;
+            }
+            tokens--; byteTokens -= bytes;
+            if (maintenance) { maintenanceTokens--; maintenanceAdmitted++; }
+            else { searchTokens--; searchAdmitted++; }
+            admittedBytes += bytes; return true;
         }
+    }
+    // Admission counts, not packets observed on the wire: an authorized sender
+    // can still fail or be canceled. Kernel helper/native legacy overhead and
+    // sockets not acquired through this ledger are deliberately not implied.
+    public TraversalResourceUsage Usage()
+    {
+        lock (gate) return new(sockets, peakSockets, searchAdmitted, maintenanceAdmitted,
+            searchDeferred, maintenanceDeferred, admittedBytes);
     }
     sealed class Lease(TraversalResources owner) : IDisposable
     {

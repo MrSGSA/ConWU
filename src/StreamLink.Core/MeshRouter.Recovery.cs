@@ -17,7 +17,7 @@ public sealed partial class MeshRouter
         byte[]? ping = peer.Link.ProbePath(nonce);
         bool sent = ping != null && (active != null
             ? AdmitMaintenance(active, ping.Length) && SendManaged(ping, active)
-            : TraversalResources.Shared.TrySend(ping.Length, maintenance: true) && Send(ping, peer.Active));
+            : SendLegacyControl(ping, peer.Active, maintenance: true));
         // A wire-aware native path charges its injected frame, including these
         // probes, to the existing machine maintenance budget. Queuing alone is
         // never counted as a completed check; a dropped frame later times out.

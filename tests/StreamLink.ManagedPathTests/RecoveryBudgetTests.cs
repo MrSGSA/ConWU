@@ -6,6 +6,38 @@ using StreamLink.Core;
 
 static class RecoveryBudgetTests
 {
+    public static async Task<object> ControlFlood(Action<bool, string> check, Func<string, string, byte[]> packet)
+    {
+        var owner = MeshIdentity.Create("https://example.com/", "", "faketcp");
+        var guest = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner))); guest.Directory = owner.Directory;
+        var adapter = new Adapter(); await using var router = new MeshRouter(owner, adapter);
+        await using var remote = new Echo(guest, owner, router.LocalEndpoint, new(), packet(guest.LocalIp, owner.LocalIp));
+        router.SetCandidate(2, remote.Local, "fixture", "");
+        var clock = Stopwatch.StartNew();
+        while (!router.Status().Single().Connected) {
+            if (clock.ElapsedMilliseconds > 8000) throw new Exception("control flood fixture could not authenticate");
+            await Task.Delay(20);
+        }
+        await Task.Delay(250);
+        int baseline = Volatile.Read(ref remote.HelloReplies);
+        var before = TraversalResources.Shared.Usage(); clock.Restart();
+        await remote.HelloBurst(300); await Task.Delay(250);
+        var after = TraversalResources.Shared.Usage(); int replies = Volatile.Read(ref remote.HelloReplies) - baseline;
+        check(replies > 0 && replies < 100 && after.SearchDeferred > before.SearchDeferred &&
+            after.SearchAdmitted - before.SearchAdmitted <= 8 + 48 * clock.Elapsed.TotalSeconds + 2,
+            "authenticated legacy hello flood produces bounded real replies and visible search deferral");
+        check(replies <= after.SearchAdmitted - before.SearchAdmitted + 2 && router.Status().Single().Connected,
+            "legacy handshake replies have admission evidence without replacing the active path");
+        int received = adapter.Incoming.Count; await remote.BusinessBurst(24);
+        clock.Restart();
+        while (adapter.Incoming.Count < received + 24 && clock.ElapsedMilliseconds < 2000) await Task.Delay(10);
+        check(adapter.Incoming.Count == received + 24,
+            "ordinary authenticated IP datagrams continue while the control burst has exhausted its search tokens");
+        return new { authenticatedHelloRequests = 300, observedReplies = replies,
+            admittedSearchDelta = after.SearchAdmitted - before.SearchAdmitted,
+            deferredSearchDelta = after.SearchDeferred - before.SearchDeferred,
+            deliveredBusinessPackets = adapter.Incoming.Count - received };
+    }
     public static async Task<object> Run(Action<bool, string> check, Func<string, string, byte[]> packet)
     {
         var owner = MeshIdentity.Create("https://example.com/", "", "faketcp");
@@ -25,6 +57,7 @@ static class RecoveryBudgetTests
             // Initial candidate challenges are not the selected-path
             // maintenance phase measured below. This is not a full wire audit.
             wire.Clear();
+            var admissionStart = TraversalResources.Shared.Usage();
             foreach (var node in nodes) node.Load = true;
             clock.Restart();
             while (router.Status().Any(p => p.Recovery?.StableBusinessConfirmedMs == null)) {
@@ -51,6 +84,7 @@ static class RecoveryBudgetTests
                 "budget contention never bypasses the business observation duration");
             return new { status = "Pass", neighbors = 7, elapsedMs = clock.ElapsedMilliseconds, maintenanceFrames = times.Length,
                 receiveIntervalSeconds = seconds, peakOneSecondFrames = peak, peers = status,
+                admissionStart, admissionEnd = TraversalResources.Shared.Usage(),
                 scope = "one production legacy MeshRouter, seven authenticated loopback echo fixtures representing separate remote devices; real MeshLink UDP I/O, memory IP adapter; not eight real Windows or native wire overhead" };
         } finally { foreach (var node in nodes) await node.DisposeAsync(); }
     }
@@ -65,6 +99,7 @@ static class RecoveryBudgetTests
         readonly CancellationTokenSource stop = new();
         readonly Task receive, send;
         public readonly int Slot;
+        public int HelloReplies;
         public volatile bool Load;
         public IPEndPoint Local => (IPEndPoint)socket.LocalEndPoint!;
         public Echo(MeshProfile profile, MeshProfile owner, IPEndPoint target, ConcurrentQueue<long> wire, byte[] business)
@@ -83,9 +118,18 @@ static class RecoveryBudgetTests
                 if (!got.RemoteEndPoint.Equals(target)) continue;
                 var value = link.Receive(buffer.AsSpan(0, got.ReceivedBytes));
                 if (!value.Authenticated) continue;
+                if (buffer[4] == 2) Interlocked.Increment(ref HelloReplies);
                 if (buffer[4] is 5 or 6) wire.Enqueue(Stopwatch.GetTimestamp());
                 if (value.Reply != null) await socket.SendToAsync(value.Reply, SocketFlags.None, target, stop.Token);
             }
+        }
+        public async Task HelloBurst(int count)
+        {
+            for (int i = 0; i < count; i++) await socket.SendToAsync(link.Hello(), SocketFlags.None, target, stop.Token);
+        }
+        public async Task BusinessBurst(int count)
+        {
+            for (int i = 0; i < count; i++) await socket.SendToAsync(link.Data(business)!, SocketFlags.None, target, stop.Token);
         }
         async Task Send()
         {
