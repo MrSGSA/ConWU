@@ -33,6 +33,8 @@ try {
     await UdpExplorationTests.Run(Check);
     await QualityFeedbackNegotiationTests.Run(Check);
     await StandbyNegotiationTests.Run(Check);
+    int oldIndex=Array.IndexOf(args,"--released-core");
+    if(oldIndex>=0){if(oldIndex+1>=args.Length)throw new ArgumentException("--released-core requires retained DLL path");rows.Add(ReleasedCoreCompatibilityTests.Run(args[oldIndex+1],Check));}
     var registry = new MeshRegistry(root);
     {
         var (a, b) = Pair(); var ca = Caps(); var cb = Caps(); long seqA = 0, seqB = 0;
@@ -204,7 +206,7 @@ try {
     }
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows,
         scope = "typed coordination and production attempt-to-Router integration; optional actual C++ protocol over loopback test backend; not MeshRunner scheduling or WAN" }, new JsonSerializerOptions { WriteIndented = true }));
-    Console.WriteLine($"PASS {checks} traversal checks, {rows.Count} HTTPS/native rounds");
+    Console.WriteLine($"PASS {checks} traversal checks, {rows.Count} additional result rows; see each row for its actual scope");
 } catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() })); throw; }
 finally { foreach (var file in Directory.GetFiles(root)) File.Delete(file); Directory.Delete(root); }
 
