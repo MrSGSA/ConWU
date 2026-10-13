@@ -11,9 +11,10 @@ static class PeerSourceAdmissionTests
         var peers = Enumerable.Range(0, 7).Select(_ => MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self).ToArray();
         var config = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", TcpPeerReflexive = true, TcpStun = ["fixture.invalid:3478"] };
         var wire = new PeerSourceNatWire(0); await using var helper = new Reflector { MapForTest = wire.Reflect };
-        int resolved = 0;
+        int resolved = 0; var cacheTime = new CacheTime();
         await using var factory = new MeshCandidateFactory(config, binary, root, [TraversalProfile.FakeTcpHttpSo], captureBroker: true, wireControl: true, peerSourceNative: true) {
-            ResolveTarget = (_, _, _) => { resolved++; return Task.FromResult(helper.Endpoint); }, RouteCheckForTest = (_, _, _) => { }, OpenCaptureForTest = (local, _) => wire.Open(0, local)
+            ResolveTarget = (_, _, _) => { resolved++; return Task.FromResult(helper.Endpoint); }, RouteCheckForTest = (_, _, _) => { }, OpenCaptureForTest = (local, _) => wire.Open(0, local),
+            EndpointTimeForTest = cacheTime
         };
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var remote = new MeshTraversalCandidate(Guid.NewGuid(), 1, "192.0.2.20:40000", null, now, now + 120, CandidatePurpose.SimultaneousOpen, PeerReflexive: true);
@@ -34,8 +35,22 @@ static class PeerSourceAdmissionTests
             await using var same = await factory.GatherSourceAware(peers[0], TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), false, null, 1, false, true, token);
             check(same.Candidate.Endpoint == resources[0].Candidate.Endpoint && helper.Accepted == 7 && helper.Requests == 7,
                 "a duplicate peer request reuses only its own partition and coalesces the recent query");
+            cacheTime.Advance(2000);
+            await using var fresh = await factory.GatherSourceAware(peers[0], TraversalProfile.FakeTcpHttpSo, Guid.NewGuid(), false, null, 1, false, true, token);
+            check(fresh.Candidate.Endpoint == resources[0].Candidate.Endpoint && helper.Accepted == 7 && helper.Requests == 8 && wire.Ios.Length == 7,
+                "at cache expiry this peer reobserves its own held source, without a new bind or another peer's partition");
         } finally { foreach (var resource in resources) await resource.DisposeAsync(); }
         await factory.DisposeAsync();
         check(wire.Ios.All(io => io.Closed), "partitioned source collection releases every helper/capture after candidate owners end");
+    }
+    // This test covers partition ownership and both sides of cache expiry;
+    // seven real helper queries need not finish in two wall-clock seconds.
+    // Only the pool's age is controlled. Socket I/O, UTC and timeouts stay real.
+    sealed class CacheTime : TimeProvider
+    {
+        long milliseconds;
+        public override long TimestampFrequency => 1000;
+        public override long GetTimestamp() => milliseconds;
+        public void Advance(int delta) => milliseconds += delta;
     }
 }
