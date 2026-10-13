@@ -12,6 +12,7 @@ Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",isolated);
 try {
     using var worker=new ControlWorker();
     worker.StartLocal();
+    await UiBoundaryTests.Run(worker,Check);
     var first=await worker.Handle(new("status"));
     string originalName=first.Profile!.DeviceName;
     first.Profile.DeviceName="mutated external reply";

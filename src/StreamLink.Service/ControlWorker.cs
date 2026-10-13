@@ -184,6 +184,7 @@ public sealed partial class ControlWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StartLocal();
+        var uiServing=RunUiControl(stoppingToken);
         using var clientsLimit=new SemaphoreSlim(8,8);var clients=new List<Task>();bool first=true;
         try
         {
@@ -199,6 +200,6 @@ public sealed partial class ControlWorker : BackgroundService
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-        finally {try{await Task.WhenAll(clients).WaitAsync(TimeSpan.FromSeconds(16));}finally{await End();runStop?.Dispose();runStop=null;}}
+        finally {try{await Task.WhenAll(clients.Append(uiServing)).WaitAsync(TimeSpan.FromSeconds(21));}finally{await End();runStop?.Dispose();runStop=null;}}
     }
 }

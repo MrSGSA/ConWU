@@ -27,6 +27,7 @@ public static class ServiceInstaller
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
         string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
+        new StreamLink.Service.ProfileStore().AuthorizeUiUser(System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
         bool existed = Installed;
         string? previous = null;
         if (existed) {

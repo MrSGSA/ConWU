@@ -261,17 +261,24 @@
         "CTL-01",
         "UI-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: separate sanitized DTO/limited patch/per-method SID pipe, ordinary daily GUI and elevated management split",
+      "product": "asInvoker daily surface; old full-profile pipe remains privileged",
+      "windowsIo": "21 isolated worker/actual authenticated Windows pipe checks and 106 Windows regressions Pass; administrator test sender, not a standard-token proof",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/UI-04.md",
+        "docs/implementation-1.0/evidence/ui-boundary/"
+      ],
+      "remaining": [
+        "real standard/other-user and SMB negative paths",
+        "installed-service client PID validation and SID rollback",
+        "ordinary GUI rendering, UAC cancellation and real pairing workflow"
+      ]
     },
     {
       "id": "NET-01",

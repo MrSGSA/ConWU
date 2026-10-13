@@ -8,6 +8,17 @@ namespace StreamLink.Service;
 
 public sealed class ProfileStore
 {
+    public void AuthorizeUiUser(string value)
+    {
+        var sid=new SecurityIdentifier(value);if(!sid.IsAccountSid())throw new IOException("必须授权单一用户SID");
+        string target=Path.Combine(Root,"ui-user.sid");if(File.Exists(target)&&(File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");
+        File.WriteAllText(target+".tmp",sid.Value);File.Move(target+".tmp",target,true);
+    }
+    internal string? AuthorizedUiUser()
+    {
+        string path=Path.Combine(Root,"ui-user.sid");if(!File.Exists(path))return null;if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");
+        var text=File.ReadAllText(path).Trim();if(text.Length>128)throw new IOException("UI授权文件无效");var sid=new SecurityIdentifier(text);return sid.IsAccountSid()?sid.Value:throw new IOException("UI授权SID无效");
+    }
     public static string Root => Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink");
     readonly string file;
     public ProfileStore()

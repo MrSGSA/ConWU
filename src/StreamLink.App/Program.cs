@@ -26,9 +26,9 @@ static class Program
             IEnumerable<object> Layout(Control c) { yield return new {Type=c.GetType().Name,Text=c.Text,Width=c.Width,Height=c.Height,X=c.Left,Y=c.Top,Dpi=c.DeviceDpi,Font=c.Font.Size,Auto=c.AutoSize}; foreach(Control child in c.Controls) foreach(var item in Layout(child)) yield return item; }
             File.WriteAllText(Path.GetFullPath(args[1])+".json",System.Text.Json.JsonSerializer.Serialize(new {preview.Width,preview.Height,preview.DeviceDpi,Layout=Layout(preview).ToArray()})); return;
         }
-        using var single = new Mutex(true, "Local\\StreamLink-Desktop", out bool first);
+        using var single = new Mutex(true, StreamLink.Core.WindowsHost.IsAdmin?"Local\\StreamLink-Desktop":"Local\\StreamLink-UserDesktop", out bool first);
         if(!first) { MessageBox.Show("StreamLink 已在运行。"); return; }
-        Application.Run(new MainWindow());
+        Application.Run(StreamLink.Core.WindowsHost.IsAdmin?new MainWindow():new UserWindow());
     }    
 }
 
