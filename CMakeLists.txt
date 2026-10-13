@@ -30,6 +30,7 @@ native_target(udp2raw-native)
 # This is a distinct test binary. The shipped binary cannot enable test I/O.
 native_target(udp2raw-protocol-test)
 target_compile_definitions(udp2raw-protocol-test PRIVATE UDP2RAW_TEST_IO)
+target_compile_options(udp2raw-protocol-test PRIVATE -g)
 native_target(udp2raw-parser-test)
 target_sources(udp2raw-parser-test PRIVATE tests/native_parser_test.cpp)
 target_compile_definitions(udp2raw-parser-test PRIVATE UDP2RAW_TEST_IO UDP2RAW_PARSER_TEST)

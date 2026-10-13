@@ -147,7 +147,7 @@ async Task<object> Pair(string mode,int? rate=null)
         Check(reserved && !b.Status().Single().Connected, mode+": actual native constructor reserves its loopback source before candidate activation");
         a.SetLegacyListenerControl(server.ControlsWirePackets);
         b.SetCandidate(1,client.ClientEndpoint,"fixture","controlled native",client.ControlsWirePackets);
-        while(!a.Status().Single().Connected||!b.Status().Single().Connected){if(clock.ElapsedMilliseconds>10000||server.Exited||client.Exited)throw new IOException(mode+" real controlled native pair did not authenticate; server="+server.ControlFailure+" client="+client.ControlFailure+" proxyPackets="+proxy.Packets+" logFolder="+folder);await Task.Delay(20,token);}
+        while(!a.Status().Single().Connected||!b.Status().Single().Connected){if(clock.ElapsedMilliseconds>10000||server.Exited||client.Exited){await CaptureStacks(folder);throw new IOException(mode+" real controlled native pair did not authenticate; server="+server.ControlFailure+" client="+client.ControlFailure+" proxyPackets="+proxy.Packets+" logFolder="+folder);}await Task.Delay(20,token);}
         double authenticatedMs=clock.Elapsed.TotalMilliseconds;
         Check(server.ControlsWirePackets&&client.ControlsWirePackets,mode+": real MeshTransport opted into parent-owned control before its native SYN");
         byte[] packet=new byte[1280];packet[0]=0x45;packet[8]=64;packet[9]=17;BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(2),1280);
@@ -182,6 +182,21 @@ async Task<object> Pair(string mode,int? rate=null)
         return new{mode,rate,authenticatedMs,elapsedMs=clock.Elapsed.TotalMilliseconds,before,after,queueReports,paced,serverPacer=serverPacer?.Snapshot(),clientPacer=clientPacer?.Snapshot(),rawPackets=proxy.Packets,httpGapMs=proxy.HttpGaps.ToArray(),
             scope="actual named pipes/C++/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"};
     }finally{client?.Dispose();server?.Dispose();}
+}
+async Task CaptureStacks(string folder)
+{
+    // Test-owned children only; omit frame arguments so keys/payloads never enter
+    // the evidence. Diagnostic time is outside the unchanged connection gate.
+    string debugger="C:/Program Files/mingw64/bin/gdb.exe";if(!File.Exists(debugger))return;
+    foreach(var resource in LegacyTransportLedger.Shared.Snapshot().Resources.Where(r=>!r.RetirementRequested&&r.ProcessId>0)){
+        try{
+            var start=new ProcessStartInfo(debugger){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
+            foreach(var word in new[]{"--batch","-p",resource.ProcessId.ToString(),"-ex","set print frame-arguments none","-ex","thread apply all bt 12","-ex","detach"})start.ArgumentList.Add(word);
+            using var process=Process.Start(start)!;var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
+            using var timeout=new CancellationTokenSource(10000);try{await process.WaitForExitAsync(timeout.Token);}catch(OperationCanceledException){process.Kill();await process.WaitForExitAsync();}
+            await File.WriteAllTextAsync(Path.Combine(folder,"stack-"+resource.ProcessId+".txt"),(await stdout)+(await stderr));
+        }catch(Exception){ }
+    }
 }
 
 void Checksum(byte[] packet){packet[10]=packet[11]=0;uint sum=0;for(int i=0;i<20;i+=2)sum+=BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(i));while(sum>65535)sum=(sum&65535)+(sum>>16);BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(10),(ushort)~sum);}
