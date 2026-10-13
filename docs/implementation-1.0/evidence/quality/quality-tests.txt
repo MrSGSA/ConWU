@@ -1,0 +1,1 @@
+{"scope":"actual loopback UDP consent/cancel plus shared budget model; not WAN or Wintun","checks":15,"status":"Pass"}

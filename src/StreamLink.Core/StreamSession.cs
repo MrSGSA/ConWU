@@ -152,7 +152,7 @@ public sealed class StreamSession : IStreamSession
                 mappingTask = mapping.Maintain(stop.Token);
             }
             if(options.Host) InviteChanged?.Invoke(Ticket.Encode());
-            qualityServer = Quality.Serve(LocalIp,PeerIp,Ticket.Secret,stop.Token);
+            qualityServer = Quality.Serve(LocalIp,PeerIp,Ticket.Secret,stop.Token,new(()=>options.AllowManualQualityRequests));
             startup.Mark("本地质量检测端口就绪");
             log("组件已启动；邀请信息包含密钥，请只分享给配对设备");
             Report("等待对端", false, "公网映射尚待实际握手确认");

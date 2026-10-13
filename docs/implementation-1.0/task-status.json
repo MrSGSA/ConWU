@@ -139,17 +139,27 @@
         "BASE-01",
         "CTL-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "ImplementedUnverified",
+      "code": "Implemented: explicit receiver consent, complete-message v2 MAC, shared diagnostic session, 20s manual profile, 90s cooldown, signed remote cancel",
+      "product": "MeshRunner/StreamSession/GUI receiver setting and independent ManualQualityVersion",
+      "windowsIo": "real loopback consent/cancel and formal Runner port-conflict/IP delivery Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "15 quality message/budget/actual UDP checks Pass",
+        "4 formal Runner isolation checks Pass",
+        "35 core checks Pass",
+        "14 control checks and 100 Windows UI/lifecycle checks Pass"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/quality/"
+      ],
+      "remaining": [
+        "same candidate two-machine Wintun/manual measurement/permission tests",
+        "actual injector pacing/accounting linkage under QOS-01; manual byte debit currently conservative 1536B"
+      ]
     },
     {
       "id": "UI-01",

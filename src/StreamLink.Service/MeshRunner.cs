@@ -99,7 +99,9 @@ public sealed class MeshRunner
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
                     try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
-                    services.Record(folder, rule); quality = services.QualityServer(mesh.LocalIp, QualityKey, stop);
+                    services.Record(folder, rule);
+                    try{quality=services.QualityWithPolicy is {} controlled?controlled(profile,mesh.LocalIp,QualityKey,stop):services.QualityServer(mesh.LocalIp,QualityKey,stop);}
+                    catch(Exception ex){log("测速服务不可用，组网继续运行："+ex.Message);}
                     timeline.Mark("原生虚拟网卡就绪");
                 }
                 if (traversal == null && router != null && factory != null && factory.Profiles.Any(router.Selection.Allows) && discovery is IMeshTraversalDiscovery controlDiscovery) {
@@ -107,7 +109,7 @@ public sealed class MeshRunner
                     traversal.Receive(pendingControl); pendingControl = []; lastPublish = 0;
                 }
                 if (router?.Completion.IsCompleted == true) await router.Completion;
-                if (quality?.IsCompleted == true) { await quality; throw new IOException("质量服务停止"); }
+                if (quality?.IsCompleted == true) {try{await quality;}catch(Exception ex)when(!stop.IsCancellationRequested){log("测速服务不可用，组网继续运行："+ex.Message);}quality=null;}
                 lock (gate) if (pendingDirectory != null) { mesh.Directory = pendingDirectory; pendingDirectory = null; }
                 if (releasing?.IsCompleted == true) {
                     try { await releasing; } catch (Exception ex) { log("旧映射清理：" + ex.Message); }

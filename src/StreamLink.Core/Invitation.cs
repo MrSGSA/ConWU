@@ -48,4 +48,5 @@ public sealed class SessionOptions
     public string Mode { get; set; } = "faketcp";
     public string LogLevel { get; set; } = "info";
     public string LogDirectory { get; set; } = "";
+    public bool AllowManualQualityRequests {get;set;}
 }

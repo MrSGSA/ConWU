@@ -24,6 +24,7 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
+    public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
     public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
@@ -37,5 +38,7 @@ internal sealed record MeshRuntimeServices(
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
         Recovery.Record,
-        Path.Combine(ProfileStore.Root, "sessions"));
+        Path.Combine(ProfileStore.Root, "sessions")) {
+            QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests))
+        };
 }

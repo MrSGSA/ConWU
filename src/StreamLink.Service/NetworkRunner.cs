@@ -129,7 +129,7 @@ public sealed class NetworkRunner
                     var starting = services.NewSession(log);
                     starting.StatusChanged += s => report(s with { PeerName = peer?.Name ?? "" });
                     log($"协商入口为设备 {selected}，本机固定地址 10.129.129.{profile.Slot}");
-                    var options = new SessionOptions { Host = host, LocalSlot = profile.Slot, ListenPort = profile.ListenPort, PersistentTicket = ticket, Mode = pair.Mode, LogLevel = profile.LogLevel, LogDirectory = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(ProfileStore.Root, "logs") };
+                    var options = new SessionOptions { Host = host, LocalSlot = profile.Slot, ListenPort = profile.ListenPort, PersistentTicket = ticket, Mode = pair.Mode, LogLevel = profile.LogLevel, LogDirectory = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(ProfileStore.Root, "logs"),AllowManualQualityRequests=profile.AllowManualQualityRequests };
                     var prepared = host ? mapping : null;
                     session = starting; activeEndpoint = selected + "/" + endpoint; connectingSince = now;
                     report(new("正在启动", $"10.129.129.{profile.Slot}", $"10.129.129.{3 - profile.Slot}", pair.Mode, false, null, "本机组件正在初始化，同时同步对端连接信息", peer?.Name ?? ""));

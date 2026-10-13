@@ -24,6 +24,9 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--quality-isolation-only",var qualityReport]){
+            await QualityIsolation(Path.GetFullPath(qualityReport));Console.WriteLine($"PASS {checks} optional quality isolation checks");return;
+        }
         if (args is ["--startup-only", var startupReport]) {
             await Startup(Path.GetFullPath(startupReport));
             Console.WriteLine($"PASS {checks} async startup/cancel checks"); return;
@@ -47,6 +50,7 @@ static partial class Program
         await Migration();
         await AliveProcessRecovery();
         await Scheduler();
+        await QualityIsolation();
         await Startup();
         Console.WriteLine($"{checks} TCP / mesh connection checks passed; loopback only, no installed service or network configuration changes.");
     }

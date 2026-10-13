@@ -87,7 +87,7 @@ public sealed partial class ControlWorker : BackgroundService
     static async Task ObserveShutdown(Task task){try{await task;}catch(OperationCanceledException){} }
     void PublishReply()
     {
-        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1));
+        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2));
     }
     ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=error,Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
     // Full per-window evidence stays in the runner; the legacy pipe remains
@@ -148,7 +148,7 @@ public sealed partial class ControlWorker : BackgroundService
                     if(profile.AdditionalData!=null){updated.AdditionalData??=new();foreach(var extra in profile.AdditionalData)updated.AdditionalData.TryAdd(extra.Key,extra.Value.Clone());}
                     bool restart=ProfileChanges.Impact(profile,updated)==ProfileChangeImpact.RestartNetwork;
                     if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
-                    try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;}}}
+                    try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;}}}
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":

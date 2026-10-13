@@ -9,3 +9,5 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.LegacyWireTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.LegacyControlTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.NativeInputTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.Tests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.QualityTests")]

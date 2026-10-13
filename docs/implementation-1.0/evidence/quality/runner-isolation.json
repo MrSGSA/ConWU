@@ -1,0 +1,9 @@
+{
+  "status": "Pass",
+  "checks": 4,
+  "adapterCreations": 1,
+  "diagnosticStarts": 1,
+  "authenticatedIpPackets": 1,
+  "scope": "formal MeshRunner and actual loopback UDP port fault \u002B MeshLink IP data; memory adapter, not native FakeTCP/WAN",
+  "relay": false
+}

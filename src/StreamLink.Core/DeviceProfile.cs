@@ -42,6 +42,7 @@ public sealed class DeviceProfile
     public bool QualityFeedback { get; set; }
     public bool StandbyPaths { get; set; }
     public bool PathDiagnostics { get; set; }
+    public bool AllowManualQualityRequests { get; set; }
     public int DiagnosticMbps { get; set; }=50;
     // Opt-in gateway fallback: TCP after UPnP; alternating later UDP_DIRECT
     // rounds. It does not enable UDP itself or bypass path-quality selection.

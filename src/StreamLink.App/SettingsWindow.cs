@@ -27,14 +27,19 @@ public sealed class SettingsWindow : Form
     public DeviceProfile Result => profile;
     readonly CheckBox standbyPaths = new() { AutoSize = true, Text = "保留独立备用路径（实验，最多120秒；需双方与服务器支持，未自动选路）" };
     readonly CheckBox pathDiagnostics=new(){AutoSize=true,Text="空闲时比较路径负载（实验，需双方与服务器支持；约80秒，可能用至256MiB；不自动换路）"};
+    readonly CheckBox manualQuality=new(){AutoSize=true,Text="允许已配对成员请求测速（最多20秒，每90秒一次；会占用带宽）"};
     readonly NumericUpDown diagnosticMbps=new(){Minimum=1,Maximum=50,Width=85};
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true,bool supportsManualQuality=false)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
         Text = "连接偏好与 STUN"; Size = new(740, 780); StartPosition = FormStartPosition.CenterParent; Font = new("Microsoft YaHei UI", 9);
         var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(18), ColumnCount = 1, RowCount = 16 }; Controls.Add(layout);
         layout.ColumnStyles.Add(new(SizeType.Percent, 100));
+        manualQuality.Checked=profile.AllowManualQualityRequests;manualQuality.Enabled=supportsManualQuality;
+        manualQuality.CheckedChanged+=(_,_)=>{if(supportsManualQuality)profile.AllowManualQualityRequests=manualQuality.Checked;};
+        if(!supportsManualQuality)manualQuality.Text="后台未声明manual-v2测速许可，需先更新后台";
+        layout.Controls.Add(manualQuality);
         preference.Items.AddRange(["自动选择可用入口", "优先本机提供入口", "优先对端提供入口"]); preference.SelectedIndex = profile.Preference == "local" ? 1 : profile.Preference == "peer" ? 2 : 0;
         layout.Controls.Add(preference); layout.Controls.Add(new Label { AutoSize = true, Text = "偏好决定谁提供入口，与应用流量方向无关；直连成功后记忆。" });
         traversal.Items.AddRange(["兼容入口（默认）", "原生 TCP 双主动（实验）", "原生 TCP + UDP 备用（实验）"]);

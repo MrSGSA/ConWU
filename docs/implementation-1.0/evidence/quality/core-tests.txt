@@ -1,0 +1,5 @@
+PASS 16 checks: STUN framing, invitation validation, authenticated quality test.
+PASS owned-process shutdown
+PASS stale-session recovery and live-owner protection
+TOTAL PASS 20
+TOTAL PASS 35: pairing, election, IPC and optional live discovery.

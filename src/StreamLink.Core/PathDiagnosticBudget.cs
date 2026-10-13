@@ -12,14 +12,23 @@ internal sealed class PathDiagnosticResources(TimeProvider? clock = null)
     readonly object gate = new();
     readonly TimeProvider time = clock ?? TimeProvider.System;
     PathDiagnosticPermit? current;
+    long manualAt;bool manualUsed;
     public PathDiagnosticPermit? TryBegin(Guid session)
     {
         if(session==Guid.Empty)throw new ArgumentException("Diagnostic session identity required");
         lock(gate){if(current?.Active==true)return null;return current=new(session,time);}
     }
+    public PathDiagnosticPermit? TryBeginManual(Guid session)
+    {
+        if(session==Guid.Empty)throw new ArgumentException("Manual diagnostic identity required");
+        lock(gate){
+            if(current?.Active==true||manualUsed&&time.GetElapsedTime(manualAt).TotalMilliseconds<PathDiagnosticPermit.SessionMs)return null;
+            manualUsed=true;manualAt=time.GetTimestamp();return current=new(session,time,manual:true);
+        }
+    }
 }
 
-internal sealed class PathDiagnosticPermit(Guid session,TimeProvider time):IDisposable
+internal sealed class PathDiagnosticPermit(Guid session,TimeProvider time,bool manual=false):IDisposable
 {
     internal const int SessionMs=90000,MaximumBytes=256*1024*1024,MaximumWindowMs=15000;
     readonly object gate=new();
@@ -32,7 +41,8 @@ internal sealed class PathDiagnosticPermit(Guid session,TimeProvider time):IDisp
     public PathDiagnosticCost Snapshot(){lock(gate)return new(session,packets,bytes,denied,(long)time.GetElapsedTime(began).TotalMilliseconds,Active);}
     public PathDiagnosticAllowance Open(Guid path,int wireMbps,int durationMs)
     {
-        if(path==Guid.Empty||wireMbps is<1 or>100||durationMs is<100 or>MaximumWindowMs)throw new ArgumentException("Bounded diagnostic window parameters invalid");
+        // Manual-v2 has one bounded 20s window; automatic-v1 remains 15s.
+        if(path==Guid.Empty||wireMbps is<1 or>100||durationMs is<100||durationMs>(manual?20000:MaximumWindowMs))throw new ArgumentException("Bounded diagnostic window parameters invalid");
         lock(gate){
             if(!Active||window?.Active==true)throw new InvalidOperationException("One diagnostic window must finish before another starts");
             if(time.GetElapsedTime(began).TotalMilliseconds+durationMs>SessionMs)throw new InvalidOperationException("Session has insufficient remaining time");

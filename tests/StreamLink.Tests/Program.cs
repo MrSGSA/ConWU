@@ -43,23 +43,26 @@ Check(result.Public.ToString()=="203.0.113.9:45678","Fragmented TCP STUN respons
 // The quality helper must ignore an unauthorized sender before a valid test.
 using var cancel=new CancellationTokenSource();
 string key=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
-var serving=Quality.Serve("127.0.0.1","127.0.0.1",key,cancel.Token);
+// Isolated logical machines use separate pools; production uses Shared. Consent
+// is explicit in this existing socket fixture, never enabled by membership.
+QualityDiagnosticPolicy Allowed()=>new(()=>true,new PathDiagnosticResources());
+var serving=Quality.Serve("127.0.0.1","127.0.0.1",key,cancel.Token,Allowed());
 using(var unauthorized=new UdpClient(AddressFamily.InterNetwork)) {
     unauthorized.Connect(IPAddress.Loopback,Quality.Port);
     await unauthorized.SendAsync(Encoding.UTF8.GetBytes("{\"Op\":\"start\",\"Id\":1,\"Mbps\":50,\"Seconds\":20,\"Count\":0,\"Mac\":null}"));
     using var timeout=new CancellationTokenSource(250);
     try {await unauthorized.ReceiveAsync(timeout.Token);throw new Exception("Unauthorized quality request accepted");} catch(OperationCanceledException) {passed++;}
 }
-var measured=await Quality.Measure("127.0.0.1",key,5,CancellationToken.None,2);
+var measured=await Quality.Measure("127.0.0.1",key,5,CancellationToken.None,2,policy:Allowed());
 Check(measured.LossPercent==0 && measured.ReceivedMbps>4.7,"Quality loopback measurement");
 cancel.Cancel();try{await serving;}catch(OperationCanceledException){}
 // Both peers may request traffic, independently of who created the network.
 using(var bidirectional=new CancellationTokenSource()) {
-    var left=Quality.Serve("127.0.0.1","127.0.0.2",key,bidirectional.Token);
-    var right=Quality.Serve("127.0.0.2","127.0.0.1",key,bidirectional.Token);
+    var left=Quality.Serve("127.0.0.1","127.0.0.2",key,bidirectional.Token,Allowed());
+    var right=Quality.Serve("127.0.0.2","127.0.0.1",key,bidirectional.Token,Allowed());
     try {
-        var toLeft=await Quality.Measure("127.0.0.2",key,2,CancellationToken.None,1,"127.0.0.1");
-        var toRight=await Quality.Measure("127.0.0.1",key,2,CancellationToken.None,1,"127.0.0.2");
+        var toLeft=await Quality.Measure("127.0.0.2",key,2,CancellationToken.None,1,"127.0.0.1",Allowed());
+        var toRight=await Quality.Measure("127.0.0.1",key,2,CancellationToken.None,1,"127.0.0.2",Allowed());
         Check(toLeft.LossPercent==0 && toLeft.ReceivedMbps>1.8,"Peer A cannot measure peer B");
         Check(toRight.LossPercent==0 && toRight.ReceivedMbps>1.8,"Peer B cannot measure peer A");
     } finally {bidirectional.Cancel();try{await Task.WhenAll(left,right);}catch(OperationCanceledException){}}
