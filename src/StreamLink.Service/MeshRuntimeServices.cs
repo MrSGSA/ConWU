@@ -7,7 +7,10 @@ using StreamLink.Core;
 
 namespace StreamLink.Service;
 
-internal sealed record MeshTransportRequest(string Folder, MeshProfile Mesh, IPEndPoint Target, bool Server, int Port, IMapping? Mapping, string LogLevel);
+internal sealed record MeshTransportRequest(string Folder, MeshProfile Mesh, IPEndPoint Target, bool Server, int Port, IMapping? Mapping, string LogLevel)
+{
+    public Action<IPEndPoint>? ReserveEndpoint { get; init; }
+}
 
 // The production runner itself is exercised with loopback transports and an
 // in-memory adapter. Tests never touch the installed service or network rules.
@@ -30,7 +33,7 @@ internal sealed record MeshRuntimeServices(
         async (profile, log, token) => profile.Mesh!.Pair.Mode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)
             : await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
-        r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel),
+        r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint),
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
         Recovery.Record,

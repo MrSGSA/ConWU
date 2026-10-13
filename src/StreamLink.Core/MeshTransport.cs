@@ -25,9 +25,12 @@ public sealed class MeshTransport : IMeshTransport
     public bool ControlsWirePackets => true;
     internal string ControlFailure => control?.Failure ?? "";
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel)
-        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null) { }
+        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, null) { }
+    public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel,
+        Action<IPEndPoint>? reserveEndpoint)
+        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, reserveEndpoint) { }
     internal MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping,
-        string logLevel, Dictionary<string, string>? testEnvironment)
+        string logLevel, Dictionary<string, string>? testEnvironment, Action<IPEndPoint>? reserveEndpoint = null)
     {
         Directory.CreateDirectory(sessionRoot);
         configuration = Path.Combine(sessionRoot, "raw-" + Guid.NewGuid().ToString("N") + ".conf");
@@ -39,6 +42,7 @@ public sealed class MeshTransport : IMeshTransport
             else {
                 using var port = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp); port.Bind(new IPEndPoint(IPAddress.Loopback, 0));
                 ClientEndpoint = (IPEndPoint)port.LocalEndPoint!; binding = ClientEndpoint.ToString();
+                reserveEndpoint?.Invoke(ClientEndpoint);
             }
             accounting = LegacyTransportLedger.Shared.Acquire(profile.Pair.Mode, server, server ? binding : "",
                 target.ToString(), mapping is TcpMapping tcp ? tcp.HelperResource.LeaseId : Guid.Empty);

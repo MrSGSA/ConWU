@@ -206,17 +206,20 @@ public sealed class MeshRunner
                 if (firewallMembers != remoteAddresses) {
                     services.Firewall(rule, mesh.LocalIp, remoteAddresses); firewallMembers = remoteAddresses;
                 }
-                foreach (int slot in clients.Keys.Where(s => !members.Any(m => m.Slot == s)).ToArray()) { clients[slot].Dispose(); clients.Remove(slot); announcements.Remove(slot); }
+                foreach (int slot in clients.Keys.Where(s => !members.Any(m => m.Slot == s)).ToArray()) { await clients[slot].DisposeAsync(); clients.Remove(slot); announcements.Remove(slot); }
                 traversal?.Tick(announcements, candidate);
                 foreach (var member in members) {
                     if (traversal?.Owns(member.Slot) == true) {
-                        if (clients.Remove(member.Slot, out var obsolete)) obsolete.Dispose();
+                        if (clients.Remove(member.Slot, out var obsolete)) await obsolete.DisposeAsync();
                         traversal.ObserveLegacyPending(member.Slot, false);
                         continue;
                     }
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
-                    if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router, ep => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel)), log);
+                    if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router,
+                        (ep, preparationToken) => LegacyStartupQueue.Shared.Start(() => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel) {
+                            ReserveEndpoint = endpoint => router.CancelLegacyCandidate(member.Slot, endpoint)
+                        }), preparationToken), log);
                     paths.Update(member.Slot, endpoint, announcement?.Name ?? "", traversal?.WaitingDetail(member.Slot) ??
                         (endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发"),
                         traversal == null ? null : () => traversal.BeginLegacyAttempt(member.Slot), traversal?.KeepLegacyAttempt(member.Slot) ?? true);
@@ -290,7 +293,7 @@ public sealed class MeshRunner
             if (probe != null) { try { mapping = await probe; } catch { } }
             if (opening != null) { try { (await opening).Dispose(); } catch { } }
             foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if (ex is not OperationCanceledException) log("退出任务：" + ex.Message); } }
-            foreach (var client in clients.Values) { try { client.Dispose(); } catch (Exception ex) { log("传输清理：" + ex.Message); } }
+            foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { log("传输清理：" + ex.Message); } }
             try { server?.Dispose(); } catch (Exception ex) { log("入口清理：" + ex.Message); }
             if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { log("映射清理：" + ex.Message); } }
             if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { log("原生网络已停止：" + ex.Message); } router = null; }

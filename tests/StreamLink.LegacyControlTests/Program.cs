@@ -120,7 +120,10 @@ async Task<object> Pair(string mode)
     MeshTransport? server=null,client=null;
     try {
         server=new(components,folder,owner,a.LocalEndpoint,true,rawPort,null,"debug",EnvironmentFor(serverIo));
-        client=new(components,folder,guest,new(IPAddress.Loopback,rawPort),false,rawPort,null,"debug",EnvironmentFor(clientIo));
+        bool reserved = false;
+        client=new(components,folder,guest,new(IPAddress.Loopback,rawPort),false,rawPort,null,"debug",EnvironmentFor(clientIo),
+            endpoint => { b.CancelLegacyCandidate(1, endpoint); reserved = true; });
+        Check(reserved && !b.Status().Single().Connected, mode+": actual native constructor reserves its loopback source before candidate activation");
         a.SetLegacyListenerControl(server.ControlsWirePackets);
         b.SetCandidate(1,client.ClientEndpoint,"fixture","controlled native",client.ControlsWirePackets);
         while(!a.Status().Single().Connected||!b.Status().Single().Connected){if(clock.ElapsedMilliseconds>10000||server.Exited||client.Exited)throw new IOException(mode+" real controlled native pair did not authenticate; server="+server.ControlFailure+" client="+client.ControlFailure+" proxyPackets="+proxy.Packets+" logFolder="+folder);await Task.Delay(20,token);}

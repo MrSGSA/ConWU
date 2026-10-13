@@ -24,6 +24,10 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if (args is ["--startup-only", var startupReport]) {
+            await Startup(Path.GetFullPath(startupReport));
+            Console.WriteLine($"PASS {checks} async startup/cancel checks"); return;
+        }
         if (args is ["--network-wake-only", var wakeReport]) {
             await NetworkWake(Path.GetFullPath(wakeReport));
             Console.WriteLine($"PASS {checks} compatibility network wake checks"); return;
@@ -43,6 +47,7 @@ static partial class Program
         await Migration();
         await AliveProcessRecovery();
         await Scheduler();
+        await Startup();
         Console.WriteLine($"{checks} TCP / mesh connection checks passed; loopback only, no installed service or network configuration changes.");
     }
     static byte[] Packet(string from, string to)
@@ -300,6 +305,7 @@ static partial class Program
         public IPEndPoint Endpoint { get; }
         public bool SuppressPong; public int Received, DataPackets;
         public byte[]? ReplyPacket;
+        public byte[]? LastSuppressedPong;
         public Func<byte[], IPEndPoint, Task>? RedirectPong;
         public PeerEndpoint(MeshLink link) { this.link = link; Endpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
         public Task Send(byte[] bytes, IPEndPoint to) => socket.SendAsync(bytes, to, stop.Token).AsTask();
@@ -311,6 +317,7 @@ static partial class Program
                     Interlocked.Increment(ref DataPackets);
                     if (ReplyPacket is {} reply && link.Data(reply) is {} encoded) await socket.SendAsync(encoded, packet.RemoteEndPoint, stop.Token);
                 }
+                if (message.Reply is {} held && SuppressPong && held[4] == 6) LastSuppressedPong = held;
                 if (message.Reply != null && !(SuppressPong && message.Reply[4] == 6)) {
                     if (message.Reply[4] == 6 && RedirectPong is {} redirect) await redirect(message.Reply, packet.RemoteEndPoint);
                     else await socket.SendAsync(message.Reply, packet.RemoteEndPoint, stop.Token);

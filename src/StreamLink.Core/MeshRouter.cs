@@ -38,6 +38,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public Guid LegacyPathId;
         public long NextLegacyControl;
         public readonly Dictionary<IPEndPoint, bool> NativeControlSources = [];
+        public readonly HashSet<IPEndPoint> CancelledCandidates = [];
+        public readonly Queue<IPEndPoint> CancelledOrder = [];
     }
     readonly object gate = new();
     bool legacyListenerControlsWire;
@@ -96,6 +98,10 @@ public sealed partial class MeshRouter : IAsyncDisposable
         lock (gate) if (peers.TryGetValue(slot, out var peer)) {
             if (peer.Managed != null) return; // negotiated paths cannot fall back to legacy auto-promotion
             bool changed = !Equals(peer.Candidate, candidate);
+            if (changed && candidate != null && peer.CancelledCandidates.Remove(candidate)) {
+                var kept = peer.CancelledOrder.Where(e => !e.Equals(candidate)).ToArray();
+                peer.CancelledOrder.Clear(); foreach (var endpoint in kept) peer.CancelledOrder.Enqueue(endpoint);
+            }
             peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
             if (candidate != null) peer.NativeControlSources[candidate] = nativeControlsWire;
             foreach (var source in peer.NativeControlSources.Keys.Where(source => !Equals(source, peer.Active) && !Equals(source, peer.Candidate) && !peer.Retired.Contains(source)).ToArray())
@@ -110,6 +116,15 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public bool UsesPath(int slot, IPEndPoint? endpoint)
     {
         lock (gate) return endpoint != null && peers.TryGetValue(slot, out var peer) && peer.Managed == null && Healthy(peer) && endpoint.Equals(peer.Active);
+    }
+    public void CancelLegacyCandidate(int slot, IPEndPoint? endpoint)
+    {
+        lock (gate) if (endpoint != null && peers.TryGetValue(slot, out var peer) && peer.Managed == null && !endpoint.Equals(peer.Active)) {
+            peer.Probes.Remove(endpoint); peer.NativeControlSources.Remove(endpoint);
+            if (peer.CancelledCandidates.Add(endpoint)) peer.CancelledOrder.Enqueue(endpoint);
+            while (peer.CancelledOrder.Count > 32) peer.CancelledCandidates.Remove(peer.CancelledOrder.Dequeue());
+            if (endpoint.Equals(peer.Candidate)) peer.Candidate = peer.Active;
+        }
     }
     void Challenge(Peer peer, IPEndPoint endpoint)
     {
@@ -173,6 +188,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             if (received.ReceivedBytes < MeshLink.Overhead || !IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
             lock (gate) if (peers.TryGetValue(buffer[5], out var peer)) {
                 if (peer.Managed != null) continue; // data arrives through its registered resource only
+                if (peer.CancelledCandidates.Contains((IPEndPoint)received.RemoteEndPoint)) { peer.Dropped++; continue; }
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
