@@ -15,9 +15,10 @@ public static class ProfileChanges
         // parameters. Keep them without restarting an established path.
         comparable.LastEntry=before.LastEntry;comparable.LastStun=before.LastStun;
         comparable.Enabled=before.Enabled;comparable.AdditionalData=before.AdditionalData;
+        comparable.CapabilityIntents=before.CapabilityIntents;
         if(JsonSerializer.Serialize(comparable)!=JsonSerializer.Serialize(before))return ProfileChangeImpact.RestartNetwork;
         return before.AllowManualQualityRequests==after.AllowManualQualityRequests&&before.DeviceName==after.DeviceName&&before.LogLevel==after.LogLevel&&before.LogDirectory==after.LogDirectory&&
-            JsonSerializer.Serialize(before.AdditionalData)==JsonSerializer.Serialize(after.AdditionalData)
+            JsonSerializer.Serialize(before.AdditionalData)==JsonSerializer.Serialize(after.AdditionalData)&&JsonSerializer.Serialize(before.CapabilityIntents)==JsonSerializer.Serialize(after.CapabilityIntents)
             ?ProfileChangeImpact.None:ProfileChangeImpact.LiveMetadata;
     }
 }

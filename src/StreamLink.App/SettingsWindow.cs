@@ -164,6 +164,20 @@ public sealed class SettingsWindow : Form
         save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.PathSelection = selection.SelectedIndex == 2 ? "auto-quality" : selection.SelectedIndex == 1 ? "faketcp-only" : "prefer-faketcp"; profile.AllowUdpFallback = udpFallback.Checked; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         for (int i = 0; i < 16; i++) layout.RowStyles.Add(new RowStyle(i == 11 || i == 13 ? SizeType.Percent : SizeType.AutoSize, i == 11 || i == 13 ? 50 : 0));
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
+        BindIntent(udpFallback,nameof(DeviceProfile.AllowUdpFallback));
+        BindIntent(tcpObservation,nameof(DeviceProfile.TcpSynObservation));BindIntent(tcpCalibration,nameof(DeviceProfile.TcpPortCalibration));
+        BindIntent(tcpPrediction,nameof(DeviceProfile.TcpPortPrediction));BindIntent(tcpPeerSource,nameof(DeviceProfile.TcpPeerReflexive));
+        BindIntent(udpExploration,nameof(DeviceProfile.UdpExploration));BindIntent(qualityFeedback,nameof(DeviceProfile.QualityFeedback));
+        BindIntent(standbyPaths,nameof(DeviceProfile.StandbyPaths));BindIntent(pathDiagnostics,nameof(DeviceProfile.PathDiagnostics));
+        BindIntent(portControl,nameof(DeviceProfile.PortControlMapping));BindIntent(udpIpv6,nameof(DeviceProfile.UdpIpv6));
+        BindIntent(tcpIpv6,nameof(DeviceProfile.FakeTcpIpv6));BindIntent(manualQuality,nameof(DeviceProfile.AllowManualQualityRequests));
+    }
+    void BindIntent(CheckBox control,string capability)
+    {
+        profile.CapabilityIntents.TryAdd(capability,control.Checked?true:null);
+        control.CheckedChanged+=(_,_)=>{if(control.Enabled)profile.CapabilityIntents[capability]=control.Checked;};
+        control.EnabledChanged+=(_,_)=>{if(control.Enabled&&profile.CapabilityIntents.TryGetValue(capability,out bool? intent)&&intent is{} value)control.Checked=value;};
+        control.AccessibleName=control.Text;
     }
     sealed record StunLists(string[] Tcp, string[] Udp);
 }

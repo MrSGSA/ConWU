@@ -125,6 +125,11 @@ static class Program
                 box.Checked=true;feedbackSettings.Result.Validate();Check(feedbackSettings.Result.QualityFeedback,"receipt checkbox updates the actual profile opt-in");
                 Field<ComboBox>(feedbackSettings,"traversal").SelectedIndex=0;
                 Check(!box.Enabled&&!box.Checked&&!feedbackSettings.Result.QualityFeedback,"returning to compatibility clears hidden receipt overhead permission");
+                Check(feedbackSettings.Result.CapabilityIntents[nameof(DeviceProfile.QualityFeedback)]==true,"temporary compatibility unavailability preserves enabled user intent");
+                Field<ComboBox>(feedbackSettings,"traversal").SelectedIndex=1;
+                Check(box.Enabled&&box.Checked&&feedbackSettings.Result.QualityFeedback,"supported mode restores previously chosen intent");
+                box.Checked=false;
+                Check(feedbackSettings.Result.CapabilityIntents[nameof(DeviceProfile.QualityFeedback)]==false,"explicit user disable is distinct from legacy unspecified default");
             }
             using(var oldFeedback=new SettingsWindow(feedbackProfile,supportsQualityFeedback:false))Check(!Field<CheckBox>(oldFeedback,"qualityFeedback").Enabled,"old backend cannot be opted into receipt traffic from a new frontend");
             Check((await worker.Handle(new("status"))).QualityFeedbackVersion==1,"backend declares its independent receipt IPC capability");

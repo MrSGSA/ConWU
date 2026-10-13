@@ -7,6 +7,9 @@ namespace StreamLink.Core;
 public sealed class DeviceProfile
 {
     [JsonExtensionData] public Dictionary<string, JsonElement>? AdditionalData { get; set; }
+    // null: legacy default/unknown intent; false: explicit user disable. Runtime
+    // capability checks still use effective flags, never this intent alone.
+    public Dictionary<string,bool?> CapabilityIntents {get;set;}=new();
     public int Version { get; set; } = 2;
     public string Device { get; set; } = Guid.NewGuid().ToString("N");
     public Pairing? Pair { get; set; }
@@ -62,6 +65,7 @@ public sealed class DeviceProfile
     public string LogDirectory { get; set; } = "";
     public void Validate()
     {
+        if(CapabilityIntents==null||CapabilityIntents.Count>32||CapabilityIntents.Keys.Any(k=>k.Length is<1 or>64||k.Any(char.IsControl)))throw new FormatException("能力意图配置无效");
         if (Version != 2 || !Guid.TryParseExact(Device, "N", out _) || Slot is < 1 or > 2 || LastEntry is < 0 or > 2 || Preference is not ("auto" or "local" or "peer")) throw new FormatException("设备配置无效");
         if (ListenPort is < 1024 or > 65535 || SourcePort is < 1024 or > 65535 || SourcePort == ListenPort) throw new FormatException("源端口与监听端口必须是不同的 1024–65535 端口");
         ValidateServers(TcpStun); ValidateServers(UdpStun); Pair?.Validate();

@@ -186,7 +186,7 @@
         "CTL-01"
       ],
       "status": "InProgress",
-      "code": "Partial: metadata hot save and future-field preservation implemented",
+      "code": "Partial: hot metadata, unknown fields, rebuild impact prompt and explicit capability intent preserved; precise next-attempt/per-peer changes pending",
       "product": "live DeviceName/log updates preserve running worker and network configuration",
       "windowsIo": "isolated Windows save/ownership fixture Pass",
       "controlledNat": "NotRun",
@@ -194,13 +194,16 @@
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
       "tests": [
-        "pre-fix control failures retained; post-fix hot save and unknown-field roundtrip Pass"
+        "pre-fix control failures retained; post-fix hot save and unknown-field roundtrip Pass",
+        "103 Windows UI/lifecycle checks Pass including intent restore and explicit disable",
+        "14 hot-save/cancellation checks Pass"
       ],
-      "evidence": [],
+      "evidence": [
+        "docs/implementation-1.0/evidence/settings/"
+      ],
       "remaining": [
-        "user-intent/current-availability separation in settings UI",
-        "explicit impact confirmation for resource-rebuilding settings",
-        "additional per-field/runtime configuration tests"
+        "precise per-peer/next-attempt handling of additional network settings",
+        "real two-end settings preservation under active business"
       ]
     },
     {
