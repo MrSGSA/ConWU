@@ -58,6 +58,18 @@ static class Program
         frame.Save(Path.ChangeExtension(output, ".png"), ImageFormat.Png);
         window.PreviewPage("join"); Application.DoEvents();
         Check(viewport.AutoScrollPosition.Y == 0, "Page switch retained the previous scroll offset");
+        var nav=Field<System.Collections.IDictionary>(window,"nav");
+        Check(nav.Keys.Cast<string>().Order().SequenceEqual(new[]{"overview","devices","diagnostics","settings"}.Order()),"primary navigation does not match product information architecture");
+        foreach(string page in new[]{"overview","devices","diagnostics","settings","join","create"}){
+            window.PreviewPage(page);Application.DoEvents();
+            Check(viewport.Controls[0].Height>100,"page is blank: "+page);
+            IEnumerable<Control> Descendants(Control root)=>root.Controls.Cast<Control>().SelectMany(c=>new[]{c}.Concat(Descendants(c)));
+            var buttons=Descendants(viewport).OfType<Button>().Where(b=>b.Visible).ToArray();
+            Check(buttons.Length>0&&buttons.All(b=>b.Height>=30*window.DeviceDpi/96),"dynamic action buttons were not DPI scaled: "+page);
+            using var screen=new Bitmap(window.Width,window.Height);window.DrawToBitmap(screen,new Rectangle(Point.Empty,screen.Size));
+            screen.Save(Path.Combine(Path.GetDirectoryName(output)!,"ui-"+page+".png"),ImageFormat.Png);
+            Check(window.Width<=Screen.FromControl(window).WorkingArea.Width&&window.Height<=Screen.FromControl(window).WorkingArea.Height,"actual DPI window exceeds work area");
+        }
         times.Sort();
         var report = new { checks, baseline, dpi = window.DeviceDpi, viewport = new { frame.Width, frame.Height }, frames = times.Count, medianDrawMs = times[times.Count / 2], p95DrawMs = times[(int)(times.Count * .95)], description = "Off-screen settings viewport scroll + DrawToBitmap timing; not screen FPS or a physical-display ghosting test. Preview mode does not start a network or service." };
         File.WriteAllText(output, JsonSerializer.Serialize(report, new JsonSerializerOptions { WriteIndented = true }));

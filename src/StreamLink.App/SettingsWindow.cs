@@ -33,8 +33,10 @@ public sealed class SettingsWindow : Form
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
-        Text = "连接偏好与 STUN"; Size = new(740, 780); StartPosition = FormStartPosition.CenterParent; Font = new("Microsoft YaHei UI", 9);
-        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, Padding = new(18), ColumnCount = 1, RowCount = 16 }; Controls.Add(layout);
+        Text = "连接偏好与 STUN";Size = new(740,Math.Min(720,Screen.PrimaryScreen!.WorkingArea.Height-50));MinimumSize=new(540,400);StartPosition = FormStartPosition.CenterParent; Font = new("Microsoft YaHei UI", 9);
+        var viewport=new Panel{Dock=DockStyle.Fill,AutoScroll=true};Controls.Add(viewport);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Top,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink, Padding = new(18), ColumnCount = 1, RowCount = 0 }; viewport.Controls.Add(layout);
+        tcp.Dock=udp.Dock=DockStyle.Top;tcp.Height=udp.Height=120;tcp.MinimumSize=udp.MinimumSize=new(0,120);
         layout.ColumnStyles.Add(new(SizeType.Percent, 100));
         manualQuality.Checked=profile.AllowManualQualityRequests;manualQuality.Enabled=supportsManualQuality;
         manualQuality.CheckedChanged+=(_,_)=>{if(supportsManualQuality)profile.AllowManualQualityRequests=manualQuality.Checked;};
@@ -155,14 +157,17 @@ public sealed class SettingsWindow : Form
         layout.Controls.Add(new Label { AutoSize = true, Text = "UDP STUN（实验配置保留；当前默认传输为 FakeTCP）" }); udp.Lines = profile.UdpStun; layout.Controls.Add(udp);
         layout.Controls.Add(new Label { AutoSize = true, Text = "导入导出仅含 STUN 列表，不含配对密钥。保存后后台重新连接。" });
         var actions = new FlowLayoutPanel { Dock = DockStyle.Fill, AutoSize = true };
-        var import = new Button { Text = "导入列表", AutoSize = true }; var export = new Button { Text = "导出列表", AutoSize = true }; var save = new Button { Text = "保存", AutoSize = true }; var community = new Button { Text = "补充社区 TCP 列表", AutoSize = true }; actions.Controls.AddRange([import, export, community, save]); layout.Controls.Add(actions);
+        var import = new Button { Text = "导入列表", AutoSize = true }; var export = new Button { Text = "导出列表", AutoSize = true }; var save = new Button { Text = "保存", AutoSize = true,AccessibleName="保存连接设置" }; var community = new Button { Text = "补充社区 TCP 列表", AutoSize = true }; actions.Controls.AddRange([import, export, community]);layout.Controls.Add(actions);
+        var footer=new FlowLayoutPanel{Dock=DockStyle.Bottom,AutoSize=true,Padding=new(18,8,18,8),FlowDirection=FlowDirection.RightToLeft};
+        var cancel=new Button{Text="取消",AutoSize=true,DialogResult=DialogResult.Cancel,AccessibleName="取消设置"};footer.Controls.Add(cancel);footer.Controls.Add(save);Controls.Add(footer);footer.BringToFront();AcceptButton=save;CancelButton=cancel;
         community.Click += async (_, _) => { community.Enabled = false; community.Text = "正在获取…"; try { var downloaded = await StunCatalog.Download(CancellationToken.None); var merged = tcp.Lines.Select(x => x.Trim()).Where(x => x.Length > 0).Concat(downloaded).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(); DeviceProfile.ValidateServers(merged); tcp.Lines = merged; MessageBox.Show(this, $"已补充列表，共 {merged.Length} 项。来源：pradt2/always-online-stun。可达性以本机实际探测为准。点击保存后生效。"); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } finally { community.Enabled = true; community.Text = "补充社区 TCP 列表"; } };
         string[] Lines(TextBox box) => box.Lines.Select(x => x.Trim()).Where(x => x.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         void Lists() { DeviceProfile.ValidateServers(Lines(tcp)); DeviceProfile.ValidateServers(Lines(udp)); }
         import.Click += (_, _) => { using var dialog = new OpenFileDialog { Filter = "STUN 列表|*.json" }; if (dialog.ShowDialog(this) != DialogResult.OK) return; try { var data = JsonSerializer.Deserialize<StunLists>(File.ReadAllText(dialog.FileName))!; DeviceProfile.ValidateServers(data.Tcp); DeviceProfile.ValidateServers(data.Udp); tcp.Lines = data.Tcp; udp.Lines = data.Udp; } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         export.Click += (_, _) => { try { Lists(); using var dialog = new SaveFileDialog { Filter = "STUN 列表|*.json", FileName = "streamlink-stun.json" }; if (dialog.ShowDialog(this) == DialogResult.OK) File.WriteAllText(dialog.FileName, JsonSerializer.Serialize(new StunLists(Lines(tcp), Lines(udp)), new JsonSerializerOptions { WriteIndented = true })); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
         save.Click += (_, _) => { try { Lists(); profile.Preference = preference.SelectedIndex == 1 ? "local" : preference.SelectedIndex == 2 ? "peer" : "auto"; profile.TraversalMode = traversal.SelectedIndex == 1 ? "tcp" : traversal.SelectedIndex == 2 ? "tcp-udp" : "legacy"; profile.PathSelection = selection.SelectedIndex == 2 ? "auto-quality" : selection.SelectedIndex == 1 ? "faketcp-only" : "prefer-faketcp"; profile.AllowUdpFallback = udpFallback.Checked; profile.TcpStun = Lines(tcp); profile.UdpStun = Lines(udp); profile.SourcePort = (int)source.Value; profile.ListenPort = (int)listen.Value; profile.ManualEndpoint = manual.Text.Trim(); profile.Validate(); DialogResult = DialogResult.OK; Close(); } catch (Exception ex) { MessageBox.Show(this, ex.Message); } };
-        for (int i = 0; i < 16; i++) layout.RowStyles.Add(new RowStyle(i == 11 || i == 13 ? SizeType.Percent : SizeType.AutoSize, i == 11 || i == 13 ? 50 : 0));
+        for (int i = 0; i < layout.RowCount; i++) layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        Shown+=(_,_)=>{var work=Screen.FromControl(this).WorkingArea;Size=new(Math.Min(Width,work.Width),Math.Min(Height,work.Height));};
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
         BindIntent(udpFallback,nameof(DeviceProfile.AllowUdpFallback));
         BindIntent(tcpObservation,nameof(DeviceProfile.TcpSynObservation));BindIntent(tcpCalibration,nameof(DeviceProfile.TcpPortCalibration));

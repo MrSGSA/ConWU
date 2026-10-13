@@ -167,17 +167,26 @@
       "dependsOn": [
         "BASE-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: production information architecture, operation feedback and dynamic DPI implemented",
+      "product": "WinForms overview/devices/diagnostics/settings",
+      "windowsIo": "Actual DPI240 preview render 28 checks, Windows UI feedback 103 checks Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "recompiled WindowsTests 103 Pass",
+        "actual WinForms six-page rendering 28 Pass at DPI240"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/UI-01-03.md",
+        "docs/implementation-1.0/evidence/ui/"
+      ],
+      "remaining": [
+        "real first pairing UI workflow",
+        "physical multi-display DPI and UIA keyboard verification"
+      ]
     },
     {
       "id": "UI-02",
@@ -212,17 +221,26 @@
       "dependsOn": [
         "UI-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: production information architecture, operation feedback and dynamic DPI implemented",
+      "product": "WinForms overview/devices/diagnostics/settings",
+      "windowsIo": "Actual DPI240 preview render 28 checks, Windows UI feedback 103 checks Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "recompiled WindowsTests 103 Pass",
+        "actual WinForms six-page rendering 28 Pass at DPI240"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/UI-01-03.md",
+        "docs/implementation-1.0/evidence/ui/"
+      ],
+      "remaining": [
+        "real first pairing UI workflow",
+        "physical multi-display DPI and UIA keyboard verification"
+      ]
     },
     {
       "id": "UI-04",

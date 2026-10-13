@@ -43,7 +43,7 @@ public sealed partial class MainWindow
     {
         RequireServer(); if (!ConfirmReplace()) return "已保留当前配对"; string mode = last?.Profile?.TransportMode ?? "faketcp";
         RequireMeshVersion();
-        using (var check = new ShortPairClient(preferences.Server, preferences.Pin)) await check.RequireMeshSupport(lifetime.Token);
+        using (var check = new ShortPairClient(preferences.Server, preferences.Pin)) await check.RequireMeshSupport(OperationToken);
         await ClearPair(true); Apply(await Call(new("mesh-create", Service: preferences.Server, Pin: preferences.Pin, Mode: mode)));
         await OpenRoom(); Apply(await Call(new("start"))); return "网络已创建，请将 6 位配对码交给另一台电脑";
     }
@@ -52,16 +52,16 @@ public sealed partial class MainWindow
         await ClearPair(true); RequireServer();
         var current = last?.Profile?.Mesh?.Pair ?? last?.Profile?.Pair;
         if (current?.Service != preferences.Server || current.CertificatePin != preferences.Pin) throw new IOException("当前网络属于另一个协调服务器，请切回原服务器或创建新网络");
-        owner = true; pairKey = new(); pairClient = new(preferences.Server, preferences.Pin); room = await pairClient.Create(pairKey, last!.Profile!.DeviceName, lifetime.Token); UpdateStatus();
+        owner = true; pairKey = new(); pairClient = new(preferences.Server, preferences.Pin); room = await pairClient.Create(pairKey, last!.Profile!.DeviceName, OperationToken); UpdateStatus();
     }
     async Task<string> JoinNetwork()
     {
         RequireServer(); string code = input?.Text.Trim() ?? ""; if (code.Length != 6) throw new FormatException("请输入完整的 6 位数字配对码");
         RequireMeshVersion();
-        using (var check = new ShortPairClient(preferences.Server, preferences.Pin)) await check.RequireMeshSupport(lifetime.Token);
+        using (var check = new ShortPairClient(preferences.Server, preferences.Pin)) await check.RequireMeshSupport(OperationToken);
         if (!ConfirmReplace()) return "已保留当前配对";
         await ClearPair(true); owner = false; pairKey = new(); pairClient = new(preferences.Server, preferences.Pin);
-        room = await pairClient.Join(code, pairKey, last?.Profile?.DeviceName ?? Environment.MachineName, lifetime.Token); input!.Clear(); UpdateStatus(); return "加入申请已发送，等待创建端核对并允许";
+        room = await pairClient.Join(code, pairKey, last?.Profile?.DeviceName ?? Environment.MachineName, OperationToken); input!.Clear(); UpdateStatus(); return "加入申请已发送，等待创建端核对并允许";
     }
     async Task PollPair()
     {
@@ -111,7 +111,7 @@ public sealed partial class MainWindow
     {
         if (exchange == null || roomState == null || room == null || last?.Profile?.Mesh?.IsOwner != true) throw new IOException("没有待批准的多机网络申请");
         if (pendingMeshInvitation.Length == 0) { var issued = await Call(new("mesh-invite")); pendingMeshInvitation = issued.Invite; Apply(issued); }
-        await pairClient!.Approve(room, roomState.Candidate, PairKeyExchange.EncryptInvitation(exchange, pendingMeshInvitation, room.Room, roomState.Candidate), lifetime.Token);
+        await pairClient!.Approve(room, roomState.Candidate, PairKeyExchange.EncryptInvitation(exchange, pendingMeshInvitation, room.Room, roomState.Candidate), OperationToken);
         pendingMeshInvitation = "";
         await ClearPair(false); if (pairText != null) pairText.Text = "已允许加入"; if (pairHint != null) pairHint.Text = "配对码已失效，正在等待设备连接。"; return "已批准设备，配对信息已加密发送";
     }

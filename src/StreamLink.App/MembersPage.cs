@@ -42,8 +42,9 @@ public sealed partial class MainWindow
                         Apply(await Call(new("mesh-revoke", PeerSlot: slot))); return "成员已移除；其他在线设备收到目录更新后生效";
                     }); remove.Width = 110; remove.Height = 32; buttons.Controls.Add(remove);
                 }
-                row.Controls.Add(buttons); memberList.Controls.Add(row);
-                if (IsHandleCreated && DeviceDpi != 96) row.Scale(new SizeF(DeviceDpi / 96f, DeviceDpi / 96f));
+                row.Controls.Add(buttons);
+                if(IsHandleCreated&&DeviceDpi!=96)row.Scale(new SizeF(DeviceDpi/96f,DeviceDpi/96f));
+                memberList.Controls.Add(row);
                 memberLabels[peer.Slot] = (title, state);
             }
             if (peers.Length == 0) memberList.Controls.Add(Design.Label(mesh.IsOwner ? "还没有其他成员。生成配对码，邀请第一台设备。" : "正在同步网络成员…", 10));
@@ -51,8 +52,9 @@ public sealed partial class MainWindow
             memberLayout = layout; memberList.ResumeLayout(true);
         }
         foreach (var peer in peers) if (memberLabels.TryGetValue(peer.Slot, out var labels)) {
-            labels.Name.Text = peer.Name + "  ·  " + peer.Ip;
-            labels.State.Text = (peer.Connected ? peer.Degraded ? "● UDP 降级直连" : "● 已直连" : "○ " + peer.Detail) + (peer.Connected && peer.RttMs is { } rtt ? $"   {rtt:F1} ms" : "");
+            string name=peer.Name+"  ·  "+peer.Ip;
+            string state=(peer.Connected ? peer.Degraded ? "● UDP 降级直连" : "● 已直连" : "○ " + peer.Detail)+(peer.Connected&&peer.RttMs is{} rtt?$"   {rtt:F1} ms":"");
+            if(labels.Name.Text!=name)labels.Name.Text=name;if(labels.State.Text!=state)labels.State.Text=state;
             labels.State.ForeColor = peer.Degraded ? Color.FromArgb(153, 102, 0) : peer.Connected ? Color.FromArgb(29, 139, 102) : Design.Muted;
         }
         var choices = peers.Where(p => p.Connected).Select(p => new PeerChoice(p.Slot, p.Name + " · " + p.Ip)).ToArray();

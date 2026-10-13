@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Form
     readonly Panel content = new ScrollViewport { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(28, 18, 28, 20) };
     readonly Label notice = Design.Label("准备就绪", 10), modeLabel = Design.Label("", 9);
     readonly ProgressBar progress = new() { Style = ProgressBarStyle.Marquee, Height = 3, Dock = DockStyle.Top, Visible = false, MarqueeAnimationSpeed = 25 };
+    readonly Button cancelOperation=new(){Text="取消等待",AutoSize=true,Visible=false,AccessibleName="取消当前操作等待"};
     readonly Dictionary<string, RoundedButton> nav = new();
     readonly List<Control> actions = [];
     readonly bool preview;
@@ -31,6 +32,9 @@ public sealed partial class MainWindow : Form
     PairRoomState? roomState;
     byte[]? exchange;
     bool owner, revealed;
+    CancellationTokenSource? uiOperation;
+    Guid uiOperationId;
+    CancellationToken OperationToken=>uiOperation?.Token??lifetime.Token;
     public MainWindow(bool preview = false)
     {
         SuspendLayout();
@@ -43,12 +47,13 @@ public sealed partial class MainWindow : Form
         shell.ColumnStyles.Add(new(SizeType.Absolute, 180)); shell.ColumnStyles.Add(new(SizeType.Percent, 100)); shell.RowStyles.Add(new(SizeType.Absolute, 78)); shell.RowStyles.Add(new(SizeType.Percent, 100)); shell.RowStyles.Add(new(SizeType.Absolute, 62)); background.Controls.Add(shell);
         var heading = Design.Stack(); heading.Controls.Add(Design.Label("StreamLink", 25, true)); heading.Controls.Add(Design.Label("连接彼此，保持直达。", 10)); shell.Controls.Add(heading, 0, 0); shell.SetColumnSpan(heading, 2);
         var navigation = Design.Stack(); navigation.Padding = new(0, 24, 10, 0); shell.Controls.Add(navigation, 0, 1);
-        foreach (var (id, text) in new[] { ("join", "加入网络"), ("create", "创建网络"), ("settings", "设置") }) {
+        foreach (var (id, text) in new[] { ("overview", "总览"), ("devices", "设备"), ("diagnostics", "诊断"), ("settings", "设置") }) {
             var button = Design.Button(text); button.Width = 166; button.Height = 48; button.Margin = new(0, 0, 0, 12); nav[id] = button;
             button.Click += (_, _) => { if (!busy) ShowPage(id); }; navigation.Controls.Add(button);
         }
         navigation.Controls.Add(Design.Label($"Windows · P2P\n{DesktopVersion.Number} 预览版", 9)); shell.Controls.Add(content, 1, 1);
-        var footer = Design.Stack(); footer.Controls.Add(progress); notice.MaximumSize = new(920, 0); footer.Controls.Add(notice); footer.Controls.Add(modeLabel); shell.Controls.Add(footer, 0, 2); shell.SetColumnSpan(footer, 2);
+        var footer = Design.Stack(); footer.Controls.Add(progress);notice.MaximumSize = new(920, 0);footer.Controls.Add(Design.Row(notice,cancelOperation)); footer.Controls.Add(modeLabel); shell.Controls.Add(footer, 0, 2); shell.SetColumnSpan(footer, 2);
+        cancelOperation.Click+=async(_,_)=>{uiOperation?.Cancel();if(uiOperationId!=Guid.Empty&&last?.ControlOperationsVersion==1)try{await backend.Call(new("cancel",CancelOperationId:uiOperationId),lifetime.Token);}catch(Exception){ }notice.Text="已取消界面等待；已请求的网络停止仍会安全完成";};
         tray.Icon = Icon; tray.Text = "StreamLink"; tray.DoubleClick += (_, _) => Restore();
         var menu = new ContextMenuStrip(); menu.Items.Add("打开 StreamLink", null, (_, _) => Restore()); menu.Items.Add("停止网络", null, async (_, _) => await Run("正在停止网络…", async () => { Apply(await Call(new("stop"))); return "网络已停止，配对已保留"; })); menu.Items.Add("退出界面", null, (_, _) => { exiting = true; Close(); }); tray.ContextMenuStrip = menu;
         timer.Tick += async (_, _) => await Poll();
@@ -58,7 +63,7 @@ public sealed partial class MainWindow : Form
             var peers = new[] { new MeshPeerStatus(2, MeshIdentity.Address(network.Pair.Network, 2), "游戏电脑", true, 16.1, "P2P 直连"), new MeshPeerStatus(3, MeshIdentity.Address(network.Pair.Network, 3), "轻薄本", false, null, "等待设备上线") };
             last = new(true, "", new DeviceProfile { Mesh = network, Enabled = true, DeviceName = "我的电脑" }, new("部分设备已直连", network.LocalIp, peers[0].Ip, "faketcp", true, 16.1, "1/2 台设备直连 · 原生组网 · 业务不经中继", peers[0].Name, peers), "", [], "", DesktopVersion.Number);
         }
-        Motion.Enabled = preferences.Animations; ShowPage("join"); if (!preview) Shown += async (_, _) => { ApplyTray(); await Poll(); timer.Start(); }; FormClosing += OnClosingWindow;
+        Motion.Enabled = preferences.Animations; ShowPage("overview"); if (!preview) Shown += async (_, _) => { ApplyTray();await Poll();timer.Start();ClampToWorkArea(); }; FormClosing += OnClosingWindow;
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
     }
     static Icon MakeIcon()
@@ -72,48 +77,54 @@ public sealed partial class MainWindow : Form
     void ApplyTray() { tray.Visible = !preview && preferences.Tray; }
     RoundedButton ActionButton(string text, string pending, Func<Task<string>> action, bool primary = false)
     {
-        var button = Design.Button(text, primary); actions.Add(button); button.Click += async (_, _) => await Run(pending, action); return button;
+        var button = Design.Button(text, primary);button.AccessibleName=text; actions.Add(button); button.Click += async (_, _) => await Run(pending, action); return button;
     }
     void SetBusy(bool value, string? message = null)
     {
-        busy = value; progress.Visible = value; if (message != null) { notice.Text = message; notice.ForeColor = Design.Accent; }
+        busy = value; progress.Visible = value;cancelOperation.Visible=value;if (message != null) { notice.Text = message; notice.ForeColor = Design.Accent; }
         foreach (var control in actions.Concat(nav.Values)) if (!control.IsDisposed) control.Enabled = !value;
     }
     async Task Run(string pending, Func<Task<string>> action)
     {
         if (busy || preview) return; SetBusy(true, pending);
+        uiOperation=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);uiOperationId=Guid.Empty;
         await uiGate.WaitAsync();
         try { await Task.Yield(); notice.Text = await action(); notice.ForeColor = Color.FromArgb(40, 130, 98); }
         catch (Exception ex) { notice.Text = ex is OperationCanceledException ? "操作已取消" : ex.Message; notice.ForeColor = Color.FromArgb(182, 65, 78); }
-        finally { uiGate.Release(); SetBusy(false); UpdateStatus(); }
+        finally {uiOperation.Dispose();uiOperation=null; uiGate.Release(); SetBusy(false); UpdateStatus(); }
     }
-    async Task<ControlReply> Call(ControlRequest request) { var reply = await backend.Call(request, lifetime.Token); if (!reply.Ok) throw new IOException(reply.Error); return reply; }
+    async Task<ControlReply> Call(ControlRequest request) {if(request.Command!="status"&&request.OperationId==Guid.Empty){uiOperationId=Guid.NewGuid();request=request with{OperationId=uiOperationId};}var reply = await backend.Call(request,request.Command=="status"?lifetime.Token:OperationToken); if (!reply.Ok) throw new IOException(reply.Error); return reply; }
     void Apply(ControlReply reply)
     {
         last = reply;
         // This is local IPC only. Faster startup feedback does not increase
         // requests to the public coordination service.
-        timer.Interval = reply.Profile?.Enabled == true && reply.Status?.Connected != true ? 750 : 2500;
+        timer.Interval = (!Visible||WindowState==FormWindowState.Minimized)&&room==null?5000:reply.Profile?.Enabled == true && reply.Status?.Connected != true ? 750 : 2500;
         UpdateStatus();
     }
     async Task Poll()
     {
-        if (busy || polling || preview || lifetime.IsCancellationRequested || !await uiGate.WaitAsync(0)) return;
+        if (polling || preview || lifetime.IsCancellationRequested) return;
         polling = true;
-        try { var reply = await Call(new("status")); if (busy) return; Apply(reply); if (room != null) await PollPair(); }
+        try {var reply = await Call(new("status"));Apply(reply);if(busy&&reply.Operation is{Completed:false} operation)notice.Text=operation.Phase; if(!busy&&room!=null)await PollPair(); }
         catch (Exception ex) { if (!busy) { notice.Text = "暂未完成检查：" + ex.Message; notice.ForeColor = Design.Muted; } }
-        finally { polling = false; uiGate.Release(); }
+        finally { polling = false; }
     }
     public void PreviewPage(string id) { if (!preview) throw new InvalidOperationException(); ShowPage(id); }
     void ShowPage(string id)
     {
         page = id; content.SuspendLayout(); foreach (Control c in content.Controls.Cast<Control>().ToArray()) c.Dispose(); content.Controls.Clear(); actions.Clear();
         networkState = addresses = localDevice = peerDevice = quality = pairText = pairHint = null; memberList = null; qualityPeer = null; input = null; approve = reject = null; approvalRow = null;
-        foreach (var item in nav) { item.Value.Selected = item.Key == id; item.Value.Invalidate(); }
+        foreach (var item in nav) { item.Value.Selected = item.Key == id||item.Key=="overview"&&id is "join" or "create"; item.Value.Invalidate(); }
         content.AutoScrollPosition = Point.Empty;
-        var stack = Design.Stack(); stack.BackColor = Design.Surface; stack.Width = content.ClientSize.Width - content.Padding.Horizontal - 20; content.Controls.Add(stack);
-        if (id == "settings") BuildSettings(stack); else BuildNetwork(stack, id == "create");
-        if (IsHandleCreated && DeviceDpi != 96) stack.Scale(new SizeF(DeviceDpi / 96f, DeviceDpi / 96f));
+        // Initial controls are scaled by the form. Pages created after its handle
+        // exists need their logical bounds scaled once, before joining that tree.
+        float pageScale=IsHandleCreated?DeviceDpi/96f:1f;
+        var stack = Design.Stack(); stack.BackColor = Design.Surface;
+        stack.Width = Math.Max(570,(int)((content.ClientSize.Width-content.Padding.Horizontal-20)/pageScale));
+        if (id == "settings") BuildSettings(stack);else if(id=="overview")BuildOverview(stack);else if(id=="devices")BuildDevices(stack);else if(id=="diagnostics")BuildDiagnostics(stack);else BuildNetwork(stack, id == "create");
+        if(pageScale!=1f)stack.Scale(new SizeF(pageScale,pageScale));
+        content.Controls.Add(stack);
         content.ResumeLayout(true); UpdateStatus();
     }
     TableLayoutPanel Card(TableLayoutPanel stack, string title)
@@ -125,12 +136,13 @@ public sealed partial class MainWindow : Form
     {
         var s = last?.Status; var p = last?.Profile;
         if (networkState != null) { networkState.Text = s?.State ?? (p?.Pair != null || p?.Mesh != null ? "已配对，网络未启动" : "尚未配对"); networkState.ForeColor = s?.Degraded == true ? Color.FromArgb(153, 102, 0) : s?.Connected == true ? Color.FromArgb(29, 139, 102) : Design.Ink; }
-        if (addresses != null) addresses.Text = p?.Pair != null ? $"本机 10.129.129.{p.Slot}    ·    对端 10.129.129.{3-p.Slot}" + (s?.RttMs is { } rtt ? $"    ·    {rtt:F1} ms" : "") : "配对成功后显示成员虚拟 IP";
+        if (addresses != null) addresses.Text = p?.Mesh != null ? $"本机 {p.Mesh.LocalIp}    ·    {s?.Peers?.Count(x=>x.Connected)??0} 台设备直连" : p?.Pair != null ? $"本机 10.129.129.{p.Slot}    ·    对端 10.129.129.{3-p.Slot}" + (s?.RttMs is { } rtt ? $"    ·    {rtt:F1} ms" : "") : "配对成功后显示成员虚拟 IP";
         if (localDevice != null) localDevice.Text = "●  " + (p?.DeviceName ?? Environment.MachineName) + "  ·  本机";
         if (peerDevice != null) peerDevice.Text = "●  " + (s?.PeerName is { Length: > 0 } name ? name : "另一台设备") + (s?.Connected == true ? "  ·  已直连" : "  ·  等待连接");
         if (quality != null) quality.Text = (s?.Degraded == true ? s.Detail + "\n" : "") + (last?.Quality is { Length: > 0 } q ? "最近一次测速：" + q : s?.Degraded == true ? "请按实际用途验证负载质量。" : s?.Detail ?? "业务数据由设备间直接传输。");
         if (p?.Mesh is { } mesh && addresses != null) addresses.Text = "本机 " + mesh.LocalIp + "    ·    " + (mesh.IsOwner ? "网络创建者" : "网络成员") + "    ·    原生 IPv4 组网";
         UpdateMembers();
+        UpdateOverview();
         modeLabel.Text = backend.IsService ? "服务模式 · 关闭界面后继续连接" : preferences.Tray && preferences.CloseToTray ? "前台模式 · 关闭窗口后驻留托盘，退出程序时断开" : "前台模式 · 退出程序时断开，可在设置中安装开机服务";
         if (room != null && pairText != null && pairHint != null && page != "settings") {
             if (owner && page == "create") pairText.Text = string.Join(" ", room.Code.ToCharArray());
@@ -163,4 +175,6 @@ public sealed partial class MainWindow : Form
         finally { tray.Visible = false; allowClose = true; Close(); }
     }
     protected override void Dispose(bool disposing) { if (disposing) { timer.Dispose(); tray.Dispose(); lifetime.Dispose(); Icon?.Dispose(); } base.Dispose(disposing); }
+    protected override void OnShown(EventArgs e){base.OnShown(e);ClampToWorkArea();}
+    void ClampToWorkArea(){var work=Screen.FromControl(this).WorkingArea;MinimumSize=new(Math.Min(MinimumSize.Width,work.Width-20),Math.Min(MinimumSize.Height,work.Height-20));if(Width>work.Width||Height>work.Height)Size=new(Math.Min(Width,work.Width),Math.Min(Height,work.Height));}
 }
