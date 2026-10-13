@@ -514,17 +514,26 @@
         "BASE-01",
         "NIC-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "ImplementedUnverified",
+      "code": "Partial: original NDIS raw-IPv4 TUN, buffered ABI/user DLL/research provider; separate observation-only WFP sample",
+      "product": "Independent research targets, never default installed or loaded",
+      "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Off; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/adr/driver-boundary-1.0.md",
+        "docs/adr/wfp-capture-backend.md",
+        "docs/driver-validation/RC1-Manual-Gates.md",
+        "docs/implementation-1.0/evidence/driver/"
+      ],
+      "remaining": [
+        "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
+        "Verifier/HVCI/HLK and signatures unavailable",
+        "WFP actual injection interface remains Partial"
+      ]
     },
     {
       "id": "DRV-01",
@@ -533,17 +542,26 @@
         "DRV-00",
         "SEC-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: original NDIS raw-IPv4 TUN, buffered ABI/user DLL/research provider; separate observation-only WFP sample",
+      "product": "Independent research targets, never default installed or loaded",
+      "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Off; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/adr/driver-boundary-1.0.md",
+        "docs/adr/wfp-capture-backend.md",
+        "docs/driver-validation/RC1-Manual-Gates.md",
+        "docs/implementation-1.0/evidence/driver/"
+      ],
+      "remaining": [
+        "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
+        "Verifier/HVCI/HLK and signatures unavailable",
+        "WFP actual injection interface remains Partial"
+      ]
     },
     {
       "id": "DRV-02",
@@ -552,17 +570,26 @@
         "DRV-01",
         "SEC-02"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "BlockedExternal",
+      "code": "Partial: original NDIS raw-IPv4 TUN, buffered ABI/user DLL/research provider; separate observation-only WFP sample",
+      "product": "Independent research targets, never default installed or loaded",
+      "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Off; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/adr/driver-boundary-1.0.md",
+        "docs/adr/wfp-capture-backend.md",
+        "docs/driver-validation/RC1-Manual-Gates.md",
+        "docs/implementation-1.0/evidence/driver/"
+      ],
+      "remaining": [
+        "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
+        "Verifier/HVCI/HLK and signatures unavailable",
+        "WFP actual injection interface remains Partial"
+      ]
     },
     {
       "id": "DRV-03",
@@ -571,17 +598,26 @@
         "DRV-00",
         "NET-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: original NDIS raw-IPv4 TUN, buffered ABI/user DLL/research provider; separate observation-only WFP sample",
+      "product": "Independent research targets, never default installed or loaded",
+      "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Off; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/adr/driver-boundary-1.0.md",
+        "docs/adr/wfp-capture-backend.md",
+        "docs/driver-validation/RC1-Manual-Gates.md",
+        "docs/implementation-1.0/evidence/driver/"
+      ],
+      "remaining": [
+        "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
+        "Verifier/HVCI/HLK and signatures unavailable",
+        "WFP actual injection interface remains Partial"
+      ]
     },
     {
       "id": "REL-01",

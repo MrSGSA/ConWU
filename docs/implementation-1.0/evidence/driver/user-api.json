@@ -1,0 +1,5 @@
+{
+  "status": "Pass",
+  "checks": 8,
+  "scope": "Actual Windows user DLL ABI/invalid-handle tests, production admission refusal. No kernel driver installed, no NDIS I/O, no signed-driver/Verifier/HVCI claim."
+}
