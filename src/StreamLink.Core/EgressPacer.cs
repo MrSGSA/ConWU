@@ -76,13 +76,13 @@ public sealed class EgressPacer : IDisposable
     // Bounded A/B parameter, not a user-facing override of the rate envelope.
     internal EgressPacer(int mbps, int burstPackets, ThreadPriority priority = ThreadPriority.Normal)
     {
-        if (mbps is < 1 or > 10000) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(mbps)); }
+        if (mbps is < 0 or > 10000) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(mbps)); }
         if (burstPackets is < 4 or > 8) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(burstPackets)); }
         if (priority is not (ThreadPriority.Normal or ThreadPriority.AboveNormal)) { timer.Dispose(); changed.Dispose(); throw new ArgumentOutOfRangeException(nameof(priority)); }
-        Mbps = mbps; rate = mbps * 125000d; priorityRate = Math.Min(8192, rate * .05);
+        Mbps = mbps; rate = mbps==0?0:mbps * 125000d; priorityRate = mbps==0?8192:Math.Min(8192, rate * .05);
         tokens = burst = burstPackets * Quantum;
         priorityName = priority.ToString();
-        limit = Math.Min(1 << 20, (int)(rate * .020)); reserve = Math.Min(2 * Quantum, limit / 4);
+        limit = mbps==0?128*1024:Math.Min(1 << 20, (int)(rate * .020)); reserve = Math.Min(2 * Quantum, limit / 4);
         worker = new Thread(Run) { IsBackground = true, Name = "StreamLink egress", Priority = priority }; worker.Start();
     }
     public Flow Register(string peer, Func<ReadOnlyMemory<byte>, object?, bool> send)
@@ -206,7 +206,7 @@ public sealed class EgressPacer : IDisposable
     void Refill()
     {
         long now = Stopwatch.GetTimestamp(); double elapsed = Stopwatch.GetElapsedTime(at, now).TotalSeconds; at = now;
-        if (bytes > 0) tokenOverrun += Math.Max(0, tokens + elapsed * rate - burst);
+        if (Mbps!=0&&bytes > 0) tokenOverrun += Math.Max(0, tokens + elapsed * rate - burst);
         tokens = Math.Min(burst, tokens + elapsed * rate);
         priorityTokens = Math.Min(2 * Quantum, priorityTokens + elapsed * priorityRate);
     }
@@ -271,11 +271,11 @@ public sealed class EgressPacer : IDisposable
                         // Wake when the next packet is eligible. Artificially
                         // waiting for a larger batch plus the real timer's
                         // rounding loses throughput to the bounded bucket cap.
-                        if (tokens < item.Bytes) { wait = (item.Bytes - tokens) / rate; item = null; }
+                        if (Mbps!=0&&tokens < item.Bytes) { wait = (item.Bytes - tokens) / rate; item = null; }
                         else {
                             var p = item.Peer;
                             (item.Priority ? p.Control : p.Data).RemoveFirst();
-                            bytes -= item.Bytes; p.Bytes -= item.Bytes; p.Outlet.Bytes -= item.Bytes; tokens -= item.Bytes;
+                            bytes -= item.Bytes; p.Bytes -= item.Bytes; p.Outlet.Bytes -= item.Bytes; if(Mbps!=0)tokens -= item.Bytes;
                             accounting.Begin(item.Bytes); item.Flow.accounting.Begin(item.Bytes);
                             p.InFlight++;
                             if (priority) { priorityTokens -= item.Bytes; priorityPackets++; }

@@ -48,7 +48,7 @@ static partial class Program
             var watch = Stopwatch.StartNew(); paths.Update(2, stale.Endpoint.ToString(), "peer", "");
             Check(watch.ElapsedMilliseconds < 200 && paths.HasPending, "production path tick returns while a constructor is synchronously blocked");
             Check(entered.Wait(2000), "pending constructor really entered before cancellation");
-            paths.Update(2, "", "peer", "expired announcement");
+            paths.InvalidatePreparation(2);
             var closing = paths.DisposeAsync().AsTask();
             Check(!closing.IsCompleted && router.UsesPath(2, first.Endpoint), "shutdown waits for the owned constructor while the unrelated active path stays usable");
             release.Set(); await closing.WaitAsync(TimeSpan.FromSeconds(3));

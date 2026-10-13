@@ -1,0 +1,20 @@
+{
+  "status": "Pass",
+  "checks": 19,
+  "rows": [
+    {
+      "cancelledConstructors": true,
+      "latePongRejected": true,
+      "oldPathRetained": true,
+      "fullProductionRunner": false,
+      "scope": "production startup queue/path manager/Router, real UDP encrypted frames, memory IP adapter and blocked constructor fixture; no native process, driver, installed service or WAN"
+    },
+    {
+      "fullProductionRunner": true,
+      "creations": 1,
+      "reads": 2,
+      "driver": false,
+      "scope": "production MeshRunner including pre-launch endpoint reservation, real UDP encrypted path; blocked constructor and IP adapter are fixtures"
+    }
+  ]
+}

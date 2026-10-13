@@ -1,0 +1,1656 @@
+{
+  "status": "Pass",
+  "checks": 72,
+  "rows": [
+    {
+      "sendQueues": [
+        {
+          "ledger": {
+            "Mbps": 1,
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1400,
+            "QueueLimitBytes": 2500,
+            "SentBytes": 1000,
+            "OverflowDrops": 2,
+            "Cancelled": 2,
+            "SendFailures": 1,
+            "MaximumQueueMs": 0.0285,
+            "QueueP95Ms": 0.1,
+            "PriorityPackets": 0,
+            "Peers": [
+              {
+                "Peer": "heavy",
+                "SentBytes": 1000,
+                "Packets": 1,
+                "OverflowDrops": 2,
+                "Cancelled": 0,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "joining",
+                "SentBytes": 0,
+                "Packets": 0,
+                "OverflowDrops": 0,
+                "Cancelled": 2,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "failure",
+                "SentBytes": 0,
+                "Packets": 0,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 1
+              }
+            ],
+            "Failure": "",
+            "TimerWaits": 0,
+            "TimerWaitMs": 0,
+            "BackloggedTokenOverrunBytes": 79.34999999999945,
+            "BurstBytes": 6144,
+            "WorkerPriority": "AboveNormal",
+            "OldestQueuedMs": 0,
+            "Accounting": {
+              "Offered": {
+                "Packets": 7,
+                "Bytes": 4700
+              },
+              "Accepted": {
+                "Packets": 5,
+                "Bytes": 3600
+              },
+              "Sent": {
+                "Packets": 1,
+                "Bytes": 1000
+              },
+              "CapacityRejected": {
+                "Packets": 1,
+                "Bytes": 1000
+              },
+              "UnavailableRejected": {
+                "Packets": 1,
+                "Bytes": 100
+              },
+              "Evicted": {
+                "Packets": 1,
+                "Bytes": 1000
+              },
+              "Cancelled": {
+                "Packets": 2,
+                "Bytes": 1400
+              },
+              "Failed": {
+                "Packets": 1,
+                "Bytes": 200
+              },
+              "Queued": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "InFlight": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Conserved": true
+            },
+            "Outlets": [
+              {
+                "Outlet": "DeviceShared",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 1400,
+                "QueueLimitBytes": 2500,
+                "SentBytes": 1000,
+                "Peers": [
+                  {
+                    "Peer": "heavy",
+                    "SentBytes": 1000,
+                    "Packets": 1,
+                    "OverflowDrops": 2,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "joining",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 2,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "failure",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 1
+                  }
+                ]
+              }
+            ],
+            "RateScope": "WholeDevice",
+            "RetiredOutletSentBytes": 0
+          }
+        },
+        {
+          "paced": false,
+          "cancel": false,
+          "accepted": 128,
+          "before": {
+            "Offered": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Accepted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Sent": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "during": {
+            "Owner": "UdpPath",
+            "ByteUnit": "MeshDatagramBytes",
+            "ByteLimit": 172032,
+            "OldestQueuedMs": 0.3154,
+            "Accounting": {
+              "Offered": {
+                "Packets": 161,
+                "Bytes": 216384
+              },
+              "Accepted": {
+                "Packets": 128,
+                "Bytes": 172032
+              },
+              "Sent": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "CapacityRejected": {
+                "Packets": 33,
+                "Bytes": 44352
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 127,
+                "Bytes": 170688
+              },
+              "InFlight": {
+                "Packets": 1,
+                "Bytes": 1344
+              },
+              "Conserved": true
+            }
+          },
+          "final": {
+            "Offered": {
+              "Packets": 161,
+              "Bytes": 216384
+            },
+            "Accepted": {
+              "Packets": 128,
+              "Bytes": 172032
+            },
+            "Sent": {
+              "Packets": 127,
+              "Bytes": 170688
+            },
+            "CapacityRejected": {
+              "Packets": 33,
+              "Bytes": 44352
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 1,
+              "Bytes": 1344
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "scope": "real Windows UDP loopback; deliberate transient send/cancellation fixture, no Wintun/WAN"
+        },
+        {
+          "paced": false,
+          "cancel": true,
+          "accepted": 128,
+          "before": {
+            "Offered": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Accepted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Sent": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "during": {
+            "Owner": "UdpPath",
+            "ByteUnit": "MeshDatagramBytes",
+            "ByteLimit": 172032,
+            "OldestQueuedMs": 0.1706,
+            "Accounting": {
+              "Offered": {
+                "Packets": 161,
+                "Bytes": 216384
+              },
+              "Accepted": {
+                "Packets": 128,
+                "Bytes": 172032
+              },
+              "Sent": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "CapacityRejected": {
+                "Packets": 33,
+                "Bytes": 44352
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 127,
+                "Bytes": 170688
+              },
+              "InFlight": {
+                "Packets": 1,
+                "Bytes": 1344
+              },
+              "Conserved": true
+            }
+          },
+          "final": {
+            "Offered": {
+              "Packets": 161,
+              "Bytes": 216384
+            },
+            "Accepted": {
+              "Packets": 128,
+              "Bytes": 172032
+            },
+            "Sent": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "CapacityRejected": {
+              "Packets": 33,
+              "Bytes": 44352
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 128,
+              "Bytes": 172032
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "scope": "real Windows UDP loopback; deliberate transient send/cancellation fixture, no Wintun/WAN"
+        },
+        {
+          "paced": true,
+          "cancel": false,
+          "accepted": 2,
+          "before": {
+            "Offered": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "Accepted": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "Sent": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "during": {
+            "Owner": "SharedEgress",
+            "ByteUnit": "OuterIpBytes",
+            "ByteLimit": 2500,
+            "OldestQueuedMs": 0.2675,
+            "Accounting": {
+              "Offered": {
+                "Packets": 167,
+                "Bytes": 224132
+              },
+              "Accepted": {
+                "Packets": 8,
+                "Bytes": 5984
+              },
+              "Sent": {
+                "Packets": 6,
+                "Bytes": 3240
+              },
+              "CapacityRejected": {
+                "Packets": 159,
+                "Bytes": 218148
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 1,
+                "Bytes": 1372
+              },
+              "InFlight": {
+                "Packets": 1,
+                "Bytes": 1372
+              },
+              "Conserved": true
+            }
+          },
+          "final": {
+            "Offered": {
+              "Packets": 167,
+              "Bytes": 224132
+            },
+            "Accepted": {
+              "Packets": 8,
+              "Bytes": 5984
+            },
+            "Sent": {
+              "Packets": 7,
+              "Bytes": 4612
+            },
+            "CapacityRejected": {
+              "Packets": 159,
+              "Bytes": 218148
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 1,
+              "Bytes": 1372
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "scope": "real Windows UDP loopback; deliberate transient send/cancellation fixture, no Wintun/WAN"
+        },
+        {
+          "paced": true,
+          "cancel": true,
+          "accepted": 2,
+          "before": {
+            "Offered": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "Accepted": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "Sent": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "during": {
+            "Owner": "SharedEgress",
+            "ByteUnit": "OuterIpBytes",
+            "ByteLimit": 2500,
+            "OldestQueuedMs": 0.3639,
+            "Accounting": {
+              "Offered": {
+                "Packets": 167,
+                "Bytes": 224132
+              },
+              "Accepted": {
+                "Packets": 8,
+                "Bytes": 5984
+              },
+              "Sent": {
+                "Packets": 6,
+                "Bytes": 3240
+              },
+              "CapacityRejected": {
+                "Packets": 159,
+                "Bytes": 218148
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 1,
+                "Bytes": 1372
+              },
+              "InFlight": {
+                "Packets": 1,
+                "Bytes": 1372
+              },
+              "Conserved": true
+            }
+          },
+          "final": {
+            "Offered": {
+              "Packets": 167,
+              "Bytes": 224132
+            },
+            "Accepted": {
+              "Packets": 8,
+              "Bytes": 5984
+            },
+            "Sent": {
+              "Packets": 6,
+              "Bytes": 3240
+            },
+            "CapacityRejected": {
+              "Packets": 159,
+              "Bytes": 218148
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 2,
+              "Bytes": 2744
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "scope": "real Windows UDP loopback; deliberate transient send/cancellation fixture, no Wintun/WAN"
+        }
+      ]
+    },
+    {
+      "outlets": [
+        {
+          "elapsedMs": 2035.3411,
+          "snapshot": {
+            "Mbps": 10,
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 21928,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 2512114,
+            "OverflowDrops": 100,
+            "Cancelled": 40,
+            "SendFailures": 0,
+            "MaximumQueueMs": 49.2346,
+            "QueueP95Ms": 50,
+            "PriorityPackets": 0,
+            "Peers": [
+              {
+                "Peer": "peer-0",
+                "SentBytes": 211104,
+                "Packets": 144,
+                "OverflowDrops": 17,
+                "Cancelled": 3,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-1",
+                "SentBytes": 210300,
+                "Packets": 701,
+                "OverflowDrops": 11,
+                "Cancelled": 9,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-2",
+                "SentBytes": 209638,
+                "Packets": 143,
+                "OverflowDrops": 18,
+                "Cancelled": 2,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-3",
+                "SentBytes": 209700,
+                "Packets": 699,
+                "OverflowDrops": 10,
+                "Cancelled": 10,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-4",
+                "SentBytes": 208172,
+                "Packets": 142,
+                "OverflowDrops": 18,
+                "Cancelled": 2,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-5",
+                "SentBytes": 208800,
+                "Packets": 696,
+                "OverflowDrops": 10,
+                "Cancelled": 10,
+                "SendFailures": 0
+              },
+              {
+                "Peer": "peer-6",
+                "SentBytes": 1254400,
+                "Packets": 1792,
+                "OverflowDrops": 16,
+                "Cancelled": 4,
+                "SendFailures": 0
+              }
+            ],
+            "Failure": "",
+            "TimerWaits": 2971,
+            "TimerWaitMs": 1978.0285000000042,
+            "BackloggedTokenOverrunBytes": 340.5,
+            "BurstBytes": 6144,
+            "WorkerPriority": "AboveNormal",
+            "OldestQueuedMs": 0,
+            "Accounting": {
+              "Offered": {
+                "Packets": 4457,
+                "Bytes": 2632074
+              },
+              "Accepted": {
+                "Packets": 4399,
+                "Bytes": 2564366
+              },
+              "Sent": {
+                "Packets": 4317,
+                "Bytes": 2512114
+              },
+              "CapacityRejected": {
+                "Packets": 58,
+                "Bytes": 67708
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 42,
+                "Bytes": 30490
+              },
+              "Cancelled": {
+                "Packets": 40,
+                "Bytes": 21762
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "InFlight": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Conserved": true
+            },
+            "Outlets": [
+              {
+                "Outlet": "fixture-interface-0",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 21928,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 1257714,
+                "Peers": [
+                  {
+                    "Peer": "peer-0",
+                    "SentBytes": 211104,
+                    "Packets": 144,
+                    "OverflowDrops": 17,
+                    "Cancelled": 3,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "peer-1",
+                    "SentBytes": 210300,
+                    "Packets": 701,
+                    "OverflowDrops": 11,
+                    "Cancelled": 9,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "peer-2",
+                    "SentBytes": 209638,
+                    "Packets": 143,
+                    "OverflowDrops": 18,
+                    "Cancelled": 2,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "peer-3",
+                    "SentBytes": 209700,
+                    "Packets": 699,
+                    "OverflowDrops": 10,
+                    "Cancelled": 10,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "peer-4",
+                    "SentBytes": 208172,
+                    "Packets": 142,
+                    "OverflowDrops": 18,
+                    "Cancelled": 2,
+                    "SendFailures": 0
+                  },
+                  {
+                    "Peer": "peer-5",
+                    "SentBytes": 208800,
+                    "Packets": 696,
+                    "OverflowDrops": 10,
+                    "Cancelled": 10,
+                    "SendFailures": 0
+                  }
+                ]
+              },
+              {
+                "Outlet": "fixture-interface-1",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 3500,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 1254400,
+                "Peers": [
+                  {
+                    "Peer": "peer-6",
+                    "SentBytes": 1254400,
+                    "Packets": 1792,
+                    "OverflowDrops": 16,
+                    "Cancelled": 4,
+                    "SendFailures": 0
+                  }
+                ]
+              }
+            ],
+            "RateScope": "WholeDevice",
+            "RetiredOutletSentBytes": 0
+          },
+          "scope": "real Windows pacing timer, controlled callback sinks; two outlet identities are fixtures, not two physical uplinks"
+        },
+        {
+          "busy": {
+            "Mbps": 10,
+            "QueuedBytes": 600,
+            "PeakQueuedBytes": 600,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 0,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0,
+            "MaximumQueueMs": 0.03,
+            "QueueP95Ms": 0.1,
+            "PriorityPackets": 0,
+            "Peers": [
+              {
+                "Peer": "same-member",
+                "SentBytes": 0,
+                "Packets": 0,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ],
+            "Failure": "",
+            "TimerWaits": 0,
+            "TimerWaitMs": 0,
+            "BackloggedTokenOverrunBytes": 212.375,
+            "BurstBytes": 6144,
+            "WorkerPriority": "AboveNormal",
+            "OldestQueuedMs": 0.076,
+            "Accounting": {
+              "Offered": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Accepted": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Sent": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "CapacityRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 1,
+                "Bytes": 600
+              },
+              "InFlight": {
+                "Packets": 1,
+                "Bytes": 400
+              },
+              "Conserved": true
+            },
+            "Outlets": [
+              {
+                "Outlet": "Unresolved",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 0,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 0,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  }
+                ]
+              },
+              {
+                "Outlet": "route-before",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 400,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 0,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  }
+                ]
+              },
+              {
+                "Outlet": "route-after",
+                "QueuedBytes": 600,
+                "PeakQueuedBytes": 600,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 0,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  }
+                ]
+              }
+            ],
+            "RateScope": "WholeDevice",
+            "RetiredOutletSentBytes": 0
+          },
+          "final": {
+            "Mbps": 10,
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 600,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 400,
+            "OverflowDrops": 0,
+            "Cancelled": 1,
+            "SendFailures": 0,
+            "MaximumQueueMs": 0.03,
+            "QueueP95Ms": 0.1,
+            "PriorityPackets": 0,
+            "Peers": [
+              {
+                "Peer": "same-member",
+                "SentBytes": 400,
+                "Packets": 1,
+                "OverflowDrops": 0,
+                "Cancelled": 1,
+                "SendFailures": 0
+              }
+            ],
+            "Failure": "",
+            "TimerWaits": 0,
+            "TimerWaitMs": 0,
+            "BackloggedTokenOverrunBytes": 212.375,
+            "BurstBytes": 6144,
+            "WorkerPriority": "AboveNormal",
+            "OldestQueuedMs": 0,
+            "Accounting": {
+              "Offered": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Accepted": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Sent": {
+                "Packets": 1,
+                "Bytes": 400
+              },
+              "CapacityRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 1,
+                "Bytes": 600
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "InFlight": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Conserved": true
+            },
+            "Outlets": [
+              {
+                "Outlet": "Unresolved",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 0,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 0,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  }
+                ]
+              },
+              {
+                "Outlet": "route-before",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 400,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 400,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 400,
+                    "Packets": 1,
+                    "OverflowDrops": 0,
+                    "Cancelled": 0,
+                    "SendFailures": 0
+                  }
+                ]
+              },
+              {
+                "Outlet": "route-after",
+                "QueuedBytes": 0,
+                "PeakQueuedBytes": 600,
+                "QueueLimitBytes": 25000,
+                "SentBytes": 0,
+                "Peers": [
+                  {
+                    "Peer": "same-member",
+                    "SentBytes": 0,
+                    "Packets": 0,
+                    "OverflowDrops": 0,
+                    "Cancelled": 1,
+                    "SendFailures": 0
+                  }
+                ]
+              }
+            ],
+            "RateScope": "WholeDevice",
+            "RetiredOutletSentBytes": 0
+          },
+          "resource": {
+            "Owner": "SharedEgress",
+            "ByteUnit": "OuterIpBytes",
+            "ByteLimit": 25000,
+            "OldestQueuedMs": 0,
+            "Accounting": {
+              "Offered": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Accepted": {
+                "Packets": 2,
+                "Bytes": 1000
+              },
+              "Sent": {
+                "Packets": 1,
+                "Bytes": 400
+              },
+              "CapacityRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "UnavailableRejected": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Evicted": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Cancelled": {
+                "Packets": 1,
+                "Bytes": 600
+              },
+              "Failed": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Queued": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "InFlight": {
+                "Packets": 0,
+                "Bytes": 0
+              },
+              "Conserved": true
+            }
+          },
+          "scope": "controlled route transition with a blocked actual callback; no physical interface change"
+        },
+        {
+          "Mbps": 10,
+          "QueuedBytes": 0,
+          "PeakQueuedBytes": 500,
+          "QueueLimitBytes": 25000,
+          "SentBytes": 500,
+          "OverflowDrops": 0,
+          "Cancelled": 0,
+          "SendFailures": 0,
+          "MaximumQueueMs": 0.0177,
+          "QueueP95Ms": 0.1,
+          "PriorityPackets": 0,
+          "Peers": [
+            {
+              "Peer": "retiring",
+              "SentBytes": 500,
+              "Packets": 1,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-63",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-64",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-65",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-66",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-67",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-68",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "churn-69",
+              "SentBytes": 0,
+              "Packets": 0,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            }
+          ],
+          "Failure": "",
+          "TimerWaits": 0,
+          "TimerWaitMs": 0,
+          "BackloggedTokenOverrunBytes": 52,
+          "BurstBytes": 6144,
+          "WorkerPriority": "AboveNormal",
+          "OldestQueuedMs": 0,
+          "Accounting": {
+            "Offered": {
+              "Packets": 1,
+              "Bytes": 500
+            },
+            "Accepted": {
+              "Packets": 1,
+              "Bytes": 500
+            },
+            "Sent": {
+              "Packets": 1,
+              "Bytes": 500
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "Outlets": [
+            {
+              "Outlet": "retiring-interface",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 500,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 500,
+              "Peers": [
+                {
+                  "Peer": "retiring",
+                  "SentBytes": 500,
+                  "Packets": 1,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            },
+            {
+              "Outlet": "churn-interface",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 0,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 0,
+              "Peers": [
+                {
+                  "Peer": "churn-63",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-64",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-65",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-66",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-67",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-68",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "churn-69",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            }
+          ],
+          "RateScope": "WholeDevice",
+          "RetiredOutletSentBytes": 0
+        },
+        {
+          "v4": "WindowsInterface:0018000000000000",
+          "v6": "WindowsInterface:0018000000000000",
+          "lookups": 42,
+          "scope": "read-only GetBestRoute2 for real loopback plus bounded-cache fixture"
+        }
+      ]
+    },
+    {
+      "dynamicAdmission": {
+        "admitted": 150,
+        "firstSendMs": 7.0429,
+        "existing": 3134308,
+        "joining": 3133200,
+        "snapshot": {
+          "Mbps": 50,
+          "QueuedBytes": 0,
+          "PeakQueuedBytes": 121928,
+          "QueueLimitBytes": 125000,
+          "SentBytes": 9378360,
+          "OverflowDrops": 68,
+          "Cancelled": 202,
+          "SendFailures": 0,
+          "MaximumQueueMs": 44.1069,
+          "QueueP95Ms": 50,
+          "PriorityPackets": 0,
+          "Peers": [
+            {
+              "Peer": "existing",
+              "SentBytes": 6245160,
+              "Packets": 4260,
+              "OverflowDrops": 68,
+              "Cancelled": 52,
+              "SendFailures": 0
+            },
+            {
+              "Peer": "joining",
+              "SentBytes": 3133200,
+              "Packets": 10444,
+              "OverflowDrops": 0,
+              "Cancelled": 150,
+              "SendFailures": 0
+            }
+          ],
+          "Failure": "",
+          "TimerWaits": 2686,
+          "TimerWaitMs": 1463.0386000000003,
+          "BackloggedTokenOverrunBytes": 84956.74999999999,
+          "BurstBytes": 12288,
+          "WorkerPriority": "AboveNormal",
+          "OldestQueuedMs": 0,
+          "Accounting": {
+            "Offered": {
+              "Packets": 14974,
+              "Bytes": 9599280
+            },
+            "Accepted": {
+              "Packets": 14937,
+              "Bytes": 9545038
+            },
+            "Sent": {
+              "Packets": 14704,
+              "Bytes": 9378360
+            },
+            "CapacityRejected": {
+              "Packets": 37,
+              "Bytes": 54242
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 31,
+              "Bytes": 45446
+            },
+            "Cancelled": {
+              "Packets": 202,
+              "Bytes": 121232
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "Outlets": [
+            {
+              "Outlet": "DeviceShared",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 121928,
+              "QueueLimitBytes": 125000,
+              "SentBytes": 9378360,
+              "Peers": [
+                {
+                  "Peer": "existing",
+                  "SentBytes": 6245160,
+                  "Packets": 4260,
+                  "OverflowDrops": 68,
+                  "Cancelled": 52,
+                  "SendFailures": 0
+                },
+                {
+                  "Peer": "joining",
+                  "SentBytes": 3133200,
+                  "Packets": 10444,
+                  "OverflowDrops": 0,
+                  "Cancelled": 150,
+                  "SendFailures": 0
+                }
+              ]
+            }
+          ],
+          "RateScope": "WholeDevice",
+          "RetiredOutletSentBytes": 0
+        }
+      }
+    },
+    {
+      "priority": {
+        "Mbps": 10,
+        "QueuedBytes": 3900,
+        "PeakQueuedBytes": 22692,
+        "QueueLimitBytes": 25000,
+        "SentBytes": 460444,
+        "OverflowDrops": 196,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 59.2343,
+        "QueueP95Ms": 50,
+        "PriorityPackets": 60,
+        "Peers": [
+          {
+            "Peer": "same-peer",
+            "SentBytes": 460444,
+            "Packets": 725,
+            "OverflowDrops": 196,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 349,
+        "TimerWaitMs": 360.0752000000002,
+        "BackloggedTokenOverrunBytes": 176.25,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 30.8878,
+        "Accounting": {
+          "Offered": {
+            "Packets": 960,
+            "Bytes": 751680
+          },
+          "Accepted": {
+            "Packets": 764,
+            "Bytes": 464344
+          },
+          "Sent": {
+            "Packets": 725,
+            "Bytes": 460444
+          },
+          "CapacityRejected": {
+            "Packets": 196,
+            "Bytes": 287336
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 39,
+            "Bytes": 3900
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "DeviceShared",
+            "QueuedBytes": 3900,
+            "PeakQueuedBytes": 22692,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 460444,
+            "Peers": [
+              {
+                "Peer": "same-peer",
+                "SentBytes": 460444,
+                "Packets": 725,
+                "OverflowDrops": 196,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "data": 416344,
+      "control": 44100
+    }
+  ],
+  "performanceGate": "NotRun",
+  "scope": "real Windows waitable timer and IPv4/IPv6 UDP loopback; synthetic concurrent peers, not real eight Windows or WAN"
+}

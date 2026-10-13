@@ -17,6 +17,7 @@ internal sealed class LegacyControlChannel : IDisposable
     readonly byte protocol;
     readonly int port;
     readonly LegacyControlGovernor governor;
+    readonly LegacyRouteEvidence? route;
     Task running = Task.CompletedTask;
     int failed, disposed, authorized;
     internal string Failure { get; private set; } = "";
@@ -25,10 +26,11 @@ internal sealed class LegacyControlChannel : IDisposable
     internal bool Failed => Volatile.Read(ref failed) != 0;
     internal bool Authorized => Volatile.Read(ref authorized) != 0;
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe, out uint pid);
-    internal LegacyControlChannel(Guid resource, bool tcp, int serverPort, LegacyControlGovernor? governor = null)
+    internal LegacyControlChannel(Guid resource, bool tcp, int serverPort, LegacyControlGovernor? governor = null,LegacyRouteEvidence? route=null)
     {
         this.resource = resource; protocol = tcp ? (byte)6 : (byte)17; port = serverPort;
         this.governor = governor ?? LegacyControlGovernor.Shared;
+        this.route=route;
         pipe = new(Name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
             PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance, 4096, 4096);
     }
@@ -49,7 +51,8 @@ internal sealed class LegacyControlChannel : IDisposable
                 var request = LegacyControlRequest.Decode(frame, protocol, port);
                 if (request.Sequence <= last) throw new IOException("Legacy control sequence rejected");
                 last = request.Sequence;
-                byte result = await governor.Admit(resource, request, stop.Token);
+                bool routeReady=route?.Prepare(request.Capture,new(request.Source,request.SourcePort),new(request.Target,request.TargetPort),out _)??true;
+                byte result =routeReady?await governor.Admit(resource, request, stop.Token):(byte)2;
                 reply.AsSpan().Clear(); BinaryPrimitives.WriteUInt64LittleEndian(reply, request.Sequence); reply[8] = result;
                 await pipe.WriteAsync(reply, stop.Token);
             }

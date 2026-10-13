@@ -81,13 +81,13 @@ internal sealed class MeshRequestBudget(int burst = 6)
 }
 
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
-    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false,bool diagnosticNative=false) : IMeshCandidateFactory, IAsyncDisposable
+    TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false,bool diagnosticNative=false,EgressPacer? sharedEgress=null) : IMeshCandidateFactory, IAsyncDisposable
 {
     readonly DeviceProfile options = profile;
     readonly bool countWireControl = wireControl && captureBroker;
     readonly bool diagnosticTransport=diagnosticNative&&wireControl&&captureBroker&&profile.ManagedEgressMbps>0;
     readonly string binary = executable, root = folder;
-    readonly EgressPacer? pacer = profile.ManagedEgressMbps > 0 ? new(profile.ManagedEgressMbps) : null;
+    readonly EgressPacer? pacer = sharedEgress??(profile.ManagedEgressMbps > 0 ? new(profile.ManagedEgressMbps) : null);
     public EgressStats? Egress => pacer?.Snapshot();
     MeshTcpEndpointPool? pool;
     readonly object poolGate = new();
@@ -119,7 +119,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     public bool SupportsDiagnosticTiming=>SupportsPathDiagnostics;
     public bool SupportsStandbyProfile(TraversalProfile profile) => SupportsStandbyPaths && profiles.Contains(profile) &&
         (profile == TraversalProfile.UdpDirect || profile == TraversalProfile.FakeTcpHttpSo && countWireControl);
-    public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token)
+    public static async Task<IMeshCandidateFactory?> Create(DeviceProfile profile, string executable, string folder, Action<string> log, CancellationToken token,EgressPacer? sharedEgress=null)
     {
         profile.Selection().Validate();
         if (profile.TraversalMode == "legacy") return null;
@@ -154,7 +154,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         if (profile.ManagedEgressMbps > 0) log($"实验链路共享 {profile.ManagedEgressMbps} Mbps 外层 IP 出口预算；兼容入口、内核反射与 HTTPS 控制流不在此范围");
         if (supported.Contains(TraversalProfile.FakeTcpHttpSo) && !wireControl) log("原生组件未提供线上控制报文计账，当前仅统计上层检查消息");
         if (profile.TcpPeerReflexive && !peerSource) log("TCP 来源学习暂未启用：原生组件需独立声明 IPv4 来源学习及线上计账能力");
-        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl, peerSource,diagnosticNative);
+        return supported.Count == 0 ? null : new MeshCandidateFactory(profile, executable, folder, supported.ToArray(), broker, log, ipv6, wireControl, peerSource,diagnosticNative,sharedEgress);
     }
     void CheckRoute(IPEndPoint endpoint, IPAddress? expected = null, bool gatewayCandidate = false)
     {
@@ -321,6 +321,6 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     async Task CloseFactory() {
         BeginNetworkClose();
         try { await StopObservation(); }
-        finally { try { if (pool != null) await pool.DisposeAsync(); } finally { try { await CloseNetworkScopes(); } finally { pacer?.Dispose(); } } }
+        finally { try { if (pool != null) await pool.DisposeAsync(); } finally { try { await CloseNetworkScopes(); } finally { if(sharedEgress==null)pacer?.Dispose(); } } }
     }
 }

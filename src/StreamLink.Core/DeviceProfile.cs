@@ -55,8 +55,11 @@ public sealed class DeviceProfile
     public bool UdpIpv6 { get; set; }
     public bool FakeTcpIpv6 { get; set; }
     // Outer IP Mbps, shared by all managed paths. Zero keeps existing behavior.
-    // Legacy native processes and kernel helper/control HTTPS are not paced.
+    // Kernel helper/control HTTPS are not part of business egress pacing.
     public int ManagedEgressMbps { get; set; }
+    // Explicit experimental admission. Matching native capability is required;
+    // shared queue bounds apply even when ManagedEgressMbps is zero.
+    public bool LegacyEgressPacing { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")
@@ -75,6 +78,7 @@ public sealed class DeviceProfile
         if (TcpPortCalibration && (!TcpSynObservation || TraversalMode == "legacy")) throw new FormatException("TCP 端口校准需同时开启受管打洞和 TCP 观察诊断");
         if (TcpPortPrediction && !TcpPortCalibration) throw new FormatException("实验 TCP 预测需启用独立端口校准");
         if (ManagedEgressMbps is < 0 or > 10000) throw new FormatException("实验链路出口上限需为 0–10000 Mbps（0 为关闭）");
+        if(LegacyEgressPacing&&TransportMode!="faketcp")throw new FormatException("兼容业务出口实验目前仅支持 FakeTCP");
         Selection().Validate();
         if (QualityFeedback && TraversalMode == "legacy") throw new FormatException("路径送达反馈需要实验受管打洞模式");
         if (StandbyPaths && TraversalMode == "legacy") throw new FormatException("备用路径需要实验受管打洞模式");

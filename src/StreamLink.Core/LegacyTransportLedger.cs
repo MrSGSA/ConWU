@@ -7,6 +7,9 @@ public sealed record LegacyTransportResource(Guid ResourceId, string Mode, bool 
 {
     public LegacyWireReport? Wire { get; init; }
     public LegacyControlQueueReport? ControlQueue { get; init; }
+    public LegacyBusinessEgressStats? BusinessEgress { get; init; }
+    public LegacyBusinessHandoffReport? BusinessHandoff {get;init;}
+    public LegacyRouteReport? Route {get;init;}
 }
 public sealed record LegacyTransportUsage(int OpenResources, int Limit, int PeakResources, long Created,
     LegacyTransportResource[] Resources)
@@ -45,20 +48,26 @@ public sealed class LegacyTransportLedger
     }
     public LegacyTransportUsage Snapshot(){lock(gate){Reap();
         var reports=resources.Values.Select(h=>h.Value.Wire).Where(w=>w!=null).ToArray();
-        return new(resources.Count,CompatibilityLimit,peak,created,resources.Values.Select(h=>h.Value).Concat(history.TakeLast(4)).ToArray()){
+        var snapshot=resources.Values.Select(h=>h.Value with{BusinessEgress=h.Egress?.Invoke(),Route=h.Route?.Invoke()}).ToArray();
+        return new(resources.Count,CompatibilityLimit,peak,created,snapshot.Concat(history.TakeLast(4)).ToArray()){
             ActiveReportedResources=reports.Length,ActiveUnreportedResources=resources.Count-reports.Length,
-            ActiveKnownInjectionPackets=reports.Sum(w=>w!.HandshakePackets+w.MaintenancePackets+w.BusinessPackets+w.CompletionPackets+w.DiagnosticPackets),
-            ActiveKnownInjectionBytes=reports.Sum(w=>w!.HandshakeBytes+w.MaintenanceBytes+w.BusinessBytes+w.CompletionBytes+w.DiagnosticBytes)
+            ActiveKnownInjectionPackets=reports.Sum(w=>w!.HandshakePackets+w.MaintenancePackets+w.BusinessPackets+w.CompletionPackets+w.DiagnosticPackets)+snapshot.Sum(s=>s.BusinessEgress?.InjectedPackets??0),
+            ActiveKnownInjectionBytes=reports.Sum(w=>w!.HandshakeBytes+w.MaintenanceBytes+w.BusinessBytes+w.CompletionBytes+w.DiagnosticBytes)+snapshot.Sum(s=>s.BusinessEgress?.InjectedBytes??0)
         };
     }}
     internal sealed class Handle(LegacyTransportLedger owner,LegacyTransportResource value):IDisposable
     {
         internal LegacyTransportResource Value=value;
+        internal Func<LegacyBusinessEgressStats>? Egress;
+        internal Func<LegacyRouteReport>? Route;
         long processStart;
         bool completed;
         internal Guid ResourceId=>Value.ResourceId;
         internal void WireLine(string line)
         {
+            if(LegacyBusinessHandoffReport.TryParse(line,Value.ResourceId,out var handoff)){
+                lock(owner.gate){if(completed||Value.BusinessHandoff is{}old&&(handoff!.Sequence<=old.Sequence||old.Counters().Zip(handoff.Counters()).Any(p=>p.First>p.Second)))return;Value=Value with{BusinessHandoff=handoff};}return;
+            }
             if (LegacyControlQueueReport.TryParse(line, Value.ResourceId, out var queue)) {
                 lock (owner.gate) {
                     if (completed || Value.ControlQueue is {} oldQueue && (queue!.Sequence <= oldQueue.Sequence ||
@@ -90,7 +99,7 @@ public sealed class LegacyTransportLedger
         }
         internal void Complete()
         {
-            if(completed)return;completed=true;Value=Value with{State="Closed",RetirementRequested=true};
+            if(completed)return;completed=true;Value=Value with{State="Closed",RetirementRequested=true,BusinessEgress=Egress?.Invoke(),Route=Route?.Invoke()};
             owner.resources.Remove(Value.ResourceId);owner.history.Enqueue(Value);while(owner.history.Count>64)owner.history.Dequeue();
         }
         public void Dispose(){lock(owner.gate){if(completed)return;Value=Value with{State="Retiring",RetirementRequested=true};if(Gone())Complete();}}

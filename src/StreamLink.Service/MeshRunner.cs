@@ -46,6 +46,7 @@ public sealed class MeshRunner
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
+        using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
         using var networkWake = services.NetworkWake();
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
@@ -76,7 +77,7 @@ public sealed class MeshRunner
             if (lastWarning == 0 || Environment.TickCount64 - lastWarning >= 30000) { log("协调服务暂不可用，已有直连继续运行：" + ex.Message); lastWarning = Environment.TickCount64; }
         }
         try {
-            gatheringFactory = services.Candidates(profile, folder, log, stop);
+            gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
             timeline.Mark("原生网络开始启动");
             report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口"));
             opening = services.Adapter(mesh);
@@ -86,7 +87,7 @@ public sealed class MeshRunner
                     nextProbe = nextRead = nextServer = now;
                     probeFailures = readFailures = serverFailures = 0;
                     lastPublish = 0;
-                    foreach (var client in clients.Values) client.WakeRetry();
+                    foreach (var client in clients) client.Value.InvalidatePreparation(client.Key);
                     (mapping as IMappingRefresh)?.RequestRefresh();
                     log("网络变化或系统唤醒，正在复核入口和发现信息；保留已验证的直连路径");
                 }
@@ -142,7 +143,7 @@ public sealed class MeshRunner
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
                 if (router != null && server == null && (mapping != null || profile.ManualEndpoint.Length > 0) && now >= nextServer) {
-                    try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel)); serverAddress = mapping?.LocalAddress; serverStarted = now; }
+                    try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
@@ -220,7 +221,7 @@ public sealed class MeshRunner
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
                     if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router,
                         (ep, preparationToken) => LegacyStartupQueue.Shared.Start(() => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel) {
-                            ReserveEndpoint = endpoint => router.CancelLegacyCandidate(member.Slot, endpoint)
+                            ReserveEndpoint = endpoint => router.CancelLegacyCandidate(member.Slot, endpoint),Egress=sharedEgress
                         }), preparationToken), log);
                     paths.Update(member.Slot, endpoint, announcement?.Name ?? "", traversal?.WaitingDetail(member.Slot) ??
                         (endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发"),
@@ -254,7 +255,7 @@ public sealed class MeshRunner
                         }
                         recoveryReports[peer.Slot] = prior;
                     }
-                    var egress = factory?.Egress;
+                    var egress = sharedEgress?.Snapshot()??factory?.Egress;
                     if (egress != null && now >= nextEgressReport) {
                         log($"实验出口 {egress.Mbps} Mbps：已发外层 {egress.SentBytes} B，突发上限 {egress.BurstBytes} B，排队 {egress.QueuedBytes}/{egress.QueueLimitBytes} B，队列 P95 ≤ {egress.QueueP95Ms:F1} ms，当前最老 {egress.OldestQueuedMs:F1} ms，溢出 {egress.OverflowDrops}，发送失败 {egress.SendFailures}" +
                             (egress.Accounting is {} accounting ? $"；在途 {accounting.InFlight.Bytes} B，拒绝 {accounting.CapacityRejected.Packets + accounting.UnavailableRejected.Packets}，队列账本 {(accounting.Conserved ? "一致" : "异常")}" : "") +

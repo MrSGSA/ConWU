@@ -10,6 +10,7 @@ namespace StreamLink.Service;
 internal sealed record MeshTransportRequest(string Folder, MeshProfile Mesh, IPEndPoint Target, bool Server, int Port, IMapping? Mapping, string LogLevel)
 {
     public Action<IPEndPoint>? ReserveEndpoint { get; init; }
+    public EgressPacer? Egress {get;init;}
 }
 
 // The production runner itself is exercised with loopback transports and an
@@ -25,6 +26,7 @@ internal sealed record MeshRuntimeServices(
     string SessionRoot)
 {
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
+    public Func<DeviceProfile,string,Action<string>,CancellationToken,EgressPacer?,Task<IMeshCandidateFactory?>>? CandidatesWithEgress{get;init;}
     public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
@@ -34,11 +36,12 @@ internal sealed record MeshRuntimeServices(
         async (profile, log, token) => profile.Mesh!.Pair.Mode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)
             : await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
-        r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint),
+        r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint,r.Egress),
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
         Recovery.Record,
         Path.Combine(ProfileStore.Root, "sessions")) {
-            QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests))
+            QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests)),
+            CandidatesWithEgress=(profile,folder,log,token,pacer)=>MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native.exe"),folder,log,token,pacer)
         };
 }

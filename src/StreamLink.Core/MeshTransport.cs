@@ -19,18 +19,19 @@ public sealed class MeshTransport : IMeshTransport
     readonly string configuration;
     readonly LegacyTransportLedger.Handle? accounting;
     readonly LegacyControlChannel? control;
+    readonly LegacyEgressChannel? business;
     int disposed;
     public IPEndPoint? ClientEndpoint { get; }
-    public bool Exited => job.AnyExited || control?.Failed == true;
+    public bool Exited => job.AnyExited || control?.Failed == true || business?.Failed==true;
     public bool ControlsWirePackets => true;
-    internal string ControlFailure => control?.Failure ?? "";
+    internal string ControlFailure => (control?.Failure??"")+" "+(business?.Snapshot().Failure??"");
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel)
         : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, null) { }
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel,
-        Action<IPEndPoint>? reserveEndpoint)
-        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, reserveEndpoint) { }
+        Action<IPEndPoint>? reserveEndpoint,EgressPacer? pacer=null)
+        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, reserveEndpoint,pacer) { }
     internal MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping,
-        string logLevel, Dictionary<string, string>? testEnvironment, Action<IPEndPoint>? reserveEndpoint = null)
+        string logLevel, Dictionary<string, string>? testEnvironment, Action<IPEndPoint>? reserveEndpoint = null,EgressPacer? pacer=null,Func<ReadOnlyMemory<byte>,bool>? testInject=null)
     {
         Directory.CreateDirectory(sessionRoot);
         configuration = Path.Combine(sessionRoot, "raw-" + Guid.NewGuid().ToString("N") + ".conf");
@@ -55,7 +56,16 @@ public sealed class MeshTransport : IMeshTransport
                 if (!pair.Key.StartsWith("STREAMLINK_TEST_", StringComparison.Ordinal)) throw new ArgumentException("Only explicit test backend variables can be injected");
                 environment[pair.Key] = pair.Value;
             }
-            control = new(accounting.ResourceId, profile.Pair.Mode == "faketcp", server ? listenPort : 0);
+            var route=new LegacyRouteEvidence(accounting.ResourceId,pacer!=null,testInject==null?null:(s,t,g,e)=>new(g,e,s.ToString(),t.ToString(),0,0,"LoopbackFixture","LoopbackFixture","LoopbackFixture",""));
+            accounting.Route=route.Snapshot;
+            control = new(accounting.ResourceId, profile.Pair.Mode == "faketcp", server ? listenPort : 0,route:route);
+            if(pacer!=null){
+                if(profile.Pair.Mode!="faketcp")throw new NotSupportedException("Experimental compatibility egress currently requires FakeTCP");
+                LegacyNativeCapabilities.RequireEgress(binary);
+                business=new(control.Authorization,pacer,profile,target,server,listenPort,Path.Combine(components,"WinDivert.dll"),route,testInject);
+                environment["STREAMLINK_LEGACY_EGRESS"]=business.Name;
+                accounting.Egress=business.Snapshot;
+            }
             environment["STREAMLINK_LEGACY_CONTROL"] = control.Name;
             environment["STREAMLINK_LEGACY_AUTH"] = control.Authorization;
             environment["STREAMLINK_LEGACY_PARENT"] = Environment.ProcessId.ToString();
@@ -64,12 +74,13 @@ public sealed class MeshTransport : IMeshTransport
             var child = job.StartObserved(binary, ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment,
                 [ticket.RawKey, ticket.Secret, control.Authorization],accounting.WireLine);
             control.Start(child.Id);
+            business?.Start(child.Id);
             accounting.Started(child);
         } catch { Dispose(); throw; }
     }
     public void Dispose() {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         try { job.Dispose(); }
-        finally { control?.Dispose(); accounting?.Dispose(); File.Delete(configuration); }
+        finally { business?.Dispose();control?.Dispose(); accounting?.Dispose(); File.Delete(configuration); }
     }
 }

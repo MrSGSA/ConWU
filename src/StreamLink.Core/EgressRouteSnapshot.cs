@@ -5,12 +5,34 @@ using System.Net.Sockets;
 using System.Runtime.InteropServices;
 
 namespace StreamLink.Core;
+public sealed record EgressRouteWitness(Guid Generation,ulong CaptureEpoch,string Source,string Target,ulong InterfaceLuid,uint InterfaceIndex,string NextHop,string InterfaceName,string EvidenceLevel,string Failure)
+{
+    public bool Ready=>Failure.Length==0;
+    public string PacingKey=>Ready&&InterfaceLuid!=0?"WindowsInterface:"+InterfaceLuid.ToString("X16"):"Unresolved";
+}
 
 // Read-only OS route evidence. No packet is sent and no route is changed.
 // Lifetime/age/metric counters are deliberately excluded: they do not by
 // themselves change the selected source, interface or next hop.
 public static class EgressRouteSnapshot
 {
+    public static EgressRouteWitness Bound(IPEndPoint source,IPEndPoint target,Guid generation,ulong epoch)
+    {
+        EgressRouteWitness Reject(string reason)=>new(generation,epoch,source.ToString(),target.ToString(),0,0,"Unknown","Unknown","Unavailable",reason);
+        if(!OperatingSystem.IsWindows()||source.AddressFamily!=target.AddressFamily||source.Port==0||target.Port==0||IPAddress.IsLoopback(source.Address))return Reject("UnsupportedSource");
+        try{
+            var row=new byte[104];var best=new byte[28];uint error=GetBestRoute2(0,0,Address(source.Address),Address(target.Address),0,row,best);
+            if(error!=0)return Reject("GetBestRoute:"+error);
+            if(!source.Address.Equals(Decode(best)))return Reject("SelectedSourceMismatch");
+            ulong luid=BinaryPrimitives.ReadUInt64LittleEndian(row);uint index=BinaryPrimitives.ReadUInt32LittleEndian(row.AsSpan(8));
+            var nic=NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(n=>n.GetIPProperties().UnicastAddresses.Any(a=>a.Address.Equals(source.Address)));
+            if(luid==0||nic==null||nic.OperationalStatus!=OperationalStatus.Up)return Reject("InterfaceUnavailable");
+            if(nic.NetworkInterfaceType is NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel||(nic.Name+nic.Description).Contains("StreamLink",StringComparison.OrdinalIgnoreCase)||nic.Description.Contains("Wintun",StringComparison.OrdinalIgnoreCase)||nic.Description.Contains("EasyTier",StringComparison.OrdinalIgnoreCase))return Reject("OverlayOrTunnelSource");
+            var address=nic.GetIPProperties().UnicastAddresses.First(a=>a.Address.Equals(source.Address));
+            if(address.DuplicateAddressDetectionState!=DuplicateAddressDetectionState.Preferred)return Reject("AddressNotPreferred");
+            return new(generation,epoch,source.ToString(),target.ToString(),luid,index,Decode(row.AsSpan(44,28)).ToString(),nic.Name,"OsBoundRouteSelection","");
+        }catch(Exception ex)when(ex is NetworkInformationException or SocketException or IOException or InvalidOperationException){return Reject(ex.GetType().Name);}
+    }
     [DllImport("iphlpapi.dll", ExactSpelling = true)]
     static extern uint GetBestRoute2(nint luid, uint index, byte[]? source, byte[] destination, uint options,
         [Out] byte[] route, [Out] byte[] bestSource);

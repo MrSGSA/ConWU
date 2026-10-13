@@ -5,6 +5,7 @@ enum class native_wire_kind : unsigned { handshake=0, maintenance=1, business=2,
 native_wire_kind native_wire_classify(char type, const char *data, int length);
 native_wire_kind native_wire_current();
 bool native_wire_secure();
+unsigned native_wire_peer();
 struct native_wire_scope {
     native_wire_kind previous;
     bool previous_secure;

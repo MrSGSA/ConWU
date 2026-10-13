@@ -9,6 +9,7 @@ HANDLE channel=INVALID_HANDLE_VALUE, halt=nullptr;
 bool enabled=false, wire_metadata=false;
 thread_local native_wire_kind wire_kind=native_wire_kind::handshake;
 thread_local bool wire_secure=false;
+thread_local unsigned wire_peer=0;
 // Overlapped I/O allows shutdown to cancel both a blocked receive and a write.
 // A partial/cancelled frame poisons the channel; it must never be reused.
 bool exact(void *buffer,unsigned count,bool write,DWORD timeout) {
@@ -48,6 +49,7 @@ void native_broker_configure(const std::string &control_name,const unsigned char
     enabled=true;
 }
 native_wire_kind native_wire_classify(char type,const char *data,int length) {
+    wire_peer=0;
     if(type=='h') return native_wire_kind::maintenance;
     // send_data_safer prefixes the local conversation ID before the unchanged
     // MeshLink frame. Unknown application input never gains business exemption.
@@ -56,7 +58,7 @@ native_wire_kind native_wire_classify(char type,const char *data,int length) {
     if(length==1344 && !memcmp(data,"SLF1",4) && data[4]==2) return native_wire_kind::completion;
     if(length<64 || memcmp(data,"SLM4",4)) return native_wire_kind::handshake;
     switch(static_cast<unsigned char>(data[4])) {
-    case 4: return native_wire_kind::business;
+    case 4: wire_peer=static_cast<unsigned char>(data[6]);return native_wire_kind::business;
     case 8: return native_wire_kind::diagnostic;
     case 5: case 6: return native_wire_kind::maintenance;
     case 2: case 3: case 7: return native_wire_kind::completion;
@@ -67,6 +69,7 @@ native_wire_scope::native_wire_scope(native_wire_kind kind):previous(wire_kind),
 native_wire_scope::~native_wire_scope() { wire_kind=previous;wire_secure=previous_secure; }
 native_wire_kind native_wire_current() { return wire_kind; }
 bool native_wire_secure() { return wire_secure; }
+unsigned native_wire_peer(){return wire_peer;}
 bool native_broker_mode() { return enabled; }
 int native_broker_receive(char *packet,unsigned capacity) {
     unsigned char prefix[4]; if(!exact(prefix,4,false,INFINITE)) return -1;

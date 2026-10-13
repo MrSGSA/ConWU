@@ -18,6 +18,7 @@ try {
     Check(new DeviceProfile().ManagedEgressMbps == 0, "default pacing remains off");
     foreach (int invalid in new[] { -1, 10001 }) { bool rejected = false; try { new DeviceProfile { ManagedEgressMbps = invalid }.Validate(); } catch (FormatException) { rejected = true; } Check(rejected, "invalid rate rejected " + invalid); }
     await Lifetime();
+    await UnlimitedBound();
     await UdpIo();
     await Churn();
     rows.Add(new { sendQueues = await SendQueueTests.Run(Check, token) });
@@ -54,6 +55,15 @@ async Task Lifetime()
     using var independent = pacer.Register("other", (_, _) => true);
     var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously); independent.TrySend(new byte[40], 40, completion: done); await done.Task.WaitAsync(token);
     Check(pacer.Snapshot().SentBytes == 1068, "peer cancellation preserves unrelated sender and exact outer byte count");
+}
+async Task UnlimitedBound()
+{
+    using var pacer=new EgressPacer(0);using var entered=new ManualResetEventSlim();using var release=new ManualResetEventSlim();
+    using var flow=pacer.Register("compatibility",(_,_)=>{entered.Set();release.Wait(token);return true;});
+    Check(flow.TrySend(new byte[1344],1372),"zero-rate bounded queue accepts a full datagram");entered.Wait(token);
+    for(int i=0;i<1024;i++)flow.TrySend(new byte[1344],1372);
+    var snapshot=pacer.Snapshot();Check(snapshot.QueuedBytes<=128*1024&&snapshot.PeakQueuedBytes<=128*1024&&snapshot.OverflowDrops>0,"zero pacing keeps one bounded queue and reports overload");
+    release.Set();await Task.Delay(100,token);Check(pacer.Snapshot().SentBytes>0,"zero pacing drains without waiting for rate tokens");
 }
 
 async Task UdpIo()

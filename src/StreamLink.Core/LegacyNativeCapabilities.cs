@@ -26,4 +26,13 @@ internal static class LegacyNativeCapabilities
             ready[file.FullName] = (file.Length, file.LastWriteTimeUtc);
         }
     }
+    internal static void RequireEgress(string binary)
+    {
+        Require(binary);
+        var info=new ProcessStartInfo(binary){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true};info.ArgumentList.Add("--native-info");
+        using var process=Process.Start(info)??throw new IOException("Native egress query failed");var output=process.StandardOutput.ReadToEndAsync();
+        if(!process.WaitForExit(3000)){process.Kill();throw new IOException("Native egress query timed out");}
+        using var parsed=JsonDocument.Parse(output.GetAwaiter().GetResult());
+        if(process.ExitCode!=0||!parsed.RootElement.TryGetProperty("legacyEgress",out var cap)||cap.GetInt32()!=1)throw new NotSupportedException("Native compatibility egress capability unavailable");
+    }
 }

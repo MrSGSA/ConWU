@@ -404,17 +404,29 @@
         "CTL-02",
         "NET-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: experimental production compatibility egress, receipts, bounded handoff, route witness and preparation cancellation implemented",
+      "product": "MeshRunner shared legacy/managed egress; explicit off-by-default capability",
+      "windowsIo": "Real Windows named pipes and full C++ protocol via raw-IP loopback fixture, no physical WinDivert injection",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Experimental off",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "57 short complete protocol checks Pass",
+        "72 egress correctness checks Pass",
+        "19 formal startup/cancel checks Pass",
+        "expanded 30-round run Fail after 136 assertions; retained, unresolved"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/QOS-01-02.md",
+        "docs/implementation-1.0/evidence/qos/"
+      ],
+      "remaining": [
+        "diagnose expanded legacy FakeTCP authentication timeout",
+        "physical WinDivert injection, capture-fence and interface evidence",
+        "50Mbps same-condition performance A/B and overload/fault isolation"
+      ]
     },
     {
       "id": "QOS-02",
@@ -423,17 +435,29 @@
         "NET-01",
         "NET-06"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: experimental production compatibility egress, receipts, bounded handoff, route witness and preparation cancellation implemented",
+      "product": "MeshRunner shared legacy/managed egress; explicit off-by-default capability",
+      "windowsIo": "Real Windows named pipes and full C++ protocol via raw-IP loopback fixture, no physical WinDivert injection",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Experimental off",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "57 short complete protocol checks Pass",
+        "72 egress correctness checks Pass",
+        "19 formal startup/cancel checks Pass",
+        "expanded 30-round run Fail after 136 assertions; retained, unresolved"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/QOS-01-02.md",
+        "docs/implementation-1.0/evidence/qos/"
+      ],
+      "remaining": [
+        "diagnose expanded legacy FakeTCP authentication timeout",
+        "physical WinDivert injection, capture-fence and interface evidence",
+        "50Mbps same-condition performance A/B and overload/fault isolation"
+      ]
     },
     {
       "id": "QOS-03",

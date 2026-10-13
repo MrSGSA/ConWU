@@ -7,6 +7,7 @@
 #include "native_so.h"
 #include "native_broker.h"
 #include "native_legacy_control.h"
+#include "native_legacy_egress.h"
 #include <atomic>
 #include <thread>
 #include "windivert.h"
@@ -89,6 +90,11 @@ void emit_wire_report_locked(bool final=false) {
             counts[0],counts[1],counts[2],counts[3],counts[4],counts[5]);
         if(n>0&&n<static_cast<int>(sizeof(queue)))lines.append(queue,n);
     }
+    if(native_legacy_egress_enabled()) {
+        unsigned long long c[8];native_legacy_egress_stats(c);char telemetry[320]{};
+        int n=snprintf(telemetry,sizeof(telemetry),"SLGE1 %s %llu %llu %llu %llu %llu %llu %llu %llu %llu\n",wire_report_id.c_str(),wire_report_sequence,c[0],c[1],c[2],c[3],c[4],c[5],c[6],c[7]);
+        if(n>0&&n<static_cast<int>(sizeof(telemetry)))lines.append(telemetry,n);
+    }
     {std::lock_guard<std::mutex> lock(reports->gate);reports->latest=std::move(lines);}
     SetEvent(reports->wake);
 }
@@ -122,6 +128,7 @@ void stop_capture() {
     // Join any already-started control injection before closing its handle.
     // In-flight authorization can finish later, but cannot inject old epochs.
     native_legacy_control_pause();
+    native_legacy_egress_pause();
     bool observed_window=reader.joinable();
     stopping.store(true);
     const bool broker_reader=native_broker_mode() && reader.joinable();
@@ -261,6 +268,7 @@ void init_filter(int port) {
     }
     initialize_reports();
     if(!native_broker_mode()&&!native_legacy_control_init(inject_legacy_now))fail("legacy control authorization failed");
+    if(!native_broker_mode()&&!native_legacy_egress_init())fail("legacy egress authorization failed");
     // Compare the whole capture description, not just the local port. No
     // overlapping old/new handles: retire the previous capture before reopening.
     std::string descriptor=std::to_string(port)+"/"+std::to_string(raw_mode)+"/"+std::to_string(program_mode)+
@@ -347,6 +355,7 @@ void init_filter(int port) {
     while (!receiving.load()) Sleep(1);
     native_attachment_armed();
     native_legacy_control_arm();
+    native_legacy_egress_arm();
 }
 
 namespace {
@@ -368,6 +377,8 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     if (native_attached()) lock.lock();
     if (!native_attachment_packet(packet,length)) return -1;
     if(native_broker_mode()) return native_broker_send(packet,length);
+    if(native_legacy_egress_enabled()&&native_wire_current()==native_wire_kind::business)
+        return native_legacy_egress_send(packet,length,native_wire_peer())?0:-1;
     auto kind=native_wire_current();
     if(native_legacy_control_enabled()&&kind!=native_wire_kind::business)
         return native_legacy_control_enqueue(packet,length,kind)?0:-1;
@@ -378,6 +389,7 @@ void native_capture_shutdown() { stop_capture(); }
 
 void native_drain_packets(conn_info_t *client) {
     if(native_legacy_control_failed()){mylog(log_fatal,"legacy control owner lost\n");myexit(74);}
+    if(native_legacy_egress_failed()){mylog(log_fatal,"legacy egress owner lost\n");myexit(74);}
     if (reader_error.load()) {
         mylog(log_fatal, "native receive loop failed: %lu\n", reader_error.load());
         myexit(-1);

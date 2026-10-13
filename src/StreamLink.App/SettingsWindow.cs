@@ -24,12 +24,13 @@ public sealed class SettingsWindow : Form
     readonly NumericUpDown source = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown listen = new() { Minimum = 1024, Maximum = 65535, Width = 110 };
     readonly NumericUpDown pacing = new() { Minimum = 0, Maximum = 10000, Width = 95 };
+    readonly CheckBox legacyPacing=new(){AutoSize=true,Text="兼容 FakeTCP 业务共享出口队列（实验，需匹配原生组件；默认关闭）"};
     public DeviceProfile Result => profile;
     readonly CheckBox standbyPaths = new() { AutoSize = true, Text = "保留独立备用路径（实验，最多120秒；需双方与服务器支持，未自动选路）" };
     readonly CheckBox pathDiagnostics=new(){AutoSize=true,Text="空闲时比较路径负载（实验，需双方与服务器支持；约80秒，可能用至256MiB；不自动换路）"};
     readonly CheckBox manualQuality=new(){AutoSize=true,Text="允许已配对成员请求测速（最多20秒，每90秒一次；会占用带宽）"};
     readonly NumericUpDown diagnosticMbps=new(){Minimum=1,Maximum=50,Width=85};
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true,bool supportsManualQuality=false)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true,bool supportsManualQuality=false,bool supportsLegacyPacing=false)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -126,11 +127,13 @@ public sealed class SettingsWindow : Form
             if (!standbyPaths.Enabled && supportsStandbyPaths) standbyPaths.Checked = false;
         }
         traversal.SelectedIndexChanged += (_, _) => StandbyAvailability(); StandbyAvailability(); extra.Controls.Add(standbyPaths);
-        pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
-        traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && traversal.SelectedIndex != 0;
+        legacyPacing.Checked=profile.LegacyEgressPacing;legacyPacing.Enabled=supportsLegacyPacing;extra.Controls.Add(legacyPacing);
+        legacyPacing.CheckedChanged+=(_,_)=>{if(supportsLegacyPacing)profile.LegacyEgressPacing=legacyPacing.Checked;pacing.Enabled=supportsPacing&&(traversal.SelectedIndex!=0||legacyPacing.Checked);};
+        pacing.Value = profile.ManagedEgressMbps; pacing.Enabled = supportsPacing && (traversal.SelectedIndex != 0||legacyPacing.Checked);
+        traversal.SelectedIndexChanged += (_, _) => pacing.Enabled = supportsPacing && (traversal.SelectedIndex != 0||legacyPacing.Checked);
         pacing.ValueChanged += (_, _) => { if (supportsPacing) profile.ManagedEgressMbps = (int)pacing.Value; };
         var paceRow = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill };
-        paceRow.Controls.AddRange([new Label { Text = "实验链路出口上限（Mbps）", AutoSize = true }, pacing, new Label { Text = "0 关闭；兼容入口不受此限速", AutoSize = true }]);
+        paceRow.Controls.AddRange([new Label { Text = "全机业务出口上限（Mbps）", AutoSize = true }, pacing, new Label { Text = "0 不限速但队列有界；兼容路径需另启实验", AutoSize = true }]);
         extra.Controls.Add(paceRow);
         pathDiagnostics.Checked=profile.PathDiagnostics;diagnosticMbps.Value=profile.DiagnosticMbps;
         pathDiagnostics.CheckedChanged+=(_,_)=>{if(supportsDiagnostics)profile.PathDiagnostics=pathDiagnostics.Checked;};
@@ -176,6 +179,7 @@ public sealed class SettingsWindow : Form
         BindIntent(standbyPaths,nameof(DeviceProfile.StandbyPaths));BindIntent(pathDiagnostics,nameof(DeviceProfile.PathDiagnostics));
         BindIntent(portControl,nameof(DeviceProfile.PortControlMapping));BindIntent(udpIpv6,nameof(DeviceProfile.UdpIpv6));
         BindIntent(tcpIpv6,nameof(DeviceProfile.FakeTcpIpv6));BindIntent(manualQuality,nameof(DeviceProfile.AllowManualQualityRequests));
+        BindIntent(legacyPacing,nameof(DeviceProfile.LegacyEgressPacing));
     }
     void BindIntent(CheckBox control,string capability)
     {

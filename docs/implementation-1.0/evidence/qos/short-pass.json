@@ -1,0 +1,703 @@
+{
+  "status": "Pass",
+  "checks": 57,
+  "rounds": 1,
+  "rows": [
+    {
+      "elapsedMs": 2575.5618,
+      "shares": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "stats": {
+        "Requests": 160,
+        "AdmittedPackets": 160,
+        "AdmittedBytes": 20480,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 8,
+        "Pending": 0
+      },
+      "usage": {
+        "OpenUdpResources": 0,
+        "PeakUdpResources": 0,
+        "SearchAdmitted": 120,
+        "MaintenanceAdmitted": 40,
+        "SearchDeferred": 68,
+        "MaintenanceDeferred": 27,
+        "AdmittedBytes": 20480
+      },
+      "scope": "eight logical owners, actual shared controller/timers; no claim of eight real devices"
+    },
+    {
+      "controlledEpochChecks": "Pass",
+      "actualReadOnlyOsRoute": {
+        "Generation": "71e05862-dfb1-4997-9e49-cce75df647eb",
+        "CaptureEpoch": 1,
+        "Source": "10.173.44.88:40001",
+        "Target": "1.1.1.1:443",
+        "InterfaceLuid": 1689399632855040,
+        "InterfaceIndex": 14,
+        "NextHop": "10.173.255.254",
+        "InterfaceName": "Ethernet",
+        "EvidenceLevel": "OsBoundRouteSelection",
+        "Failure": "",
+        "Ready": true,
+        "PacingKey": "WindowsInterface:0006008001000000"
+      },
+      "scope": "deterministic route observer concurrency plus real Windows route lookup; no packet sent, no physical egress capture"
+    },
+    {
+      "authorizedAndRejected": true,
+      "scope": "actual Windows named-pipe credentials/PID/EOF; no simulated authorization result"
+    },
+    {
+      "nativeExitCode": -1,
+      "rawPackets": 0,
+      "permitRequests": 0,
+      "scope": "actual authorized-worker PID with wrong secret, C\u002B\u002B loopback backend; not a simulated authentication assertion"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1872.1025,
+      "elapsedMs": 3378.2266,
+      "before": {
+        "Requests": 0,
+        "AdmittedPackets": 0,
+        "AdmittedBytes": 0,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 38,
+        "AdmittedPackets": 38,
+        "AdmittedBytes": 15070,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.6088,
+        43.7348,
+        41.3015
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 188.1603,
+      "elapsedMs": 1395.4894,
+      "before": {
+        "Requests": 39,
+        "AdmittedPackets": 38,
+        "AdmittedBytes": 15070,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 67,
+        "AdmittedPackets": 66,
+        "AdmittedBytes": 23392,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 30,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": 10,
+      "authenticatedMs": 1753.527,
+      "elapsedMs": 3291.0666,
+      "before": {
+        "Requests": 67,
+        "AdmittedPackets": 66,
+        "AdmittedBytes": 23392,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 105,
+        "AdmittedPackets": 104,
+        "AdmittedBytes": 38462,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [
+        {
+          "OfferedPackets": 2,
+          "OfferedBytes": 2892,
+          "InjectedPackets": 2,
+          "InjectedBytes": 2892,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        },
+        {
+          "OfferedPackets": 1,
+          "OfferedBytes": 1446,
+          "InjectedPackets": 1,
+          "InjectedBytes": 1446,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        }
+      ],
+      "serverPacer": {
+        "Mbps": 10,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 25000,
+        "SentBytes": 2892,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 1.0682,
+        "QueueP95Ms": 2,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:2",
+            "SentBytes": 2892,
+            "Packets": 2,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 4098503.5,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Accepted": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Sent": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 2892,
+            "Peers": [
+              {
+                "Peer": "slot:2",
+                "SentBytes": 2892,
+                "Packets": 2,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "clientPacer": {
+        "Mbps": 10,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 25000,
+        "SentBytes": 1446,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 0.033,
+        "QueueP95Ms": 0.1,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:1",
+            "SentBytes": 1446,
+            "Packets": 1,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 2201265.5,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Accepted": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Sent": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 1446,
+            "Peers": [
+              {
+                "Peer": "slot:1",
+                "SentBytes": 1446,
+                "Packets": 1,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "rawPackets": 39,
+      "httpGapMs": [
+        46.2056,
+        45.9128,
+        44.8125
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": 0,
+      "authenticatedMs": 1766.7129,
+      "elapsedMs": 3281.2967,
+      "before": {
+        "Requests": 107,
+        "AdmittedPackets": 105,
+        "AdmittedBytes": 38628,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 145,
+        "AdmittedPackets": 143,
+        "AdmittedBytes": 53698,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [
+        {
+          "OfferedPackets": 2,
+          "OfferedBytes": 2892,
+          "InjectedPackets": 2,
+          "InjectedBytes": 2892,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        },
+        {
+          "OfferedPackets": 1,
+          "OfferedBytes": 1446,
+          "InjectedPackets": 1,
+          "InjectedBytes": 1446,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        }
+      ],
+      "serverPacer": {
+        "Mbps": 0,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 131072,
+        "SentBytes": 2892,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 0.0395,
+        "QueueP95Ms": 0.1,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:2",
+            "SentBytes": 2892,
+            "Packets": 2,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 0,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Accepted": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Sent": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 131072,
+            "SentBytes": 2892,
+            "Peers": [
+              {
+                "Peer": "slot:2",
+                "SentBytes": 2892,
+                "Packets": 2,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "clientPacer": {
+        "Mbps": 0,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 131072,
+        "SentBytes": 1446,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 0.0986,
+        "QueueP95Ms": 0.1,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:1",
+            "SentBytes": 1446,
+            "Packets": 1,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 0,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Accepted": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Sent": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 131072,
+            "SentBytes": 1446,
+            "Peers": [
+              {
+                "Peer": "slot:1",
+                "SentBytes": 1446,
+                "Packets": 1,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "rawPackets": 39,
+      "httpGapMs": [
+        46.1055,
+        45.8917,
+        44.0165
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    }
+  ],
+  "scope": "real C\u002B\u002B legacy protocol/HTTP, authenticated Windows named pipes, shared controls and full MeshRouter IP; raw carriage and IP adapter are loopback fixtures, no physical WinDivert/Wintun/NAT"
+}

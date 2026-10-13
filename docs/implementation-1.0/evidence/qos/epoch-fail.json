@@ -1,0 +1,176 @@
+{
+  "status": "Fail",
+  "checks": 36,
+  "rows": [
+    {
+      "elapsedMs": 2567.3503,
+      "shares": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "stats": {
+        "Requests": 160,
+        "AdmittedPackets": 160,
+        "AdmittedBytes": 20480,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 8,
+        "Pending": 0
+      },
+      "usage": {
+        "OpenUdpResources": 0,
+        "PeakUdpResources": 0,
+        "SearchAdmitted": 120,
+        "MaintenanceAdmitted": 40,
+        "SearchDeferred": 62,
+        "MaintenanceDeferred": 15,
+        "AdmittedBytes": 20480
+      },
+      "scope": "eight logical owners, actual shared controller/timers; no claim of eight real devices"
+    },
+    {
+      "controlledEpochChecks": "Pass",
+      "actualReadOnlyOsRoute": {
+        "Generation": "70d4ecd8-c3c5-45d3-8dbd-9bc912975ccb",
+        "CaptureEpoch": 1,
+        "Source": "10.173.44.88:40001",
+        "Target": "1.1.1.1:443",
+        "InterfaceLuid": 1689399632855040,
+        "InterfaceIndex": 14,
+        "NextHop": "10.173.255.254",
+        "InterfaceName": "Ethernet",
+        "EvidenceLevel": "OsBoundRouteSelection",
+        "Failure": "",
+        "Ready": true,
+        "PacingKey": "WindowsInterface:0006008001000000"
+      },
+      "scope": "deterministic route observer concurrency plus real Windows route lookup; no packet sent, no physical egress capture"
+    },
+    {
+      "authorizedAndRejected": true,
+      "scope": "actual Windows named-pipe credentials/PID/EOF; no simulated authorization result"
+    },
+    {
+      "nativeExitCode": -1,
+      "rawPackets": 0,
+      "permitRequests": 0,
+      "scope": "actual authorized-worker PID with wrong secret, C\u002B\u002B loopback backend; not a simulated authentication assertion"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1879.5412,
+      "elapsedMs": 3397.3449,
+      "before": {
+        "Requests": 0,
+        "AdmittedPackets": 0,
+        "AdmittedBytes": 0,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 38,
+        "AdmittedPackets": 38,
+        "AdmittedBytes": 15070,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        46.7845,
+        44.3292,
+        57.556
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1656.1415,
+      "elapsedMs": 2873.7754,
+      "before": {
+        "Requests": 40,
+        "AdmittedPackets": 39,
+        "AdmittedBytes": 15236,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 72,
+        "AdmittedPackets": 71,
+        "AdmittedBytes": 28670,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    }
+  ],
+  "error": "System.IO.IOException: first business failed: server=EndOfStreamException:Unable to read beyond the end of the stream. IOException:Legacy egress outer packet or prepared route rejected client=  resources=[{\u0022Route\u0022:{\u0022Generation\u0022:\u0022322656d8-d886-4dff-9ed8-c36eef15e8ce\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u0022322656d8-d886-4dff-9ed8-c36eef15e8ce\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:52426\u0022,\u0022Target\u0022:\u0022127.0.0.1:60878\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:1,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:true},\u0022BusinessEgress\u0022:{\u0022OfferedPackets\u0022:0,\u0022OfferedBytes\u0022:0,\u0022InjectedPackets\u0022:0,\u0022InjectedBytes\u0022:0,\u0022RejectedPackets\u0022:0,\u0022Outstanding\u0022:0,\u0022PeakOutstanding\u0022:0,\u0022Failure\u0022:\u0022IOException:Legacy egress outer packet or prepared route rejected\u0022}},{\u0022Route\u0022:{\u0022Generation\u0022:\u0022c774c179-92da-4a32-9a65-1ed6c20f23f7\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u0022c774c179-92da-4a32-9a65-1ed6c20f23f7\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:60878\u0022,\u0022Target\u0022:\u0022127.0.0.1:52426\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:0,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:true},\u0022BusinessEgress\u0022:{\u0022OfferedPackets\u0022:0,\u0022OfferedBytes\u0022:0,\u0022InjectedPackets\u0022:0,\u0022InjectedBytes\u0022:0,\u0022RejectedPackets\u0022:0,\u0022Outstanding\u0022:0,\u0022PeakOutstanding\u0022:0,\u0022Failure\u0022:\u0022\u0022}},{\u0022Route\u0022:{\u0022Generation\u0022:\u00227cd877da-43f1-4b89-a5ee-da63b07a2c3b\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u00227cd877da-43f1-4b89-a5ee-da63b07a2c3b\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:31291\u0022,\u0022Target\u0022:\u0022127.0.0.1:53255\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:0,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:false},\u0022BusinessEgress\u0022:null},{\u0022Route\u0022:{\u0022Generation\u0022:\u0022d4787726-9702-4a24-b250-b401d6f8cb45\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u0022d4787726-9702-4a24-b250-b401d6f8cb45\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:53255\u0022,\u0022Target\u0022:\u0022127.0.0.1:31291\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:0,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:false},\u0022BusinessEgress\u0022:null},{\u0022Route\u0022:{\u0022Generation\u0022:\u002229c8e5c9-9eef-439f-9f3b-df2bf08ef3ea\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u002229c8e5c9-9eef-439f-9f3b-df2bf08ef3ea\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:55784\u0022,\u0022Target\u0022:\u0022127.0.0.1:58463\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:0,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:false},\u0022BusinessEgress\u0022:null},{\u0022Route\u0022:{\u0022Generation\u0022:\u00220a08fea6-1b4b-4de4-8f5d-390c27716503\u0022,\u0022CaptureEpoch\u0022:1,\u0022Witnesses\u0022:[{\u0022Generation\u0022:\u00220a08fea6-1b4b-4de4-8f5d-390c27716503\u0022,\u0022CaptureEpoch\u0022:1,\u0022Source\u0022:\u0022127.0.0.1:58463\u0022,\u0022Target\u0022:\u0022127.0.0.1:55784\u0022,\u0022InterfaceLuid\u0022:0,\u0022InterfaceIndex\u0022:0,\u0022NextHop\u0022:\u0022LoopbackFixture\u0022,\u0022InterfaceName\u0022:\u0022LoopbackFixture\u0022,\u0022EvidenceLevel\u0022:\u0022LoopbackFixture\u0022,\u0022Failure\u0022:\u0022\u0022,\u0022Ready\u0022:true,\u0022PacingKey\u0022:\u0022Unresolved\u0022}],\u0022StaleRejected\u0022:0,\u0022Unavailable\u0022:0,\u0022Enforced\u0022:false},\u0022BusinessEgress\u0022:null}]\r\n ---\u003E System.TimeoutException: The operation has timed out.\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 158\r\n   --- End of inner exception stack trace ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 158\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 184\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext()\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 184\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003CMain\u003E$(String[] args) in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 38"
+}
