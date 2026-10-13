@@ -1,0 +1,13 @@
+CLOSE 1 23369ms stop-begin
+CLOSE 1 23405ms stop-complete
+CLOSE 1 23405ms exclusive-acquired
+CLOSE 1 23903ms native-close-complete
+CLOSE 1 26414ms stop-begin
+CLOSE 1 26927ms library-free-complete
+CLOSE 1 26927ms stop-complete
+CLOSE 1 26928ms stop-begin
+CLOSE 1 26928ms stop-complete
+System.TimeoutException: The operation has timed out.
+   at NativeLifecycleTests.Run(String components, String output, Int32 rounds) in D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.AdapterContractTests\NativeLifecycleTests.cs:line 31
+   at NativeLifecycleTests.Run(String components, String output, Int32 rounds) in D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.AdapterContractTests\NativeLifecycleTests.cs:line 34
+   at Program.<Main>$(String[] args) in D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.AdapterContractTests\Program.cs:line 5

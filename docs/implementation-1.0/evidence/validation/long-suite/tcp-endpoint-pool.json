@@ -1,0 +1,6 @@
+{
+  "status": "Pass",
+  "checks": 1001,
+  "rows": [],
+  "scope": "formal endpoint pool and seven-peer candidate factory; real Windows TCP helpers; clock injection for cache age, memory capture; no native worker, MeshRunner, physical WinDivert/Wintun or NAT"
+}

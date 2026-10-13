@@ -15,16 +15,17 @@
       "title": "核对真实HEAD、交接与验收口径",
       "dependsOn": [],
       "status": "Verified",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
+      "code": "Complete specification/HEAD mapping",
+      "product": "No original specification or gate changed",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
       "evidence": [],
-      "remaining": []
+      "remaining": [],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "SEC-01",
@@ -35,10 +36,10 @@
       "status": "ImplementedUnverified",
       "code": "Implemented",
       "product": "Complete production recv_raw0/recv_raw_tcp, native and broker share parser",
-      "windowsIo": "NotRun",
+      "windowsIo": "Native complete production parser and managed Windows differential corpus; actual WinDivert ingress not validated",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [
         "transport/udp2raw/network.cpp",
         "transport/udp2raw/client.cpp",
@@ -47,17 +48,18 @@
         "tests/native_parser_test.cpp"
       ],
       "tests": [
-        "complete production parser: 25307 checks including 20000 mutations, Pass after 7901 baseline failures",
-        "SO state: 630 cases Pass",
-        "HTTP/bare loopback: 11 tests Pass"
+        "29659 complete native parser assertions, including 20000 mutations: Pass",
+        "22414 native/managed frames, zero mismatches: Pass",
+        "Full linked Linux ASan/UBSan: 29659 Pass",
+        "630 SO model checks and 11 full HTTP/SEQ loopback tests: Pass"
       ],
       "evidence": [
         "docs/implementation-1.0/evidence/sec01/"
       ],
       "remaining": [
-        "independent Windows raw capture negative-path reachability evidence",
-        "ASan/UBSan full linked parser coverage when suitable runtime available"
-      ]
+        "Actual authorized Windows raw ingress/offload and independent observation reachability gate"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "SEC-02",
@@ -66,12 +68,12 @@
         "SEC-01"
       ],
       "status": "InProgress",
-      "code": "Partial: bounded shared syntax/checksum policy and isolated malformed-frame handling implemented",
+      "code": "Partial: parser/corpus/offload policy and actual dependency SBOM implemented",
       "product": "native recv_raw_tcp and managed WinDivert receive",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "29659 native assertions including IPv4/IPv6 and 20000 mutations Pass",
@@ -83,9 +85,10 @@
         "docs/implementation-1.0/evidence/sec02/"
       ],
       "remaining": [
-        "actual WinDivert/offload/negative input isolation evidence",
-        "dependency SBOM and expanded input/bounds audit"
-      ]
+        "Actual physical WinDivert/checksum-offload negative isolation",
+        "Complete native bounds/dependency provenance audit beyond the tested corpus"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "SEC-03",
@@ -99,7 +102,7 @@
       "windowsIo": "106 Windows profile/worker/UI checks, 1066 mesh protocol checks Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "1024 actual concurrent encrypted business/control frames with unique epoch/nonce, replay rejected",
@@ -111,10 +114,11 @@
         "docs/implementation-1.0/evidence/security/"
       ],
       "remaining": [
-        "UI-04 safe ordinary-user boundary",
-        "fixed installed-package rollback and real multi-path/multi-device WAN",
-        "existing owner-generated member keys/no PFS remain documented"
-      ]
+        "Cross-user/remote negative gate under UI-04",
+        "Real multi-device/WAN lifecycle and installed legacy 0.5.6 migration",
+        "Owner-generated member credentials/no PFS remain explicit boundaries"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "CTL-01",
@@ -125,10 +129,10 @@
       "status": "ImplementedUnverified",
       "code": "Implemented: propagated cancellation, bounded stop, operation IDs, immutable status snapshot, retained owner on timeout",
       "product": "ControlWorker and foreground backend; 8 authenticated pipe instances",
-      "windowsIo": "Protected local Windows profile and cancellation/ownership tests Pass; pipe integration pending",
+      "windowsIo": "Protected worker, 23 control/cancel/hot-save checks and real installed candidate RPC/PID readiness Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "14 isolated control checks Pass",
@@ -139,9 +143,9 @@
         "docs/implementation-1.0/evidence/control/"
       ],
       "remaining": [
-        "actual concurrent pipe integration with candidate service",
-        "exercise timeout/owned native Job teardown on actual capture resources"
-      ]
+        "Actual capture/native-job teardown under forced timeout and concurrent installed management operations"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "CTL-02",
@@ -156,7 +160,7 @@
       "windowsIo": "real loopback consent/cancel and formal Runner port-conflict/IP delivery Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "15 quality message/budget/actual UDP checks Pass",
@@ -168,9 +172,10 @@
         "docs/implementation-1.0/evidence/quality/"
       ],
       "remaining": [
-        "same candidate two-machine Wintun/manual measurement/permission tests",
-        "actual injector pacing/accounting linkage under QOS-01; manual byte debit currently conservative 1536B"
-      ]
+        "Two-Windows Wintun/manual measurements and receiver consent off/on",
+        "Actual physical final-injector budget linkage; 1536B manual debits are conservative upper bounds"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "UI-01",
@@ -184,7 +189,7 @@
       "windowsIo": "Actual DPI240 preview render 28 checks, Windows UI feedback 103 checks Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "recompiled WindowsTests 103 Pass",
@@ -195,9 +200,10 @@
         "docs/implementation-1.0/evidence/ui/"
       ],
       "remaining": [
-        "real first pairing UI workflow",
-        "physical multi-display DPI and UIA keyboard verification"
-      ]
+        "Actual first pairing through full GUI on two devices",
+        "Ordinary-user daily GUI integration and management UAC workflow"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "UI-02",
@@ -206,25 +212,25 @@
         "CTL-01"
       ],
       "status": "InProgress",
-      "code": "Partial: hot metadata, unknown fields, rebuild impact prompt and explicit capability intent preserved; precise next-attempt/per-peer changes pending",
+      "code": "Partial: hot metadata + STUN next-attempt updates, opaque fields and explicit disabled/unknown intents; other network changes remain explicit rebuild",
       "product": "live DeviceName/log updates preserve running worker and network configuration",
       "windowsIo": "isolated Windows save/ownership fixture Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
-        "pre-fix control failures retained; post-fix hot save and unknown-field roundtrip Pass",
-        "103 Windows UI/lifecycle checks Pass including intent restore and explicit disable",
-        "14 hot-save/cancellation checks Pass"
+        "23 protected control/cancel/hot-save checks Pass",
+        "Current STUN list edits do not cancel live owner; subsequent collection receives cloned lists"
       ],
       "evidence": [
         "docs/implementation-1.0/evidence/settings/"
       ],
       "remaining": [
-        "precise per-peer/next-attempt handling of additional network settings",
-        "real two-end settings preservation under active business"
-      ]
+        "Precise per-peer changes for remaining network fields",
+        "Two-end preservation during real business"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "UI-03",
@@ -235,10 +241,10 @@
       "status": "InProgress",
       "code": "Partial: production information architecture, operation feedback and dynamic DPI implemented",
       "product": "WinForms overview/devices/diagnostics/settings",
-      "windowsIo": "Actual DPI240 preview render 28 checks, Windows UI feedback 103 checks Pass",
+      "windowsIo": "Actual Windows DPI240 six-page render: 28 Pass; timing under concurrent build is not screen FPS",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [
         "recompiled WindowsTests 103 Pass",
@@ -249,9 +255,10 @@
         "docs/implementation-1.0/evidence/ui/"
       ],
       "remaining": [
-        "real first pairing UI workflow",
-        "physical multi-display DPI and UIA keyboard verification"
-      ]
+        "Physical 100/125/150/200% and mixed-DPI dual display",
+        "UIA/Narrator/keyboard, high contrast and reduced animation acceptance"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "UI-04",
@@ -264,10 +271,10 @@
       "status": "InProgress",
       "code": "Partial: separate sanitized DTO/limited patch/per-method SID pipe, ordinary daily GUI and elevated management split",
       "product": "asInvoker daily surface; old full-profile pipe remains privileged",
-      "windowsIo": "21 isolated worker/actual authenticated Windows pipe checks and 106 Windows regressions Pass; administrator test sender, not a standard-token proof",
+      "windowsIo": "Protected SID pipe/admin fixture Pass; installed SCM PID verification and SID rollback Pass; linked ordinary-token child blocked by Win32 267",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -275,10 +282,11 @@
         "docs/implementation-1.0/evidence/ui-boundary/"
       ],
       "remaining": [
-        "real standard/other-user and SMB negative paths",
-        "installed-service client PID validation and SID rollback",
-        "ordinary GUI rendering, UAC cancellation and real pairing workflow"
-      ]
+        "Actual standard-token, other account and remote SMB negatives",
+        "Real non-elevated rendering and UAC cancellation",
+        "Pairing and advanced management currently still use elevated GUI"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-01",
@@ -288,17 +296,24 @@
         "SEC-02",
         "CTL-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Two actual Windows capture owners and physical observer prove 30 continuity/RST/helper/cancel cases",
+        "P->Q ingress evidence must remain separate from same-P outbound proof"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-02",
@@ -307,17 +322,24 @@
         "NET-01",
         "SEC-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Actual same-resource full FakeTCP SO and source-learning under verified NAT/filters",
+        "Same binary algorithm off/on added coverage and physical RST gate"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-03",
@@ -326,17 +348,25 @@
         "SEC-03",
         "CTL-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "Common nomination/resource lifecycle, replay/security regression and Router/Runner scenarios in local validation"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Current fixed RC real multi-path cancellation/migration and loss cases across actual endpoints"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-04",
@@ -346,17 +376,24 @@
         "NET-02",
         "NET-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Owned two-public-IP TCP observer and actual independent holdout/background allocation measurements",
+        "Real calibrated prediction off/on coverage; no inference from UDP"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-05",
@@ -366,12 +403,12 @@
         "SEC-03"
       ],
       "status": "InProgress",
-      "code": "Partial: real same-socket authenticated peer-port witness and separately graded EmpiricalEim evaluation; formal negotiation not yet connected",
-      "product": "Mechanism API implemented; formal production capability/Ready integration missing",
-      "windowsIo": "9 actual Windows UDP witness/resource checks Pass; EIM STUN holdout is an explicit fixture",
+      "code": "Partial: formal epoch-forwarded authenticated one-port witnesses + independent empirical EIM opt-in/version + production same-resource sampling implemented",
+      "product": "MeshTraversalManager/factory/preparation, existing sole receiver and winner lifecycle; empirical evidence is never strong peer-port proof",
+      "windowsIo": "42 checks Pass including seven real STUN transactions and both epoch-wrapped peer witnesses; complete UDP business on actual Winsock; NAT/filter fixtures explicitly identified",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged; new sampling is not advertised/default enabled",
+      "defaultEnablement": "UdpEmpiricalStability=false; UdpExploration=false; healthy FakeTCP protected",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -379,10 +416,10 @@
         "docs/implementation-1.0/evidence/udp/"
       ],
       "remaining": [
-        "formal witness authorization/capability/Ready negotiation without circular prerequisite",
-        "separate empirical strategy opt-in/version and bounded preparation",
-        "fixed RC DF PMTU/full business and WAN off/on algorithm comparison"
-      ]
+        "Production strong cooperative provider for complete authorized multi-port set; current declared-port witness cannot authorize unobserved ports",
+        "Fixed RC physical DF/PMTU and actual private NAT off/on business coverage"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-06",
@@ -391,17 +428,24 @@
         "CTL-01",
         "NET-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Eight real Windows fairness/60pps and healthy loaded peer plus new members",
+        "Current actual 15s startup and p50/p95 stable recovery; historical timing Fail preserved"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NET-07",
@@ -410,17 +454,24 @@
         "NET-03",
         "NIC-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Conditional opt-in only; absence must not block IPv4",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Real PCP/NAT-PMP router leases/epochs and public reachability",
+        "Two native global IPv6 physical sources and complete business/MTU; loopback is not Internet evidence"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "QOS-01",
@@ -430,12 +481,12 @@
         "NET-03"
       ],
       "status": "InProgress",
-      "code": "Partial: experimental production compatibility egress, receipts, bounded handoff, route witness and preparation cancellation implemented",
+      "code": "Partial: production legacy pacing/receipts/fence, route witness and preparation cancellation implemented",
       "product": "MeshRunner shared legacy/managed egress; explicit off-by-default capability",
       "windowsIo": "Real Windows named pipes and full C++ protocol via raw-IP loopback fixture, no physical WinDivert injection",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Experimental off",
+      "defaultEnablement": "LegacyEgressPacing=false; ManagedEgressMbps=0",
       "changedFiles": [],
       "tests": [
         "57 short complete protocol checks Pass",
@@ -449,10 +500,11 @@
         "docs/implementation-1.0/evidence/qos/"
       ],
       "remaining": [
-        "diagnose expanded legacy FakeTCP authentication timeout",
-        "physical WinDivert injection, capture-fence and interface evidence",
-        "50Mbps same-condition performance A/B and overload/fault isolation"
-      ]
+        "Historical expanded 136-check legacy authentication timeout remains unexplained; subsequent 30-round Pass does not erase it",
+        "Physical WinDivert final injection/route/fence and 50Mbps identical-condition A/B",
+        "Overload/failure isolation with actual Wintun business"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "QOS-02",
@@ -462,12 +514,12 @@
         "NET-06"
       ],
       "status": "InProgress",
-      "code": "Partial: experimental production compatibility egress, receipts, bounded handoff, route witness and preparation cancellation implemented",
+      "code": "Partial: production legacy pacing/receipts/fence, route witness and preparation cancellation implemented",
       "product": "MeshRunner shared legacy/managed egress; explicit off-by-default capability",
       "windowsIo": "Real Windows named pipes and full C++ protocol via raw-IP loopback fixture, no physical WinDivert injection",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Experimental off",
+      "defaultEnablement": "LegacyEgressPacing=false; ManagedEgressMbps=0",
       "changedFiles": [],
       "tests": [
         "57 short complete protocol checks Pass",
@@ -481,10 +533,11 @@
         "docs/implementation-1.0/evidence/qos/"
       ],
       "remaining": [
-        "diagnose expanded legacy FakeTCP authentication timeout",
-        "physical WinDivert injection, capture-fence and interface evidence",
-        "50Mbps same-condition performance A/B and overload/fault isolation"
-      ]
+        "Historical expanded 136-check legacy authentication timeout remains unexplained; subsequent 30-round Pass does not erase it",
+        "Physical WinDivert final injection/route/fence and 50Mbps identical-condition A/B",
+        "Overload/failure isolation with actual Wintun business"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "QOS-03",
@@ -495,17 +548,24 @@
         "QOS-02",
         "NET-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "ImplementedUnverified",
+      "code": "Implemented inherited production architecture; not rebuilt",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Real Windows helper/socket/HTTPS resources and production Runner + C++ protocol; raw I/O, NAT and most IP adapters are explicit fixtures",
+      "controlledNat": "Model fixtures only; no real controlled NAT pass",
+      "wan": "BlockedExternal",
+      "defaultEnablement": "Feedback/standby/AutoQuality opt-in; default PreferFakeTcp never displaced by idle RTT",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Physical loaded bidirectional quality and failure/standby selection",
+        "Diagnostic qualification is not application delivery or zero-loss streaming Gate"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "NIC-01",
@@ -514,25 +574,26 @@
         "BASE-01",
         "CTL-01"
       ],
-      "status": "ImplementedUnverified",
-      "code": "Implemented: existing IPacketAdapter extended with provider/ABI/cancel/MTU/stats and real prefix/route overlap inspection",
+      "status": "InProgress",
+      "code": "Partial: provider/ABI/stats/cancel/real route detection + guarded concurrent handle lifecycle + warnings implemented",
       "product": "official NativeAdapter, bridge ABI2 and formal Router cancellation",
-      "windowsIo": "real Wintun read/write/UDP app and clean owned adapter removal Pass",
+      "windowsIo": "Current 1073 mesh checks including actual Wintun application roundtrip and owned adapter removal: Pass; 100-cycle test: Fail before completion",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Official Wintun remains the only default provider",
       "changedFiles": [],
       "tests": [
-        "12 adapter/conflict/read-only OS route checks Pass",
-        "47 mesh+official Wintun checks Pass"
+        "Actual 1280-compatible application IP through signed Wintun, encrypted MeshLink and return to original UDP socket Pass",
+        "Concurrent-close/PnP stress attempts retained as Fail; no gate weakening"
       ],
       "evidence": [
         "docs/implementation-1.0/evidence/adapter/"
       ],
       "remaining": [
-        "dedicated 100-cycle lifecycle and concurrent-close stress",
-        "GUI route warning integration and additional real topology cases"
-      ]
+        "Complete 100-cycle/concurrent close and PnP timing regression",
+        "Real additional route topologies and physical installed-package reopen"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "DRV-00",
@@ -547,7 +608,7 @@
       "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Off; official Wintun/WinDivert retained",
+      "defaultEnablement": "Research only; never default loaded; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -560,7 +621,8 @@
         "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
         "Verifier/HVCI/HLK and signatures unavailable",
         "WFP actual injection interface remains Partial"
-      ]
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "DRV-01",
@@ -575,7 +637,7 @@
       "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Off; official Wintun/WinDivert retained",
+      "defaultEnablement": "Research only; never default loaded; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -588,7 +650,8 @@
         "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
         "Verifier/HVCI/HLK and signatures unavailable",
         "WFP actual injection interface remains Partial"
-      ]
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "DRV-02",
@@ -603,7 +666,7 @@
       "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Off; official Wintun/WinDivert retained",
+      "defaultEnablement": "Research only; never default loaded; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -616,7 +679,8 @@
         "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
         "Verifier/HVCI/HLK and signatures unavailable",
         "WFP actual injection interface remains Partial"
-      ]
+      ],
+      "disposition": "Signing account, independent Windows kernel test machine and Verifier/HVCI/HLK unavailable"
     },
     {
       "id": "DRV-03",
@@ -631,7 +695,7 @@
       "windowsIo": "MSVC/WDK kernel+user DLL build, InfVerif0 and 8 actual user ABI/invalid-handle tests Pass; no kernel I/O",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Off; official Wintun/WinDivert retained",
+      "defaultEnablement": "Research only; never default loaded; official Wintun/WinDivert retained",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -644,7 +708,8 @@
         "independent signed-driver Windows lab, kernel IO/PnP/power/concurrency",
         "Verifier/HVCI/HLK and signatures unavailable",
         "WFP actual injection interface remains Partial"
-      ]
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "REL-01",
@@ -654,12 +719,12 @@
         "SEC-03"
       ],
       "status": "InProgress",
-      "code": "Partial: unified RC SemVer, explicit update channels, required/runtime manifest preflight, local ServiceReady and restoration handling",
-      "product": "Production installer/client; actual fixed packages not built or installed yet",
-      "windowsIo": "109 Windows fixtures and 21 control tests Pass; synthetic PE headers, not signing/installed-service evidence",
+      "code": "Partial: explicit SemVer channels, strict complete bundle + SPDX/files/relationships/licenses/exact source; trusted publisher verification/signature not completed",
+      "product": "Actual fixed Windows 310-file preflight and Linux coordinator prepared; no deployment",
+      "windowsIo": "Complete published bundle Pass; hash integrity is not publisher authentication",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -667,10 +732,10 @@
         "docs/implementation-1.0/evidence/release/"
       ],
       "remaining": [
-        "new fixed RC package pipeline + SBOM + exact source provenance",
-        "real install/upgrade/double-failure/same-network rollback and UI pairing",
-        "trusted publisher signatures unavailable; candidate must be explicit unsigned"
-      ]
+        "Trusted publisher signing and independently pinned verification; self-declared VerifiedPublisher remains rejected",
+        "Full exact compiler-runtime provenance and license compatibility audit"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "REL-02",
@@ -681,12 +746,12 @@
         "UI-04"
       ],
       "status": "InProgress",
-      "code": "Partial: unified RC SemVer, explicit update channels, required/runtime manifest preflight, local ServiceReady and restoration handling",
+      "code": "Partial: real transaction, local ServiceReady, independent authorization/service restoration and isolated installed acceptance",
       "product": "Production installer/client; actual fixed packages not built or installed yet",
-      "windowsIo": "109 Windows fixtures and 21 control tests Pass; synthetic PE headers, not signing/installed-service evidence",
+      "windowsIo": "Complete 7a9c310e RC installed, candidate-failure rollback, dual failure, DPAPI hash/SID preservation and exact cleanup Pass; original service PID/state/ImagePath unchanged",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
       "evidence": [
@@ -694,10 +759,11 @@
         "docs/implementation-1.0/evidence/release/"
       ],
       "remaining": [
-        "new fixed RC package pipeline + SBOM + exact source provenance",
-        "real install/upgrade/double-failure/same-network rollback and UI pairing",
-        "trusted publisher signatures unavailable; candidate must be explicit unsigned"
-      ]
+        "Cross-version actual 0.5.6 upgrade/same-network rollback",
+        "Candidate with live two-machine business and GUI pairing/UAC workflow",
+        "Unlogged reboot and installed standard-user authorization"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "VAL-01",
@@ -710,17 +776,23 @@
         "NET-05",
         "NET-06"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
-      "controlledNat": "NotRun",
-      "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "status": "BlockedExternal",
+      "code": "Existing mechanisms and local algorithm fixtures executed; actual public coverage unavailable",
+      "product": "Formal Runner full business exercised locally with stated fixtures",
+      "windowsIo": "Real Windows resources/local mechanism evidence only",
+      "controlledNat": "BlockedExternal: independently verified router topology absent",
+      "wan": "BlockedExternal: Akane SSH timed out; no replacement public NAT4 equipment",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/validation/",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "Manual 30 real resource rounds, SO matrix and full FakeTCP/UDP business off/on; see manual acceptance"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "VAL-02",
@@ -734,17 +806,25 @@
         "UI-02",
         "UI-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: fixed preflight/installed transaction/real local Wintun/quality harness evidence",
+      "product": "Existing production integration retained; evidence below",
+      "windowsIo": "Installed isolated candidate and single-host actual Wintun business Pass; current paired real performance not run",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/evidence/release/",
+        "docs/implementation-1.0/evidence/adapter/"
+      ],
+      "remaining": [
+        "Actual two-way 50Mbps/20s zero-loss original Gate",
+        "60-minute real application streaming and both directions",
+        "Real GUI first pairing; existing historical quality Fails remain"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "VAL-03",
@@ -755,17 +835,22 @@
         "REL-02",
         "NET-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "BlockedExternal",
+      "code": "Existing bounded scheduling/recovery/control interruption harness retained",
+      "product": "Local seven/eight-node models are not eight Windows terminals",
+      "windowsIo": "Local 360-second control abort scenario and lifecycle harness; no physical suspend/reboot/8-machine claim",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
       "evidence": [],
-      "remaining": []
+      "remaining": [
+        "Eight actual Windows devices",
+        "Both ends unlogged cold start; real suspend/switch/lease/driver crashes",
+        "Both-end coordinator-only interruption >=6min plus separate reflector/DNS failures"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "REL-03",
@@ -780,17 +865,23 @@
         "VAL-03",
         "NET-07"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
+      "status": "ImplementedUnverified",
+      "code": "Explicit per-capability decisions/intents/capability absence implemented; no evidence-free promotion",
+      "product": "Formal defaults retained, independent experiments remain explicit",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/capability-decisions.json"
+      ],
+      "remaining": [
+        "External gate-backed individual punching promotion",
+        "Current defaults are a candidate, not formal 1.0 certification"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     },
     {
       "id": "REL-04",
@@ -799,17 +890,43 @@
         "REL-02",
         "REL-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
+      "status": "ImplementedUnverified",
+      "code": "Fixed RC/source/Windows/Linux/research packaging and complete 32-task disposition",
+      "product": "Completion report, capability decisions, manual gates, original Fail and source provenance included; immutable artifact hash index and final installed acceptance are delivered beside the fixed archives",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Existing default retained; no blanket experimental promotion",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "RC1-completion-report.md",
+        "capability-decisions.json",
+        "manual-acceptance.md",
+        "evidence/validation/fixed-tail/manifest.json"
+      ],
+      "remaining": [
+        "Formal release remains blocked by required external and unfinished implementation gates; exact artifact delivery index is external to the immutable source snapshot"
+      ],
+      "disposition": "Implementation/evidence recorded; not an unconditional Gate pass"
     }
-  ]
+  ],
+  "updatedDate": "2026-10-14",
+  "codeCandidate": "1e7928e4868e93919417330eede62d9896de8d99",
+  "formalReleaseAllowed": false,
+  "newFailures": [
+    "Expanded legacy raw-protocol authentication timeout at 136 checks, unexplained",
+    "Official Wintun 100-cycle concurrent-close/PnP assertion not completed; immediate disappearance Fail and experimental wait timeouts retained",
+    "Ordinary linked-token process creation: Win32 267, not an authorization pass",
+    "Long validation overlapped edits and ended with a transient compile error; original Fail preserved, clean tail tracked separately"
+  ],
+  "localTailEvidence": {
+    "path": "evidence/validation/fixed-tail/manifest.json",
+    "status": "Pass",
+    "checks": 26,
+    "subset": true,
+    "sourceCommit": "1e7928e4868e93919417330eede62d9896de8d99",
+    "scope": "Fixed clean source local subset only; no WAN, driver signing, eight-device or formal release claim"
+  },
+  "deliveryPolicy": "Immutable release directory supplies exact artifact hashes and final installed acceptance; any post-snapshot evidence is recorded there, without rewriting retained Fail."
 }

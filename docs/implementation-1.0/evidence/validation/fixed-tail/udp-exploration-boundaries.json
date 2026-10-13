@@ -1,0 +1,163 @@
+{
+  "status": "Pass",
+  "checks": 38,
+  "rows": [
+    {
+      "fault": "first-receiver-fails",
+      "elapsedMs": 430.5835,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 3,
+        "packetsAdmitted": 12,
+        "bytesAdmitted": 7392,
+        "winnerSource": "70380cad-82b1-4ce0-bf1e-f50fe02aa1a4",
+        "elapsedMs": 411.3393
+      },
+      "hard": {
+        "sourcesRequested": 4,
+        "sourcesOpened": 4,
+        "sourcesSent": 3,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 15,
+        "bytesAdmitted": 6432,
+        "winnerSource": "7528a0bd-c93a-4ecd-86de-e63d4d36da7e",
+        "elapsedMs": 356.3503
+      }
+    },
+    {
+      "fault": "cancel",
+      "elapsedMs": 22.4065,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 1,
+        "packetsAdmitted": 4,
+        "bytesAdmitted": 384,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 21.3134
+      },
+      "hard": {
+        "sourcesRequested": 2,
+        "sourcesOpened": 2,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 3,
+        "bytesAdmitted": 288,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 21.1146
+      }
+    },
+    {
+      "fault": "selection-authentication",
+      "elapsedMs": 532.0927,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 2,
+        "packetsAdmitted": 13,
+        "bytesAdmitted": 8736,
+        "winnerSource": "8c129902-e3cb-4988-a8f6-97316b9b2e8f",
+        "elapsedMs": 531.1712
+      },
+      "hard": {
+        "sourcesRequested": 2,
+        "sourcesOpened": 2,
+        "sourcesSent": 2,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 11,
+        "bytesAdmitted": 6048,
+        "winnerSource": "770c8c0a-7635-4afb-8120-a5be6936f96d",
+        "elapsedMs": 530.9984
+      }
+    },
+    {
+      "fault": "wrong-member-key",
+      "elapsedMs": 12025.529,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 2,
+        "packetsAdmitted": 2,
+        "bytesAdmitted": 192,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 12024.5724
+      },
+      "hard": {
+        "sourcesRequested": 2,
+        "sourcesOpened": 2,
+        "sourcesSent": 2,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 365,
+        "bytesAdmitted": 35040,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 12024.3498
+      }
+    },
+    {
+      "fault": "pmtu-too-small",
+      "elapsedMs": 6222.591,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 2,
+        "packetsAdmitted": 201,
+        "bytesAdmitted": 261408,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 6220.493
+      },
+      "hard": {
+        "sourcesRequested": 2,
+        "sourcesOpened": 2,
+        "sourcesSent": 2,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 201,
+        "bytesAdmitted": 261408,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 6220.2706
+      }
+    },
+    {
+      "fault": "unstable-easy-mapping",
+      "elapsedMs": 12008.1009,
+      "easy": {
+        "sourcesRequested": 1,
+        "sourcesOpened": 1,
+        "sourcesSent": 1,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 2,
+        "packetsAdmitted": 3,
+        "bytesAdmitted": 212,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 12007.2431
+      },
+      "hard": {
+        "sourcesRequested": 2,
+        "sourcesOpened": 2,
+        "sourcesSent": 2,
+        "confirmedExternalMappings": null,
+        "uniqueGuessedPorts": 0,
+        "packetsAdmitted": 364,
+        "bytesAdmitted": 34944,
+        "winnerSource": "00000000-0000-0000-0000-000000000000",
+        "elapsedMs": 12004.4148
+      }
+    }
+  ],
+  "scope": "internal mechanism boundary tests; model I/O, no public scanning, driver or installed configuration changes"
+}

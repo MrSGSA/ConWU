@@ -1,0 +1,28 @@
+{
+  "test_kind": "loopback protocol, no driver, no WAN",
+  "tests": 11,
+  "failures": 0,
+  "errors": 0,
+  "elapsed_seconds": 6.598617199982982,
+  "passed": true,
+  "http_handshake_profile": {
+    "client": {
+      "http_flags": 24,
+      "bare_flags": 16,
+      "http_bytes": 180,
+      "bare_bytes": 48,
+      "sequence_delta": 0,
+      "ack_delta": 0,
+      "observed_gap_ms": 44.911
+    },
+    "server": {
+      "http_flags": 24,
+      "bare_flags": 16,
+      "http_bytes": 180,
+      "bare_bytes": 48,
+      "sequence_delta": 0,
+      "ack_delta": 0,
+      "observed_gap_ms": 46.605
+    }
+  }
+}

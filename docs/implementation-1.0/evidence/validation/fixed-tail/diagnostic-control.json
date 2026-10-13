@@ -1,0 +1,7 @@
+{
+  "status": "Pass",
+  "checks": 124,
+  "diagnostic": {
+    "scope": "bounded codec model; no session scheduling, transport or network proof"
+  }
+}

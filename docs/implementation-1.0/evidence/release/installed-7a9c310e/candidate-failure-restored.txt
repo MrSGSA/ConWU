@@ -1,0 +1,14 @@
+System.IO.IOException: 候选安装未通过本地就绪检查，已恢复原服务状态和 UI 授权
+ ---> System.IO.IOException: 服务管理失败：[SC] StartService 失败 1053:
+
+服务没有及时响应启动或控制请求。
+
+
+   at StreamLink.ServiceInstaller.Sc(String[] args)
+   at StreamLink.ServiceInstaller.<>c__DisplayClass3_0.<<Install>b__1>d.MoveNext()
+--- End of stack trace from previous location ---
+   at StreamLink.ServiceInstallTransaction.Execute(Func`1 apply, Func`1 restoreAuthorization, Func`1 restoreService)
+   --- End of inner exception stack trace ---
+   at StreamLink.ServiceInstallTransaction.Execute(Func`1 apply, Func`1 restoreAuthorization, Func`1 restoreService)
+   at StreamLink.ServiceInstaller.Install()
+   at StreamLink.Program.Main(String[] args)

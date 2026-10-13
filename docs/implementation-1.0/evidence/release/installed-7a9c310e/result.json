@@ -1,0 +1,58 @@
+{
+  "status": "Pass",
+  "sourceCommit": "7a9c310e60696f4e181f4120267a6f27e9c7b5d4",
+  "version": "1.0.0-rc1",
+  "scope": "Actual complete Windows candidate, SCM/PID-verified RPC and protected DPAPI; unique service/pipe/profile/install directories. Same RC baseline and intentional copied-runtime fault; not 0.5.6 migration, two-device business or unlogged boot evidence.",
+  "validationInstance": "StreamLink-Validation-f439b7b350f04caea0547410c1a95bef",
+  "networkEnabled": false,
+  "results": [
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--install"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--acceptance-status D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-installed-7a9c310e\\initial-ready.json"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--acceptance-create-network"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--acceptance-status D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-installed-7a9c310e\\paired-disabled.json"
+    },
+    {
+      "expectedFailure": true,
+      "exit": 1,
+      "operation": "--install"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--acceptance-status D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-installed-7a9c310e\\restored-ready.json"
+    },
+    {
+      "expectedFailure": true,
+      "exit": 1,
+      "operation": "--install"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--acceptance-status D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-installed-7a9c310e\\final-ready.json"
+    },
+    {
+      "expectedFailure": false,
+      "exit": 0,
+      "operation": "--uninstall"
+    }
+  ],
+  "failure": "",
+  "liveServiceUnchanged": true,
+  "sharedDriversUninstalled": false
+}

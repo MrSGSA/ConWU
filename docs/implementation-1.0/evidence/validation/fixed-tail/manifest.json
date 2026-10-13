@@ -1,0 +1,597 @@
+{
+  "planVersion": "1.0",
+  "profile": "Local",
+  "status": "Pass",
+  "sourceCommit": "1e7928e4868e93919417330eede62d9896de8d99",
+  "dirty": false,
+  "endCommit": "1e7928e4868e93919417330eede62d9896de8d99",
+  "endDirty": false,
+  "fixedSource": true,
+  "excludedChecks": [
+    "native-build",
+    "network-wake",
+    "tcp-mapping-wake",
+    "legacy-native-wire",
+    "legacy-parent-wire",
+    "legacy-native-control",
+    "endpoint-lifetime",
+    "native-managed",
+    "native-negative",
+    "native-prepared-so",
+    "native-router",
+    "native-capture-broker",
+    "native-tcp-source-learning",
+    "network-scopes",
+    "native-port-window",
+    "native-port-window-wide",
+    "native-path-timeout",
+    "protocol-profile",
+    "mesh-watch",
+    "mesh-traversal-control",
+    "mesh-runner-traversal",
+    "mesh-runner-udp-exploration",
+    "mesh-runner-tcp-source-learning",
+    "tcp-endpoint-pool",
+    "mesh-runner-lifecycle",
+    "native-wire-budget",
+    "port-prediction-factory",
+    "port-prediction-runner",
+    "port-prediction-model",
+    "tcp-shape-observer",
+    "mesh-nomination-model"
+  ],
+  "subset": true,
+  "os": "Microsoft Windows NT 10.0.26300.0",
+  "native": [
+    {
+      "path": "out\\native\\udp2raw-native.exe",
+      "sha256": "E845BD7197EDC2F447E7701B0B3DD5456051AF6B0347EF249A940675C384EFB5"
+    },
+    {
+      "path": "out\\native\\udp2raw-protocol-test.exe",
+      "sha256": "62A1FCF82D1560DA1E69089121FA8872F312D648E3B5864DEE5011E742BBE327"
+    }
+  ],
+  "results": [
+    {
+      "name": "mesh-connections",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 96477,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\mesh-connections.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshConnectionTests",
+        "-c",
+        "Release"
+      ]
+    },
+    {
+      "name": "mesh-regression",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 22029,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\mesh-regression.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshTests",
+        "-c",
+        "Release"
+      ]
+    },
+    {
+      "name": "managed-router",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 111019,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\managed-router.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\managed-router.json"
+      ]
+    },
+    {
+      "name": "delivery-feedback-router",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 24121,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\delivery-feedback-router.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--feedback-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\delivery-feedback-router.json"
+      ]
+    },
+    {
+      "name": "standby-router",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 46036,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-router.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--standby-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-router.json"
+      ]
+    },
+    {
+      "name": "diagnostic-control",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 11199,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-control.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--diagnostic-control-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-control.json"
+      ]
+    },
+    {
+      "name": "diagnostic-readiness",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 6279,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-readiness.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--diagnostic-readiness-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-readiness.json"
+      ]
+    },
+    {
+      "name": "diagnostic-session-model",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 5027,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-session-model.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--diagnostic-session-model-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-session-model.json"
+      ]
+    },
+    {
+      "name": "quality-assessment-model",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 5338,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-assessment-model.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--quality-assessment-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-assessment-model.json"
+      ]
+    },
+    {
+      "name": "quality-agreement-model",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 4662,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-agreement-model.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.ManagedPathTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--quality-agreement-only",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-agreement-model.json"
+      ]
+    },
+    {
+      "name": "quality-udp-retain",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 136858,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-udp-retain.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-udp-retain.json",
+        "--quality-udp-retain-only"
+      ]
+    },
+    {
+      "name": "quality-native-benefit",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 133753,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-native-benefit.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-native-benefit.json",
+        "--quality-native-benefit-only"
+      ]
+    },
+    {
+      "name": "quality-native-fault",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 148399,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-native-fault.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\quality-native-fault.json",
+        "--quality-native-fault-only"
+      ]
+    },
+    {
+      "name": "diagnostic-udp-product",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 128920,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-udp-product.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-udp-product.json",
+        "--diagnostic-runner-only"
+      ]
+    },
+    {
+      "name": "diagnostic-native-product",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 132893,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-native-product.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-native-product.json",
+        "--native-diagnostic-runner-only"
+      ]
+    },
+    {
+      "name": "diagnostic-business-protection",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 47489,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-business-protection.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\diagnostic-business-protection.json",
+        "--diagnostic-busy-only"
+      ]
+    },
+    {
+      "name": "standby-native-runner",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 138307,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-native-runner.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-native-runner.json",
+        "--standby-only"
+      ]
+    },
+    {
+      "name": "standby-udp-runner",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 54298,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-udp-runner.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\standby-udp-runner.json",
+        "--udp-standby-only"
+      ]
+    },
+    {
+      "name": "delivery-feedback-runner",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 127924,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\delivery-feedback-runner.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.MeshRunnerTraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--native",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\out\\native\\udp2raw-protocol-test.exe",
+        "--rounds",
+        "1",
+        "--output",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\delivery-feedback-runner.json",
+        "--feedback-only"
+      ]
+    },
+    {
+      "name": "udp-foundation",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 25962,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-foundation.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release"
+      ]
+    },
+    {
+      "name": "shared-enhancement-admission",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 3595,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\shared-enhancement-admission.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--enhancement",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\enhancement-admission.json"
+      ]
+    },
+    {
+      "name": "udp-managed",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 111339,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-managed.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--managed",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-managed.json"
+      ]
+    },
+    {
+      "name": "udp-exploration",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 78518,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--probability",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration.json"
+      ]
+    },
+    {
+      "name": "udp-exploration-boundaries",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 37720,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration-boundaries.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--probability-boundaries",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration-boundaries.json"
+      ]
+    },
+    {
+      "name": "udp-exploration-intersection-model",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 4654,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration-intersection-model.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.TraversalTests",
+        "-c",
+        "Release",
+        "--no-build",
+        "--",
+        "--probability-model",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\udp-exploration-model.json"
+      ]
+    },
+    {
+      "name": "egress-correctness",
+      "exitCode": 0,
+      "status": "Pass",
+      "elapsedMs": 19499,
+      "log": "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\egress-correctness.txt",
+      "command": [
+        "dotnet",
+        "run",
+        "--project",
+        "tests\\StreamLink.EgressTests",
+        "-c",
+        "Release",
+        "--",
+        "D:\\Codex_workspace\\UDP2RAW\\product\\artifacts\\rc1-validation-tail-1e7928e\\egress-correctness.json",
+        "--correctness-only"
+      ]
+    }
+  ],
+  "gate": "Local only: no driver, no NAT, no release claim",
+  "remainingGates": [
+    "M1 controlled two-Windows 30 rounds and WAN",
+    "M2 SO + business",
+    "M3 product integration",
+    "M4 Wintun UDP_DIRECT",
+    "M5-M9"
+  ]
+}

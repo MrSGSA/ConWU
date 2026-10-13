@@ -1,0 +1,226 @@
+{
+  "status": "Pass",
+  "checks": 58,
+  "rows": [
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "b70b8c34-232f-4d3a-8716-5c814c66d36f"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "preserved-local-port",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "962dd9b9-f03b-4b50-b3d0-f3344eac7712"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "stable-observed-port",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "314fe504-753c-4911-9678-bcf65aa7d608"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "observed-port-block",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 8,
+      "ModelId": "b749c27b-1215-4b8c-b033-2bd489bb964f"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 2,
+      "ModelId": "f3f0985c-5795-44d2-92c7-71aa43467428"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 9,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "00710a99-4f2a-4666-9636-ab11fd197498"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "3cbbe7eb-19e5-48de-a18c-b364fa18f4b5"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "5438c1f4-be78-4163-82da-d990fe90fd21"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "8ac13471-28bd-424d-b230-4421b29ef1aa"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 1,
+      "ModelId": "18e68c8c-43d5-4726-8c6f-48b97c30a0c1"
+    },
+    {
+      "randomAllocationSeeds": 1000,
+      "admittedModels": 0,
+      "interpretation": "predictor false admission fixture, not NAT traversal success probability"
+    },
+    {
+      "State": "QualifiedLocalModel",
+      "Reason": "held-out-coverage-only-not-path-success",
+      "Model": "fixed-step",
+      "TrainingWindows": 10,
+      "ValidationWindows": 10,
+      "TrainingHits": 10,
+      "ValidationHits": 10,
+      "TrainingInterference": 4,
+      "ValidationInterference": 3,
+      "MaximumPorts": 2,
+      "ModelId": "6d83b110-ac07-40e7-b6ed-66ca3def1277"
+    },
+    {
+      "predictive": false,
+      "results": [
+        {
+          "Success": false,
+          "Endpoint": "",
+          "Failure": "no-verified-path",
+          "SentPackets": 8,
+          "AuthenticatedPackets": 0,
+          "LearnedCandidates": 0,
+          "ElapsedMs": 1631.6099
+        },
+        {
+          "Success": false,
+          "Endpoint": "",
+          "Failure": "no-verified-path",
+          "SentPackets": 8,
+          "AuthenticatedPackets": 0,
+          "LearnedCandidates": 0,
+          "ElapsedMs": 1623.333
+        }
+      ],
+      "candidates": [
+        "192.0.2.2:46000"
+      ],
+      "actualMappingsA": 1,
+      "actualMappingsB": 2,
+      "controlPackets": 16,
+      "socketA": "dcf6aa39-75a0-4781-bead-29cd96162b35",
+      "socketB": "84944878-08bb-4e22-9b24-ad8303636e22",
+      "actualUdpSockets": false,
+      "rawNetwork": "NAT model",
+      "realUdpTraversal": true,
+      "meshRunner": false
+    },
+    {
+      "predictive": true,
+      "results": [
+        {
+          "Success": true,
+          "Endpoint": "192.0.2.2:46007",
+          "Failure": "",
+          "SentPackets": 8,
+          "AuthenticatedPackets": 5,
+          "LearnedCandidates": 0,
+          "ElapsedMs": 413.922
+        },
+        {
+          "Success": true,
+          "Endpoint": "192.0.2.1:50000",
+          "Failure": "",
+          "SentPackets": 5,
+          "AuthenticatedPackets": 5,
+          "LearnedCandidates": 0,
+          "ElapsedMs": 413.8483
+        }
+      ],
+      "candidates": [
+        "192.0.2.2:46007",
+        "192.0.2.2:46014"
+      ],
+      "actualMappingsA": 1,
+      "actualMappingsB": 2,
+      "controlPackets": 13,
+      "socketA": "d25222a7-d693-40cb-901d-a8f86637e4a7",
+      "socketB": "2942a1f9-1a53-4a02-a4a8-18c2a5c0adc7",
+      "actualUdpSockets": false,
+      "rawNetwork": "NAT model",
+      "realUdpTraversal": true,
+      "meshRunner": false
+    }
+  ],
+  "scope": "deterministic allocation evidence and in-memory NAT running real UdpTraversal/MeshLink; no public NAT, native TCP I/O, physical Windows or Wintun"
+}

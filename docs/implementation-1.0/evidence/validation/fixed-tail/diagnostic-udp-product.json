@@ -1,0 +1,1241 @@
+{
+  "status": "Pass",
+  "checks": 10,
+  "rows": [
+    {
+      "mode": "ipv6",
+      "connectedMs": 9251,
+      "elapsedMs": 124232,
+      "paths": [
+        [
+          {
+            "LeaseId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+            "local": "[::1]:62829",
+            "remote": "[::1]:62426"
+          },
+          {
+            "LeaseId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+            "local": "[::1]:58468",
+            "remote": "[::1]:51040"
+          }
+        ],
+        [
+          {
+            "LeaseId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+            "local": "[::1]:62426",
+            "remote": "[::1]:62829"
+          },
+          {
+            "LeaseId": "076184b1-f51d-4486-911d-b07a680f4a31",
+            "local": "[::1]:51040",
+            "remote": "[::1]:58468"
+          }
+        ]
+      ],
+      "egress": [
+        {
+          "Mbps": 10,
+          "QueuedBytes": 0,
+          "PeakQueuedBytes": 5568,
+          "QueueLimitBytes": 25000,
+          "SentBytes": 4375832,
+          "OverflowDrops": 0,
+          "Cancelled": 0,
+          "SendFailures": 0,
+          "MaximumQueueMs": 2.0988,
+          "QueueP95Ms": 0.25,
+          "PriorityPackets": 529,
+          "Peers": [
+            {
+              "Peer": "466faea0b9e04fa29d95cb1bfb89e703",
+              "SentBytes": 4375832,
+              "Packets": 3599,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            }
+          ],
+          "Failure": "",
+          "TimerWaits": 0,
+          "TimerWaitMs": 0,
+          "BackloggedTokenOverrunBytes": 150790523.125,
+          "BurstBytes": 6144,
+          "WorkerPriority": "AboveNormal",
+          "OldestQueuedMs": 0,
+          "Accounting": {
+            "Offered": {
+              "Packets": 3599,
+              "Bytes": 4375832
+            },
+            "Accepted": {
+              "Packets": 3599,
+              "Bytes": 4375832
+            },
+            "Sent": {
+              "Packets": 3599,
+              "Bytes": 4375832
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "Outlets": [
+            {
+              "Outlet": "Unresolved",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 0,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 0,
+              "Peers": [
+                {
+                  "Peer": "466faea0b9e04fa29d95cb1bfb89e703",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            },
+            {
+              "Outlet": "WindowsInterface:0018000000000000",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 5568,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 4375832,
+              "Peers": [
+                {
+                  "Peer": "466faea0b9e04fa29d95cb1bfb89e703",
+                  "SentBytes": 4375832,
+                  "Packets": 3599,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            }
+          ],
+          "RateScope": "WholeDevice",
+          "RetiredOutletSentBytes": 0
+        },
+        {
+          "Mbps": 10,
+          "QueuedBytes": 0,
+          "PeakQueuedBytes": 4176,
+          "QueueLimitBytes": 25000,
+          "SentBytes": 4336424,
+          "OverflowDrops": 0,
+          "Cancelled": 0,
+          "SendFailures": 0,
+          "MaximumQueueMs": 21.2129,
+          "QueueP95Ms": 0.25,
+          "PriorityPackets": 408,
+          "Peers": [
+            {
+              "Peer": "35e82aeaaafa492abdfa5425a7dcaa0a",
+              "SentBytes": 4336424,
+              "Packets": 3476,
+              "OverflowDrops": 0,
+              "Cancelled": 0,
+              "SendFailures": 0
+            }
+          ],
+          "Failure": "",
+          "TimerWaits": 0,
+          "TimerWaitMs": 0,
+          "BackloggedTokenOverrunBytes": 150753176.5,
+          "BurstBytes": 6144,
+          "WorkerPriority": "AboveNormal",
+          "OldestQueuedMs": 0,
+          "Accounting": {
+            "Offered": {
+              "Packets": 3476,
+              "Bytes": 4336424
+            },
+            "Accepted": {
+              "Packets": 3476,
+              "Bytes": 4336424
+            },
+            "Sent": {
+              "Packets": 3476,
+              "Bytes": 4336424
+            },
+            "CapacityRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "UnavailableRejected": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Evicted": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Cancelled": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Failed": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Queued": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "InFlight": {
+              "Packets": 0,
+              "Bytes": 0
+            },
+            "Conserved": true
+          },
+          "Outlets": [
+            {
+              "Outlet": "Unresolved",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 0,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 0,
+              "Peers": [
+                {
+                  "Peer": "35e82aeaaafa492abdfa5425a7dcaa0a",
+                  "SentBytes": 0,
+                  "Packets": 0,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            },
+            {
+              "Outlet": "WindowsInterface:0018000000000000",
+              "QueuedBytes": 0,
+              "PeakQueuedBytes": 4176,
+              "QueueLimitBytes": 25000,
+              "SentBytes": 4336424,
+              "Peers": [
+                {
+                  "Peer": "35e82aeaaafa492abdfa5425a7dcaa0a",
+                  "SentBytes": 4336424,
+                  "Packets": 3476,
+                  "OverflowDrops": 0,
+                  "Cancelled": 0,
+                  "SendFailures": 0
+                }
+              ]
+            }
+          ],
+          "RateScope": "WholeDevice",
+          "RetiredOutletSentBytes": 0
+        }
+      ],
+      "diagnostics": [
+        {
+          "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+          "State": "Done",
+          "Leg": 11,
+          "TargetMbps": 1,
+          "Failure": "",
+          "Cost": {
+            "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+            "WirePackets": 3068,
+            "WireBytes": 4270656,
+            "Denied": 0,
+            "ElapsedMs": 82488,
+            "Active": false
+          },
+          "Windows": [
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 0,
+              "SourceSlot": 1,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.013,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.7639,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 0,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 0,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1031,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139022468
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 1,
+              "SourceSlot": 1,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.039,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 0.6779,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 1,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1063,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139029328
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 2,
+              "SourceSlot": 1,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 508,
+                "Rejected": 0,
+                "ElapsedMs": 5001.445,
+                "AdmittedPackets": 508,
+                "AdmittedBytes": 707136,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9442,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 2,
+                "ExpectedPackets": 508,
+                "ReceivedPackets": 508,
+                "ReceivedPayloadBytes": 650240,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1078,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139036187
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 3,
+              "SourceSlot": 1,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.589,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 1.1519,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 3,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1062,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139042937
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 4,
+              "SourceSlot": 1,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.235,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9538,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 4,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1062,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139049687
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 5,
+              "SourceSlot": 1,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.02,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 2.9233,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 5,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1063,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139056453
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 6,
+              "SourceSlot": 2,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5001.93,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 1.2173,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 6,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139063312
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 7,
+              "SourceSlot": 2,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.136,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.8607,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 7,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1093,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139070265
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 8,
+              "SourceSlot": 2,
+              "PathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+              "ResourceId": "4254d28b-f845-4322-a0ad-a0a853556be2",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.873,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.6583,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 8,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139077125
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 9,
+              "SourceSlot": 2,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.078,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.5838,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 9,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 1,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139083984
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 10,
+              "SourceSlot": 2,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.344,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 0.8141,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 10,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139090843
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 11,
+              "SourceSlot": 2,
+              "PathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+              "ResourceId": "c2b8ba6b-b580-4a10-80e2-de7416d4b244",
+              "NetworkGeneration": "0f341781-deac-4537-abcc-4831989c2990",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 507,
+                "Rejected": 0,
+                "ElapsedMs": 5000.442,
+                "AdmittedPackets": 507,
+                "AdmittedBytes": 705744,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9114,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 11,
+                "ExpectedPackets": 507,
+                "ReceivedPackets": 507,
+                "ReceivedPayloadBytes": 648960,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1016,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139097703
+            }
+          ]
+        },
+        {
+          "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+          "State": "Done",
+          "Leg": 11,
+          "TargetMbps": 1,
+          "Failure": "",
+          "Cost": {
+            "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+            "WirePackets": 3067,
+            "WireBytes": 4269264,
+            "Denied": 0,
+            "ElapsedMs": 82803,
+            "Active": false
+          },
+          "Windows": [
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 0,
+              "SourceSlot": 1,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.013,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.7639,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 0,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 0,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1031,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139022515
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 1,
+              "SourceSlot": 1,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.039,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 0.6779,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 1,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1063,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139029359
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 2,
+              "SourceSlot": 1,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 508,
+                "Rejected": 0,
+                "ElapsedMs": 5001.445,
+                "AdmittedPackets": 508,
+                "AdmittedBytes": 707136,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9442,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 2,
+                "ExpectedPackets": 508,
+                "ReceivedPackets": 508,
+                "ReceivedPayloadBytes": 650240,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1078,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139036203
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 3,
+              "SourceSlot": 1,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.589,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 1.1519,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 3,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1062,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139042953
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 4,
+              "SourceSlot": 1,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.235,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9538,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 4,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1062,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139049718
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 5,
+              "SourceSlot": 1,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.02,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 2.9233,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 5,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1063,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139056484
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 6,
+              "SourceSlot": 2,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5001.93,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 1.2173,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 6,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139063218
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 7,
+              "SourceSlot": 2,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.136,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.8607,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 7,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1093,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139070187
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 8,
+              "SourceSlot": 2,
+              "PathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+              "ResourceId": "f8ca9d86-9655-4557-8134-479e0e47a2a7",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.873,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.6583,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 8,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139077031
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 9,
+              "SourceSlot": 2,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.078,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.5838,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 9,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 1,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139083890
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 10,
+              "SourceSlot": 2,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 512,
+                "Rejected": 0,
+                "ElapsedMs": 5000.344,
+                "AdmittedPackets": 512,
+                "AdmittedBytes": 712704,
+                "WireDenied": 0,
+                "LoadedRttSamples": 7,
+                "LoadedRttP95Ms": 0.8141,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 10,
+                "ExpectedPackets": 512,
+                "ReceivedPackets": 512,
+                "ReceivedPayloadBytes": 655360,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1000,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139090750
+            },
+            {
+              "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+              "Leg": 11,
+              "SourceSlot": 2,
+              "PathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+              "ResourceId": "076184b1-f51d-4486-911d-b07a680f4a31",
+              "NetworkGeneration": "2a7337df-3f06-4371-bc8e-a77c632178d2",
+              "TargetMbps": 1,
+              "Source": {
+                "Accepted": 507,
+                "Rejected": 0,
+                "ElapsedMs": 5000.442,
+                "AdmittedPackets": 507,
+                "AdmittedBytes": 705744,
+                "WireDenied": 0,
+                "LoadedRttSamples": 6,
+                "LoadedRttP95Ms": 0.9114,
+                "Result": "Completed"
+              },
+              "Receipt": {
+                "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+                "Leg": 11,
+                "ExpectedPackets": 507,
+                "ReceivedPackets": 507,
+                "ReceivedPayloadBytes": 648960,
+                "DeficitAtCutoffPercent": 0,
+                "Duplicates": 0,
+                "Reordered": 0,
+                "MaximumReorderDistance": 0,
+                "LongestAbsentRun": 0,
+                "RelativeArrivalP95Ms": 1,
+                "RelativelyDelayedOver20Ms": 0,
+                "ReceiverSettleMs": 1016,
+                "Result": "ReportedAtCutoff",
+                "Scope": "Authenticated diagnostic ingress at receipt cutoff; relative arrival delay is measured against the first sample, not absolute one-way latency or application delivery"
+              },
+              "ObservedMs": 139097609
+            }
+          ]
+        }
+      ],
+      "quality": [
+        {
+          "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+          "ActivePathId": "4eaf44a3-8773-4f15-bf64-90091bf7b870",
+          "CandidatePathId": "bebc9427-06d7-4e5c-9d1a-19a2e6c14471",
+          "TargetMbps": 1,
+          "CandidateQualified": true,
+          "StableBenefit": false,
+          "Result": "QualityObservedDiagnostic",
+          "Reason": "RetainHealthyActiveNoStableBenefit",
+          "AssessedMs": 139098078,
+          "EvidenceDigest": "48BF83EC9E987CC9B7BACD736A71F1645F9A29FB98AF134BB496C2547256E928",
+          "Profile": "LegacyDiagnostic",
+          "Scope": "Three matched diagnostic windows per direction, authenticated ingress at cutoff and loaded round trips; not absolute one-way latency or application delivery"
+        },
+        {
+          "SessionId": "092d05a6-98d9-4895-9471-b19024fa19d2",
+          "ActivePathId": "a1371839-3627-42c1-b2bd-7f2506ea9401",
+          "CandidatePathId": "1a16c47b-e7e6-4fce-83ef-35fa861c91ce",
+          "TargetMbps": 1,
+          "CandidateQualified": true,
+          "StableBenefit": false,
+          "Result": "QualityObservedDiagnostic",
+          "Reason": "RetainHealthyActiveNoStableBenefit",
+          "AssessedMs": 139098406,
+          "EvidenceDigest": "48BF83EC9E987CC9B7BACD736A71F1645F9A29FB98AF134BB496C2547256E928",
+          "Profile": "LegacyDiagnostic",
+          "Scope": "Three matched diagnostic windows per direction, authenticated ingress at cutoff and loaded round trips; not absolute one-way latency or application delivery"
+        }
+      ],
+      "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+    }
+  ],
+  "scope": "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices"
+}

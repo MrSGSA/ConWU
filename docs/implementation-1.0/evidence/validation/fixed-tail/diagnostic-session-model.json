@@ -1,0 +1,38 @@
+{
+  "status": "Pass",
+  "checks": 1520,
+  "diagnostic": {
+    "cases": 390,
+    "scope": "deterministic protocol/control/receipt models with instant synthetic source results; no sockets, native I/O or capacity proof"
+  },
+  "loaded": {
+    "rows": [
+      {
+        "mode": "correct",
+        "probes": 4,
+        "samples": 4
+      },
+      {
+        "mode": "wrong-leg",
+        "probes": 10,
+        "samples": 0
+      },
+      {
+        "mode": "baseline",
+        "probes": 10,
+        "samples": 0
+      },
+      {
+        "mode": "unmarked",
+        "probes": 10,
+        "samples": 0
+      },
+      {
+        "mode": "denied",
+        "probes": 10,
+        "samples": 0
+      }
+    ],
+    "scope": "deterministic diagnostic timing/phase model; no socket, driver, network capacity or deadline delivery claim"
+  }
+}

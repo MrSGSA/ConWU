@@ -7,3 +7,7 @@
 本机实际使用同一已固定官方Wintun组件，新建隔离虚拟网卡，真实Windows UDP应用→Wintun→MeshLink→模拟remote，再返回真实应用；ABI2及读计数通过，退出后隔离地址/网卡及精确临时规则已移除。共47项mesh/native检查通过。12项契约/父子/默认/VPN/ownership/取消模型及真实只读路由表通过。此处真实I/O只证明官方provider，没有自研内核驱动/WAN/FakeTCP证据。
 
 证据 `evidence/adapter/` 保留bridge与官方组件hash、环境和原日志。MinGW构建桥接DLL成功，已有官方头pragma/函数指针转换警告保留，不冒充零警告。后续100次停启/并发关闭、UI警告及其他拓扑继续补齐；自研provider没有DRV-02 Gate时不能通过RequireProduction替换官方默认。
+
+## 2026-10-14 后续证据与未通过项
+
+官方适配器读/写/统计/取消和释放已加并发句柄保护，取消不提前释放仍使用的句柄；源码ABI仍为2。最新1073项Mesh回归包含真实Windows UDP应用→Wintun→MeshLink→原UDP应用返回，单次清理通过。100次并发停启未完成：即时接口消失断言Fail，诊断等待再次超时。所有Fail保留在 `evidence/adapter/rc1-final/`；尝试的PnP确认等待及额外identity接口已撤回，不靠扩大时间门槛取得通过。单次成功不能替代该生命周期Gate，自研内核验证仍Blocked。

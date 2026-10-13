@@ -1,0 +1,413 @@
+{
+  "status": "Pass",
+  "checks": 78,
+  "rows": [
+    {
+      "elapsed": 3.0108398,
+      "search": 151,
+      "maintenance": 36,
+      "injected": 187,
+      "budgets": [
+        {
+          "HandshakePackets": 23,
+          "HandshakeBytes": 1472,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 171,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 28,
+          "HandshakeBytes": 1792,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 166,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 27,
+          "HandshakeBytes": 1728,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 167,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 26,
+          "HandshakeBytes": 1664,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 168,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 23,
+          "HandshakeBytes": 1472,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 171,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 24,
+          "HandshakeBytes": 1536,
+          "MaintenancePackets": 0,
+          "MaintenanceBytes": 0,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 170,
+          "Selected": false,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        },
+        {
+          "HandshakePackets": 0,
+          "HandshakeBytes": 0,
+          "MaintenancePackets": 36,
+          "MaintenanceBytes": 2304,
+          "BusinessPackets": 0,
+          "BusinessBytes": 0,
+          "Denied": 158,
+          "Selected": true,
+          "Standby": false,
+          "DiagnosticPackets": 0,
+          "DiagnosticBytes": 0
+        }
+      ],
+      "finalInjectionTest": true,
+      "realTcpHelper": true,
+      "rawIo": "memory",
+      "independentPhysicalWindows": false
+    },
+    {
+      "rows": [
+        {
+          "mode": "ipv6",
+          "connectedMs": 7583,
+          "elapsedMs": 8614,
+          "Packets": 58,
+          "MaximumBytes": 1466,
+          "paths": [
+            [
+              {
+                "LeaseId": "bd115c5d-8e0a-4a08-9570-322f90cb0ec4",
+                "AttachId": "6b12ba35-bc5c-4e43-905f-f18288539573",
+                "local": "[::1]:57659",
+                "remote": "[::1]:60633"
+              }
+            ],
+            [
+              {
+                "LeaseId": "fbfe02c6-6709-4a56-9938-bdbee488f1da",
+                "AttachId": "c3f7cd1f-a49c-4603-a84e-16b63c63d841",
+                "local": "[::1]:60633",
+                "remote": "[::1]:57659"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 19,
+                "HandshakeBytes": 8326,
+                "MaintenancePackets": 10,
+                "MaintenanceBytes": 4132,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 1,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 16,
+                "HandshakeBytes": 7802,
+                "MaintenancePackets": 11,
+                "MaintenanceBytes": 4398,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "ipv6-unreachable",
+          "connectedMs": 18319,
+          "elapsedMs": 19414,
+          "Packets": 73,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "2d0c814f-97eb-4e1d-843d-cbf9700dfd42",
+                "AttachId": "4bb858b5-3679-49bb-85aa-81da01daf4c8",
+                "local": "127.0.0.1:57214",
+                "remote": "127.0.0.1:57215"
+              }
+            ],
+            [
+              {
+                "LeaseId": "fdd56a0e-b934-43a2-b4ae-d4852deb7856",
+                "AttachId": "0ea39289-a7e9-4e00-8531-7d0767b8b588",
+                "local": "127.0.0.1:57215",
+                "remote": "127.0.0.1:57214"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 20,
+                "HandshakeBytes": 8112,
+                "MaintenancePackets": 12,
+                "MaintenanceBytes": 4264,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 15,
+                "HandshakeBytes": 6180,
+                "MaintenancePackets": 14,
+                "MaintenanceBytes": 5812,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-native-abi",
+          "connectedMs": 7439,
+          "elapsedMs": 8563,
+          "Packets": 56,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "d62c0f3e-66e0-406b-944c-61f225bb4cb7",
+                "AttachId": "d46a3f2b-9aa7-4dcb-96a6-24a233567baa",
+                "local": "127.0.0.1:64520",
+                "remote": "127.0.0.1:59101"
+              }
+            ],
+            [
+              {
+                "LeaseId": "2b68ad55-0e62-413e-a8bc-23bade971bed",
+                "AttachId": "57e6a288-febe-4cc4-aef8-88c658ccf8ee",
+                "local": "127.0.0.1:59101",
+                "remote": "127.0.0.1:64520"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 7700,
+                "MaintenancePackets": 11,
+                "MaintenanceBytes": 4098,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 13,
+                "HandshakeBytes": 5768,
+                "MaintenancePackets": 12,
+                "MaintenanceBytes": 4344,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-service",
+          "connectedMs": 7876,
+          "elapsedMs": 8967,
+          "Packets": 58,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "56ff5356-8e1e-49c2-bf58-03f767898b76",
+                "AttachId": "5cd7d92c-8779-4af5-8df8-3c6f40c31f9f",
+                "local": "127.0.0.1:55265",
+                "remote": "127.0.0.1:64483"
+              }
+            ],
+            [
+              {
+                "LeaseId": "476dffc1-518c-49a3-97b2-08185fe135bc",
+                "AttachId": "9c0d589b-1295-4d76-82d0-e915bb8a1632",
+                "local": "127.0.0.1:64483",
+                "remote": "127.0.0.1:55265"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 7700,
+                "MaintenancePackets": 11,
+                "MaintenanceBytes": 4098,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 1,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 14,
+                "HandshakeBytes": 7070,
+                "MaintenancePackets": 13,
+                "MaintenanceBytes": 4510,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        }
+      ],
+      "actualNative": true,
+      "realTcpHelpers": true,
+      "realHttps": true,
+      "rawCaptureSimulated": true,
+      "realWinDivertIo": false,
+      "realNat": false,
+      "wintun": false
+    }
+  ],
+  "scope": "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices"
+}

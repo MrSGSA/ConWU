@@ -1,0 +1,7 @@
+{
+  "status": "Pass",
+  "checks": 978,
+  "standby": {
+    "scope": "real UDP loopback/Router/MeshLink with retained resources, no Wintun/native TCP/WAN"
+  }
+}

@@ -1,0 +1,464 @@
+{
+  "status": "Pass",
+  "checks": 125,
+  "rows": [
+    {
+      "rows": [
+        {
+          "mode": "ipv6",
+          "connectedMs": 9344,
+          "elapsedMs": 13480,
+          "Packets": 73,
+          "MaximumBytes": 1466,
+          "paths": [
+            [
+              {
+                "LeaseId": "5b01ec8a-c4ae-4589-b629-5888da9b00c2",
+                "AttachId": "f31adf75-6fa9-44b0-bf7e-d0e3813e3e79",
+                "local": "[::1]:56224",
+                "remote": "[::1]:55363"
+              }
+            ],
+            [
+              {
+                "LeaseId": "d4bb78c6-04fb-4be1-9466-17dbf2f08bb4",
+                "AttachId": "bd9fe835-b773-409e-91e1-3d51c085f633",
+                "local": "[::1]:55363",
+                "remote": "[::1]:56224"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 8060,
+                "MaintenancePackets": 19,
+                "MaintenanceBytes": 9470,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 13,
+                "HandshakeBytes": 6028,
+                "MaintenancePackets": 21,
+                "MaintenanceBytes": 11058,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "ipv6-unreachable",
+          "connectedMs": 18595,
+          "elapsedMs": 22884,
+          "Packets": 86,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "14f47eca-0606-4be6-965d-115e579a6385",
+                "AttachId": "8fa31977-fadf-4ace-8efc-3680fdb9cc50",
+                "local": "127.0.0.1:59050",
+                "remote": "127.0.0.1:59055"
+              }
+            ],
+            [
+              {
+                "LeaseId": "47e0fe75-de52-4bc8-b993-7d46f7d35069",
+                "AttachId": "54fac3d9-3663-46d5-b1ae-946b34f9f4a5",
+                "local": "127.0.0.1:59055",
+                "remote": "127.0.0.1:59050"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 7700,
+                "MaintenancePackets": 21,
+                "MaintenanceBytes": 10558,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 13,
+                "HandshakeBytes": 5768,
+                "MaintenancePackets": 22,
+                "MaintenanceBytes": 10804,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-native-abi",
+          "connectedMs": 8950,
+          "elapsedMs": 12250,
+          "Packets": 73,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "a98e715e-b0ca-47e2-b261-790f90286410",
+                "AttachId": "f030e47d-0e6e-40f8-b48c-1af7ca07923d",
+                "local": "127.0.0.1:64399",
+                "remote": "127.0.0.1:63491"
+              }
+            ],
+            [
+              {
+                "LeaseId": "57651a22-e19f-4b5b-b1fd-e8958ed3524e",
+                "AttachId": "27552f09-19fb-4ad4-9bbd-a39b2f1f6fda",
+                "local": "127.0.0.1:63491",
+                "remote": "127.0.0.1:64399"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 19,
+                "HandshakeBytes": 8060,
+                "MaintenancePackets": 18,
+                "MaintenanceBytes": 7788,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 14,
+                "HandshakeBytes": 6120,
+                "MaintenancePackets": 20,
+                "MaintenanceBytes": 9336,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-service",
+          "connectedMs": 8937,
+          "elapsedMs": 13201,
+          "Packets": 67,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "d324828d-e002-4b4c-a867-ff6866f195cc",
+                "AttachId": "d2d34c09-b60d-49bf-a799-dc34b59f25b3",
+                "local": "127.0.0.1:64088",
+                "remote": "127.0.0.1:63928"
+              }
+            ],
+            [
+              {
+                "LeaseId": "bf7d8fc7-15ca-4d37-9ca0-23d6e36faef8",
+                "AttachId": "c8606e54-3312-4765-9e3a-5698ab7415ad",
+                "local": "127.0.0.1:63928",
+                "remote": "127.0.0.1:64088"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 17,
+                "HandshakeBytes": 7640,
+                "MaintenancePackets": 17,
+                "MaintenanceBytes": 8502,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 12,
+                "HandshakeBytes": 5716,
+                "MaintenancePackets": 19,
+                "MaintenanceBytes": 10050,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        }
+      ],
+      "actualNative": true,
+      "realTcpHelpers": true,
+      "realHttps": true,
+      "rawCaptureSimulated": true,
+      "realWinDivertIo": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "rounds": 1,
+      "pmtu": {
+        "requestedUserMtu": 1280,
+        "readbackUserMtu": 1280,
+        "dontFragment": 1,
+        "oversizeRejected": false,
+        "wirePmtuVerified": false,
+        "initialFailurePreserved": "m7-ipv6-udp-initial-pmtu-20261011.json"
+      },
+      "runners": [
+        {
+          "mode": "ipv6",
+          "connectedMs": 8923,
+          "elapsedMs": 12217,
+          "paths": [
+            [
+              {
+                "LeaseId": "28681e0f-7d9f-43f4-ae44-389af278ad14",
+                "local": "[::1]:50950",
+                "remote": "[::1]:52649"
+              }
+            ],
+            [
+              {
+                "LeaseId": "fcf75a0f-4215-47c1-9b8c-034e9e0590f4",
+                "local": "[::1]:52649",
+                "remote": "[::1]:50950"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "ipv6-unreachable",
+          "connectedMs": 16430,
+          "elapsedMs": 19823,
+          "paths": [
+            [
+              {
+                "LeaseId": "d657b08b-acbb-49d0-ad91-c0610747a22e",
+                "local": "127.0.0.1:58149",
+                "remote": "127.0.0.1:58151"
+              }
+            ],
+            [
+              {
+                "LeaseId": "d611de03-6a9f-4e7a-a56f-e8d03f2bc98b",
+                "local": "127.0.0.1:58151",
+                "remote": "127.0.0.1:58149"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "old-peer",
+          "connectedMs": 8920,
+          "elapsedMs": 13184,
+          "paths": [
+            [
+              {
+                "LeaseId": "13fba9d3-806b-4891-889b-c3e8bb4d6f41",
+                "local": "127.0.0.1:50734",
+                "remote": "127.0.0.1:58914"
+              }
+            ],
+            [
+              {
+                "LeaseId": "34bd14df-0c36-4ae4-9b49-ffe7bcbb3edf",
+                "local": "127.0.0.1:58914",
+                "remote": "127.0.0.1:50734"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "old-service",
+          "connectedMs": 8928,
+          "elapsedMs": 13164,
+          "paths": [
+            [
+              {
+                "LeaseId": "e068548d-84a5-4583-becd-7f78b144a945",
+                "local": "127.0.0.1:61427",
+                "remote": "127.0.0.1:65127"
+              }
+            ],
+            [
+              {
+                "LeaseId": "bc2bfe21-fdee-4de1-8fca-96e7e9e0ad6a",
+                "local": "127.0.0.1:65127",
+                "remote": "127.0.0.1:61427"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        }
+      ],
+      "realIPv6Sockets": true,
+      "realHttps": true,
+      "realNat": false,
+      "wintun": false,
+      "nativeFakeTcpIpv6": false
+    }
+  ],
+  "scope": "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices"
+}

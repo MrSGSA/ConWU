@@ -1,0 +1,2 @@
+BLOCKED ordinary-token launch: Win32=267; real non-elevated desktop/other-user gate not passed. Administrator fixture checks continue independently.
+{"scope":"isolated Windows control worker; no driver or production service","checks":21,"failures":0,"status":"Pass"}

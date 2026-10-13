@@ -1,0 +1,171 @@
+{
+  "originalManifest": "rc1-validation-b47a3c99/manifest.json",
+  "originalStatus": "Fail",
+  "startedCommit": "b47a3c99e3566e532e47180fa2330596ef03053f",
+  "endedCommit": "1e7928e",
+  "fixedCandidateEvidence": false,
+  "reason": "The long suite overlapped subsequent source edits/builds; original start-only clean metadata is not evidence of an immutable b47a3c99 tree for later tests. Final mesh-connections failed because of an in-progress CandidateLog compilation error, fixed subsequently. Preserve original Fail; separately record clean-head tail validation and package acceptance.",
+  "results": [
+    {
+      "name": "native-build",
+      "status": "Pass",
+      "elapsedMs": 12704
+    },
+    {
+      "name": "network-wake",
+      "status": "Pass",
+      "elapsedMs": 18275
+    },
+    {
+      "name": "tcp-mapping-wake",
+      "status": "Pass",
+      "elapsedMs": 7291
+    },
+    {
+      "name": "legacy-native-wire",
+      "status": "Pass",
+      "elapsedMs": 7430
+    },
+    {
+      "name": "legacy-parent-wire",
+      "status": "Pass",
+      "elapsedMs": 7487
+    },
+    {
+      "name": "legacy-native-control",
+      "status": "Pass",
+      "elapsedMs": 400227
+    },
+    {
+      "name": "endpoint-lifetime",
+      "status": "Pass",
+      "elapsedMs": 44731
+    },
+    {
+      "name": "native-managed",
+      "status": "Pass",
+      "elapsedMs": 39334
+    },
+    {
+      "name": "native-negative",
+      "status": "Pass",
+      "elapsedMs": 4749
+    },
+    {
+      "name": "native-prepared-so",
+      "status": "Pass",
+      "elapsedMs": 49518
+    },
+    {
+      "name": "native-router",
+      "status": "Pass",
+      "elapsedMs": 72717
+    },
+    {
+      "name": "native-capture-broker",
+      "status": "Pass",
+      "elapsedMs": 112026
+    },
+    {
+      "name": "native-tcp-source-learning",
+      "status": "Pass",
+      "elapsedMs": 197426
+    },
+    {
+      "name": "network-scopes",
+      "status": "Pass",
+      "elapsedMs": 80834
+    },
+    {
+      "name": "native-port-window",
+      "status": "Pass",
+      "elapsedMs": 135379
+    },
+    {
+      "name": "native-port-window-wide",
+      "status": "Pass",
+      "elapsedMs": 18060
+    },
+    {
+      "name": "native-path-timeout",
+      "status": "Pass",
+      "elapsedMs": 10763
+    },
+    {
+      "name": "protocol-profile",
+      "status": "Pass",
+      "elapsedMs": 6984
+    },
+    {
+      "name": "mesh-watch",
+      "status": "Pass",
+      "elapsedMs": 40863
+    },
+    {
+      "name": "mesh-traversal-control",
+      "status": "Pass",
+      "elapsedMs": 89648
+    },
+    {
+      "name": "mesh-runner-traversal",
+      "status": "Pass",
+      "elapsedMs": 916579
+    },
+    {
+      "name": "mesh-runner-udp-exploration",
+      "status": "Pass",
+      "elapsedMs": 748154
+    },
+    {
+      "name": "mesh-runner-tcp-source-learning",
+      "status": "Pass",
+      "elapsedMs": 83878
+    },
+    {
+      "name": "tcp-endpoint-pool",
+      "status": "Pass",
+      "elapsedMs": 151756
+    },
+    {
+      "name": "mesh-runner-lifecycle",
+      "status": "Pass",
+      "elapsedMs": 409635
+    },
+    {
+      "name": "native-wire-budget",
+      "status": "Pass",
+      "elapsedMs": 76184
+    },
+    {
+      "name": "port-prediction-factory",
+      "status": "Pass",
+      "elapsedMs": 203556
+    },
+    {
+      "name": "port-prediction-runner",
+      "status": "Pass",
+      "elapsedMs": 1153610
+    },
+    {
+      "name": "port-prediction-model",
+      "status": "Pass",
+      "elapsedMs": 32842
+    },
+    {
+      "name": "tcp-shape-observer",
+      "status": "Pass",
+      "elapsedMs": 93390
+    },
+    {
+      "name": "mesh-nomination-model",
+      "status": "Pass",
+      "elapsedMs": 11865
+    },
+    {
+      "name": "mesh-connections",
+      "status": "Fail",
+      "elapsedMs": 10317
+    }
+  ],
+  "classification": "Local mechanisms/product harness only; protocol raw I/O and NAT fixtures are not WinDivert WAN evidence"
+}

@@ -1,0 +1,108 @@
+{
+  "status": "Pass",
+  "checks": 34,
+  "feedback": [
+    {
+      "mode": "ordinary",
+      "left": null,
+      "right": null,
+      "scope": "real Windows UDP loopback/Router/MeshLink AEAD, synthetic loss, no FakeTCP/Wintun/WAN"
+    },
+    {
+      "mode": "partial",
+      "left": {
+        "Reports": [
+          {
+            "RequestId": "ccec1c9b-534c-4203-820f-95a85a49740e",
+            "SendEpoch": "fb775e79-f89d-edd8-ba97-1af28e2857f6",
+            "FirstSequence": 9,
+            "LastSequence": 28,
+            "StartedMs": 138457093,
+            "EndedMs": 138459156,
+            "AcceptedPackets": 20,
+            "AcceptedBytes": 25600,
+            "PeerDeliveredPackets": 10,
+            "PeerDeliveredBytes": 12800,
+            "ReceiverSettleMs": 1000,
+            "Result": "ReportedAtCutoff",
+            "DeficitAtReceiptPercent": 50
+          }
+        ],
+        "WaitingReports": 0,
+        "ReceiverRequests": 1,
+        "RetainedReceiveRecords": 7,
+        "Deferred": 0,
+        "InvalidControls": 0,
+        "QueuedControls": 1,
+        "Evidence": "AuthenticatedPathDeliveryAtReceiptCutoff"
+      },
+      "right": {
+        "Reports": [],
+        "WaitingReports": 1,
+        "ReceiverRequests": 1,
+        "RetainedReceiveRecords": 10,
+        "Deferred": 0,
+        "InvalidControls": 0,
+        "QueuedControls": 2,
+        "Evidence": "AuthenticatedPathDeliveryAtReceiptCutoff"
+      },
+      "scope": "real Windows UDP loopback/Router/MeshLink AEAD, synthetic loss, no FakeTCP/Wintun/WAN"
+    },
+    {
+      "mode": "feedback-loss",
+      "left": {
+        "Reports": [
+          {
+            "RequestId": "a0432e09-f9b4-4e2b-a4ae-99548ef915df",
+            "SendEpoch": "bb58a4a3-19f7-def4-fd06-d6bd2a657581",
+            "FirstSequence": 8,
+            "LastSequence": 27,
+            "StartedMs": 138461203,
+            "EndedMs": 138463265,
+            "AcceptedPackets": 20,
+            "AcceptedBytes": 25600,
+            "PeerDeliveredPackets": null,
+            "PeerDeliveredBytes": null,
+            "ReceiverSettleMs": 0,
+            "Result": "FeedbackTimeout",
+            "DeficitAtReceiptPercent": null
+          }
+        ],
+        "WaitingReports": 0,
+        "ReceiverRequests": 0,
+        "RetainedReceiveRecords": 7,
+        "Deferred": 0,
+        "InvalidControls": 0,
+        "QueuedControls": 3,
+        "Evidence": "AuthenticatedPathDeliveryAtReceiptCutoff"
+      },
+      "right": {
+        "Reports": [
+          {
+            "RequestId": "3126ea5b-2380-4f4f-b027-e736cf16eebb",
+            "SendEpoch": "04179667-a1dc-2ece-511d-e04c1061bc93",
+            "FirstSequence": 7,
+            "LastSequence": 13,
+            "StartedMs": 138461218,
+            "EndedMs": 138463296,
+            "AcceptedPackets": 7,
+            "AcceptedBytes": 8960,
+            "PeerDeliveredPackets": null,
+            "PeerDeliveredBytes": null,
+            "ReceiverSettleMs": 0,
+            "Result": "FeedbackTimeout",
+            "DeficitAtReceiptPercent": null
+          }
+        ],
+        "WaitingReports": 0,
+        "ReceiverRequests": 0,
+        "RetainedReceiveRecords": 20,
+        "Deferred": 0,
+        "InvalidControls": 0,
+        "QueuedControls": 6,
+        "Evidence": "AuthenticatedPathDeliveryAtReceiptCutoff"
+      },
+      "scope": "real Windows UDP loopback/Router/MeshLink AEAD, synthetic loss, no FakeTCP/Wintun/WAN"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "status": "Fail",
+  "checks": 4,
+  "rounds": 0,
+  "rows": [],
+  "failure": "System.Exception: Owned adapter remains after close\r\n   at NativeLifecycleTests.Run(String components, String output, Int32 rounds) in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.AdapterContractTests\\NativeLifecycleTests.cs:line 34",
+  "scope": "Actual official Wintun/bridge creation, owned IPv4, concurrent read/write/statistics/cancel/close, 100-cycle limit and exact adapter teardown. Unknown IP protocol 253 is delivered locally only. No remote business, custom driver, user route deletion or existing service change."
+}

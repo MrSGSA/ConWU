@@ -1,0 +1,971 @@
+{
+  "status": "Pass",
+  "checks": 190,
+  "rows": [
+    {
+      "connectedMs": 27670,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 55831
+        },
+        {
+          "Peer": 0,
+          "Port": 55576
+        },
+        {
+          "Peer": 0,
+          "Port": 55576
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27936,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 101,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 59097
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 57902
+        },
+        {
+          "Peer": 1,
+          "Port": 57902
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27843,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 51876
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 60173
+        },
+        {
+          "Peer": 0,
+          "Port": 60173
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27807,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 96,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 61469
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 56477
+        },
+        {
+          "Peer": 1,
+          "Port": 56477
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27931,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 96,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 53498
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 57128
+        },
+        {
+          "Peer": 0,
+          "Port": 57128
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27806,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 63533
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 62182
+        },
+        {
+          "Peer": 1,
+          "Port": 62182
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27916,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 98,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 56764
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 55734
+        },
+        {
+          "Peer": 0,
+          "Port": 55734
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28010,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 53291
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 55697
+        },
+        {
+          "Peer": 1,
+          "Port": 55697
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 26701,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 99,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 62403
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 56366
+        },
+        {
+          "Peer": 0,
+          "Port": 56366
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28020,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 59063
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 53294
+        },
+        {
+          "Peer": 1,
+          "Port": 53294
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28023,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 55421
+        },
+        {
+          "Peer": 0,
+          "Port": 50473
+        },
+        {
+          "Peer": 0,
+          "Port": 50473
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27851,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 51041
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 51506
+        },
+        {
+          "Peer": 1,
+          "Port": 51506
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27626,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 96,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 50485
+        },
+        {
+          "Peer": 0,
+          "Port": 62918
+        },
+        {
+          "Peer": 0,
+          "Port": 62918
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 26498,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 50619
+        },
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 53548
+        },
+        {
+          "Peer": 1,
+          "Port": 53548
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27809,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 59945
+        },
+        {
+          "Peer": 0,
+          "Port": 60048
+        },
+        {
+          "Peer": 0,
+          "Port": 60048
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27842,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 101,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 55847
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 54732
+        },
+        {
+          "Peer": 1,
+          "Port": 54732
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27938,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 52566
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 58568
+        },
+        {
+          "Peer": 0,
+          "Port": 58568
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28577,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 102,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 63605
+        },
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 54952
+        },
+        {
+          "Peer": 1,
+          "Port": 54952
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27857,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 98,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 53407
+        },
+        {
+          "Peer": 0,
+          "Port": 50461
+        },
+        {
+          "Peer": 0,
+          "Port": 50461
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27870,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 101,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 57843
+        },
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 51069
+        },
+        {
+          "Peer": 1,
+          "Port": 51069
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27957,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 56509
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 50481
+        },
+        {
+          "Peer": 0,
+          "Port": 50481
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27916,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 50767
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 51428
+        },
+        {
+          "Peer": 1,
+          "Port": 51428
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28064,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 99,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 56502
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 55707
+        },
+        {
+          "Peer": 0,
+          "Port": 55707
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27994,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 52075
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 52591
+        },
+        {
+          "Peer": 1,
+          "Port": 52591
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27914,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 60928
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 62199
+        },
+        {
+          "Peer": 0,
+          "Port": 62199
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27938,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 52108
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 51990
+        },
+        {
+          "Peer": 1,
+          "Port": 51990
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 28158,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 100,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 49263
+        },
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 59922
+        },
+        {
+          "Peer": 0,
+          "Port": 59922
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27969,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 49360
+        },
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 64752
+        },
+        {
+          "Peer": 1,
+          "Port": 64752
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27715,
+      "stablePeer": 0,
+      "helperFallback": false,
+      "Refused": 12,
+      "Packets": 99,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 1,
+          "Port": 40007
+        },
+        {
+          "Peer": 0,
+          "Port": 61505
+        },
+        {
+          "Peer": 0,
+          "Port": 61588
+        },
+        {
+          "Peer": 0,
+          "Port": 61588
+        },
+        {
+          "Peer": 1,
+          "Port": 40014
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "connectedMs": 27978,
+      "stablePeer": 1,
+      "helperFallback": true,
+      "Refused": 13,
+      "Packets": 97,
+      "observations": 2,
+      "mappings": [
+        {
+          "Peer": 0,
+          "Port": 40007
+        },
+        {
+          "Peer": 1,
+          "Port": 53163
+        },
+        {
+          "Peer": 0,
+          "Port": 40014
+        },
+        {
+          "Peer": 1,
+          "Port": 57044
+        },
+        {
+          "Peer": 1,
+          "Port": 57044
+        }
+      ],
+      "training": "twenty synthetic independent windows injected into each actual factory; raw fresh observations and HTTPS signatures are exercised",
+      "scope": "EIM/APDF stable side and sequential APDM/APDF hard side, controlled memory mapping/filtering, actual C\u002B\u002B and formal Runner"
+    },
+    {
+      "negative": "stable-preservation-changed",
+      "scope": "actual fresh HTTPS observation; controlled NAT stopped preserving local source port"
+    }
+  ],
+  "scope": "formal Runner/factory/actor, signed HTTPS observer/coordination, real TCP helpers and C\u002B\u002B protocol; controlled NAT/raw/IP and synthetic qualified training fixtures, no WinDivert/Wintun/public NAT"
+}

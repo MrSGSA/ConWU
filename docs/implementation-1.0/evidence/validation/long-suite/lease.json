@@ -1,0 +1,282 @@
+{
+  "scope": "Windows loopback kernel-TCP resource lifecycle only; NOT WinDivert/FakeTCP coexistence or NAT success",
+  "rounds": 30,
+  "checks": 248,
+  "nativeRawAttached": false,
+  "captureOwnershipTested": false,
+  "rstLeakageTested": false,
+  "natClassified": false,
+  "publicNetworkUsed": false,
+  "rows": [
+    {
+      "round": 1,
+      "leaseId": "970527e6-84cf-48a5-9fab-0dc621ba4f1a",
+      "generation": "869da031-f751-449f-a233-866c6f17e696",
+      "sourcePort": 52643,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 771
+    },
+    {
+      "round": 2,
+      "leaseId": "c64423ec-1820-476a-b5af-6ef1045050b1",
+      "generation": "80793206-1b28-4a8d-8a91-91cfe6f4137e",
+      "sourcePort": 52650,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1256
+    },
+    {
+      "round": 3,
+      "leaseId": "a894da35-83b9-45b1-90a6-00490fc85d78",
+      "generation": "98f15e7d-be60-48d5-a881-32487e200163",
+      "sourcePort": 60016,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1250
+    },
+    {
+      "round": 4,
+      "leaseId": "f0f31fcf-1930-48b1-8acc-601df0d84cb8",
+      "generation": "71ef2ed7-bae1-4e8e-855e-2ad0cae77261",
+      "sourcePort": 60061,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1242
+    },
+    {
+      "round": 5,
+      "leaseId": "709d9f19-db9b-4f22-8955-0ae5e76cfa90",
+      "generation": "b033d40d-697e-4c4c-bb53-0618160b5c3d",
+      "sourcePort": 60180,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 6,
+      "leaseId": "f95f2413-511d-429b-9741-fe2fe9df2cd3",
+      "generation": "529bcf43-2628-4075-b662-3ebd6e88744c",
+      "sourcePort": 60060,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1244
+    },
+    {
+      "round": 7,
+      "leaseId": "e096bbae-0006-4800-b509-58dc554f2fb6",
+      "generation": "4ff24473-98b2-4092-8cbf-42b43c2abfc6",
+      "sourcePort": 60389,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1243
+    },
+    {
+      "round": 8,
+      "leaseId": "a298a277-d462-4273-9ae3-5e9ba36ccfd7",
+      "generation": "42090bda-9b6e-4e35-a9b3-eebce3fb8695",
+      "sourcePort": 60413,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1261
+    },
+    {
+      "round": 9,
+      "leaseId": "dcc11cd6-d40a-4096-8846-cc035cf6bd60",
+      "generation": "8ea9e966-b903-4288-949b-96ddaa646258",
+      "sourcePort": 60423,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1249
+    },
+    {
+      "round": 10,
+      "leaseId": "0896910c-ac4d-4135-8459-a4a753e0c315",
+      "generation": "404847b4-153b-486b-96de-1897f5e9d7f4",
+      "sourcePort": 60433,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1246
+    },
+    {
+      "round": 11,
+      "leaseId": "df7dae64-c77c-4ca8-a048-beee5fda9297",
+      "generation": "d8cc9a63-adc7-4a8a-99ee-d1ccc335ab23",
+      "sourcePort": 65049,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 12,
+      "leaseId": "a07a523e-b416-485e-a2c2-d8ffe4adac51",
+      "generation": "994a892c-b932-47a9-8c77-c6b5b5de2945",
+      "sourcePort": 65060,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 13,
+      "leaseId": "7328a991-e6bd-4477-a75e-294bfa6f2124",
+      "generation": "afb908ec-eecc-43c4-85ce-7d9e1eed9e88",
+      "sourcePort": 65071,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1248
+    },
+    {
+      "round": 14,
+      "leaseId": "5db48703-f352-462b-adc6-19d231ab1821",
+      "generation": "ef320567-b8b5-4833-9b63-aaee9441f73b",
+      "sourcePort": 55483,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1246
+    },
+    {
+      "round": 15,
+      "leaseId": "2f429b99-1b69-407d-9b81-653de6f6d3de",
+      "generation": "27c5a0e6-6174-47db-940f-becb7052dd9a",
+      "sourcePort": 55494,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 16,
+      "leaseId": "5a19d484-2695-457b-ac61-9a2140009e85",
+      "generation": "d15f85e5-65d4-4bf0-8c5c-27cb920a9573",
+      "sourcePort": 55500,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1259
+    },
+    {
+      "round": 17,
+      "leaseId": "83969398-18f2-4b17-a17d-57a3ef070eec",
+      "generation": "232dfccb-3809-4cf4-8e62-56709539f41b",
+      "sourcePort": 55510,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1233
+    },
+    {
+      "round": 18,
+      "leaseId": "6cf8e700-a7d7-4245-bf50-0eccfddca145",
+      "generation": "9ab42953-8a1c-41ff-9212-d96a36c38eb1",
+      "sourcePort": 55517,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1261
+    },
+    {
+      "round": 19,
+      "leaseId": "0357b029-e5cb-4aff-954e-4355ea11f1bd",
+      "generation": "53d931fd-416d-423c-b116-c4ea0a90cdc6",
+      "sourcePort": 57118,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1242
+    },
+    {
+      "round": 20,
+      "leaseId": "5984a07d-60c4-404e-a9ad-4c2ffe64e4e5",
+      "generation": "b41c1c18-8e09-403d-98bb-8fd5928db56b",
+      "sourcePort": 64384,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1248
+    },
+    {
+      "round": 21,
+      "leaseId": "6e35f8ce-e289-4dba-b822-0ca9d66d1cf0",
+      "generation": "736adb48-da0a-441a-a01c-66e57b78647d",
+      "sourcePort": 64395,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1247
+    },
+    {
+      "round": 22,
+      "leaseId": "694427c9-e18f-489d-b1d5-df99ef0b81b4",
+      "generation": "8d870072-b88a-4863-bfc7-1cbec1a010ec",
+      "sourcePort": 64411,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1241
+    },
+    {
+      "round": 23,
+      "leaseId": "21416462-1c29-4bcf-99b3-4f46cbd5b8fe",
+      "generation": "d4bb3116-f178-4e8f-94eb-0bf394f09cf4",
+      "sourcePort": 64418,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1263
+    },
+    {
+      "round": 24,
+      "leaseId": "ff62bdfd-09e0-491d-8502-f5c9a2c8a6c8",
+      "generation": "dd8c79c1-c320-46bc-901a-352bc809d0d5",
+      "sourcePort": 64427,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1244
+    },
+    {
+      "round": 25,
+      "leaseId": "17ddf441-4144-40b8-b4c3-32f3ef3e2151",
+      "generation": "17a8064e-022d-4dea-8aad-ab58dbcf1dc6",
+      "sourcePort": 49254,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 26,
+      "leaseId": "c86cc502-bef4-48e4-9438-f67fd72cffee",
+      "generation": "19931fdf-5c68-48d5-8dc8-9168c2af2724",
+      "sourcePort": 49269,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1243
+    },
+    {
+      "round": 27,
+      "leaseId": "97d9dd61-f5bc-4478-b76d-58833733f84d",
+      "generation": "7781ba41-0344-4b90-bd5b-f6239bc61c88",
+      "sourcePort": 49277,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1245
+    },
+    {
+      "round": 28,
+      "leaseId": "9949ebd8-c71a-4c7c-a7a3-fc4626d378b1",
+      "generation": "812c3fb6-8ca1-4705-a508-2b001aa990a9",
+      "sourcePort": 49294,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1260
+    },
+    {
+      "round": 29,
+      "leaseId": "c737ab15-1d9e-41e6-b8d2-8d7cf08cbc8c",
+      "generation": "11779b04-71e5-41d9-9aac-bce16b6ac890",
+      "sourcePort": 49304,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1243
+    },
+    {
+      "round": 30,
+      "leaseId": "82e7d4f2-7c70-4a0b-9c09-2079cc7d7dee",
+      "generation": "03370c6d-ffc0-4d95-9065-d782dd90fdeb",
+      "sourcePort": 49317,
+      "acceptedConnections": 1,
+      "transactions": 4,
+      "elapsedMs": 1244
+    }
+  ]
+}

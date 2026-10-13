@@ -1,0 +1,13 @@
+{
+  "codeCommit": "1e7928e4868e93919417330eede62d9896de8d99",
+  "codeTreeFingerprint": "5E61EF82F37FE583C38CD4CA3984F8DFB0D565A12B8909D546096FF147E32024",
+  "paths": [
+    "src",
+    "transport",
+    "drivers",
+    "tests",
+    "CMakeLists.txt",
+    "Directory.Build.targets"
+  ],
+  "scope": "Committed source identities for comparing a docs-only final snapshot; not binary authentication or replacement for installed-package verification"
+}

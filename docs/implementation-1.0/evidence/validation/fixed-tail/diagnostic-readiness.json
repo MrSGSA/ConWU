@@ -1,0 +1,65 @@
+{
+  "status": "Pass",
+  "checks": 20,
+  "readiness": {
+    "scope": "real shared egress timer/queues and final diagnostic allowance; memory callbacks, no native/UDP/WAN",
+    "elapsedMs": 125,
+    "cost": {
+      "SessionId": "c6f8941c-b2b5-465b-a884-c38d27aea330",
+      "WirePackets": 12,
+      "WireBytes": 16800,
+      "Denied": 0,
+      "ElapsedMs": 122,
+      "Active": true
+    },
+    "queue": {
+      "Owner": "SharedEgress",
+      "ByteUnit": "OuterIpBytes",
+      "ByteLimit": 25000,
+      "OldestQueuedMs": 0,
+      "Accounting": {
+        "Offered": {
+          "Packets": 13,
+          "Bytes": 18200
+        },
+        "Accepted": {
+          "Packets": 13,
+          "Bytes": 18200
+        },
+        "Sent": {
+          "Packets": 12,
+          "Bytes": 16800
+        },
+        "CapacityRejected": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "UnavailableRejected": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "Evicted": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "Cancelled": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "Failed": {
+          "Packets": 1,
+          "Bytes": 1400
+        },
+        "Queued": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "InFlight": {
+          "Packets": 0,
+          "Bytes": 0
+        },
+        "Conserved": true
+      }
+    }
+  }
+}

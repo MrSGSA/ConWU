@@ -1,0 +1,1256 @@
+{
+  "status": "Pass",
+  "checks": 680,
+  "rows": [
+    {
+      "rows": [
+        {
+          "mode": "ipv6",
+          "connectedMs": 8780,
+          "elapsedMs": 9827,
+          "Packets": 52,
+          "MaximumBytes": 1466,
+          "paths": [
+            [
+              {
+                "LeaseId": "9365e979-d567-4e9c-8154-a75cb23ece30",
+                "AttachId": "69683cea-1530-4d82-a597-60939cdbdcaf",
+                "local": "[::1]:52348",
+                "remote": "[::1]:50622"
+              }
+            ],
+            [
+              {
+                "LeaseId": "ac226d1f-cf9b-4dc5-b7cc-27aa386d0ab1",
+                "AttachId": "8da8b2aa-a0d2-4035-aa68-46a29095d720",
+                "local": "[::1]:50622",
+                "remote": "[::1]:52348"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 17,
+                "HandshakeBytes": 7980,
+                "MaintenancePackets": 10,
+                "MaintenanceBytes": 4132,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 12,
+                "HandshakeBytes": 5956,
+                "MaintenancePackets": 11,
+                "MaintenanceBytes": 4398,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1466,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "ipv6-unreachable",
+          "connectedMs": 16184,
+          "elapsedMs": 17281,
+          "Packets": 61,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "c006805f-8161-4194-b07c-9a990ebf329e",
+                "AttachId": "319d983a-565a-4211-87c4-bebc81a5e0d4",
+                "local": "127.0.0.1:63644",
+                "remote": "127.0.0.1:63645"
+              }
+            ],
+            [
+              {
+                "LeaseId": "f1a331d2-1327-487c-98a6-2ed11de6dcc2",
+                "AttachId": "a3d9caf8-5b29-4f29-ab06-9e20a95432b6",
+                "local": "127.0.0.1:63645",
+                "remote": "127.0.0.1:63644"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 17,
+                "HandshakeBytes": 7640,
+                "MaintenancePackets": 9,
+                "MaintenanceBytes": 2630,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 12,
+                "HandshakeBytes": 5716,
+                "MaintenancePackets": 11,
+                "MaintenanceBytes": 4178,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-native-abi",
+          "connectedMs": 7551,
+          "elapsedMs": 8584,
+          "Packets": 59,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "5e6ee58b-58ba-4725-b80e-e6654ac003f8",
+                "AttachId": "b62d95a9-6d97-48f1-8249-bb54668956c8",
+                "local": "127.0.0.1:51449",
+                "remote": "127.0.0.1:51469"
+              }
+            ],
+            [
+              {
+                "LeaseId": "6522f921-9658-4574-b9ac-3b7c933070f5",
+                "AttachId": "3adbff7f-5a8a-4f9b-a6a3-1939cc7bcc4c",
+                "local": "127.0.0.1:51469",
+                "remote": "127.0.0.1:51449"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 7700,
+                "MaintenancePackets": 12,
+                "MaintenanceBytes": 4264,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 13,
+                "HandshakeBytes": 5768,
+                "MaintenancePackets": 14,
+                "MaintenanceBytes": 5812,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        },
+        {
+          "mode": "old-service",
+          "connectedMs": 7605,
+          "elapsedMs": 8710,
+          "Packets": 59,
+          "MaximumBytes": 1446,
+          "paths": [
+            [
+              {
+                "LeaseId": "a9b0e171-0a44-49cb-909c-70124d98edba",
+                "AttachId": "9eef0eaf-9e88-41ed-866b-448be2815057",
+                "local": "127.0.0.1:60824",
+                "remote": "127.0.0.1:55622"
+              }
+            ],
+            [
+              {
+                "LeaseId": "c5c74ef2-58c1-464b-9435-d0ba07e529bd",
+                "AttachId": "52e38a48-c14e-49a9-9179-ecace226d951",
+                "local": "127.0.0.1:55622",
+                "remote": "127.0.0.1:60824"
+              }
+            ]
+          ],
+          "wireControl": [
+            [
+              {
+                "HandshakePackets": 18,
+                "HandshakeBytes": 7700,
+                "MaintenancePackets": 12,
+                "MaintenanceBytes": 4264,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ],
+            [
+              {
+                "HandshakePackets": 13,
+                "HandshakeBytes": 5768,
+                "MaintenancePackets": 14,
+                "MaintenanceBytes": 5812,
+                "BusinessPackets": 1,
+                "BusinessBytes": 1446,
+                "Denied": 0,
+                "Selected": true,
+                "Standby": false,
+                "DiagnosticPackets": 0,
+                "DiagnosticBytes": 0
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "qualityMode": "",
+          "controlledDrops": 0,
+          "recovery": null,
+          "scope": "formal Runner/Factory/Actor/native C\u002B\u002B, real HTTPS and Windows TCP helpers/pipes; raw IP and virtual IP memory fixtures, no physical NAT/WinDivert/Wintun or WAN guarantee"
+        }
+      ],
+      "actualNative": true,
+      "realTcpHelpers": true,
+      "realHttps": true,
+      "rawCaptureSimulated": true,
+      "realWinDivertIo": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "rounds": 30,
+      "pmtu": {
+        "requestedUserMtu": 1280,
+        "readbackUserMtu": 1280,
+        "dontFragment": 1,
+        "oversizeRejected": false,
+        "wirePmtuVerified": false,
+        "initialFailurePreserved": "m7-ipv6-udp-initial-pmtu-20261011.json"
+      },
+      "runners": [
+        {
+          "mode": "ipv6",
+          "connectedMs": 6749,
+          "elapsedMs": 7843,
+          "paths": [
+            [
+              {
+                "LeaseId": "3fecafbf-846b-4e5f-ba53-693f0937a613",
+                "local": "[::1]:62843",
+                "remote": "[::1]:58156"
+              }
+            ],
+            [
+              {
+                "LeaseId": "f87de67e-7fdb-4656-a661-9e56430068f8",
+                "local": "[::1]:58156",
+                "remote": "[::1]:62843"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "ipv6-unreachable",
+          "connectedMs": 14172,
+          "elapsedMs": 15297,
+          "paths": [
+            [
+              {
+                "LeaseId": "81ef93ef-61b7-45b5-aba5-d08297a03b7a",
+                "local": "127.0.0.1:65484",
+                "remote": "127.0.0.1:56725"
+              }
+            ],
+            [
+              {
+                "LeaseId": "0a3b6c77-5a72-4ecd-8e24-3861e8cbe1ed",
+                "local": "127.0.0.1:56725",
+                "remote": "127.0.0.1:65484"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "old-peer",
+          "connectedMs": 6655,
+          "elapsedMs": 7780,
+          "paths": [
+            [
+              {
+                "LeaseId": "4978df59-57f7-4108-b4a0-94d769af2cbd",
+                "local": "127.0.0.1:61829",
+                "remote": "127.0.0.1:62300"
+              }
+            ],
+            [
+              {
+                "LeaseId": "16f85b0b-f388-441d-9a20-3f03fca2f219",
+                "local": "127.0.0.1:62300",
+                "remote": "127.0.0.1:61829"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        },
+        {
+          "mode": "old-service",
+          "connectedMs": 6699,
+          "elapsedMs": 7699,
+          "paths": [
+            [
+              {
+                "LeaseId": "cd6d4335-6e18-4cb2-ac55-087a8657d0d8",
+                "local": "127.0.0.1:62312",
+                "remote": "127.0.0.1:64303"
+              }
+            ],
+            [
+              {
+                "LeaseId": "b9560d95-fdd2-4711-b15a-891adb2cdb45",
+                "local": "127.0.0.1:64303",
+                "remote": "127.0.0.1:62312"
+              }
+            ]
+          ],
+          "egress": [
+            null,
+            null
+          ],
+          "diagnostics": [
+            null,
+            null
+          ],
+          "quality": [
+            null,
+            null
+          ],
+          "scope": "formal production UDP Runner, real HTTPS and same Windows IPv6 loopback sockets; memory IP adapter, no physical WAN, Wintun or streaming deadline"
+        }
+      ],
+      "realIPv6Sockets": true,
+      "realHttps": true,
+      "realNat": false,
+      "wintun": false,
+      "nativeFakeTcpIpv6": false
+    },
+    {
+      "afterChecks": {
+        "connectedMs": 14157,
+        "elapsedMs": 42222,
+        "realHttps": true,
+        "realUdp": true,
+        "realPcpDatagrams": true,
+        "realNatPmpDatagrams": true,
+        "realNat": false,
+        "wintun": false,
+        "noStun": false,
+        "peers": [
+          [
+            {
+              "socketId": "d8e5373f-707a-49a8-b681-ea0a2eb4d498",
+              "local": "127.0.0.1:59698",
+              "remote": "127.0.0.1:59700"
+            }
+          ],
+          [
+            {
+              "socketId": "50f2f4a4-71b7-4586-9572-b1e0f46251b5",
+              "local": "127.0.0.1:59700",
+              "remote": "127.0.0.1:59698"
+            }
+          ]
+        ]
+      },
+      "withoutStun": {
+        "connectedMs": 6721,
+        "elapsedMs": 35243,
+        "realHttps": true,
+        "realUdp": true,
+        "realPcpDatagrams": true,
+        "realNatPmpDatagrams": true,
+        "realNat": false,
+        "wintun": false,
+        "noStun": true,
+        "peers": [
+          [
+            {
+              "socketId": "07e73792-b650-4962-ae1f-988550ec6dac",
+              "local": "127.0.0.1:56273",
+              "remote": "127.0.0.1:58155"
+            }
+          ],
+          [
+            {
+              "socketId": "51e1e2fb-114b-4d40-b268-c9cf3b84d148",
+              "local": "127.0.0.1:58155",
+              "remote": "127.0.0.1:56273"
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "scenario": "bounded-foreground-opportunities",
+      "wallMs": 60555,
+      "peers": 7,
+      "realTimer": true,
+      "gathered": 2,
+      "closed": 2,
+      "outcomes": [
+        "\u8BBE\u5907 4 \u673A\u4F1A\u7A97 5f74e0f7cd1b445b98567cf027a96c2e \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=54031\uFF1Blegacy=0,so=0,udp=0",
+        "\u8BBE\u5907 5 \u673A\u4F1A\u7A97 bf28dfa5e83e4cb1ae73d6e8849e5141 \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=54031\uFF1Blegacy=0,so=0,udp=0",
+        "\u8BBE\u5907 6 \u673A\u4F1A\u7A97 eea805a50dae4161b2c70ba78474c99f \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=54031\uFF1Blegacy=0,so=0,udp=0",
+        "\u8BBE\u5907 7 \u673A\u4F1A\u7A97 5009299ad97c48cb982d368c6ec72420 \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=54031\uFF1Blegacy=0,so=0,udp=0",
+        "\u8BBE\u5907 8 \u673A\u4F1A\u7A97 bda8f3b4c06c4999b8f5b2489f23ba1d \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=54031\uFF1Blegacy=0,so=0,udp=0",
+        "\u8BBE\u5907 2 \u673A\u4F1A\u7A97 ed6db513843f4e96b27b9d42298f61b1 \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=60015\uFF1Blegacy=0,so=0,udp=1",
+        "\u8BBE\u5907 3 \u673A\u4F1A\u7A97 03f9b9d748554b7a8e4356454f090910 \u7ED3\u675F\uFF1ANoDirectPathWithinBudget\uFF1B\u8FDB\u5165\u540E\u53F0\u9000\u907F\uFF1BelapsedMs=60015\uFF1Blegacy=0,so=0,udp=1"
+      ],
+      "realNat": false,
+      "nativeDriver": false,
+      "scope": "production scheduler and legacy client admission with controlled failing/held preparation; no real 8-device claim"
+    },
+    {
+      "scenario": "UDP-to-FakeTCP-product-upgrade",
+      "udpAtMs": 6450,
+      "failedUpgradeAtMs": 50425,
+      "upgradedAtMs": 112809,
+      "fullMtuPacketsEachDirection": 1173,
+      "residenceMs": 30000,
+      "cooldownMs": 60000,
+      "attempts": [
+        {
+          "Slot": 1,
+          "Mode": 1,
+          "Tick": 133075218,
+          "Attempt": "43f91bb9-b438-404d-b54a-5bffe94be424"
+        },
+        {
+          "Slot": 1,
+          "Mode": 2,
+          "Tick": 133120343,
+          "Attempt": "c2ae2efc-8ded-44cc-ab06-ed503ca35416"
+        },
+        {
+          "Slot": 2,
+          "Mode": 2,
+          "Tick": 133124921,
+          "Attempt": "c2ae2efc-8ded-44cc-ab06-ed503ca35416"
+        },
+        {
+          "Slot": 1,
+          "Mode": 3,
+          "Tick": 133185421,
+          "Attempt": "101e70f1-5373-434c-aad4-cc343df11c29"
+        },
+        {
+          "Slot": 2,
+          "Mode": 3,
+          "Tick": 133185578,
+          "Attempt": "101e70f1-5373-434c-aad4-cc343df11c29"
+        }
+      ],
+      "realHttps": true,
+      "realUdpSockets": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "scenario": "faketcp-only-second-round",
+      "connectedAtMs": 7551,
+      "leaderGathers": 2,
+      "responderGathers": 1,
+      "realHttps": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 1,
+      "selectedMs": 6467,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 2,
+      "selectedMs": 7522,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 3,
+      "selectedMs": 6549,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 4,
+      "selectedMs": 6668,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 5,
+      "selectedMs": 7596,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 6,
+      "selectedMs": 8997,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 7,
+      "selectedMs": 6680,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 8,
+      "selectedMs": 6722,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 9,
+      "selectedMs": 6601,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 10,
+      "selectedMs": 6470,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 11,
+      "selectedMs": 6663,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 12,
+      "selectedMs": 6708,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 13,
+      "selectedMs": 6565,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 14,
+      "selectedMs": 6700,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 15,
+      "selectedMs": 7736,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 16,
+      "selectedMs": 6688,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 17,
+      "selectedMs": 6671,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 18,
+      "selectedMs": 6661,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 19,
+      "selectedMs": 6726,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 20,
+      "selectedMs": 6673,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 21,
+      "selectedMs": 6772,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 22,
+      "selectedMs": 6675,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 23,
+      "selectedMs": 6645,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 24,
+      "selectedMs": 6725,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 25,
+      "selectedMs": 6659,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 26,
+      "selectedMs": 7698,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 27,
+      "selectedMs": 6685,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 28,
+      "selectedMs": 6717,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 29,
+      "selectedMs": 6682,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 3,
+      "round": 30,
+      "selectedMs": 7464,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": false,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 1,
+      "selectedMs": 7614,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 2,
+      "selectedMs": 7464,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 3,
+      "selectedMs": 7517,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 4,
+      "selectedMs": 7636,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 5,
+      "selectedMs": 7578,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 6,
+      "selectedMs": 7643,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 7,
+      "selectedMs": 9064,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 8,
+      "selectedMs": 7646,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 9,
+      "selectedMs": 7727,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 10,
+      "selectedMs": 7828,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 11,
+      "selectedMs": 7762,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 12,
+      "selectedMs": 7700,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 13,
+      "selectedMs": 8078,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 14,
+      "selectedMs": 7664,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 15,
+      "selectedMs": 6709,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 16,
+      "selectedMs": 6761,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 17,
+      "selectedMs": 7790,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 18,
+      "selectedMs": 7758,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 19,
+      "selectedMs": 6679,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 20,
+      "selectedMs": 6678,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 21,
+      "selectedMs": 7628,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 22,
+      "selectedMs": 7686,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 23,
+      "selectedMs": 8974,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 24,
+      "selectedMs": 7670,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 25,
+      "selectedMs": 7783,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 26,
+      "selectedMs": 7790,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 27,
+      "selectedMs": 6672,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 28,
+      "selectedMs": 7733,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 29,
+      "selectedMs": 7625,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    },
+    {
+      "kind": 2,
+      "round": 30,
+      "selectedMs": 7744,
+      "automaticRunner": true,
+      "realHttps": true,
+      "realSocket": true,
+      "nativeTestBackend": true,
+      "realNat": false,
+      "wintun": false
+    }
+  ],
+  "scope": "real production MeshRunner, HTTPS, socket/native protocol; injected loopback endpoint gathering and memory IP adapter, not WinDivert/WAN/Wintun or real 8 devices"
+}

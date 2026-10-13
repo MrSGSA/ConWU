@@ -1,0 +1,9 @@
+{
+  "status": "Pass",
+  "checks": 872,
+  "quality": {
+    "cases": 240,
+    "mechanisms": 8,
+    "scope": "bounded authenticated-body approval/policy models; no network or Router selection claim"
+  }
+}

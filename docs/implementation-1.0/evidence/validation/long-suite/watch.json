@@ -1,0 +1,9 @@
+{
+  "checks": 46,
+  "eightIsolatedMembers": true,
+  "realHttps": true,
+  "holdSeconds": 25,
+  "measuredHoldSeconds": 25.0326597,
+  "realWindowsEndpoints": 1,
+  "realEightDevices": false
+}

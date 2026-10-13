@@ -1,0 +1,36 @@
+{
+  "status": "Pass",
+  "checks": 14,
+  "rows": [
+    {
+      "callerCancel": true,
+      "reason": "caller-cancelled",
+      "elapsedMs": 166,
+      "syns": 1,
+      "diagnostic": null
+    },
+    {
+      "callerCancel": false,
+      "reason": "round-expired",
+      "elapsedMs": 8044,
+      "syns": 5,
+      "diagnostic": {
+        "AttemptId": "3ed001f3-980f-4d3d-980a-5f45d34ae1ef",
+        "LeaseId": "035a1beb-bc83-431d-b12b-da5cd1d80401",
+        "AttachId": "7fc8d33a-b740-45f7-873e-981202930552",
+        "Local": "127.0.0.1:50702",
+        "Peer": "127.0.0.1:50703",
+        "CaptureArmed": true,
+        "StartAcknowledged": true,
+        "NativeExited": false,
+        "BridgeProbeAttempts": 40,
+        "AuthenticatedProbeReceives": 0,
+        "PayloadQualified": false,
+        "RemainingMs": -18.065,
+        "WireControl": null,
+        "PeerSource": null
+      }
+    }
+  ],
+  "scope": "Actual native test backend and owned Windows TCP helper, loopback only; no WinDivert or WAN classification"
+}

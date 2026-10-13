@@ -1,0 +1,101 @@
+{
+  "status": "Pass",
+  "checks": 43,
+  "rows": [
+    {
+      "rows": [
+        {
+          "networkGeneration": "bd8b201e-15bc-4943-8ae4-c2f6b682c882",
+          "independentWindows": 1,
+          "qualification": {
+            "State": "PredictionNotSupported",
+            "Reason": "insufficient-independent-windows",
+            "Model": "",
+            "TrainingWindows": 0,
+            "ValidationWindows": 0,
+            "TrainingHits": 0,
+            "ValidationHits": 0,
+            "TrainingInterference": 0,
+            "ValidationInterference": 0,
+            "MaximumPorts": 0,
+            "ModelId": "00000000-0000-0000-0000-000000000000"
+          },
+          "candidateEnabled": false,
+          "reason": "fresh-anchor-and-authenticated-candidate-integration-pending"
+        },
+        {
+          "rows": [
+            {
+              "scenario": "twenty-windows",
+              "state": "QualifiedLocalModel",
+              "windows": 20,
+              "model": {
+                "State": "QualifiedLocalModel",
+                "Reason": "held-out-coverage-only-not-path-success",
+                "Model": "fixed-step",
+                "TrainingWindows": 10,
+                "ValidationWindows": 10,
+                "TrainingHits": 10,
+                "ValidationHits": 10,
+                "TrainingInterference": 3,
+                "ValidationInterference": 4,
+                "MaximumPorts": 2,
+                "ModelId": "e815a4de-ddde-4a3e-a8f4-fdc9c204ab51"
+              },
+              "Sent": 141,
+              "Calls": 60,
+              "Mappings": 47,
+              "actualHelperConnections": 21,
+              "serverQuotaEmulated": false,
+              "spacingMsForFixture": 0
+            },
+            {
+              "scenario": "business-return",
+              "state": "BusinessPathAvailable",
+              "Sent": 1,
+              "Calls": 2
+            },
+            {
+              "scenario": "waiting-cancel",
+              "state": "Cancelled",
+              "Sent": 0,
+              "Calls": 0
+            },
+            {
+              "scenario": "queued-business",
+              "state": "BusinessPathAvailable",
+              "Sent": 0,
+              "Calls": 0
+            },
+            {
+              "scenario": "interval-cancel",
+              "state": "Cancelled",
+              "Sent": 6,
+              "Calls": 3
+            },
+            {
+              "scenario": "interval-business",
+              "state": "BusinessPathAvailable",
+              "Sent": 6,
+              "Calls": 3
+            },
+            {
+              "scenario": "missing-observer",
+              "state": "PredictionNotSupported",
+              "Sent": 0,
+              "Calls": 1
+            },
+            {
+              "helpers": 4,
+              "rawSends": 3,
+              "scope": "two isolated factories share one calibration admission; controlled observer and raw I/O"
+            }
+          ],
+          "scope": "actual factory, exclusive loopback helpers and raw SYN creation; allocation/observer are controlled memory fixtures; no authenticated observer service, native worker, WinDivert, Wintun or WAN"
+        }
+      ],
+      "scope": "formal factory and TcpShapeProbe; real loopback TCP helpers; controlled observer API/NAT raw I/O, no native worker, Wintun or public NAT; calibration scheduling interval accelerated only in fixture"
+    }
+  ],
+  "scope": "formal candidate factory and TcpShapeProbe, real loopback TCP helper; controlled observer API and raw I/O; no MeshRunner/native worker, Wintun, public NAT or real multiple devices"
+}
