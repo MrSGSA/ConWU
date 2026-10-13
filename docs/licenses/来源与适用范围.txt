@@ -1,0 +1,12 @@
+本目录保存许可文本，不改变任何上游版权或许可证。
+GPL-2.0.txt / GPL-3.0.txt / GCC-Runtime-Exception-3.1.txt 来自 gcc-mirror/gcc releases/gcc-14 的 COPYING、COPYING3、COPYING.RUNTIME。
+winpthreads-COPYING.txt 来自 mingw-w64/mingw-w64 的 mingw-w64-libraries/winpthreads/COPYING。
+链接与获取日期：2026-10-13。
+https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14/COPYING
+https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14/COPYING3
+https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14/COPYING.RUNTIME
+https://raw.githubusercontent.com/mingw-w64/mingw-w64/master/mingw-w64-libraries/winpthreads/COPYING
+当前 transport/udp2raw/lib 的 AES、MD5、PBKDF2/SHA 源头带 GPL-2.0-or-later 版权头；不能仅以仓库顶层 MIT 文件描述整个原生二进制。
+libev 使用自身 BSD-2-Clause 或 GPL-2.0-or-later 许可。官方 WinDivert/Wintun 的许可与来源另附。
+打包提供同一固定 Git 提交的完整源码与构建脚本；源码中的版权头保留。NuGet/.NET notices 从实际 publish 所用缓存导出。
+SBOM 的 licenseConcluded 保持 NOASSERTION；编译器运行库的精确来源与许可组合审查不因文件哈希自动成为通过。

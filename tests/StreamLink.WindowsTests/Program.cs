@@ -271,10 +271,22 @@ static class Program
         ApplicationConfiguration.Initialize();
         using var host = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new(-30000, -30000) };
         host.Shown += async (_, _) => {
-            try { await Lifecycle(); await Feedback(); Console.WriteLine($"PASS {count}: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and UI busy/success/failure feedback. No live service/network changed."); }
+            try { await Lifecycle(); await InstallationTransaction(); await Feedback(); Console.WriteLine($"PASS {count}: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and UI busy/success/failure feedback. No live service/network changed."); }
             catch (Exception e) { Console.Error.WriteLine(e); Environment.ExitCode = 1; }
             finally { host.Close(); }
         };
         Application.Run(host);
+    }
+    static async Task InstallationTransaction()
+    {
+        var calls=new List<string>();
+        await ServiceInstallTransaction.Execute(()=>{calls.Add("apply");return Task.CompletedTask;},()=>{calls.Add("auth");return Task.CompletedTask;},()=>{calls.Add("service");return Task.CompletedTask;});
+        Check(calls.SequenceEqual(["apply"]),"healthy candidate must not invoke rollback");
+        calls.Clear();bool failed=false;
+        try{await ServiceInstallTransaction.Execute(()=>throw new IOException("candidate"),()=>{calls.Add("auth");return Task.CompletedTask;},()=>{calls.Add("service");return Task.CompletedTask;});}catch(IOException ex){failed=ex.InnerException?.Message=="candidate";}
+        Check(failed&&calls.SequenceEqual(["auth","service"]),"candidate readiness failure restores authorization and prior service independently");
+        calls.Clear();int errors=0;
+        try{await ServiceInstallTransaction.Execute(()=>throw new IOException("candidate"),()=>{calls.Add("auth");throw new IOException("authorization");},()=>{calls.Add("service");throw new IOException("restore executable");});}catch(IOException ex){errors=(ex.InnerException as AggregateException)?.InnerExceptions.Count??0;}
+        Check(errors==3&&calls.SequenceEqual(["auth","service"]),"double rollback failure retains original error and still attempts executable restoration after authorization failure");
     }
 }

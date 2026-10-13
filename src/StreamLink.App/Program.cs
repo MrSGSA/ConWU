@@ -11,6 +11,18 @@ static class Program
         // To customize application configuration such as set high DPI settings or default font,
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
+        if(args.Length>=2&&args[0]=="--validation-instance") { StreamLink.Core.WindowsInstance.ConfigureValidation(args[1]);args=args[2..]; }
+        if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-status",var output]) {
+            try {
+                var status=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
+                var root=StreamLink.Service.ProfileStore.Root;var file=Path.Combine(root,"profile.dpapi");
+                File.WriteAllText(Path.GetFullPath(output),System.Text.Json.JsonSerializer.Serialize(new{status.Ok,status.ServiceReady,status.Version,status.ControlOperationsVersion,NetworkEnabled=status.Profile?.Enabled??false,Network=status.Profile?.Mesh?.Pair.Network,DirectoryRevision=status.Profile?.Mesh?.Directory?.Revision,ProfileSha256=File.Exists(file)?Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file))):"",UiSid=new StreamLink.Service.ProfileStore().UiUserSnapshot(),instance=StreamLink.Core.WindowsInstance.Name}));
+            }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.GetFullPath(output),System.Text.Json.JsonSerializer.Serialize(new{Ok=false,error=ex.Message}));}return;
+        }
+        if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-create-network"]) {
+            try {var created=StreamLink.Core.ServiceProtocol.Call(new("mesh-create",Service:"https://example.com/")).GetAwaiter().GetResult();if(!created.Ok)throw new IOException(created.Error);}
+            catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
+        }
         if (args.Length == 2 && args[0] == "--verify-bundle") {
             try { int files = ServiceInstaller.VerifyBundle(AppContext.BaseDirectory); File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Pass", files, version = DesktopVersion.Release })); }
             catch (Exception ex) { Environment.ExitCode = 1; File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Fail", error = ex.Message })); }

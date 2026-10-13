@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public enum ProfileChangeImpact { None, LiveMetadata, RestartNetwork }
+public enum ProfileChangeImpact { None, LiveMetadata, NextAttempt, RestartNetwork }
 public static class ProfileChanges
 {
     public static DeviceProfile Copy(DeviceProfile value) => JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(value))!;
@@ -16,7 +16,10 @@ public static class ProfileChanges
         comparable.LastEntry=before.LastEntry;comparable.LastStun=before.LastStun;
         comparable.Enabled=before.Enabled;comparable.AdditionalData=before.AdditionalData;
         comparable.CapabilityIntents=before.CapabilityIntents;
+        bool nextAttempt=!before.TcpStun.SequenceEqual(after.TcpStun)||!before.UdpStun.SequenceEqual(after.UdpStun);
+        comparable.TcpStun=before.TcpStun;comparable.UdpStun=before.UdpStun;
         if(JsonSerializer.Serialize(comparable)!=JsonSerializer.Serialize(before))return ProfileChangeImpact.RestartNetwork;
+        if(nextAttempt)return ProfileChangeImpact.NextAttempt;
         return before.AllowManualQualityRequests==after.AllowManualQualityRequests&&before.DeviceName==after.DeviceName&&before.LogLevel==after.LogLevel&&before.LogDirectory==after.LogDirectory&&
             JsonSerializer.Serialize(before.AdditionalData)==JsonSerializer.Serialize(after.AdditionalData)&&JsonSerializer.Serialize(before.CapabilityIntents)==JsonSerializer.Serialize(after.CapabilityIntents)
             ?ProfileChangeImpact.None:ProfileChangeImpact.LiveMetadata;

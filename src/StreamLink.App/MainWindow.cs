@@ -39,7 +39,7 @@ public sealed partial class MainWindow : Form
     {
         SuspendLayout();
         this.preview = preview;
-        Text = $"StreamLink · {DesktopVersion.Number} 预览版"; ClientSize = new(1080, 740); MinimumSize = new(940, 680);
+        Text = $"StreamLink · {DesktopVersion.Release}"; ClientSize = new(1080, 740); MinimumSize = new(940, 680);
         AutoScaleMode = AutoScaleMode.None; Font = Design.Font(); ForeColor = Design.Ink; StartPosition = FormStartPosition.CenterScreen; Icon = MakeIcon();
         DoubleBuffered = true;
         var background = new PearlPanel { Dock = DockStyle.Fill }; Controls.Add(background);
@@ -51,7 +51,7 @@ public sealed partial class MainWindow : Form
             var button = Design.Button(text); button.Width = 166; button.Height = 48; button.Margin = new(0, 0, 0, 12); nav[id] = button;
             button.Click += (_, _) => { if (!busy) ShowPage(id); }; navigation.Controls.Add(button);
         }
-        navigation.Controls.Add(Design.Label($"Windows · P2P\n{DesktopVersion.Number} 预览版", 9)); shell.Controls.Add(content, 1, 1);
+        navigation.Controls.Add(Design.Label($"Windows · P2P\n{DesktopVersion.Release}", 9)); shell.Controls.Add(content, 1, 1);
         var footer = Design.Stack(); footer.Controls.Add(progress);notice.MaximumSize = new(920, 0);footer.Controls.Add(Design.Row(notice,cancelOperation)); footer.Controls.Add(modeLabel); shell.Controls.Add(footer, 0, 2); shell.SetColumnSpan(footer, 2);
         cancelOperation.Click+=async(_,_)=>{uiOperation?.Cancel();if(uiOperationId!=Guid.Empty&&last?.ControlOperationsVersion==1)try{await backend.Call(new("cancel",CancelOperationId:uiOperationId),lifetime.Token);}catch(Exception){ }notice.Text="已取消界面等待；已请求的网络停止仍会安全完成";};
         tray.Icon = Icon; tray.Text = "StreamLink"; tray.DoubleClick += (_, _) => Restore();

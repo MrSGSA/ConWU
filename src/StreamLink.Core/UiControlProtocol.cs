@@ -10,7 +10,7 @@ public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Gu
 public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1);
 public static class UiControlProtocol
 {
-    public const string PipeName="StreamLink-UI-v1";
+    public static string PipeName=>WindowsInstance.IsValidation ? WindowsInstance.Name + "-UI-v1" : "StreamLink-UI-v1";
     public static async Task<UiControlReply> Call(UiControlRequest request,CancellationToken token=default)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(20000);

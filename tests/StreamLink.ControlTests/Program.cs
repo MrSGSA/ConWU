@@ -3,6 +3,7 @@ using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Service;
 
+if(args.Length==3&&args[0]=="--ui-linked-client"){await LinkedUserTests.Child(args[1],args[2]);return 0;}
 int checks=0,failures=0;
 void Check(bool ok,string reason){checks++;if(!ok){failures++;Console.Error.WriteLine(reason);}}
 T Field<T>(ControlWorker worker,string name)=>(T)typeof(ControlWorker).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(worker)!;
@@ -34,6 +35,14 @@ try {
     held.TrySetResult();var saved=await save;
     Check(saved.Ok&&hot&&undisturbed,"Metadata save must not cancel or await network worker");
     Check(saved.Profile!.DeviceName=="hot metadata","Metadata must persist");
+    var activeProfile=ProfileChanges.Copy(saved.Profile);Set(worker,"runningProfile",activeProfile);
+    using var nextStop=new CancellationTokenSource();var nextHeld=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    Set(worker,"runStop",nextStop);Set(worker,"running",nextHeld.Task);
+    var servers=ProfileChanges.Copy(saved.Profile);servers.TcpStun=["tcp.example.com:3478"];servers.UdpStun=["udp.example.com:3478"];
+    Check(ProfileChanges.Impact(saved.Profile,servers)==ProfileChangeImpact.NextAttempt,"STUN edits classify as next-attempt input rather than a whole-network rebuild");
+    var serversSaved=await worker.Handle(new("save",servers)).WaitAsync(TimeSpan.FromSeconds(1));
+    Check(serversSaved.Ok&&!nextStop.IsCancellationRequested&&!nextHeld.Task.IsCompleted&&activeProfile.TcpStun.SequenceEqual(servers.TcpStun)&&activeProfile.UdpStun.SequenceEqual(servers.UdpStun),"saving STUN lists preserves live owner/Active and passes immutable array replacements to subsequent collection");
+    nextHeld.TrySetResult();
     var extension=JsonSerializer.Deserialize<DeviceProfile>("{\"FutureOption\":{\"explicitDisabled\":true}}")!;
     Check(JsonSerializer.Serialize(extension).Contains("FutureOption"),"Unknown future profile fields must roundtrip");
     await worker.StopLocal();

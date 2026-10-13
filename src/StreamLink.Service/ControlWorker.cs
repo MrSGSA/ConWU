@@ -150,7 +150,7 @@ public sealed partial class ControlWorker : BackgroundService
                     if(profile.AdditionalData!=null){updated.AdditionalData??=new();foreach(var extra in profile.AdditionalData)updated.AdditionalData.TryAdd(extra.Key,extra.Value.Clone());}
                     bool restart=ProfileChanges.Impact(profile,updated)==ProfileChangeImpact.RestartNetwork;
                     if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
-                    try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;}}}
+                    try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":

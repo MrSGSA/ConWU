@@ -18,7 +18,7 @@ static class ControlServerIdentity
         IntPtr manager = OpenSCManager(null, null, 1), service = IntPtr.Zero;
         try
         {
-            if (manager == IntPtr.Zero || (service = OpenService(manager, "StreamLink", 4)) == IntPtr.Zero || !QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<Status>(), out _) || status.State != 4 || !GetNamedPipeServerProcessId(pipe.SafePipeHandle, out uint pid) || pid == 0 || pid != status.Pid) throw new IOException("控制接口不是已注册的 StreamLink 服务，已拒绝发送配对信息");
+            if (manager == IntPtr.Zero || (service = OpenService(manager, WindowsInstance.Name, 4)) == IntPtr.Zero || !QueryServiceStatusEx(service, 0, out var status, Marshal.SizeOf<Status>(), out _) || status.State != 4 || !GetNamedPipeServerProcessId(pipe.SafePipeHandle, out uint pid) || pid == 0 || pid != status.Pid) throw new IOException("控制接口不是已注册的 StreamLink 服务，已拒绝发送配对信息");
         }
         finally { if (service != IntPtr.Zero) CloseServiceHandle(service); if (manager != IntPtr.Zero) CloseServiceHandle(manager); }
     }

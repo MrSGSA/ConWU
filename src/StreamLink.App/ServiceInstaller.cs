@@ -9,7 +9,7 @@ using StreamLink.Core;
 namespace StreamLink;
 public static class ServiceInstaller
 {
-    public static bool Installed { get { using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\StreamLink"); return key != null; } }
+    public static bool Installed { get { using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name); return key != null; } }
     static async Task Sc(params string[] args)
     {
         var info = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe")) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
@@ -24,29 +24,52 @@ public static class ServiceInstaller
         string manifest = Path.Combine(source, "manifest.json");
         if (!File.Exists(manifest)) throw new IOException("请从完整发布包运行；缺少安装文件清单");
         VerifyBundle(source);
-        string parent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamLink");
+        string parent = WindowsInstance.IsValidation ? WindowsInstance.InstallParent : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamLink");
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
         string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
         var profileStore=new StreamLink.Service.ProfileStore();string? previousUi=profileStore.UiUserSnapshot();
         bool existed = Installed;
         string? previous = null;
+        bool wasRunning=false;int previousStart=2;string previousDisplay="StreamLink P2P Network";object? previousFailure=null,previousDescription=null;
         if (existed) {
-            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\StreamLink"); previous = key?.GetValue("ImagePath") as string;
-            await StopRegistered();
+            using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name); previous = key?.GetValue("ImagePath") as string;
+            if(string.IsNullOrEmpty(previous))throw new IOException("原服务的 ImagePath 无效，未修改原服务");
+            previousStart=(int?)key!.GetValue("Start")??2;previousDisplay=key.GetValue("DisplayName") as string??previousDisplay;
+            previousFailure=key.GetValue("FailureActions");previousDescription=key.GetValue("Description");
+            using var service=new ServiceController(WindowsInstance.Name);wasRunning=service.Status!=ServiceControllerStatus.Stopped;
         }
-        try {
+        await ServiceInstallTransaction.Execute(async()=>{
+            if(existed)await StopRegistered();
             profileStore.AuthorizeUiUser(System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
-            await Sc(existed ? "config" : "create", "StreamLink", "binPath=", "\"" + Path.Combine(destination, "StreamLink.Service.exe") + "\"", "start=", "auto", "DisplayName=", "StreamLink P2P Network");
-            await Sc("description", "StreamLink", "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
-            await Sc("failure", "StreamLink", "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
-            await Sc("start", "StreamLink");
-            await Task.Run(() => { using var service = new ServiceController("StreamLink"); service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30)); });
-            using var ready=new CancellationTokenSource(15000);while(true){ready.Token.ThrowIfCancellationRequested();var status=await ServiceProtocol.Call(new("status"),ready.Token);if(status.Ok&&status.ServiceReady&&status.ControlOperationsVersion==1&&status.Version==DesktopVersion.Number)break;await Task.Delay(250,ready.Token);}
-        } catch(Exception candidateFailure) {
-            try{profileStore.RestoreUiUser(previousUi);if(previous!=null){await StopRegistered();await Sc("config","StreamLink","binPath=",previous);await Sc("start","StreamLink");await Task.Run(()=>{using var old=new ServiceController("StreamLink");old.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(30));});}else{await StopRegistered();if(Installed)await Sc("delete","StreamLink");}}
-            catch(Exception rollbackFailure){throw new IOException("候选安装失败，恢复旧服务/授权也失败："+candidateFailure.Message+"；"+rollbackFailure.Message,new AggregateException(candidateFailure,rollbackFailure));}
-            throw new IOException("候选安装未通过本地ServiceReady检查，已恢复旧服务与UI授权；离线对端不作为安装失败条件",candidateFailure);
+            string command="\""+Path.Combine(destination,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
+            await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", "auto", "DisplayName=", "StreamLink P2P Network");
+            await Sc("description", WindowsInstance.Name, "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
+            await Sc("failure", WindowsInstance.Name, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
+            await Sc("start", WindowsInstance.Name);
+            await WaitRunning();await WaitLocalReady(true);
+        },()=>{profileStore.RestoreUiUser(previousUi);return Task.CompletedTask;},async()=>{
+            await StopRegistered();
+            if(previous!=null){
+                await Sc("config",WindowsInstance.Name,"binPath=",previous,"start=",previousStart==2?"auto":previousStart==4?"disabled":"demand","DisplayName=",previousDisplay);
+                using(var key=Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name,true)!) {
+                    if(previousFailure!=null)key.SetValue("FailureActions",previousFailure);else key.DeleteValue("FailureActions",false);
+                    if(previousDescription!=null)key.SetValue("Description",previousDescription);else key.DeleteValue("Description",false);
+                }
+                if(wasRunning){await Sc("start",WindowsInstance.Name);await WaitRunning();await WaitLocalReady(false);}
+            }else if(Installed)await Sc("delete",WindowsInstance.Name);
+        });
+    }
+    static Task WaitRunning()=>Task.Run(()=>{using var service=new ServiceController(WindowsInstance.Name);service.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(30));});
+    static async Task WaitLocalReady(bool candidate)
+    {
+        using var ready=new CancellationTokenSource(15000);
+        while(true){
+            ready.Token.ThrowIfCancellationRequested();
+            try {var status=await ServiceProtocol.Call(new("status"),ready.Token);
+                if(status.Ok&&(!candidate||status.ServiceReady&&status.ControlOperationsVersion==1&&status.Version==DesktopVersion.Number))return;
+            }catch(Exception ex)when(!ready.IsCancellationRequested&&ex is IOException or System.TimeoutException){ }
+            await Task.Delay(250,ready.Token);
         }
     }
     static void CopyBundle(string source, string destination, string parent, string manifest)
@@ -151,15 +174,15 @@ public static class ServiceInstaller
     static async Task StopRegistered()
     {
         if (!Installed) return;
-        using var service = new ServiceController("StreamLink");
+        using var service = new ServiceController(WindowsInstance.Name);
         if (service.Status == ServiceControllerStatus.Stopped) return;
-        if (service.Status != ServiceControllerStatus.StopPending) await Sc("stop", "StreamLink");
+        if (service.Status != ServiceControllerStatus.StopPending) await Sc("stop", WindowsInstance.Name);
         await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(50)));
     }
     public static async Task StartIfNeeded()
     {
-        using var service = new ServiceController("StreamLink");
-        if (service.Status == ServiceControllerStatus.Stopped) await Sc("start", "StreamLink");
+        using var service = new ServiceController(WindowsInstance.Name);
+        if (service.Status == ServiceControllerStatus.Stopped) await Sc("start", WindowsInstance.Name);
         await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30)));
     }
     public static async Task Uninstall()
@@ -167,6 +190,6 @@ public static class ServiceInstaller
         if (!Installed) return;
         try { await ServiceProtocol.Call(new("stop")); } catch { }
         await StopRegistered();
-        await Sc("delete", "StreamLink");
+        await Sc("delete", WindowsInstance.Name);
     }
 }

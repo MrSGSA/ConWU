@@ -11,6 +11,8 @@ try{
     if(Test-Path -LiteralPath $candidate){throw 'Fixed candidate already exists; never overwrite its evidence'}
     $stage=New-Item -ItemType Directory -Path (Join-Path $candidate 'windows') -Force
     $artifacts=New-Item -ItemType Directory -Path (Join-Path $repo "artifacts/package-$Version-$($commit.Substring(0,8))") -Force
+    & git archive --format=zip "--output=$candidate/StreamLink-$Version-source.zip" $commit
+    if($LASTEXITCODE){throw 'Exact committed source archive failed'}
     & ./scripts/Build.ps1 -Test *> (Join-Path $artifacts.FullName 'native-build.txt')
     if($LASTEXITCODE){throw 'Native build failed'}
     foreach($project in @('StreamLink.App','StreamLink.Service')){
@@ -36,15 +38,15 @@ try{
     Copy-Item transport/udp2raw/LICENSE.md -Destination "$($licenses.FullName)/udp2raw-license.txt"
     Copy-Item "$wd/LICENSE" -Destination "$($licenses.FullName)/WinDivert-license.txt"
     Copy-Item "$wt/LICENSE.txt" -Destination "$($licenses.FullName)/Wintun-license.txt"
+    Copy-Item transport/udp2raw/libev/LICENSE -Destination "$($licenses.FullName)/libev-license.txt"
+    Copy-Item docs/licenses/* -Destination $licenses.FullName
+    foreach($crypto in @('lib/aes_faster_c/aes.cpp','lib/md5.cpp','lib/pbkdf2-sha1.cpp','lib/pbkdf2-sha256.cpp')){
+        $header=(Get-Content -LiteralPath (Join-Path transport/udp2raw $crypto) -TotalCount 30)-join "`n"
+        $header|Set-Content (Join-Path $licenses.FullName (([IO.Path]::GetFileName($crypto))+'.copyright-header.txt')) -Encoding utf8
+    }
     $sources=New-Item -ItemType Directory -Path (Join-Path $stage.FullName 'sources') -Force
     Copy-Item out/downloads/WinDivert-v2.2.2-source.zip -Destination $sources.FullName
-    $packages=@{}
-    foreach($project in @('StreamLink.App','StreamLink.Service','StreamLink.Discovery')){
-        $assets=Get-Content "src/$project/obj/project.assets.json" -Raw|ConvertFrom-Json
-        foreach($library in $assets.libraries.PSObject.Properties){if($library.Value.type -eq 'package'){$packages[$library.Name]=$library.Value}}
-    }
-    $packageRows=foreach($name in ($packages.Keys|Sort-Object)){$parts=$name.Split('/');[ordered]@{SPDXID='SPDXRef-Package-'+($parts[0] -replace '[^A-Za-z0-9.-]','-');name=$parts[0];versionInfo=$parts[1];downloadLocation="https://www.nuget.org/packages/$($parts[0])/$($parts[1])";filesAnalyzed=$false;licenseConcluded='NOASSERTION';licenseDeclared='NOASSERTION'}}
-    [ordered]@{spdxVersion='SPDX-2.3';dataLicense='CC0-1.0';SPDXID='SPDXRef-DOCUMENT';name="StreamLink-$Version";documentNamespace="https://github.com/MrSGSA/StreamLink/sbom/$commit/windows";creationInfo=@{created=(Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ');creators=@('Tool: StreamLink Package-RC')};packages=@($packageRows);nativeDependencies=@(@{name='WinDivert';version='2.2.2';officialSource='https://github.com/basil00/WinDivert'},@{name='Wintun';version='0.14.1';officialSource='https://www.wintun.net/'},@{name='udp2raw-http';version='c4995ea+StreamLink';sourceCommit=$commit});scope='Managed package identities from actual project assets; native dependencies listed separately. No license/cryptographic provenance inference.'}|ConvertTo-Json -Depth 10|Set-Content "$($stage.FullName)/sbom.spdx.json" -Encoding utf8
+    Copy-Item (Join-Path $candidate "StreamLink-$Version-source.zip") -Destination $sources.FullName
     Copy-Item docs/implementation-1.0/task-status.json -Destination "$($stage.FullName)/task-status.json"
     @"
 StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中继。
@@ -61,6 +63,7 @@ $exe=Join-Path $PSScriptRoot 'StreamLink.exe'
 $process=Start-Process -FilePath $exe -ArgumentList '--install' -Verb RunAs -PassThru -Wait
 if($process.ExitCode){throw 'Installation failed; inspect local installer error and rollback outcome'}
 '@|Set-Content "$($stage.FullName)/Install-Service.ps1" -Encoding utf8
+    & ./scripts/Write-RcSbom.ps1 -Directory $stage.FullName -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json') -Native
     $files=@(Get-ChildItem -LiteralPath $stage.FullName -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($stage.FullName,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
     [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;releaseLevel='development-candidate';releaseGate='NotPassed';provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content "$($stage.FullName)/manifest.json" -Encoding utf8
     $preflight=Join-Path $artifacts.FullName 'bundle-preflight.json'
@@ -70,8 +73,8 @@ if($process.ExitCode){throw 'Installation failed; inspect local installer error 
     & dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=false "-p:StreamLinkReleaseVersion=$Version" -o $coord *> (Join-Path $artifacts.FullName 'coordination-publish.txt')
     if($LASTEXITCODE){throw 'Coordination publish failed'}
     [ordered]@{version=$Version;sourceCommit=$commit;businessRelay=$false;deployment='PreparedOnlyNotDeployed';listen='http://127.0.0.1:42861';stateDirectory='owner must explicitly configure persistent STREAMLINK_DISCOVERY_DATA';cloudflareOriginIsHttp=$true}|ConvertTo-Json|Set-Content (Join-Path $coord 'deployment.json') -Encoding utf8
-    & git archive --format=zip "--output=$candidate/StreamLink-$Version-source.zip" $commit
-    if($LASTEXITCODE){throw 'Exact committed source archive failed'}
+    Copy-Item LICENSE -Destination (Join-Path $coord 'LICENSE-StreamLink.txt')
+    & ./scripts/Write-RcSbom.ps1 -Directory $coord -Version $Version -Commit $commit -Assets @('src/StreamLink.Discovery/obj/project.assets.json')
     $driver=New-Item -ItemType Directory -Path (Join-Path $candidate 'driver-research') -Force
     Copy-Item drivers,transport/tun-native,src/StreamLink.ResearchAdapters,docs/driver-validation -Destination $driver.FullName -Recurse
     if(Test-Path out/driver-research){Copy-Item out/driver-research -Destination $driver.FullName -Recurse}

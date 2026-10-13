@@ -15,6 +15,19 @@ static class UiBoundaryTests
         using var stop=new CancellationTokenSource();var server=(Task)typeof(ControlWorker).GetMethod("RunUiControl",flags)!.Invoke(worker,[stop.Token])!;
         async Task<UiControlReply> Request(UiControlRequest request){using var deadline=new CancellationTokenSource(5000);using var pipe=new NamedPipeClientStream(".",UiControlProtocol.PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,TokenImpersonationLevel.Identification);await pipe.ConnectAsync(3000,deadline.Token);await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);}
         try{
+            NamedPipeServerStream? privilegedFixture=null;
+            try { privilegedFixture=(NamedPipeServerStream)typeof(ControlWorker).Assembly.GetType("StreamLink.Service.LocalControlPipe")!.GetMethod("Create")!.Invoke(null,[true,null])!; }
+            catch(TargetInvocationException ex) when(ex.InnerException is System.ComponentModel.Win32Exception) { /* The installed privileged pipe may already own the name. */ }
+            try {
+                try {
+                    var ordinary=await LinkedUserTests.Run(Path.Combine(ProfileStore.Root,"profile.dpapi"));
+                    check(!ordinary.Administrator&&ordinary.UiStatus&&ordinary.Patch,"real linked UAC ordinary token reads the authorized sanitized pipe and changes only permitted metadata");
+                    check(ordinary.PrivatePipeDenied&&ordinary.ProfileDenied&&ordinary.Error.Length==0,"real ordinary token cannot open privileged control pipe or read protected DPAPI configuration");
+                    Console.WriteLine("ORDINARY-TOKEN "+JsonSerializer.Serialize(ordinary));
+                } catch(System.ComponentModel.Win32Exception ex) when(ex.NativeErrorCode is 267 or 1314 or 1008) {
+                    Console.WriteLine("BLOCKED ordinary-token launch: Win32="+ex.NativeErrorCode+"; real non-elevated desktop/other-user gate not passed. Administrator fixture checks continue independently.");
+                }
+            } finally { privilegedFixture?.Dispose(); }
             var status=await Request(new("status"));string json=JsonSerializer.Serialize(status);
             check(status.Ok&&status.Status?.ServiceReady==true,"actual Windows UI pipe authenticates local SID and returns a separate status DTO");
             var secret=created.Profile!.Mesh!;check(!json.Contains(secret.Pair.Secret)&&!json.Contains(secret.SigningPrivate)&&!json.Contains(secret.ExchangePrivate)&&!json.Contains(secret.OwnerPrivate)&&!json.Contains("Profile")&&!json.Contains("Invite"),"UI status cannot receive profile, enrollment or any long-term credential");
