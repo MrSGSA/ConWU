@@ -1,0 +1,108 @@
+{
+  "scope": "Internal archive checks; portable C++ model; isolated exact parser-prefix probe. NOT Windows I/O, WAN, .NET, full-native-parser or exploit verification.",
+  "source_commit_reported": "3b285f25a0cbe7949a33bfb6c0c323e3f7423fa0",
+  "zip_sha256": "f1e7319657ff09776439f7e5973551b5c18f55f3b84e5cb0e1b5bfa9854421b8",
+  "tooling": {
+    "dotnet": null,
+    "pwsh": null,
+    "g++": "/usr/bin/g++",
+    "cmake": "/usr/bin/cmake"
+  },
+  "so_model": {
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-Wpedantic",
+      "-fsanitize=address,undefined",
+      "-fno-omit-frame-pointer",
+      "-I/mnt/data/streamlink_review/StreamLink-PRO-完整源码-20261013-3b285f2/source/transport/udp2raw",
+      "/mnt/data/streamlink_review/StreamLink-PRO-完整源码-20261013-3b285f2/source/tests/native_so_state_test.cpp",
+      "-o",
+      "/mnt/data/streamlink_audit_artifacts/native-so-state-test"
+    ],
+    "build_exit": 0,
+    "build_stderr": "",
+    "source_sha256": "a135fdfab2f0be187a2bc87d6ed8a4ee190050653f7935d2ae086bb15b7d1b24",
+    "exit": 0,
+    "stdout": "{\"scope\":\"pure C++ TCP-shape model; not native integration or NAT\",\"cases\":630,\"status\":\"Pass\"}\n",
+    "stderr": ""
+  },
+  "tcp_prefix_probe": {
+    "scope": "Exact production prefix + exact TCP header struct, stubbed IP input, allocated 64-byte backing even for truncated logical packets; 99 means prefix accepted, not full parser success. No network injection.",
+    "source": "transport/udp2raw/network.cpp:2184-2216; network.h my_tcphdr",
+    "command": [
+      "g++",
+      "-std=c++17",
+      "-Wall",
+      "-Wextra",
+      "-fsanitize=address,undefined",
+      "-fno-omit-frame-pointer",
+      "/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp",
+      "-o",
+      "/mnt/data/streamlink_audit_artifacts/tcp-parser-prefix-probe"
+    ],
+    "build_exit": 0,
+    "stderr": "/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp: In function ‘int recv_raw_tcp(raw_info_t&, char*&, int&)’:\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp:75:26: warning: unused variable ‘send_info’ [-Wunused-variable]\n   75 |     const packet_info_t &send_info = raw_info.send_info;\n      |                          ^~~~~~~~~\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp:74:47: warning: unused parameter ‘payload’ [-Wunused-parameter]\n   74 | int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {\n      |                                        ~~~~~~~^~~~~~~\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp:74:61: warning: unused parameter ‘payloadlen’ [-Wunused-parameter]\n   74 | int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {\n      |                                                        ~~~~~^~~~~~~~~~\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp: In function ‘int main()’:\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp:116:5: warning: this ‘if’ clause does not guard... [-Wmisleading-indentation]\n  116 |     if(!first) std::cout << \",\"; first=false;\n      |     ^~\n/mnt/data/streamlink_audit_artifacts/tcp_parser_prefix_probe.cpp:116:34: note: ...this statement, but the latter is misleadingly indented as if it were guarded by the ‘if’\n  116 |     if(!first) std::cout << \",\"; first=false;\n      |                                  ^~~~~\n",
+    "exit": 0,
+    "stdout": "[{\"doff\":0,\"logical_length\":20,\"return\":0,\"output_untouched\":true},{\"doff\":15,\"logical_length\":20,\"return\":0,\"output_untouched\":true},{\"doff\":1,\"logical_length\":20,\"return\":99,\"output_untouched\":true},{\"doff\":4,\"logical_length\":20,\"return\":99,\"output_untouched\":true},{\"doff\":5,\"logical_length\":10,\"return\":0,\"output_untouched\":true},{\"doff\":5,\"logical_length\":20,\"return\":99,\"output_untouched\":true}]\n",
+    "run_stderr": "",
+    "cases": [
+      {
+        "doff": 0,
+        "logical_length": 20,
+        "return": 0,
+        "output_untouched": true
+      },
+      {
+        "doff": 15,
+        "logical_length": 20,
+        "return": 0,
+        "output_untouched": true
+      },
+      {
+        "doff": 1,
+        "logical_length": 20,
+        "return": 99,
+        "output_untouched": true
+      },
+      {
+        "doff": 4,
+        "logical_length": 20,
+        "return": 99,
+        "output_untouched": true
+      },
+      {
+        "doff": 5,
+        "logical_length": 10,
+        "return": 0,
+        "output_untouched": true
+      },
+      {
+        "doff": 5,
+        "logical_length": 20,
+        "return": 99,
+        "output_untouched": true
+      }
+    ]
+  },
+  "source_manifest": {
+    "count": 515,
+    "mismatches": [],
+    "meaning": "Matches supplied metadata; no remote Git independent attestation"
+  },
+  "archive_checksums": {
+    "count": 537,
+    "mismatches": []
+  },
+  "evidence_index": {
+    "count": 15,
+    "mismatches": []
+  },
+  "important_result_recalculation": {
+    "soak_loss_percent": 0.06953068891648712,
+    "installed_forward_loss_percent": 0.023055197986512708,
+    "note": "Recalculation of supplied counts, not a new network measurement."
+  }
+}

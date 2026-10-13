@@ -1,0 +1,635 @@
+{
+  "schemaVersion": 1,
+  "target": "1.0.0-rc1",
+  "baselineCommit": "3b285f25a0cbe7949a33bfb6c0c323e3f7423fa0",
+  "inputSpecification": "docs/review-1.0/StreamLink-1.0-Final-Execution-Plan-3b285f2.md",
+  "releaseGate": "NotPassed",
+  "historicalFailures": [
+    "0.5.6 installed 50Mbps forward: 24/104098 lost; reverse interrupted",
+    "0.5.6 60min synthetic load: 13037/18749994 lost",
+    "0.5.6 first connection exceeded 15s"
+  ],
+  "tasks": [
+    {
+      "id": "BASE-01",
+      "title": "核对真实HEAD、交接与验收口径",
+      "dependsOn": [],
+      "status": "Verified",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "SEC-01",
+      "title": "修复原生TCP解析长度/返回码契约",
+      "dependsOn": [
+        "BASE-01"
+      ],
+      "status": "InProgress",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "SEC-02",
+      "title": "原生输入模糊测试与checksum/offload专项",
+      "dependsOn": [
+        "SEC-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "SEC-03",
+      "title": "会话认证、撤销、密钥与日志安全回归",
+      "dependsOn": [
+        "BASE-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "CTL-01",
+      "title": "控制面取消传播、有界退出和只读状态",
+      "dependsOn": [
+        "BASE-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "CTL-02",
+      "title": "旧Quality统一诊断预算与故障隔离",
+      "dependsOn": [
+        "BASE-01",
+        "CTL-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "UI-01",
+      "title": "总览/设备/诊断/设置的信息架构与配对",
+      "dependsOn": [
+        "BASE-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "UI-02",
+      "title": "配置差异分类与无损热更新",
+      "dependsOn": [
+        "CTL-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "UI-03",
+      "title": "DPI、键盘、可访问性及低干扰渲染",
+      "dependsOn": [
+        "UI-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "UI-04",
+      "title": "安全拆分普通权限UI与管理操作",
+      "dependsOn": [
+        "SEC-03",
+        "CTL-01",
+        "UI-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-01",
+      "title": "端点连续性、真实tuple与物理RST证据",
+      "dependsOn": [
+        "SEC-01",
+        "SEC-02",
+        "CTL-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-02",
+      "title": "SO和TCP来源学习实质晋级",
+      "dependsOn": [
+        "NET-01",
+        "SEC-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-03",
+      "title": "共同提名与Active生命周期闭环",
+      "dependsOn": [
+        "SEC-03",
+        "CTL-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-04",
+      "title": "分协议观察设施与校准预测增益",
+      "dependsOn": [
+        "NET-01",
+        "NET-02",
+        "NET-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-05",
+      "title": "UDP同socket/PMTU及私网稳定证据provider",
+      "dependsOn": [
+        "NET-03",
+        "SEC-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-06",
+      "title": "建连调度、长轮询与全机公平资源",
+      "dependsOn": [
+        "CTL-01",
+        "NET-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NET-07",
+      "title": "PCP/NATPMP与原生IPv6真实资格",
+      "dependsOn": [
+        "NET-03",
+        "NIC-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "QOS-01",
+      "title": "补兼容业务pacing与过载反馈",
+      "dependsOn": [
+        "CTL-02",
+        "NET-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "QOS-02",
+      "title": "补兼容出口见证/同步准备及迟到失效",
+      "dependsOn": [
+        "NET-01",
+        "NET-06"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "QOS-03",
+      "title": "反馈/备用/质量选择及保守晋级",
+      "dependsOn": [
+        "CTL-02",
+        "QOS-01",
+        "QOS-02",
+        "NET-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "NIC-01",
+      "title": "自主适配provider契约与路由冲突修复",
+      "dependsOn": [
+        "BASE-01",
+        "CTL-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "DRV-00",
+      "title": "自研驱动架构、L3边界与合法工具链",
+      "dependsOn": [
+        "BASE-01",
+        "NIC-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "DRV-01",
+      "title": "最小自研TUN驱动与用户API真实实现",
+      "dependsOn": [
+        "DRV-00",
+        "SEC-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "DRV-02",
+      "title": "独立驱动安全/签名/硬件验证",
+      "dependsOn": [
+        "DRV-01",
+        "SEC-02"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "DRV-03",
+      "title": "有界自研WFP捕获后端可行性与样机",
+      "dependsOn": [
+        "DRV-00",
+        "NET-01"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "REL-01",
+      "title": "稳定更新通道、可信发布清单与依赖来源",
+      "dependsOn": [
+        "BASE-01",
+        "SEC-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "REL-02",
+      "title": "安装事务、ServiceReady与同网回退",
+      "dependsOn": [
+        "REL-01",
+        "CTL-01",
+        "UI-04"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "VAL-01",
+      "title": "真实TCP/UDP穿透新增覆盖与负例",
+      "dependsOn": [
+        "NET-01",
+        "NET-02",
+        "NET-03",
+        "NET-04",
+        "NET-05",
+        "NET-06"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "VAL-02",
+      "title": "质量、真实配对和安装双方向完整验收",
+      "dependsOn": [
+        "QOS-01",
+        "QOS-02",
+        "QOS-03",
+        "REL-02",
+        "UI-01",
+        "UI-02",
+        "UI-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "VAL-03",
+      "title": "八真机、冷启动、休眠换网与控制中断",
+      "dependsOn": [
+        "NET-06",
+        "NIC-01",
+        "REL-02",
+        "NET-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "REL-03",
+      "title": "逐能力FormalAuto晋级与用户意图迁移",
+      "dependsOn": [
+        "SEC-01",
+        "SEC-02",
+        "SEC-03",
+        "NET-03",
+        "VAL-01",
+        "VAL-02",
+        "VAL-03",
+        "NET-07"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    },
+    {
+      "id": "REL-04",
+      "title": "固定RC、可复现交付与结束Goal",
+      "dependsOn": [
+        "REL-02",
+        "REL-03"
+      ],
+      "status": "Todo",
+      "code": "NotReviewed",
+      "product": "NotReviewed",
+      "windowsIo": "NotRun",
+      "controlledNat": "NotRun",
+      "wan": "NotRun",
+      "defaultEnablement": "Unchanged",
+      "changedFiles": [],
+      "tests": [],
+      "evidence": [],
+      "remaining": []
+    }
+  ]
+}

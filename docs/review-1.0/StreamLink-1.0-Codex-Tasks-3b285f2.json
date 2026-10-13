@@ -1,0 +1,1258 @@
+{
+  "schema_version": "1.0",
+  "spec_version": "2.0",
+  "source_commit": "3b285f25a0cbe7949a33bfb6c0c323e3f7423fa0",
+  "candidate_commit": "1b98314560531f63e461595d24bd929e084db30c",
+  "generated_date": "2026-10-13",
+  "status_notice": "Todos are proposed work, not audited pass/fail of current project. Map current HEAD before applying. Dependencies permit implementation on ready interfaces; external evidence blocking promotion must not stall unrelated code.",
+  "constraints": {
+    "business_relay": false,
+    "outer_business_retransmission": false,
+    "preserve_http_seq_profile": true,
+    "default_driver": "official Wintun + WinDivert until independent promotion",
+    "default_transport": "PreferFakeTcp",
+    "production_changes_require_scope_authorization": true,
+    "forbid_security_bypass": true,
+    "historical_failed_gates_immutable": true
+  },
+  "driver_work_policy": {
+    "required_this_iteration": [
+      "DRV-00",
+      "DRV-01",
+      "DRV-03 limited research"
+    ],
+    "promotion_requires": [
+      "DRV-02"
+    ],
+    "external_block_does_not_block_wintun_rc": true
+  },
+  "completion_rules": {
+    "development_complete": "All locally executable work and evidence/RC delivered; exact external blocks and code partials listed.",
+    "release_ready": "All scope/default-specific gates really pass; no fabricated downgrade of requirements.",
+    "external_block_does_not_equal_pass": true,
+    "maximum_unchanged_retry_for_diagnosis": 1,
+    "do_not_wait_forever_on_dependency_evidence": true,
+    "finalization_requires_disposition_for_all_tasks": true
+  },
+  "topological_order": [
+    "BASE-01",
+    "SEC-01",
+    "SEC-03",
+    "CTL-01",
+    "UI-01",
+    "SEC-02",
+    "CTL-02",
+    "UI-02",
+    "UI-03",
+    "UI-04",
+    "NET-03",
+    "NIC-01",
+    "REL-01",
+    "NET-01",
+    "NET-05",
+    "NET-06",
+    "NET-07",
+    "QOS-01",
+    "DRV-00",
+    "REL-02",
+    "NET-02",
+    "QOS-02",
+    "DRV-01",
+    "DRV-03",
+    "VAL-03",
+    "NET-04",
+    "QOS-03",
+    "DRV-02",
+    "VAL-01",
+    "VAL-02",
+    "REL-03",
+    "REL-04"
+  ],
+  "tasks": [
+    {
+      "id": "BASE-01",
+      "title": "核对真实HEAD、交接与验收口径",
+      "priority": "P0",
+      "depends_on": [],
+      "paths": [
+        "docs/StreamLink-0.5.6-完成度报告-20261013.md",
+        "docs/StreamLink-0.5.6-人工验收步骤-20261013.md",
+        "docs/execution-status-20261011.md",
+        "scripts/Package.ps1"
+      ],
+      "work": "映射3b285f2后的变更；区分114715d、1b98314和当前构建；保留历史Fail和Partial；确定可用测试环境、权限、原门槛和本轮新增项。",
+      "acceptance": [
+        "状态矩阵关联文件/提交/hash",
+        "不重造Git来源",
+        "原始安装负载Fail和未完成反向保留",
+        "没有环境的项精确Block而不是无限续跑"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "SEC-01",
+      "title": "修复原生TCP解析长度/返回码契约",
+      "priority": "P0",
+      "depends_on": [
+        "BASE-01"
+      ],
+      "paths": [
+        "transport/udp2raw/network.cpp",
+        "transport/udp2raw/client.cpp",
+        "transport/udp2raw/connection.cpp",
+        "transport/udp2raw/native_so.cpp"
+      ],
+      "work": "在访问TCP字段前验证最小头长；失败清空输出并返回负值；完整成功后提交recv_info；修未知选项剩余长度；增加真正解析器失败用例，不只运行前缀探针。",
+      "acceptance": [
+        "逻辑长度0–19和doff0–4均拒绝",
+        "doff超出IP载荷拒绝",
+        "错误输出确定",
+        "合法HTTP/bare和SO回归通过",
+        "发布前完成旧native和broker可达性定界"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F01"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "SEC-02",
+      "title": "原生输入模糊测试与checksum/offload专项",
+      "priority": "P0",
+      "depends_on": [
+        "SEC-01"
+      ],
+      "paths": [
+        "transport/udp2raw/network.cpp",
+        "transport/udp2raw/native_backend.cpp",
+        "src/StreamLink.Core/TcpCaptureOwner.cs",
+        "src/StreamLink.Core/WinDivertEndpointIo.cs",
+        "tests/protocol_loopback.py"
+      ],
+      "work": "统一离线语料检验两种入口；验证GRO、选项、截断、长度运算、认证前分配；区分offload未完成校验与实际线路坏包。",
+      "acceptance": [
+        "模糊用例无未定义行为/崩溃",
+        "无效包不退出broker",
+        "记录工具和语料hash",
+        "Windows未测不能标全链安全",
+        "有效数据profile不改变"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F01",
+        "F12"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "SEC-03",
+      "title": "会话认证、撤销、密钥与日志安全回归",
+      "priority": "P0",
+      "depends_on": [
+        "BASE-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/MeshLink.cs",
+        "src/StreamLink.Core/MeshIdentity.cs",
+        "src/StreamLink.Core/PathNomination.cs",
+        "src/StreamLink.Service/ProfileStore.cs",
+        "src/StreamLink.Core/NativeAttachment.cs"
+      ],
+      "work": "保持每成员会话共享序号/重放，补新能力的身份/代次绑定、撤销与日志脱敏；不凭假设重写密码协议。",
+      "acceptance": [
+        "同密钥nonce无复用",
+        "候选/Active重复只交付一次",
+        "撤销revision不回退",
+        "假IP/旧Attempt不能认证晋升",
+        "导出不含私钥/长期秘密/原始ControlReply"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F05"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "CTL-01",
+      "title": "控制面取消传播、有界退出和只读状态",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01"
+      ],
+      "paths": [
+        "src/StreamLink.Service/ControlWorker.cs",
+        "src/StreamLink.App/DesktopBackend.cs",
+        "src/StreamLink.Core/ServiceProtocol.cs",
+        "src/StreamLink.Service/StreamLinkServiceLifetime.cs"
+      ],
+      "work": "令牌贯穿Handle/End；状态快照不被长管理操作堵住；操作ID及阶段、取消和精确Job回收。",
+      "acceptance": [
+        "挂起helper/native/HTTP夹具可取消",
+        "GUI仍可读状态",
+        "不提前关闭有引用Lease",
+        "超时指明资源而非全局清理"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F03"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "CTL-02",
+      "title": "旧Quality统一诊断预算与故障隔离",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01",
+        "CTL-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/Quality.cs",
+        "src/StreamLink.Core/PathDiagnosticBudget.cs",
+        "src/StreamLink.Service/MeshRunner.cs",
+        "src/StreamLink.Service/MeshRuntimeServices.cs"
+      ],
+      "work": "诊断许可、peer身份、窗口/总字节/冷却、消息语义认证统一；20秒手动测速不能偷偷绕过15秒新窗口，使用明确版本profile；隔离可选诊断退出。",
+      "acceptance": [
+        "未许可不发压测",
+        "连续新ID不能绕过总额",
+        "占用诊断端口不重启mesh",
+        "取消结束实际发包",
+        "本地Send不冒充Delivered"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F02"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "UI-01",
+      "title": "总览/设备/诊断/设置的信息架构与配对",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01"
+      ],
+      "paths": [
+        "src/StreamLink.App/MainWindow.cs",
+        "src/StreamLink.App/SettingsPage.cs",
+        "src/StreamLink.App/SettingsWindow.cs",
+        "tests/StreamLink.RenderingTests"
+      ],
+      "work": "复用WinForms；已有网络默认总览；三种策略、能力原因、阶段失败、设备IP复制、只读诊断和真实首次配对工作流。",
+      "acceptance": [
+        "未配置公共服务器不虚报服务",
+        "真实短码/批准/保存/连接走通",
+        "部分连通与服务状态分离",
+        "默认界面不堆实验开关"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F11"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "UI-02",
+      "title": "配置差异分类与无损热更新",
+      "priority": "P1",
+      "depends_on": [
+        "CTL-01"
+      ],
+      "paths": [
+        "src/StreamLink.Service/ControlWorker.cs",
+        "src/StreamLink.Core/DeviceProfile.cs",
+        "src/StreamLink.App/SettingsPage.cs",
+        "src/StreamLink.App/SettingsWindow.cs"
+      ],
+      "work": "替换统一End/Begin save为分类patch；保留身份修改拒绝；区分用户意图与临时能力不可用。",
+      "acceptance": [
+        "改设备名/日志不重建网卡或worker",
+        "只有受影响参数才重连",
+        "用户明确禁用不丢",
+        "旧字段往返不重置",
+        "风险变更有影响提示"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F04",
+        "F11"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "UI-03",
+      "title": "DPI、键盘、可访问性及低干扰渲染",
+      "priority": "P1",
+      "depends_on": [
+        "UI-01"
+      ],
+      "paths": [
+        "src/StreamLink.App/MainWindow.cs",
+        "src/StreamLink.App/SettingsWindow.cs",
+        "src/StreamLink.App/StreamLink.csproj",
+        "tests/StreamLink.RenderingTests"
+      ],
+      "work": "滚动/自适应布局和PerMonitorV2；减少重复缩放；常驻增量更新、系统减少动画、UIA与键盘。",
+      "acceptance": [
+        "1366x768到双屏高DPI保存/取消始终可达",
+        "100/125/150/200%实测",
+        "UIA名称/焦点通过",
+        "截图来自真实程序",
+        "关闭GUI不关后台网络"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F11"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "UI-04",
+      "title": "安全拆分普通权限UI与管理操作",
+      "priority": "P0",
+      "depends_on": [
+        "SEC-03",
+        "CTL-01",
+        "UI-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/ServiceProtocol.cs",
+        "src/StreamLink.Service/LocalControlPipe.cs",
+        "src/StreamLink.Service/ControlWorker.cs",
+        "src/StreamLink.App/app.manifest",
+        "src/StreamLink.App/DesktopBackend.cs"
+      ],
+      "work": "新增脱敏StatusDTO与受限ConfigPatch；安装指定SID和方法授权；UAC仅用于受管安装/驱动等，不开放旧完整profile接口。",
+      "acceptance": [
+        "普通未授权用户/SMB拒绝",
+        "只读UI拿不到秘密",
+        "不能指定任意日志路径/EXE/驱动",
+        "日常状态不要求全GUI管理员",
+        "未完成安全分离不启普通权限旧管道"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F05"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-01",
+      "title": "端点连续性、真实tuple与物理RST证据",
+      "priority": "P0",
+      "depends_on": [
+        "SEC-01",
+        "SEC-02",
+        "CTL-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/TcpEndpointLease.cs",
+        "src/StreamLink.Core/NativeAttachment.cs",
+        "src/StreamLink.Core/TcpCaptureOwner.cs",
+        "src/StreamLink.Core/WinDivertEndpointIo.cs",
+        "transport/udp2raw/native_backend.cpp",
+        "tests/StreamLink.EndpointPoc"
+      ],
+      "work": "复用唯一owner/授权attach；排除helper；真实端点与路由见证；旧P→Q和同P主动证据分开。",
+      "acceptance": [
+        "30轮真实Windows资源正负例",
+        "native不二次bind",
+        "Armed期无非预期RST且观察点有效",
+        "helper正常",
+        "进程退出与取消不泄漏/串资源"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-02",
+      "title": "SO和TCP来源学习实质晋级",
+      "priority": "P1",
+      "depends_on": [
+        "NET-01",
+        "SEC-03"
+      ],
+      "paths": [
+        "transport/udp2raw/native_so_state.h",
+        "transport/udp2raw/native_so.cpp",
+        "src/StreamLink.Core/TcpCaptureOwner.cs",
+        "src/StreamLink.Core/NativePortWindow.cs",
+        "tests/native_so_state_test.cpp"
+      ],
+      "work": "完善既有SO/来源学习，保持8秒共同期限与HTTP/bare；真实严格过滤/稳定映射正例及对照。",
+      "acceptance": [
+        "交叉/偏差/丢包/重复/旧RST/回绕受控通过",
+        "同tuple只一状态",
+        "同公网IP多成员不串线",
+        "至少实际全业务正例后申请默认晋级",
+        "不把内核connect成功当FakeTCP"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-03",
+      "title": "共同提名与Active生命周期闭环",
+      "priority": "P0",
+      "depends_on": [
+        "SEC-03",
+        "CTL-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/PathNomination.cs",
+        "src/StreamLink.Core/MeshTraversalAttempt.cs",
+        "src/StreamLink.Service/MeshTraversalManager.cs",
+        "src/StreamLink.Core/MeshRouter.cs"
+      ],
+      "work": "核查Ready/期限/确认/提交/退役收敛与受管资源，不重建已有协议。",
+      "acceptance": [
+        "旧路径响应不能验证新候选",
+        "丢Confirm有界收敛",
+        "取消失败候选不关闭Active",
+        "重放只交付一次",
+        "过程统计真实阶段"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-04",
+      "title": "分协议观察设施与校准预测增益",
+      "priority": "P1",
+      "depends_on": [
+        "NET-01",
+        "NET-02",
+        "NET-03"
+      ],
+      "paths": [
+        "src/StreamLink.Core/NatObservations.cs",
+        "src/StreamLink.Core/TcpPredictionEvidence.cs",
+        "src/StreamLink.Core/NatPortPrediction.cs",
+        "src/StreamLink.Core/MeshTcpPrediction.cs",
+        "src/StreamLink.Discovery/TcpSynObserver.cs",
+        "src/StreamLink.Service/MeshTraversalResources.Calibration.cs"
+      ],
+      "work": "同源分目的观察、双IP设施、独立留出与背景干扰、APDM顺序、缓存TTL；校准独立取消而不阻塞前台。",
+      "acceptance": [
+        "SYN/握手/业务证据分层",
+        "TCP不推导自UDP",
+        "预测成本和新增覆盖配对对照",
+        "短期规律失效有冷却",
+        "缺第二IP不假造完整分类"
+      ],
+      "gate": "conditional",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-05",
+      "title": "UDP同socket/PMTU及私网稳定证据provider",
+      "priority": "P1",
+      "depends_on": [
+        "NET-03",
+        "SEC-03"
+      ],
+      "paths": [
+        "src/StreamLink.Core/UdpTraversal.cs",
+        "src/StreamLink.Core/UdpTraversal.Path.cs",
+        "src/StreamLink.Core/UdpStableSourceEvidence.cs",
+        "src/StreamLink.Core/UdpProbabilityPreparation.cs",
+        "src/StreamLink.Service/MeshTraversalResources.UdpExploration.cs"
+      ],
+      "work": "保留真实获胜socket；补PeerPortWitness可采集provider并识别循环前提；单独分级EmpiricalEim实验准入，不伪装强证据。",
+      "acceptance": [
+        "结束Attempt业务继续",
+        "1344B DF真实正例与1400余量区分",
+        "私网证据缺失原因准确",
+        "授权强校验与预测置信分离",
+        "探索全局预算/12秒不重置",
+        "实际N/M报告"
+      ],
+      "gate": "conditional",
+      "review_findings": [
+        "F10"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-06",
+      "title": "建连调度、长轮询与全机公平资源",
+      "priority": "P1",
+      "depends_on": [
+        "CTL-01",
+        "NET-03"
+      ],
+      "paths": [
+        "src/StreamLink.Service/MeshRunner.cs",
+        "src/StreamLink.Service/MeshPairOpportunity.cs",
+        "src/StreamLink.Core/TraversalContracts.cs",
+        "src/StreamLink.Core/TraversalEnhancementScheduler.cs",
+        "src/StreamLink.Core/MeshWatch.cs",
+        "src/StreamLink.Discovery/MeshRegistry.Watch.cs"
+      ],
+      "work": "缩短无效串行等待，旧/新控制共账；2轻/1重、60pps等统一参数；条件缓存、退避和事件快速恢复。",
+      "acceptance": [
+        "困难peer不饿死其他peer",
+        "健康串流新增成员不受无界探测",
+        "60秒前台窗口结束",
+        "八设备配额可核算",
+        "15秒目标实际计时不改起点"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NET-07",
+      "title": "PCP/NATPMP与原生IPv6真实资格",
+      "priority": "P1",
+      "depends_on": [
+        "NET-03",
+        "NIC-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/PortControlLease.cs",
+        "src/StreamLink.Core/PortControlProtocol.cs",
+        "src/StreamLink.Core/Ipv6Direct.cs",
+        "src/StreamLink.Service/MeshTraversalResources.cs"
+      ],
+      "work": "复用已实现provider，验证网关返回租约/epoch与完整可达；IPv6源/路由/MTU和能力一致。",
+      "acceptance": [
+        "只清自己的映射",
+        "缺网关/IPv6不阻塞IPv4",
+        "ULA不冒充物理公网",
+        "各地址族认证业务",
+        "无外部隧道中继"
+      ],
+      "gate": "conditional",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "QOS-01",
+      "title": "补兼容业务pacing与过载反馈",
+      "priority": "P1",
+      "depends_on": [
+        "CTL-02",
+        "NET-03"
+      ],
+      "paths": [
+        "src/StreamLink.Core/EgressPacer.cs",
+        "src/StreamLink.Core/MeshTransport.cs",
+        "src/StreamLink.Core/LegacyControlChannel.cs",
+        "src/StreamLink.Core/LegacyTransportLedger.cs",
+        "transport/udp2raw/native_backend.cpp"
+      ],
+      "work": "legacy与broker业务均遵守同一全机出口速率与有限队列；注入回执、在途/拒绝/取消反馈到底层。",
+      "acceptance": [
+        "不增加隐藏队列",
+        "0pacing仍内存有界",
+        "legacy非删除而是补齐",
+        "按真实wire字节",
+        "业务不增加可靠重传",
+        "同条件A/B再默认晋级"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F10"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "QOS-02",
+      "title": "补兼容出口见证/同步准备及迟到失效",
+      "priority": "P1",
+      "depends_on": [
+        "NET-01",
+        "NET-06"
+      ],
+      "paths": [
+        "src/StreamLink.Core/EgressRouteSnapshot.cs",
+        "src/StreamLink.Core/EgressRouteCache.cs",
+        "src/StreamLink.Service/MeshTraversalResources.Network.cs",
+        "src/StreamLink.Service/LegacyStartupQueue.cs",
+        "src/StreamLink.Core/LegacyTransportLedger.cs"
+      ],
+      "work": "旧/新路径均关联实际源/接口/下一跳/代次；异步准备失败/迟到不更改新状态。",
+      "acceptance": [
+        "错误出口不伪报就绪",
+        "多地址同LUID不重复额度",
+        "Unknown共享保守桶",
+        "切网旧观察不能给新候选授权",
+        "全机速率非每接口自动翻倍"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F10"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "QOS-03",
+      "title": "反馈/备用/质量选择及保守晋级",
+      "priority": "P1",
+      "depends_on": [
+        "CTL-02",
+        "QOS-01",
+        "QOS-02",
+        "NET-03"
+      ],
+      "paths": [
+        "src/StreamLink.Core/PathDeliveryFeedback.cs",
+        "src/StreamLink.Core/PathQualityAssessment.cs",
+        "src/StreamLink.Core/MeshRouter.Quality.cs",
+        "src/StreamLink.Core/MeshRouter.Standby.cs",
+        "src/StreamLink.Core/PathDiagnosticBudget.cs"
+      ],
+      "work": "被动测量优先，有合格备用再快速切故障；主动诊断有总额；双方向质量证据与共同提名。",
+      "acceptance": [
+        "低空载RTT不能抢健康FakeTCP",
+        "驻留冷却工作",
+        "无证据不切",
+        "满载诊断不挤垮业务",
+        "没有时钟证据不写单向deadline通过"
+      ],
+      "gate": "conditional",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "NIC-01",
+      "title": "自主适配provider契约与路由冲突修复",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01",
+        "CTL-01"
+      ],
+      "paths": [
+        "src/StreamLink.Core/NativeAdapter.cs",
+        "src/StreamLink.Service/MeshRuntimeServices.cs",
+        "transport/tun/adapter.cpp",
+        "src/StreamLink.Core/NetworkConfiguration.cs"
+      ],
+      "work": "扩展现有IPacketAdapter而不另造同义抽象；provider/ABI/取消/MTU/统计；读取实际前缀路由检测冲突。",
+      "acceptance": [
+        "父子网段与VPN路由正确诊断",
+        "默认路由不无条件冲突",
+        "不单机改全网身份网段",
+        "只清自有配置",
+        "官方Wintun现有路径不退化"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F06"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "DRV-00",
+      "title": "自研驱动架构、L3边界与合法工具链",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01",
+        "NIC-01"
+      ],
+      "paths": [
+        "proposed:docs/adr/driver-boundary-1.0.md",
+        "transport/tun/adapter.cpp",
+        "src/StreamLink.Core/NativeAdapter.cs"
+      ],
+      "work": "区分虚拟NIC与WFP捕获；选择符合L3rawIP的NDIS/适用框架；冻结ABI、系统范围、威胁模型、签名测试与许可证。",
+      "acceptance": [
+        "不是改名fork声称自研",
+        "WDK目标独立于MinGW",
+        "内核不承载加密NAT",
+        "默认Package不因WDK缺失不可构建",
+        "外部签名条件清楚"
+      ],
+      "gate": "driver-research",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "DRV-01",
+      "title": "最小自研TUN驱动与用户API真实实现",
+      "priority": "P1",
+      "depends_on": [
+        "DRV-00",
+        "SEC-03"
+      ],
+      "paths": [
+        "proposed:drivers/StreamLink.Tun/",
+        "proposed:transport/tun-native/",
+        "proposed:tests/StreamLink.AdapterContractTests/"
+      ],
+      "work": "实现INF/设备/NDIS队列/PnP电源与有界I/O，用户DLL和IPacketAdapter provider；先正确再优化共享ring。",
+      "acceptance": [
+        "非空架构代码",
+        "实际收发与现有L3契约一致",
+        "取消/关闭/崩溃/低内存有界",
+        "不暴露任意kernel指针或接口",
+        "构建或外部Block状态如实",
+        "默认不加载"
+      ],
+      "gate": "driver-research",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "DRV-02",
+      "title": "独立驱动安全/签名/硬件验证",
+      "priority": "P0",
+      "depends_on": [
+        "DRV-01",
+        "SEC-02"
+      ],
+      "paths": [
+        "proposed:drivers/StreamLink.Tun/",
+        "proposed:scripts/driver-validation/",
+        "proposed:docs/driver-validation/"
+      ],
+      "work": "专用环境WDK分析/Verifier/HVCI/HLK/SecureBoot合规签名和PnP压力；完整provider A/B。",
+      "acceptance": [
+        "不在唯一生产远程链路开Verifier",
+        "不关系统安全发布",
+        "签名凭据不足BlockExternal",
+        "未通过不替代Wintun",
+        "实际源码与签名二进制hash关联"
+      ],
+      "gate": "driver-promotion",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "DRV-03",
+      "title": "有界自研WFP捕获后端可行性与样机",
+      "priority": "P2",
+      "depends_on": [
+        "DRV-00",
+        "NET-01"
+      ],
+      "paths": [
+        "proposed:docs/adr/wfp-capture-backend.md",
+        "proposed:drivers/StreamLink.CapturePoC/",
+        "src/StreamLink.Core/TcpCaptureOwner.cs"
+      ],
+      "work": "映射owner授权/tuple过滤到WFP；最小可用环境样机验证注入循环识别、服务失联清理；只有实际收益才完整替代。",
+      "acceptance": [
+        "不把NIC与capture混为一项",
+        "只操作授权tuple",
+        "不全局RST抑制",
+        "默认继续WinDivert",
+        "不与HTTP/加密/网卡替换同时混改"
+      ],
+      "gate": "driver-research",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "REL-01",
+      "title": "稳定更新通道、可信发布清单与依赖来源",
+      "priority": "P1",
+      "depends_on": [
+        "BASE-01",
+        "SEC-03"
+      ],
+      "paths": [
+        "src/StreamLink.App/SettingsPage.cs",
+        "src/StreamLink.App/ServiceInstaller.cs",
+        "scripts/Package.ps1",
+        "src/StreamLink.App/StreamLink.csproj"
+      ],
+      "work": "正确SemVer/preview筛选；manifest必需集合、签名可信源、签后hash、SBOM与协议/ABI相容。",
+      "acceptance": [
+        "stable不推荐RC/preview",
+        "自列hash不当来源证明",
+        "缺必需文件失败",
+        "无生产私钥入包",
+        "缺签名账号不伪造证书",
+        "既有路径安全校验保留"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F07",
+        "F09"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "REL-02",
+      "title": "安装事务、ServiceReady与同网回退",
+      "priority": "P1",
+      "depends_on": [
+        "REL-01",
+        "CTL-01",
+        "UI-04"
+      ],
+      "paths": [
+        "src/StreamLink.App/ServiceInstaller.cs",
+        "src/StreamLink.Service/ProfileStore.cs",
+        "src/StreamLink.Core/ServiceProtocol.cs",
+        "scripts/Package.ps1"
+      ],
+      "work": "安装本地健康检查与NetworkWaitingPeer分离；首次安装/升级/双失败回退状态保留；同网版本迁移保持撤销。",
+      "acceptance": [
+        "SCMRunning不独算成功",
+        "旧服务恢复失败明确报告",
+        "离线peer不触发错误卸载",
+        "同网0.5.x/RC回退实际验证",
+        "不动其他共享驱动",
+        "真实UI配对入口"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F08",
+        "F13"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "VAL-01",
+      "title": "真实TCP/UDP穿透新增覆盖与负例",
+      "priority": "P1",
+      "depends_on": [
+        "NET-01",
+        "NET-02",
+        "NET-03",
+        "NET-04",
+        "NET-05",
+        "NET-06"
+      ],
+      "paths": [
+        "scripts/Invoke-TraversalValidation.ps1",
+        "tests/StreamLink.MeshHarness",
+        "tests/StreamLink.TraversalTests",
+        "tests/StreamLink.MeshRunnerTraversalTests"
+      ],
+      "work": "先实现实际缺少的测试profile再调用；模型/LAN/受控NAT/WAN分层，配对算法对照和新增覆盖/退化矩阵。",
+      "acceptance": [
+        "稳定资源30轮物理验证",
+        "SO完整FakeTCP业务新覆盖",
+        "算法off/on同构建",
+        "失败超时保留分母",
+        "无业务服务器或成员中继",
+        "缺WAN不可用回环替代"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "VAL-02",
+      "title": "质量、真实配对和安装双方向完整验收",
+      "priority": "P1",
+      "depends_on": [
+        "QOS-01",
+        "QOS-02",
+        "QOS-03",
+        "REL-02",
+        "UI-01",
+        "UI-02",
+        "UI-03"
+      ],
+      "paths": [
+        "src/StreamLink.Core/Quality.cs",
+        "tests/StreamLink.MeshHarness",
+        "scripts/Package.ps1",
+        "docs/StreamLink-0.5.6-人工验收步骤-20261013.md"
+      ],
+      "work": "预先冻结门槛/测试编排；同条件旧新A/B，双方向短测、60分钟、真实播放、24h后台；最后完整安装包复验。",
+      "acceptance": [
+        "不更改历史丢包Fail",
+        "非安全质量失败另方向仍准确执行或标中断",
+        "RTT时窗和排队有证据",
+        "无clock不算单向",
+        "不降低负载刷过",
+        "交付原始计数和环境"
+      ],
+      "gate": "core",
+      "review_findings": [
+        "F13"
+      ],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "VAL-03",
+      "title": "八真机、冷启动、休眠换网与控制中断",
+      "priority": "P1",
+      "depends_on": [
+        "NET-06",
+        "NIC-01",
+        "REL-02",
+        "NET-03"
+      ],
+      "paths": [
+        "src/StreamLink.Service/MeshNetworkWake.cs",
+        "src/StreamLink.Service/StreamLinkServiceLifetime.cs",
+        "tests/StreamLink.WindowsTests",
+        "tests/StreamLink.MeshHarness"
+      ],
+      "work": "两节点生命周期、三节点禁止relay、八节点公平/28关系、独立HTTPS冷启动；准确阶段恢复和资源基线。",
+      "acceptance": [
+        "8进程不替代8真实Windows",
+        "有界机会和队列公平",
+        "双端仅控制中断与其他依赖失效分开",
+        "不用15秒两机目标衡量28对全网",
+        "只清自有资源"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "REL-03",
+      "title": "逐能力FormalAuto晋级与用户意图迁移",
+      "priority": "P1",
+      "depends_on": [
+        "SEC-01",
+        "SEC-02",
+        "SEC-03",
+        "NET-03",
+        "VAL-01",
+        "VAL-02",
+        "VAL-03",
+        "NET-07"
+      ],
+      "paths": [
+        "src/StreamLink.Core/DeviceProfile.cs",
+        "src/StreamLink.Core/PathSelection.cs",
+        "src/StreamLink.App/SettingsWindow.cs",
+        "src/StreamLink.Discovery/Program.cs",
+        "proposed:docs/releases/1.0-capabilities.md"
+      ],
+      "work": "逐功能决策FormalAuto/Conditional/Experimental，保留用户明确禁用；能力缺失不发布虚假可用；有真实新增覆盖才宣传。",
+      "acceptance": [
+        "安全/真实路径/质量证据逐项关联",
+        "旧版默认false与明确禁用可区分",
+        "推荐策略实际自动使用已晋级能力",
+        "条件不足不无限准备",
+        "驱动单独晋级不捆绑"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    },
+    {
+      "id": "REL-04",
+      "title": "固定RC、可复现交付与结束Goal",
+      "priority": "P1",
+      "depends_on": [
+        "REL-02",
+        "REL-03"
+      ],
+      "paths": [
+        "scripts/Package.ps1",
+        "proposed:docs/releases/v1.0.0-rc1.md",
+        "proposed:docs/release-readiness.json"
+      ],
+      "work": "汇总每项包括驱动的最高完成阶段、默认清单、构建/包hash、审查问题与阻塞；无外部条件交RC结束，不伪造正式通过。",
+      "acceptance": [
+        "完整Windows/协调包和回滚",
+        "真实源码来源",
+        "待签名/硬件状态明确",
+        "无未修P0进入默认",
+        "缺Gate不发1.0正式标签",
+        "无计划外无限继续"
+      ],
+      "gate": "core",
+      "review_findings": [],
+      "status": "Todo",
+      "evidence": {
+        "static": null,
+        "unit_or_model": null,
+        "windows_io": null,
+        "controlled_nat": null,
+        "wan": null,
+        "installed_package": null
+      },
+      "default_enablement": "unchanged_until_capability_gate"
+    }
+  ],
+  "dependency_semantics": "Implementation order. External verification/signing blockers do not forbid implementing downstream mocks/interfaces or preparing RC; they forbid claiming dependent capability verified/default-enabled. Final report must disposition every task, including independent driver work."
+}
