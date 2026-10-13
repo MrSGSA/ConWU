@@ -442,17 +442,25 @@
         "BASE-01",
         "CTL-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "ImplementedUnverified",
+      "code": "Implemented: existing IPacketAdapter extended with provider/ABI/cancel/MTU/stats and real prefix/route overlap inspection",
+      "product": "official NativeAdapter, bridge ABI2 and formal Router cancellation",
+      "windowsIo": "real Wintun read/write/UDP app and clean owned adapter removal Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "12 adapter/conflict/read-only OS route checks Pass",
+        "47 mesh+official Wintun checks Pass"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/adapter/"
+      ],
+      "remaining": [
+        "dedicated 100-cycle lifecycle and concurrent-close stress",
+        "GUI route warning integration and additional real topology cases"
+      ]
     },
     {
       "id": "DRV-00",

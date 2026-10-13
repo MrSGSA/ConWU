@@ -164,7 +164,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     {
         var buffer = new byte[MeshLink.Mtu];
         while (!stop.IsCancellationRequested) {
-            int count = adapter.Read(buffer); if (count == 0) continue;
+            int count = adapter.Read(buffer,stop.Token); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peers.TryGetValue(slot, out var peer)) {
                 byte[]? encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
@@ -253,6 +253,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         stop.Cancel();
+        adapter.Stop();
         Task[] pathPumps;
         lock (gate) { foreach (var peer in peers.Values) CloseManaged(peer); pathPumps = managedPumps.ToArray(); }
         try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (OperationCanceledException) { }

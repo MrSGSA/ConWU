@@ -4,6 +4,7 @@
 #include <windows.h>
 #include <netioapi.h>
 #include <cstring>
+#include <atomic>
 #include "wintun.h"
 
 struct Adapter {
@@ -11,21 +12,27 @@ struct Adapter {
     WINTUN_ADAPTER_HANDLE adapter = nullptr;
     WINTUN_SESSION_HANDLE session = nullptr;
     HANDLE event = nullptr;
+    HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<unsigned long long> counts[7]{};
     WINTUN_CLOSE_ADAPTER_FUNC *close = nullptr;
     WINTUN_END_SESSION_FUNC *end = nullptr;
     WINTUN_RECEIVE_PACKET_FUNC *receive = nullptr;
     WINTUN_RELEASE_RECEIVE_PACKET_FUNC *release = nullptr;
     WINTUN_ALLOCATE_SEND_PACKET_FUNC *allocate = nullptr;
     WINTUN_SEND_PACKET_FUNC *send = nullptr;
-    ~Adapter() { if (session && end) end(session); if (adapter && close) close(adapter); if (library) FreeLibrary(library); }
+    ~Adapter() { if (stop) CloseHandle(stop);if (session && end) end(session); if (adapter && close) close(adapter); if (library) FreeLibrary(library); }
 };
 #define API extern "C" __declspec(dllexport)
 API void sltun_close(Adapter *a) { delete a; }
+API DWORD sltun_abi() { return 2; }
+API void sltun_stop(Adapter *a) { if(a&&a->stop)SetEvent(a->stop); }
+API DWORD sltun_stats(Adapter *a, unsigned long long *counts) {if(!a||!counts)return ERROR_INVALID_PARAMETER;for(unsigned i=0;i<7;i++)counts[i]=a->counts[i].load();return ERROR_SUCCESS;}
 
 API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result) {
     *result = nullptr;
     Adapter *a = new Adapter();
     auto fail = [a](DWORD error) { delete a; return error ? error : ERROR_GEN_FAILURE; };
+    if(!a->stop)return fail(GetLastError());
     a->library = LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!a->library) return fail(GetLastError());
 #define LOAD(field, type, symbol) a->field = reinterpret_cast<type *>(GetProcAddress(a->library, symbol)); if (!a->field) return fail(ERROR_PROC_NOT_FOUND)
@@ -62,20 +69,27 @@ API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, 
 }
 
 API DWORD sltun_read(Adapter *a, BYTE *buffer, DWORD capacity, DWORD *length) {
+    if(!a||!buffer||!length)return ERROR_INVALID_PARAMETER;
     *length = 0;
+    if(WaitForSingleObject(a->stop,0)==WAIT_OBJECT_0)return ERROR_OPERATION_ABORTED;
     DWORD size = 0; BYTE *packet = a->receive(a->session, &size);
     if (!packet) {
         DWORD error = GetLastError(); if (error != ERROR_NO_MORE_ITEMS) return error;
-        DWORD waited = WaitForSingleObject(a->event, 100);
+        HANDLE events[]={a->stop,a->event};a->counts[6]++;
+        DWORD waited = WaitForMultipleObjects(2,events,FALSE,100);
         if (waited == WAIT_FAILED) return GetLastError();
+        if(waited==WAIT_OBJECT_0)return ERROR_OPERATION_ABORTED;
         return ERROR_NO_MORE_ITEMS;
     }
-    if (size <= capacity) { std::memcpy(buffer, packet, size); *length = size; }
+    if (size <= capacity) { std::memcpy(buffer, packet, size); *length = size;a->counts[0]++;a->counts[1]+=size; }
+    else a->counts[5]++;
     a->release(a->session, packet);
     return size <= capacity ? ERROR_SUCCESS : ERROR_INSUFFICIENT_BUFFER;
 }
 API DWORD sltun_write(Adapter *a, const BYTE *buffer, DWORD length) {
+    if(!a||!buffer)return ERROR_INVALID_PARAMETER;
+    if(WaitForSingleObject(a->stop,0)==WAIT_OBJECT_0)return ERROR_OPERATION_ABORTED;
     if (length < 20 || length > 1280) return ERROR_INVALID_DATA;
-    BYTE *packet = a->allocate(a->session, length); if (!packet) return GetLastError();
-    std::memcpy(packet, buffer, length); a->send(a->session, packet); return ERROR_SUCCESS;
+    BYTE *packet = a->allocate(a->session, length); if (!packet) {DWORD error=GetLastError();if(error==ERROR_BUFFER_OVERFLOW)a->counts[4]++;return error;}
+    std::memcpy(packet, buffer, length); a->send(a->session, packet);a->counts[2]++;a->counts[3]+=length;return ERROR_SUCCESS;
 }

@@ -1,0 +1,14 @@
+{
+  "runId": "rc1-official-adapter-abi2",
+  "sourceCommit": "d06697219c859c89885e93adc0d92c3b240a686c",
+  "bridgeSha256": "F14B5560A5E8BABE6C0AA7692F32038FBA967AA2DD1A0BC738FEF5798F06A64B",
+  "officialDriverSha256": "E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE",
+  "status": "Pass",
+  "contractChecks": 12,
+  "nativeMeshChecks": 47,
+  "provider": "official-wintun",
+  "abi": 2,
+  "scope": "actual Windows Wintun + MeshRouter and real UDP application, simulated remote memory adapter; no WAN",
+  "temporaryAdapterRemoved": true,
+  "temporaryRuleRemoved": true
+}

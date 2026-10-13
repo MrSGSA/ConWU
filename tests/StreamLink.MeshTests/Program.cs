@@ -166,6 +166,8 @@ static class Program
         Console.WriteLine("Isolated native adapter " + local.LocalIp);
         try {
             using var adapter = new NativeAdapter(components, local.Pair.Network, 1);
+            PacketAdapterProviders.RequireProduction(adapter.Descriptor);
+            Check(adapter.Descriptor.Abi==2&&adapter.Descriptor.CancelRead,"actual official provider declares versioned cancellable ABI");
             WindowsHost.AddFirewall(rule, local.LocalIp, peer.LocalIp);
             var memory = new MemoryAdapter();
             await using (var native = new MeshRouter(local, adapter))
@@ -177,6 +179,7 @@ static class Program
                 byte[] payload = RandomNumberGenerator.GetBytes(1200);
                 await udp.SendAsync(payload, new IPEndPoint(IPAddress.Parse(peer.LocalIp), 45124));
                 await Until(() => memory.Incoming.Count > 0, "Windows UDP application traverses Wintun and encrypted datagram router");
+                Check(adapter.Statistics.ReadPackets>0&&adapter.Statistics.ReadBytes>=1200,"actual adapter read accounting reflects IP packets");
                 memory.Incoming.TryDequeue(out var packet); byte[] echo = packet!.ToArray(); int ipHeader = (echo[0] & 15) * 4;
                 echo.AsSpan(12, 4).CopyTo(echo.AsSpan(16, 4)); IPAddress.Parse(peer.LocalIp).GetAddressBytes().CopyTo(echo, 12);
                 (echo[ipHeader], echo[ipHeader + 2]) = (echo[ipHeader + 2], echo[ipHeader]); (echo[ipHeader + 1], echo[ipHeader + 3]) = (echo[ipHeader + 3], echo[ipHeader + 1]);
