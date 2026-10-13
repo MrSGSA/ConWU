@@ -43,7 +43,7 @@ public sealed partial class MeshRouter
         public TraversalAttemptContext? Context;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
-        public readonly Dictionary<long, (long Sent, bool Activity,int BaselineLeg)> PendingRoundTrips = [];
+        public readonly Dictionary<long, (long Sent, bool Activity,int BaselineLeg,int LoadedLeg)> PendingRoundTrips = [];
         public int ControlPackets => Budget.Packets;
         public int ControlBytes => Budget.Bytes;
         public string Failure = "";
@@ -160,7 +160,7 @@ public sealed partial class MeshRouter
                     if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out var probe) && Stopwatch.GetElapsedTime(probe.Sent).TotalSeconds < 12) {
                         path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(probe.Sent, path.LastRoundTrip).TotalMilliseconds;
                         path.Traffic.RoundTrip(path.RttMs.Value, Environment.TickCount64, probe.Activity);
-                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value,probe.BaselineLeg);
+                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value,probe.BaselineLeg,probe.LoadedLeg);
                     }
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
@@ -282,7 +282,7 @@ public sealed partial class MeshRouter
                 byte[]? ping = peer.Link.ProbePath(nonce);
                 if (ping != null && AdmitMaintenance(path, ping.Length) && SendManaged(ping, path)) {
                     if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value.Sent).Key);
-                    path.PendingRoundTrips[nonce] = (Stopwatch.GetTimestamp(), path.Traffic.RecentlyBusy(now),-1);
+                    path.PendingRoundTrips[nonce] = (Stopwatch.GetTimestamp(), path.Traffic.RecentlyBusy(now),-1,managed.Diagnostic?.LoadedLeg(path.Identity.PathId)??-1);
                     if (path.ProofAt != 0) peer.Recovery.KeepaliveSent(nonce, now);
                 }
             }

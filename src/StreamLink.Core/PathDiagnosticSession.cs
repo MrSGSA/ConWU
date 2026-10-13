@@ -12,7 +12,7 @@ public sealed record PathDiagnosticSessionStatus(Guid SessionId,string State,int
     PathDiagnosticCost Cost,PathDiagnosticWindow[] Windows,
     [property:JsonIgnore(Condition=JsonIgnoreCondition.WhenWritingDefault)]int TimingVersion=0);
 internal sealed record PathDiagnosticTarget(ValidatedPathIdentity Identity,IPathDiagnosticWire Wire,Func<byte[],bool> Send,
-    Func<byte[],byte[]?> Encode,Func<long> Denied,Func<int,bool>? BaselineProbe=null);
+    Func<byte[],byte[]?> Encode,Func<long> Denied,Func<int,bool>? BaselineProbe=null,Func<int,bool>? LoadedProbe=null);
 
 // Serialized by the Router gate, with one existing receiver. One source worker
 // invokes the callback under that same gate; no second socket or reader exists.
@@ -35,6 +35,8 @@ internal sealed class PathDiagnosticSession:IDisposable
     readonly int timingVersion;
     long idleAt,nextIdleProbe;
     int idleProbes;
+    long nextLoadedProbe;
+    int loadedProbes;
     readonly long began;
     Phase phase;
     int leg,controls,cleanupSends;
@@ -83,6 +85,7 @@ internal sealed class PathDiagnosticSession:IDisposable
     }
     void StartSource()
     {
+        nextLoadedProbe=clockNow();loadedProbes=0;
         if(current==null||sending!=null)return;
         before=permit.Snapshot();allowance=permit.Open(current.Identity.PathId,(int)Math.Ceiling(target*1.4),5500);
         current.Wire.GrantDiagnosticWire(allowance);var path=current;int round=leg;
@@ -94,6 +97,10 @@ internal sealed class PathDiagnosticSession:IDisposable
     {
         if(disposed)return;
         if(!Finished&&(!healthy()||!permit.Active||now-began>=PathDiagnosticPermit.SessionMs||now-stageAt>=12000))Cancel("ResourcesOrDeadline");
+        if(phase==Phase.Sending&&sending?.IsCompleted==false&&now>=nextLoadedProbe&&loadedProbes<10&&rtts.Count<4){
+            if(current!.LoadedProbe?.Invoke(leg)==true)loadedProbes++;
+            nextLoadedProbe=now+500;
+        }
         if(phase==Phase.Baseline){
             if(idleRtts.Count>=4&&now-idleAt>=800)StartSource();
             else if(now-idleAt>=3500)Cancel("IdleBaselineUnavailable");
@@ -172,11 +179,12 @@ internal sealed class PathDiagnosticSession:IDisposable
         if(!Finished&&!IsLocalSource&&current?.Identity.PathId==path&&phase is Phase.WaitStart or Phase.Receiving or Phase.Settling)
             receiver?.Record(payload);
     }
-    public void RoundTrip(Guid path,double milliseconds,int baselineLeg=-1)
+    public int LoadedLeg(Guid path)=>IsLocalSource&&current?.Identity.PathId==path&&phase==Phase.Sending?leg:-1;
+    public void RoundTrip(Guid path,double milliseconds,int baselineLeg=-1,int loadedLeg=-1)
     {
         if(!IsLocalSource||current?.Identity.PathId!=path||!double.IsFinite(milliseconds)||milliseconds is<0 or>=12000)return;
         if(timingVersion==1&&phase==Phase.Baseline&&baselineLeg==leg&&idleRtts.Count<8)idleRtts.Add(milliseconds);
-        else if(phase==Phase.Sending&&baselineLeg<0&&rtts.Count<32)rtts.Add(milliseconds);
+        else if(phase==Phase.Sending&&baselineLeg<0&&loadedLeg==leg&&rtts.Count<32)rtts.Add(milliseconds);
     }
     public void Cancel(string reason)
     {

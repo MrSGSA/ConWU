@@ -21,7 +21,15 @@ public sealed partial class MeshRouter
         long nonce=BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
         byte[]? ping=peer.Link.ProbePath(nonce);
         if(ping==null||!AdmitMaintenance(path,ping.Length)||!SendManaged(ping,path))return false;
-        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,leg);return true;
+        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,leg,-1);return true;
+    }
+    bool LoadedProbe(Peer peer,ManagedPath path,int leg)
+    {
+        if(!DiagnosticIdle(Environment.TickCount64,1000)||path.PendingRoundTrips.Count>=8)return false;
+        long nonce=BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
+        byte[]? ping=peer.Link.ProbePath(nonce);
+        if(ping==null||!AdmitMaintenance(path,ping.Length)||!SendManaged(ping,path))return false;
+        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,-1,leg);return true;
     }
     bool DiagnosticPair(Peer peer,ManagedPath active,ManagedPath standby)=>peer.Managed is{}managed&&ReferenceEquals(managed.Active,active)&&
         ReferenceEquals(managed.Candidate,standby)&&!active.Closing&&!standby.Closing&&!active.Transport.Failed&&!standby.Transport.Failed&&
@@ -44,7 +52,8 @@ public sealed partial class MeshRouter
                 body=>{lock(gate)return Valid()&&DiagnosticIdle(Environment.TickCount64,1000)?peer.Link.Diagnostic(body):null;},
                 ()=>path.Transport is IWireControlPath wire?wire.WireControl?.Denied??0:
                     (path.Transport as IMeshSendDiagnostics)?.SendQueue.Accounting.Failed.Packets??0,
-                leg=>{lock(gate)return Valid()&&BaselineProbe(peer,path,leg);});}
+                leg=>{lock(gate)return Valid()&&BaselineProbe(peer,path,leg);},
+                leg=>{lock(gate)return Valid()&&LoadedProbe(peer,path,leg);});}
             return new(PathNomination.ContextDigest(standby.Context!),standby.Context!.Nominator,profile.Self.Slot,peer.Member.Slot,standby.DiagnosticMbps,permit,Target,
                 body=>SendFeedback(peer,standby,body,Environment.TickCount64),
                 ()=>Valid()&&DiagnosticIdle(Environment.TickCount64,1000),timingVersion:standby.DiagnosticTiming);

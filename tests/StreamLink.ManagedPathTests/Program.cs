@@ -34,7 +34,8 @@ if(args.Contains("--quality-assessment-only")){
 }
 if(args.Contains("--diagnostic-session-model-only")){
     var diagnostic=DiagnosticSessionModels.Run(Check);
-    await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,diagnostic},new JsonSerializerOptions{WriteIndented=true}));return;
+    var loaded=LoadedProbeModels.Run(Check);
+    await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,diagnostic,loaded},new JsonSerializerOptions{WriteIndented=true}));return;
 }
 if(args.Contains("--diagnostic-control-only")){
     var diagnostic=DiagnosticControlTests.Run(Check);
