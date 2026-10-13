@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using StreamLink.Core;
 
+if(args is ["--native-lifecycle",var components,"--output",var output,"--rounds",var roundText]) { try{await NativeLifecycleTests.Run(Path.GetFullPath(components),Path.GetFullPath(output),int.Parse(roundText));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return; }
 int checks=0;
 void Check(bool ok,string reason){if(!ok)throw new Exception(reason);checks++;}
 IPAddress Ip(string text)=>IPAddress.Parse(text);

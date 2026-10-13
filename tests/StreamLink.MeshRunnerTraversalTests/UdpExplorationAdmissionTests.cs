@@ -120,5 +120,17 @@ static class UdpExplorationAdmissionTests
         try{await using var unused=await factory.GatherEnhanced(peer,TraversalProfile.UdpDirect,Guid.NewGuid(),false,hard,2,false,false,true,()=>true,token,true);}catch(IOException ex){unqualified=ex.Message.Contains("UdpStableEndpointUnavailable");}
         check(unqualified&&resolutions==initial+1&&budget.Usage().OpenUdpResources==0,
             "explicit local off stops after the ordinary single STUN observation, never silently samples or claims private stability");
+        var other=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh)));other.Directory=mesh.Directory;
+        var observed=new System.Collections.Concurrent.ConcurrentQueue<string>();
+        DeviceProfile Profile(MeshProfile p)=>new(){Mesh=p,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478"]};
+        await using var fa=new MeshCandidateFactory(Profile(mesh),"unused","unused",[TraversalProfile.UdpDirect],diagnostic:observed.Enqueue){ResolveTarget=(_,_,_)=>Task.FromResult(a.Endpoint),RouteCheckForTest=(_,_,_)=>{}};
+        await using var fb=new MeshCandidateFactory(Profile(other),"unused","unused",[TraversalProfile.UdpDirect],diagnostic:observed.Enqueue){ResolveTarget=(_,_,_)=>Task.FromResult(a.Endpoint),RouteCheckForTest=(_,_,_)=>{}};
+        var attempt=Guid.NewGuid();
+        await using var ra=await fa.Gather(other.Self,TraversalProfile.UdpDirect,attempt,token);
+        await using var rb=await fb.Gather(mesh.Self,TraversalProfile.UdpDirect,attempt,token);
+        ra.AuthorizeUdpWitness(rb.Candidate);rb.AuthorizeUdpWitness(ra.Candidate);
+        var wait=System.Diagnostics.Stopwatch.StartNew();
+        while(observed.Count(s=>s.StartsWith("PeerPortWitness："))<2){if(wait.ElapsedMilliseconds>2500)throw new TimeoutException("Epoch-wrapped production witness unavailable: "+string.Join(';',observed));await Task.Delay(10,token);}
+        check(observed.Count(s=>s.StartsWith("PeerPortWitness："))==2,"formal epoch wrappers forward authenticated preparation to both actual same-socket peer-port witnesses, without a selected path");
     }
 }

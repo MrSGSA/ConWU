@@ -202,6 +202,7 @@ internal sealed partial class MeshCandidateFactory
     }
     sealed class EpochResource(MeshCandidateFactory owner, NetworkEpoch epoch, IMeshCandidateResource inner) : IMeshCandidateResource
     {
+        public void AuthorizeUdpWitness(MeshTraversalCandidate remote) { owner.RequireEpoch(epoch); inner.AuthorizeUdpWitness(remote); }
         readonly IDisposable reference = owner.HoldEpoch(epoch);
         int disposed;
         public MeshTraversalCandidate Candidate { get { owner.RequireEpoch(epoch); return inner.Candidate; } }

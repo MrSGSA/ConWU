@@ -99,6 +99,8 @@ public sealed class MeshRunner
                 }
                 if (opening?.IsCompleted == true) {
                     var adapter = await opening; opening = null;
+                    if(adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
+                        log($"虚拟网段路由警告：{warning.Reason}；{warning.Prefix}；现有路由未改动，可在诊断中检查其他 VPN/父网段");
                     try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
                     services.Record(folder, rule);
                     try{quality=services.QualityWithPolicy is {} controlled?controlled(profile,mesh.LocalIp,QualityKey,stop):services.QualityServer(mesh.LocalIp,QualityKey,stop);}

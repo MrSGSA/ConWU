@@ -1,16 +1,18 @@
-param([ValidateSet('Local')][string]$Profile='Local', [string]$OutputDirectory)
+param([ValidateSet('Local')][string]$Profile='Local', [string]$OutputDirectory,[string]$StartAt='')
 $ErrorActionPreference='Stop'
 $root=Split-Path -Parent $PSScriptRoot
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $root ('artifacts\validation-'+(Get-Date -Format 'yyyyMMdd-HHmmss'))}
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
 $results=[Collections.Generic.List[object]]::new()
+$skipped=[Collections.Generic.List[string]]::new();$script:validationReachedStart=$StartAt.Length -eq 0
 $completed=$false
 Push-Location $root
 try {
  $commit=(& git rev-parse HEAD).Trim()
  $dirty=[bool](& git status --porcelain)
  function Invoke-Check([string]$Name,[string]$Program,[string[]]$Arguments){
+  if(-not $script:validationReachedStart){if($Name -eq $StartAt){$script:validationReachedStart=$true}else{$skipped.Add($Name);return}}
   $watch=[Diagnostics.Stopwatch]::StartNew()
   $log=Join-Path $OutputDirectory ($Name+'.txt')
   & $Program @Arguments *> $log
@@ -76,13 +78,15 @@ try {
  Invoke-Check 'udp-exploration-boundaries' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability-boundaries',(Join-Path $OutputDirectory 'udp-exploration-boundaries.json'))
  Invoke-Check 'udp-exploration-intersection-model' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability-model',(Join-Path $OutputDirectory 'udp-exploration-model.json'))
  Invoke-Check 'egress-correctness' 'dotnet' @('run','--project','tests\StreamLink.EgressTests','-c','Release','--',(Join-Path $OutputDirectory 'egress-correctness.json'),'--correctness-only')
+ if(-not $script:validationReachedStart){throw 'Requested StartAt check does not exist'}
  $completed=$true
 } finally {
  $hashes=@('out\native\udp2raw-native.exe','out\native\udp2raw-protocol-test.exe') | Where-Object {Test-Path -LiteralPath $_} | ForEach-Object {
    [pscustomobject]@{path=$_;sha256=(Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash}
  }
  $status=if($completed -and @($results|Where-Object status -eq 'Fail').Count -eq 0){'Pass'}else{'Fail'}
- [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
+ $endCommit=(& git rev-parse HEAD).Trim();$endDirty=[bool](& git status --porcelain)
+ [pscustomobject]@{planVersion='1.0';profile=$Profile;status=$status;sourceCommit=$commit;dirty=$dirty;endCommit=$endCommit;endDirty=$endDirty;fixedSource=(!$dirty -and !$endDirty -and $commit -eq $endCommit);excludedChecks=@($skipped);subset=$StartAt.Length -gt 0;os=[Environment]::OSVersion.VersionString;native=$hashes;results=$results;
    gate='Local only: no driver, no NAT, no release claim';remainingGates=@('M1 controlled two-Windows 30 rounds and WAN','M2 SO + business','M3 product integration','M4 Wintun UDP_DIRECT','M5-M9')} |
    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'manifest.json')
  Pop-Location

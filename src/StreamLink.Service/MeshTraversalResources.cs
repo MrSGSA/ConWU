@@ -85,6 +85,7 @@ internal sealed class MeshRequestBudget(int burst = 6)
 internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string executable, string folder,
     TraversalProfile[] profiles, bool captureBroker = false, Action<string>? diagnostic = null, bool ipv6Native = false, bool wireControl = false, bool peerSourceNative = false,bool diagnosticNative=false,EgressPacer? sharedEgress=null) : IMeshCandidateFactory, IAsyncDisposable
 {
+    Action<string>? CandidateLog => diagnostic;
     readonly DeviceProfile options = profile;
     readonly bool countWireControl = wireControl && captureBroker;
     readonly bool diagnosticTransport=diagnosticNative&&wireControl&&captureBroker&&profile.ManagedEgressMbps>0;
@@ -307,9 +308,9 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         {
             try {
                 var observation = await udp!.ObservePeerPort(endpoint, CancellationToken.None);
-                owner.observationLog?.Invoke($"PeerPortWitness：socket={observation.SocketId:N}；target={endpoint}；observed={observation.Mapped}；仅见证此端口，未提升探索资格");
+                (owner.observationLog ?? owner.CandidateLog)?.Invoke($"PeerPortWitness：socket={observation.SocketId:N}；target={endpoint}；observed={observation.Mapped}；仅见证此端口，未提升探索资格");
             } catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException) {
-                owner.observationLog?.Invoke("PeerPortWitnessUnavailable：声明端口在剩余预算内无有效响应");
+                (owner.observationLog ?? owner.CandidateLog)?.Invoke("PeerPortWitnessUnavailable：声明端口在剩余预算内无有效响应");
             }
         }
         public MeshTraversalCandidate Candidate {
