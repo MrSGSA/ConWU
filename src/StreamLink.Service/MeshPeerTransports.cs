@@ -4,42 +4,90 @@ namespace StreamLink.Service;
 
 // At most one proven path and one tentative replacement per member. The
 // replacement must pass the router's authenticated round trip before retirement.
-internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTransport> create, Action<string> log) : IDisposable
+internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
 {
+    readonly MeshRouter router;
+    readonly Func<string, CancellationToken, Task<IMeshTransport>> create;
+    readonly Action<string> log;
+    public MeshPeerTransports(MeshRouter router, Func<string, IMeshTransport> create, Action<string> log)
+        : this(router, (endpoint, _) => Task.FromResult(create(endpoint)), log) { }
+    public MeshPeerTransports(MeshRouter router, Func<string, CancellationToken, Task<IMeshTransport>> create, Action<string> log)
+    { this.router = router; this.create = create; this.log = log; }
     (string Endpoint, IMeshTransport Transport)? active, pending;
+    Task<IMeshTransport>? preparing;
+    CancellationTokenSource? preparationStop;
+    string preparationEndpoint = "";
+    bool disposed;
     long started, nextAttempt;
+    long preparationBegan;
     int failures;
     string requested = "";
-    public bool HasPending => pending != null;
+    public bool HasPending => pending != null || preparing != null;
     public void WakeRetry() { nextAttempt = 0; failures = 0; }
     public void Update(int slot, string endpoint, string name, string detail, Func<bool>? beginAttempt = null, bool keepPending = true)
     {
+        ObjectDisposedException.ThrowIf(disposed, this);
         long now = Environment.TickCount64;
         if (endpoint.Length > 0 && endpoint != requested) { requested = endpoint; failures = 0; nextAttempt = 0; }
+        if (preparing != null) {
+            if (!keepPending || endpoint != preparationEndpoint) preparationStop!.Cancel();
+            if (preparing.IsCompleted) {
+                try {
+                    var prepared = preparing.GetAwaiter().GetResult();
+                    if (preparationStop!.IsCancellationRequested) prepared.Dispose();
+                    else {
+                        pending = (preparationEndpoint, prepared); started = preparationBegan;
+                        log($"设备 {slot} 传输准备完成，排队与启动耗时 {now - preparationBegan} ms");
+                    }
+                } catch (OperationCanceledException) when (preparationStop!.IsCancellationRequested) { }
+                catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
+                finally { preparing = null; preparationStop!.Dispose(); preparationStop = null; }
+            }
+        }
         if (active?.Transport.Exited == true) { Close(active); active = null; }
         if (pending != null && router.UsesPath(slot, pending.Value.Transport.ClientEndpoint) && !pending.Value.Transport.Exited) {
             Close(active); active = pending; pending = null; failures = 0; nextAttempt = 0;
             log($"设备 {slot} 已通过双向验证，使用新的直连路径");
         }
-        if (!keepPending && pending != null) { Close(pending); pending = null; }
+        if ((!keepPending || endpoint.Length == 0) && pending != null) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; }
         if (pending != null && (pending.Value.Transport.Exited || now - started >= 15000)) {
-            Close(pending); pending = null; Retry(now);
+            router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; Retry(now);
             log($"设备 {slot} 新路径暂不可用，保留已有路径");
         }
-        if (pending != null && endpoint.Length > 0 && endpoint != pending.Value.Endpoint) { Close(pending); pending = null; nextAttempt = 0; }
+        if (pending != null && endpoint.Length > 0 && endpoint != pending.Value.Endpoint) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; nextAttempt = 0; }
         // A live native process can have a dead wire path (NAT state cleared,
         // sleep or source-route change). An unchanged authenticated announcement
         // is still eligible for a NEW independently bound client. Do not stop
         // the retained transport merely because its health window elapsed.
         bool replaceDisconnected = active != null && !router.HasHealthyPath(slot);
-        if (pending == null && endpoint.Length > 0 && (endpoint != active?.Endpoint || replaceDisconnected) && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
-            try { pending = (endpoint, create(endpoint)); started = now; }
-            catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
+        if (preparing == null && pending == null && keepPending && endpoint.Length > 0 && (endpoint != active?.Endpoint || replaceDisconnected) && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
+            try {
+                preparationEndpoint = endpoint; preparationBegan = now; preparationStop = new(); preparationStop.CancelAfter(15000);
+                preparing = create(endpoint, preparationStop.Token);
+                if (preparing.IsCompletedSuccessfully) {
+                    pending = (endpoint, preparing.Result); started = now; preparing = null;
+                    preparationStop.Dispose(); preparationStop = null;
+                }
+            }
+            catch (Exception ex) { preparationStop?.Dispose(); preparationStop = null; preparing = null; Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
         }
         var transport = pending?.Transport ?? active?.Transport;
         router.SetCandidate(slot, transport?.ClientEndpoint, name, detail, transport?.ControlsWirePackets == true);
     }
     void Retry(long now) { failures = Math.Min(failures + 1, 4); nextAttempt = now + Math.Min(15000, 1000 << failures); }
     static void Close((string Endpoint, IMeshTransport Transport)? path) => path?.Transport.Dispose();
-    public void Dispose() { try { Close(pending); } finally { Close(active); pending = active = null; } }
+    public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();
+    public async ValueTask DisposeAsync()
+    {
+        if (disposed) return; disposed = true; preparationStop?.Cancel();
+        try {
+            if (preparing != null) {
+                try { (await preparing).Dispose(); }
+                catch (OperationCanceledException) when (preparationStop!.IsCancellationRequested) { }
+            }
+        } finally {
+            preparing = null; preparationStop?.Dispose(); preparationStop = null;
+            try { Close(pending); } finally { Close(active); pending = active = null; }
+        }
+    }
 }
