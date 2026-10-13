@@ -213,6 +213,7 @@ static class NativeIpv6RunnerTests
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
         public bool SupportsTcpPeerReflexive => inner.SupportsTcpPeerReflexive;
         public bool SupportsUdpExploration => inner.SupportsUdpExploration;
+        public bool SupportsUdpEmpiricalStability => inner.SupportsUdpEmpiricalStability;
         public bool SupportsQualityFeedback => inner.SupportsQualityFeedback;
         public bool SupportsStandbyPaths => inner.SupportsStandbyPaths;
         public bool SupportsPathDiagnostics=>inner.SupportsPathDiagnostics;
@@ -231,12 +232,13 @@ static class NativeIpv6RunnerTests
             int round, bool prediction, bool source, CancellationToken t)
         { Interlocked.Increment(ref Gathers); var gathered = await inner.GatherSourceAware(peer, p, attempt, v6, remote, round, prediction, source, t); Candidates.Enqueue(gathered.Candidate); return new Resource(gathered, this); }
         public async Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer, TraversalProfile p, Guid attempt, bool v6, MeshTraversalCandidate? remote,
-            int round, bool prediction, bool source, bool exploration, Func<bool> eligible, CancellationToken t)
-        { Interlocked.Increment(ref Gathers); var gathered = await inner.GatherEnhanced(peer, p, attempt, v6, remote, round, prediction, source, exploration, eligible, t); Candidates.Enqueue(gathered.Candidate); return new Resource(gathered, this); }
+            int round, bool prediction, bool source, bool exploration, Func<bool> eligible, CancellationToken t, bool empiricalAllowed=false)
+        { Interlocked.Increment(ref Gathers); var gathered = await inner.GatherEnhanced(peer, p, attempt, v6, remote, round, prediction, source, exploration, eligible, t, empiricalAllowed); Candidates.Enqueue(gathered.Candidate); return new Resource(gathered, this); }
         sealed class Resource(IMeshCandidateResource inner, Inspect owner) : IMeshCandidateResource {
             public MeshTraversalCandidate Candidate => inner.Candidate;
             public TimeSpan ExplorationRemaining => inner.ExplorationRemaining;
             public object? ExplorationStats => inner.ExplorationStats;
+            public void AuthorizeUdpWitness(MeshTraversalCandidate remote)=>inner.AuthorizeUdpWitness(remote);
             public async Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext c, MeshTraversalCandidate r, CancellationToken t) => new Prepared(await inner.PrepareCandidate(c, r, t), owner);
             public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext c, IPEndPoint r, CancellationToken t) => new Prepared(await inner.Prepare(c, r, t), owner);
             public ValueTask DisposeAsync() => inner.DisposeAsync();

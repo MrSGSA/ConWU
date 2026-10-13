@@ -14,12 +14,15 @@ internal sealed partial class MeshCandidateFactory
     internal Func<IPEndPoint, int[]>? ExplorationTargetsForTest { get; init; }
     public bool SupportsUdpExploration => options.UdpExploration && options.TraversalMode == "tcp-udp" &&
         options.Selection().Allows(TraversalProfile.UdpDirect) && Profiles.Contains(TraversalProfile.UdpDirect);
+    public bool SupportsUdpEmpiricalStability => SupportsUdpExploration && options.UdpEmpiricalStability;
     public Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
-        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token) =>
-        GatherCurrent(ct => GatherEnhancedCurrent(peer,profile,attempt,allowIpv6,remote,round,predictionAllowed,peerSourceAllowed,explorationAllowed,stillEligible,ct),token);
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token, bool empiricalAllowed = false) =>
+        GatherCurrent(ct => GatherEnhancedCurrent(peer,profile,attempt,allowIpv6,remote,round,predictionAllowed,peerSourceAllowed,explorationAllowed,stillEligible,ct,empiricalAllowed),token);
     Task<IMeshCandidateResource> GatherEnhancedCurrent(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
-        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token)
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token, bool empiricalAllowed)
     {
+        if (remote?.Exploration?.EvidenceKind == "empirical-eim-v1" && (!empiricalAllowed || !SupportsUdpEmpiricalStability))
+            throw new IOException("经验 UDP 稳定性候选缺少本轮双方授权");
         if (remote?.Exploration != null && (!explorationAllowed || !SupportsUdpExploration || profile != TraversalProfile.UdpDirect ||
             remote.Prediction != null || remote.PeerReflexive || IPEndPoint.Parse(remote.Endpoint).AddressFamily != AddressFamily.InterNetwork))
             throw new IOException("UDP 探索未获双方、服务与本机策略授权");
@@ -27,7 +30,7 @@ internal sealed partial class MeshCandidateFactory
             throw new IOException("UDP 探索只能使用已认证对端声明的公网 IPv4");
         if (remote?.Exploration != null || remote == null && round >= 2 && explorationAllowed && SupportsUdpExploration && profile == TraversalProfile.UdpDirect) {
             if (!stillEligible()) throw new IOException("UDP 探索目标已有健康路径");
-            return GatherExploration(peer, attempt, remote, stillEligible, token);
+            return GatherExploration(peer, attempt, remote, stillEligible, token, empiricalAllowed && SupportsUdpEmpiricalStability);
         }
         return GatherSourceAware(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, peerSourceAllowed, token);
     }
@@ -49,7 +52,7 @@ internal sealed partial class MeshCandidateFactory
         while (values.Count < 256) values.Add(RandomNumberGenerator.GetInt32(1024, 65536));
         return values.Order().ToArray();
     }
-    async Task<IMeshCandidateResource> GatherExploration(MeshMember peer, Guid attempt, MeshTraversalCandidate? remote, Func<bool> stillEligible, CancellationToken token)
+    async Task<IMeshCandidateResource> GatherExploration(MeshMember peer, Guid attempt, MeshTraversalCandidate? remote, Func<bool> stillEligible, CancellationToken token, bool empiricalAllowed)
     {
         UdpExplorationSeed? seed = null;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(UdpProbeGroup.DurationMs);
@@ -89,13 +92,41 @@ internal sealed partial class MeshCandidateFactory
             // production never infers peer-port stability from unrelated STUN.
             if (remote?.Exploration?.Stable != true && ExplorationEvidenceForTest != null)
                 proof = ExplorationEvidenceForTest(node, generation, observations.ToArray(), remote);
+            if (remote?.Exploration?.Stable != true && proof == null && empiricalAllowed) {
+                var samples = new List<NatObservation>();
+                // Four training observations, then two later holdouts, on the
+                // winning source. All work shares the seed's original deadline
+                // and machine control budget; there is no fresh check window.
+                var destinations = new List<IPEndPoint>();
+                foreach (var name in options.UdpStun.Distinct().Take(8)) {
+                    using var fast = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); fast.CancelAfter(700);
+                    try {
+                        var other = await ResolveTarget(name, AddressFamily.InterNetwork, fast.Token);
+                        if (destinations.Contains(other)) continue;
+                        CheckRoute(other, node.Local.Address); destinations.Add(other);
+                        if (destinations.Count >= 2 && destinations.Select(d => d.Address).Distinct().Count() >= 2) break;
+                    } catch (Exception ex) when (!deadline.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) { }
+                }
+                if (destinations.Select(d => d.Address).Distinct().Count() >= 2) {
+                    for (int i = 0; i < 6; i++) {
+                        using var fast = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); fast.CancelAfter(750);
+                        try { samples.Add(await node.Observe(destinations[i % destinations.Count], fast.Token)); }
+                        catch (Exception ex) when (!deadline.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException) { break; }
+                    }
+                    if (samples.Count == 6 && samples.All(o => o.Mapped.Equals(mapped)))
+                        proof = UdpStableSourceEvidence.Empirical(node, generation, samples.Take(4).ToArray(), samples.Skip(4).ToArray(), true);
+                }
+                observationLog?.Invoke(proof == null ? "EmpiricalEimUnavailable：当前同源独立训练/留出观察不足或映射变化" : "EmpiricalEimOnly：同 socket 4 训练 + 2 留出观察；仅显式实验资格，不是任意对端端口强证据");
+            }
             if (remote?.Exploration is { Stable: false } && proof == null) throw new IOException("UdpStableEndpointUnavailable：双方没有合格稳定源证据");
             bool stable = remote?.Exploration?.Stable != true && proof != null;
             var targets = stable ? [] : ExplorationTargetsForTest?.Invoke(mapped) ?? GuessUdpPorts(mapped);
             if (!stable) _ = MeshUdpExploration.Ports(MeshUdpExploration.FormatPorts(targets));
             long observed = observations.Min(o => o.ObservedAt.ToUnixTimeSeconds());
+            long expires = observed + 12; // sampling never resets the seed TTL
             var description = stable ? proof!.Description : new UdpExplorationCandidate(false, Guid.Empty, "", 0, MeshUdpExploration.FormatPorts(targets), "");
-            var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), target.ToString(), observed, observed + 12,
+            observed = Math.Max(observed, proof?.ObservedAt ?? observed);
+            var candidate = new MeshTraversalCandidate(Guid.NewGuid(), 1, mapped.ToString(), target.ToString(), observed, expires,
                 CandidatePurpose.UdpDirect, Exploration: description);
             MeshUdpExploration.Validate(candidate, TraversalProfile.UdpDirect);
             if (seed.Remaining <= TimeSpan.Zero || !stillEligible()) throw new IOException("UDP 探索种子已过期或已有健康路径");

@@ -402,7 +402,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
             group != null && (settings.DurationMs != UdpProbeGroup.DurationMs || settings.MaximumPackets != UdpProbeGroup.PacketLimit) ||
             settings.MaximumCandidates is < 1 or > 8 || input.Length > settings.MaximumCandidates || input.Any(ep => !ValidEndpoint(ep) || group != null && !group.Allows(ep))) throw new ArgumentException("打洞预算或候选无效");
         if (Interlocked.Exchange(ref begun, 1) != 0) throw new InvalidOperationException("每轮打洞需要新的会话，不能重用过期凭据");
-        lock (gate) { budget = settings; round = group?.Round ?? new(resources, settings.MaximumPackets); started = group?.Started ?? Stopwatch.GetTimestamp(); foreach (var endpoint in input) Add(endpoint, false); }
+        lock (gate) { budget = settings; round = group?.Round ?? (witnessStarted == 0 ? new(resources, settings.MaximumPackets) : round); started = group?.Started ?? Stopwatch.GetTimestamp(); foreach (var endpoint in input) Add(endpoint, false); }
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token, stop.Token);
         bool success = false;
         long nextSelection = 0;

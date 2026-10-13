@@ -1,0 +1,41 @@
+PASS production collector obtains empirical admission from seven actual same-socket STUN transactions, without an injected stability provider
+PASS empirical candidate retains one actual socket and its original seed deadline/resource ledger
+PASS old/disabled peer capability rejects empirical evidence before DNS or source allocation
+PASS ending unselected empirical collection releases the sole continuously held resource
+PASS independent empirical capability cannot bypass ordinary UDP exploration permission
+PASS explicit local off stops after the ordinary single STUN observation, never silently samples or claims private stability
+PASS missing bilateral/server permission rejects exploration before DNS or source allocation
+PASS healthy target rejects expensive exploration before any source allocation
+PASS UDP enhancement cannot authorize a TCP factory path
+PASS IPv6 cannot use the IPv4 probability factory
+PASS local opt-out refuses remote UDP source expansion
+PASS production source expansion rejects loopback/private/CGN/documentation targets before DNS or allocation: 127.0.0.1:43000
+PASS production source expansion rejects loopback/private/CGN/documentation targets before DNS or allocation: 10.0.0.1:43000
+PASS production source expansion rejects loopback/private/CGN/documentation targets before DNS or allocation: 100.64.0.1:43000
+PASS production source expansion rejects loopback/private/CGN/documentation targets before DNS or allocation: 192.0.2.1:43000
+PASS all rejected physical routes leave no remembered target and never allocate a source
+PASS two unqualified private-source roles return an explicit failure after one observation, without expanding or scanning
+PASS actual Windows UDP STUN charges the seed's shared ledger and begins its only observation clock
+PASS single loopback or private STUN observation cannot claim native public stability
+PASS published proof ID never exposes the local socket resource identity
+PASS stability proof cannot cross an egress/resource generation
+PASS one peer port cannot authorize a larger guess set
+PASS TCP observations cannot qualify a UDP endpoint
+PASS queue cancellation never opens extra sockets or closes the held seed
+PASS post-admission health recheck cancels expansion while preserving seed ownership
+PASS formal Runner exchanges signed stable/hard UDP exploration candidates
+PASS exploration selects an authenticated UDP path and preserves explicit quality-degraded status
+PASS formal preparation includes the observed seed within one stable and 32 total hard sources
+PASS the same observed stable resource wins; unused hard resources close before Router ownership
+PASS formal exploratory UDP path delivers full-size bidirectional MeshLink business
+PASS formal exploratory shutdown closes every seed, extra source and adapter
+PASS formal Runner exchanges signed stable/hard UDP exploration candidates
+PASS exploration selects an authenticated UDP path and preserves explicit quality-degraded status
+PASS formal preparation includes the observed seed within one stable and 32 total hard sources
+PASS the same observed stable resource wins; unused hard resources close before Router ownership
+PASS formal exploratory UDP path delivers full-size bidirectional MeshLink business
+PASS formal exploratory shutdown closes every seed, extra source and adapter
+PASS real Windows exploration retains only two actual winning UDP sockets from 33 sources
+PASS same-source promotion preserves actual Winsock resource IDs and both selected endpoints
+PASS real UDP same-socket exploratory path carries complete bidirectional MeshLink frames
+PASS real socket shutdown returns every shared UDP quota without closing the retained winner early

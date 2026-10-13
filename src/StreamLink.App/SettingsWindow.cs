@@ -14,6 +14,7 @@ public sealed class SettingsWindow : Form
     readonly CheckBox tcpPrediction = new() { AutoSize = true, Text = "TCP 小窗口预测（实验，校准合格后尝试；需双方和服务器支持）" };
     readonly CheckBox tcpPeerSource = new() { AutoSize = true, Text = "TCP 来源端点学习（实验，适用于对端端口变化；需双方和服务器支持）" };
     readonly CheckBox udpExploration = new() { AutoSize = true, Text = "UDP 多源探索（实验，需稳定端证据；最多 32 源/256 端口，默认关闭）" };
+    readonly CheckBox udpEmpirical = new() { AutoSize = true, Text = "私网 UDP 经验稳定性（独立实验，4 训练 + 2 留出；不保证对端映射稳定）" };
     readonly CheckBox qualityFeedback = new() { AutoSize = true, Text = "路径送达反馈（实验，需双方及服务器支持；只测量，不自动换路）" };
     readonly CheckBox portControl = new() { AutoSize = true, Text = "TCP PCP / NAT-PMP 后备映射（实验，需网关支持）" };
     readonly CheckBox udpIpv6 = new() { AutoSize = true, Text = "IPv6 UDP 备用（实验，需双方原生 IPv6 与新版服务器）" };
@@ -30,7 +31,7 @@ public sealed class SettingsWindow : Form
     readonly CheckBox pathDiagnostics=new(){AutoSize=true,Text="空闲时比较路径负载（实验，需双方与服务器支持；约80秒，可能用至256MiB；不自动换路）"};
     readonly CheckBox manualQuality=new(){AutoSize=true,Text="允许已配对成员请求测速（最多20秒，每90秒一次；会占用带宽）"};
     readonly NumericUpDown diagnosticMbps=new(){Minimum=1,Maximum=50,Width=85};
-    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true,bool supportsManualQuality=false,bool supportsLegacyPacing=false)
+    public SettingsWindow(DeviceProfile current, bool supportsSelection = true, bool supportsObserver = true, bool supportsPortControl = true, bool supportsUdpGateway = true, bool supportsUdpIpv6 = true, bool supportsFakeTcpIpv6 = true, bool supportsPacing = true, bool supportsCalibration = true, bool supportsPrediction = true, bool supportsPeerSource = true, bool supportsUdpExploration = true, bool supportsQualityFeedback = true, bool supportsStandbyPaths = true,bool supportsDiagnostics=true,bool supportsAutoQuality=true,bool supportsManualQuality=false,bool supportsLegacyPacing=false,bool supportsUdpEmpirical=false)
     {
         SuspendLayout(); AutoScaleMode = AutoScaleMode.None;
         profile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(current))!;
@@ -112,6 +113,14 @@ public sealed class SettingsWindow : Form
         if (!supportsUdpExploration) udpExploration.Text = "UDP 多源探索需更新后台组件。";
         traversal.SelectedIndexChanged += (_, _) => ExplorationAvailability(); selection.SelectedIndexChanged += (_, _) => ExplorationAvailability();
         udpFallback.CheckedChanged += (_, _) => ExplorationAvailability(); ExplorationAvailability(); extra.Controls.Add(udpExploration);
+        udpEmpirical.Checked = profile.UdpEmpiricalStability;
+        udpEmpirical.CheckedChanged += (_, _) => { if (supportsUdpEmpirical) profile.UdpEmpiricalStability = udpEmpirical.Checked; };
+        void EmpiricalAvailability() {
+            udpEmpirical.Enabled = supportsUdpEmpirical && udpExploration.Enabled && udpExploration.Checked;
+            if (!udpEmpirical.Enabled && supportsUdpEmpirical) udpEmpirical.Checked = false;
+        }
+        udpExploration.CheckedChanged += (_, _) => EmpiricalAvailability(); udpExploration.EnabledChanged += (_, _) => EmpiricalAvailability();
+        EmpiricalAvailability(); extra.Controls.Add(udpEmpirical);
         extra.Controls.AddRange([portControl, tcpIpv6, udpIpv6]); layout.Controls.Add(extra);
         qualityFeedback.Checked = profile.QualityFeedback;
         qualityFeedback.CheckedChanged += (_, _) => { if (supportsQualityFeedback) profile.QualityFeedback = qualityFeedback.Checked; };
@@ -175,7 +184,7 @@ public sealed class SettingsWindow : Form
         BindIntent(udpFallback,nameof(DeviceProfile.AllowUdpFallback));
         BindIntent(tcpObservation,nameof(DeviceProfile.TcpSynObservation));BindIntent(tcpCalibration,nameof(DeviceProfile.TcpPortCalibration));
         BindIntent(tcpPrediction,nameof(DeviceProfile.TcpPortPrediction));BindIntent(tcpPeerSource,nameof(DeviceProfile.TcpPeerReflexive));
-        BindIntent(udpExploration,nameof(DeviceProfile.UdpExploration));BindIntent(qualityFeedback,nameof(DeviceProfile.QualityFeedback));
+        BindIntent(udpExploration,nameof(DeviceProfile.UdpExploration));BindIntent(udpEmpirical,nameof(DeviceProfile.UdpEmpiricalStability));BindIntent(qualityFeedback,nameof(DeviceProfile.QualityFeedback));
         BindIntent(standbyPaths,nameof(DeviceProfile.StandbyPaths));BindIntent(pathDiagnostics,nameof(DeviceProfile.PathDiagnostics));
         BindIntent(portControl,nameof(DeviceProfile.PortControlMapping));BindIntent(udpIpv6,nameof(DeviceProfile.UdpIpv6));
         BindIntent(tcpIpv6,nameof(DeviceProfile.FakeTcpIpv6));BindIntent(manualQuality,nameof(DeviceProfile.AllowManualQualityRequests));

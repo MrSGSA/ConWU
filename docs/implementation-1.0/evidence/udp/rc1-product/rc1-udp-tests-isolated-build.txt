@@ -1,0 +1,15 @@
+  正在确定要还原的项目…
+  已还原 D:\Codex_workspace\UDP2RAW\product\src\StreamLink.Core\StreamLink.Core.csproj (用时 216 毫秒)。
+  已还原 D:\Codex_workspace\UDP2RAW\product\src\StreamLink.Discovery\StreamLink.Discovery.csproj (用时 234 毫秒)。
+  已还原 D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.MeshRunnerTraversalTests\StreamLink.MeshRunnerTraversalTests.csproj (用时 4.31 秒)。
+  已还原 D:\Codex_workspace\UDP2RAW\product\src\StreamLink.Service\StreamLink.Service.csproj (用时 4.56 秒)。
+  StreamLink.Core -> D:\Codex_workspace\UDP2RAW\product\artifacts\rc1-udp-isolated\bin\StreamLink.Core\release\StreamLink.Core.dll
+  StreamLink.Service -> D:\Codex_workspace\UDP2RAW\product\artifacts\rc1-udp-isolated\bin\StreamLink.Service\release\StreamLink.Service.dll
+  StreamLink.Discovery -> D:\Codex_workspace\UDP2RAW\product\artifacts\rc1-udp-isolated\bin\StreamLink.Discovery\release\StreamLink.Discovery.dll
+  StreamLink.MeshRunnerTraversalTests -> D:\Codex_workspace\UDP2RAW\product\artifacts\rc1-udp-isolated\bin\StreamLink.MeshRunnerTraversalTests\release\StreamLink.MeshRunnerTraversalTests.dll
+
+已成功生成。
+    0 个警告
+    0 个错误
+
+已用时间 00:00:21.41

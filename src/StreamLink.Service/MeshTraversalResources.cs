@@ -14,6 +14,7 @@ internal interface IMeshCandidateResource : IAsyncDisposable
     bool PredictionReady => false;
     TimeSpan ExplorationRemaining => TimeSpan.Zero;
     object? ExplorationStats => null;
+    void AuthorizeUdpWitness(MeshTraversalCandidate remote) { }
     bool PredictionControlReady(int requests) => false;
     Task<MeshTraversalCandidate> MeasurePrediction(long started, CancellationToken token) => throw new NotSupportedException();
     void FinishPrediction(PredictionOutcome outcome) { }
@@ -29,6 +30,7 @@ internal interface IMeshCandidateFactory
     bool SupportsTcpPrediction => false;
     bool SupportsTcpPeerReflexive => false;
     bool SupportsUdpExploration => false;
+    bool SupportsUdpEmpiricalStability => false;
     bool SupportsQualityFeedback => false;
     bool SupportsStandbyPaths => false;
     bool SupportsPathDiagnostics=>false;
@@ -49,7 +51,7 @@ internal interface IMeshCandidateFactory
         MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token) =>
         GatherCoordinated(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, token);
     Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer, TraversalProfile profile, Guid attempt, bool allowIpv6,
-        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token) =>
+        MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, bool explorationAllowed, Func<bool> stillEligible, CancellationToken token, bool empiricalAllowed = false) =>
         GatherSourceAware(peer, profile, attempt, allowIpv6, remote, round, predictionAllowed, peerSourceAllowed, token);
 }
 
@@ -290,6 +292,26 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         TcpEndpointLease? tcp, UdpTraversal? udp, MeshTcpEndpointPool.Use? pooled) : IMeshCandidateResource
     {
         bool prepared;
+        public void AuthorizeUdpWitness(MeshTraversalCandidate remote)
+        {
+            if (udp == null || prepared) return;
+            var endpoint = IPEndPoint.Parse(remote.Endpoint);
+            if (endpoint.AddressFamily != AddressFamily.InterNetwork) return;
+            owner.CheckRoute(endpoint, udp.Local.Address);
+            udp.AuthorizePeerWitness(endpoint.Address);
+            // Diagnostics only. This exact declared peer port does not attest
+            // the unobserved random port set of a probability strategy.
+            _ = ObserveDeclaredPeer(endpoint);
+        }
+        async Task ObserveDeclaredPeer(IPEndPoint endpoint)
+        {
+            try {
+                var observation = await udp!.ObservePeerPort(endpoint, CancellationToken.None);
+                owner.observationLog?.Invoke($"PeerPortWitness：socket={observation.SocketId:N}；target={endpoint}；observed={observation.Mapped}；仅见证此端口，未提升探索资格");
+            } catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException) {
+                owner.observationLog?.Invoke("PeerPortWitnessUnavailable：声明端口在剩余预算内无有效响应");
+            }
+        }
         public MeshTraversalCandidate Candidate {
             get {
                 if (udp?.GatewaySnapshot != null && !udp.GatewayCandidateCurrent(IPEndPoint.Parse(candidate.Endpoint)))

@@ -48,6 +48,13 @@ internal sealed class UdpStableSourceEvidence
         return new(owner, generation, observations[0].Mapped, "peer-ports", observations.Min(o => o.ObservedAt.ToUnixTimeSeconds()), peer.ToString(), ports);
     }
     public UdpExplorationCandidate Description => new(true, Id, Kind, ObservedAt, ports, peer);
+    public static UdpStableSourceEvidence Empirical(UdpTraversal owner, Guid generation, NatObservation[] training, NatObservation[] holdout, bool explicitlyEnabled)
+    {
+        Validate(owner, generation, training.Concat(holdout).ToArray());
+        var result = UdpEmpiricalEvidenceProvider.Evaluate(owner, generation, training, holdout, explicitlyEnabled);
+        if (!result.ExperimentalAdmission) throw new IOException("UdpStableEndpointUnavailable: " + result.Reason);
+        return new(owner, generation, training[0].Mapped, "empirical-eim-v1", training.Min(o => o.ObservedAt.ToUnixTimeSeconds()));
+    }
     public void Require(UdpTraversal owner, Guid expectedGeneration, IPEndPoint advertised, IPAddress peerAddress, int[] targets)
     {
         if (owner.SocketId != socket || expectedGeneration != generation || !owner.Local.Equals(local) || !advertised.Equals(mapped) || !owner.ReceiveReady ||

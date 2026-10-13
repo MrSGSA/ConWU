@@ -31,9 +31,9 @@ public static class MeshUdpExploration
             if (e.EvidenceId != Guid.Empty || e.EvidenceKind != "" || e.EvidenceObservedAt != 0 || e.PeerScope != "") throw new FormatException("严格侧不能伪报稳定证据");
             _ = Ports(e.Targets); return;
         }
-        if (e.EvidenceId == Guid.Empty || e.EvidenceObservedAt <= 0 || e.EvidenceObservedAt > candidate.ObservedAt || e.EvidenceKind is not ("public-local" or "peer-ports"))
+        if (e.EvidenceId == Guid.Empty || e.EvidenceObservedAt <= 0 || e.EvidenceObservedAt > candidate.ObservedAt || e.EvidenceKind is not ("public-local" or "peer-ports" or "empirical-eim-v1"))
             throw new FormatException("UDP 稳定证据类型、时间或身份无效");
-        if (e.EvidenceKind == "public-local") {
+        if (e.EvidenceKind is "public-local" or "empirical-eim-v1") {
             if (e.Targets != "" || e.PeerScope != "") throw new FormatException("原生公网证据不能包含另一种端口观察范围");
         } else {
             _ = Ports(e.Targets);

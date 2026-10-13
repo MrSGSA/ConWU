@@ -22,9 +22,11 @@ public sealed partial class UdpTraversal
     }
     TimeSpan WitnessRemaining
     {
-        get{lock(gate){var own=TimeSpan.FromMilliseconds(UdpProbeGroup.DurationMs)-Stopwatch.GetElapsedTime(witnessStarted);var shared=group?.Remaining??explorationSeed?.Remaining;return shared is{} other&&other<own?other:own;}}
+        get{lock(gate){var own=TimeSpan.FromMilliseconds(UdpProbeGroup.DurationMs)-Stopwatch.GetElapsedTime(witnessStarted);var shared=group?.Remaining??explorationSeed?.Remaining;
+            if (shared == null && started != 0) shared = TimeSpan.FromMilliseconds(budget.DurationMs) - Stopwatch.GetElapsedTime(started);
+            return shared is{} other&&other<own?other:own;}}
     }
-    bool AdmitWitness()=>group!=null?group.Round.TrySend(96,false):explorationSeed!=null?explorationSeed.SendAdmission(96):resources.TrySend(96);
+    bool AdmitWitness()=>group!=null?group.Round.TrySend(96,false):explorationSeed!=null?explorationSeed.SendAdmission(96):round.TrySend(96,false);
     byte[] WitnessPacket(byte kind,ReadOnlySpan<byte> nonce,ReadOnlySpan<byte> resourceGeneration,IPEndPoint? observed=null)
     {
         var frame=new byte[96];"SLW4"u8.CopyTo(frame);frame[4]=kind;frame[5]=localSlot;frame[6]=remoteSlot;attempt.CopyTo(frame,8);nonce.CopyTo(frame.AsSpan(24,16));resourceGeneration.CopyTo(frame.AsSpan(40,16));

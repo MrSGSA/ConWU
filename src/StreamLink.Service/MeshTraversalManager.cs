@@ -83,7 +83,8 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             TcpPeerReflexive: allowed.Contains(TraversalProfile.FakeTcpHttpSo) && factory.SupportsTcpPeerReflexive ? 1 : 0,
             UdpExploration: allowed.Contains(TraversalProfile.UdpDirect) && factory.SupportsUdpExploration ? 1 : 0,
             QualityFeedback: factory.SupportsQualityFeedback ? 1 : 0,
-            StandbyPaths: factory.SupportsStandbyPaths ? 1 : 0,PathDiagnostics:factory.SupportsPathDiagnostics?1:0,DiagnosticMbps:factory.DiagnosticMbps,AutoQuality:factory.SupportsAutoQuality?1:0,DiagnosticTiming:factory.SupportsDiagnosticTiming?1:0);
+            StandbyPaths: factory.SupportsStandbyPaths ? 1 : 0,PathDiagnostics:factory.SupportsPathDiagnostics?1:0,DiagnosticMbps:factory.DiagnosticMbps,AutoQuality:factory.SupportsAutoQuality?1:0,DiagnosticTiming:factory.SupportsDiagnosticTiming?1:0,
+            UdpEmpiricalStability: factory.SupportsUdpEmpiricalStability ? 1 : 0);
         MeshTraversal.ValidateCapabilities(Capabilities);
     }
     public void Receive(MeshTraversalMessage[]? messages)
@@ -241,6 +242,9 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
                     (m.Candidate?.Exploration != null || m.PeerCandidate?.Exploration != null) &&
                     (!discovery.SupportsUdpExploration || Capabilities.UdpExploration != 1 || remote.UdpExploration != 1))
                     throw new IOException("协调服务或双方未授权本轮 UDP 探索消息");
+                if ((m.Candidate?.Exploration?.EvidenceKind == "empirical-eim-v1" || m.PeerCandidate?.Exploration?.EvidenceKind == "empirical-eim-v1") &&
+                    (Capabilities.UdpEmpiricalStability != 1 || remote.UdpEmpiricalStability != 1))
+                    throw new IOException("双方未独立授权经验 UDP 稳定性实验");
                 if (entries.TryGetValue(slot, out var e)) {
                     if (e.Closing != null) continue;
                     if (m.AttemptId != e.Attempt && m.Stage == MeshTraversalStage.Offer && e.Actor?.Phase != MeshAttemptPhase.Selected) {
@@ -347,7 +351,8 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
                 e.Deadline - Environment.TickCount64 >= UdpProbeGroup.DurationMs;
             if (offer?.Candidate?.Exploration != null && !exploration) throw new IOException("协调服务、双方或机会窗未授权 UDP 探索");
             e.Gathering = factory.GatherEnhanced(peer, kind, attempt, allow6, offer?.Candidate,
-                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, exploration, () => !router.Status().Any(s => s.Slot == peer.Slot && s.Connected), e.Stop.Token);
+                e.Upgrade ? 1 : opportunities[peer.Slot].Count(kind), prediction, sourceLearning, exploration, () => !router.Status().Any(s => s.Slot == peer.Slot && s.Connected), e.Stop.Token,
+                Capabilities.UdpEmpiricalStability == 1 && remote.UdpEmpiricalStability == 1);
             }
         }
         catch (Exception ex) { e.Gathering = Task.FromException<IMeshCandidateResource>(ex); }
@@ -363,6 +368,9 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             // Kept independently from the inbox so admission/async preparation
             // cannot discard the authenticated endpoint when consuming Ready.
             if (e.RemoteCandidate?.Id != e.Actor.Context.RemoteCandidateId) throw new IOException("缺少本轮已认证远端候选");
+            if (e.Profile == TraversalProfile.UdpDirect && e.RemoteCandidate.Exploration == null &&
+                Capabilities.UdpEmpiricalStability == 1 && e.Remote.UdpEmpiricalStability == 1)
+                e.Resource!.AuthorizeUdpWitness(e.RemoteCandidate);
             RequireRoundTime(e); e.Preparing = e.Resource!.PrepareCandidate(e.Actor.Context, e.RemoteCandidate, e.Stop.Token);
         }
     }

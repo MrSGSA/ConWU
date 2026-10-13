@@ -42,6 +42,9 @@ public sealed class DeviceProfile
     // coordinator capability plus an accounted native IPv4 capture broker.
     public bool TcpPeerReflexive { get; set; }
     public bool UdpExploration { get; set; }
+    // Weaker, separately negotiated admission. STUN holdouts never claim to
+    // prove arbitrary peer-port stability; keep this experiment opt-in.
+    public bool UdpEmpiricalStability { get; set; }
     public bool QualityFeedback { get; set; }
     public bool StandbyPaths { get; set; }
     public bool PathDiagnostics { get; set; }
@@ -88,6 +91,7 @@ public sealed class DeviceProfile
         if (PathSelection == "auto-quality" && !PathDiagnostics) throw new FormatException("自动质量选路需显式开启独立备用与空闲负载诊断");
         if (UdpExploration && (TraversalMode != "tcp-udp" || !Selection().Allows(TraversalProfile.UdpDirect)))
             throw new FormatException("UDP 多源探索需要 UDP 备用许可与实验 TCP/UDP 打洞");
+        if (UdpEmpiricalStability && !UdpExploration) throw new FormatException("经验 UDP 稳定性实验需先启用 UDP 多源探索");
         if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))
             throw new FormatException("TCP 来源学习需要实验 TCP 打洞与 FakeTCP 网络");
         if (PathSelection == "faketcp-only" && (TransportMode == "udp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))

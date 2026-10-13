@@ -9,6 +9,7 @@ static class UdpExplorationAdmissionTests
 {
     public static async Task Run(Action<bool,string> check,CancellationToken token)
     {
+        await EmpiricalCollector(check, token);
         var mesh=MeshIdentity.Create("https://example.com/","","faketcp");var peer=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self;
         var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true};
         int resolutions=0,opened=0;await using var factory=new MeshCandidateFactory(config,"unused","unused",[TraversalProfile.UdpDirect]){
@@ -83,9 +84,41 @@ static class UdpExplorationAdmissionTests
     internal sealed class UdpReflector:IAsyncDisposable{
         readonly UdpClient socket=new(new IPEndPoint(IPAddress.Loopback,0));readonly CancellationTokenSource stop=new();readonly Task pump;
         public IPEndPoint Endpoint=>(IPEndPoint)socket.Client.LocalEndPoint!;
-        public UdpReflector(){pump=Run();}
+        public UdpReflector(IPAddress? address=null){socket.Dispose();socket=new(new IPEndPoint(address??IPAddress.Loopback,0));pump=Run();}
         async Task Run(){while(!stop.IsCancellationRequested){var input=await socket.ReceiveAsync(stop.Token);var p=new byte[32];input.Buffer.AsSpan(0,20).CopyTo(p);p[0]=1;p[1]=1;p[3]=12;p[21]=0x20;p[23]=8;p[25]=1;
             BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(26),(ushort)(input.RemoteEndPoint.Port^0x2112));BinaryPrimitives.WriteUInt32BigEndian(p.AsSpan(28),BinaryPrimitives.ReadUInt32BigEndian(input.RemoteEndPoint.Address.GetAddressBytes())^0x2112a442);await socket.SendAsync(p,input.RemoteEndPoint,stop.Token);}}
         public async ValueTask DisposeAsync(){stop.Cancel();try{await pump;}catch(OperationCanceledException){}socket.Dispose();stop.Dispose();}
+    }
+    static async Task EmpiricalCollector(Action<bool,string> check,CancellationToken token)
+    {
+        var mesh=MeshIdentity.Create("https://example.com/","","faketcp");var peer=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self;
+        var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478","two.invalid:3478"]};
+        await using var a=new UdpReflector();await using var b=new UdpReflector(IPAddress.Parse("127.0.0.2"));
+        var budget=new TraversalResources();int resolutions=0;Guid held=Guid.Empty;
+        await using var factory=new MeshCandidateFactory(config,"unused","unused",[TraversalProfile.UdpDirect]){
+            ExplorationBudgetForTest=budget,RouteCheckForTest=(_,_,_)=>{},
+            ResolveTarget=(name,_,_)=>{resolutions++;return Task.FromResult(name.StartsWith("one")?a.Endpoint:b.Endpoint);},
+            OpenExplorationSocketForTest=_=>{var socket=new TraversalSocket(new(IPAddress.Loopback,0));held=socket.Id;return socket;}};
+        long now=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var hard=new MeshTraversalCandidate(Guid.NewGuid(),1,"8.8.8.8:43000",null,now,now+12,CandidatePurpose.UdpDirect,Exploration:new(false,Guid.Empty,"",0,"43000",""));
+        await using(var candidate=await factory.GatherEnhanced(peer,TraversalProfile.UdpDirect,Guid.NewGuid(),false,hard,2,false,false,true,()=>true,token,true)){
+            MeshUdpExploration.Validate(candidate.Candidate,TraversalProfile.UdpDirect);MeshUdpExploration.Pair(candidate.Candidate,hard);
+            check(candidate.Candidate.Exploration?.EvidenceKind=="empirical-eim-v1"&&candidate.Candidate.Exploration.Stable,
+                "production collector obtains empirical admission from seven actual same-socket STUN transactions, without an injected stability provider");
+            check(held!=Guid.Empty&&budget.Usage().OpenUdpResources==1&&candidate.ExplorationRemaining>TimeSpan.Zero,
+                "empirical candidate retains one actual socket and its original seed deadline/resource ledger");
+            int before=resolutions;bool denied=false;
+            try{await using var unused=await factory.GatherEnhanced(peer,TraversalProfile.UdpDirect,Guid.NewGuid(),false,candidate.Candidate,2,false,false,true,()=>true,token,false);}catch(IOException){denied=true;}
+            check(denied&&resolutions==before,"old/disabled peer capability rejects empirical evidence before DNS or source allocation");
+        }
+        check(budget.Usage().OpenUdpResources==0,"ending unselected empirical collection releases the sole continuously held resource");
+        var capability=new MeshTraversalCapabilities(1,0,Guid.NewGuid(),[TraversalProfile.UdpDirect],UdpExploration:1,UdpEmpiricalStability:1);
+        MeshTraversal.ValidateCapabilities(capability);bool rejected=false;
+        try{MeshTraversal.ValidateCapabilities(capability with{UdpExploration=0});}catch(FormatException){rejected=true;}
+        check(rejected,"independent empirical capability cannot bypass ordinary UDP exploration permission");
+        config.UdpEmpiricalStability=false;int initial=resolutions;bool unqualified=false;
+        try{await using var unused=await factory.GatherEnhanced(peer,TraversalProfile.UdpDirect,Guid.NewGuid(),false,hard,2,false,false,true,()=>true,token,true);}catch(IOException ex){unqualified=ex.Message.Contains("UdpStableEndpointUnavailable");}
+        check(unqualified&&resolutions==initial+1&&budget.Usage().OpenUdpResources==0,
+            "explicit local off stops after the ordinary single STUN observation, never silently samples or claims private stability");
     }
 }

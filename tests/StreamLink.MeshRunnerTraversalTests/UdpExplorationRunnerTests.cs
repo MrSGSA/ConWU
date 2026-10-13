@@ -49,9 +49,10 @@ static class UdpExplorationRunnerTests
     }
     internal sealed class FirstBlocked(NativeIpv6RunnerTests.Inspect inner):IMeshCandidateFactory,IAsyncDisposable {
         public TraversalProfile[] Profiles=>inner.Profiles;public bool SupportsUdpExploration=>true;
+        public bool SupportsUdpEmpiricalStability=>inner.SupportsUdpEmpiricalStability;
         public Task<IMeshCandidateResource> Gather(MeshMember peer,TraversalProfile p,Guid a,CancellationToken t)=>throw new IOException("fixture ordinary opportunity not reachable");
-        public Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer,TraversalProfile p,Guid a,bool v6,MeshTraversalCandidate? r,int round,bool prediction,bool source,bool exploration,Func<bool> eligible,CancellationToken t)=>
-            round==1 && r?.Exploration==null ? throw new IOException("fixture ordinary opportunity not reachable") : inner.GatherEnhanced(peer,p,a,v6,r,round,prediction,source,exploration,eligible,t);
+        public Task<IMeshCandidateResource> GatherEnhanced(MeshMember peer,TraversalProfile p,Guid a,bool v6,MeshTraversalCandidate? r,int round,bool prediction,bool source,bool exploration,Func<bool> eligible,CancellationToken t,bool empiricalAllowed=false)=>
+            round==1 && r?.Exploration==null ? throw new IOException("fixture ordinary opportunity not reachable") : inner.GatherEnhanced(peer,p,a,v6,r,round,prediction,source,exploration,eligible,t,empiricalAllowed);
         public ValueTask DisposeAsync()=>inner.DisposeAsync();
     }
 }

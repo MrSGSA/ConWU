@@ -5,10 +5,10 @@ using System.Text.Json;
 namespace StreamLink.Core;
 public sealed record ControlRequest(string Command, DeviceProfile? Profile = null, string Invite = "", string Service = "", string Pin = "", int Mbps = 50, string Mode = "faketcp", int PeerSlot = 0, Guid OperationId = default, Guid CancelOperationId = default);
 public sealed record ControlOperationStatus(Guid Id, string Command, string Phase, bool Completed, bool Cancelable, string Error = "");
-public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile, SessionStatus? Status, string Invite, string[] Logs, string Quality = "", string Version = "0.2.0", int PathSelectionVersion = 0, int TcpObserverVersion = 0, int PortControlVersion = 0, int UdpIpv6Version = 0, int FakeTcpIpv6Version = 0, int EgressPacingVersion = 0, int TcpCalibrationVersion = 0, int TcpPredictionVersion = 0, int TcpPeerReflexiveVersion = 0, int UdpExplorationVersion = 0, int QualityFeedbackVersion = 0, int StandbyPathsVersion = 0,int PathDiagnosticsVersion=0,int AutoQualityVersion=0, ControlOperationStatus? Operation = null, int ControlOperationsVersion = 0, int ManualQualityVersion = 0,int LegacyEgressPacingVersion=0,bool ServiceReady=false);
+public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile, SessionStatus? Status, string Invite, string[] Logs, string Quality = "", string Version = "0.2.0", int PathSelectionVersion = 0, int TcpObserverVersion = 0, int PortControlVersion = 0, int UdpIpv6Version = 0, int FakeTcpIpv6Version = 0, int EgressPacingVersion = 0, int TcpCalibrationVersion = 0, int TcpPredictionVersion = 0, int TcpPeerReflexiveVersion = 0, int UdpExplorationVersion = 0, int QualityFeedbackVersion = 0, int StandbyPathsVersion = 0,int PathDiagnosticsVersion=0,int AutoQualityVersion=0, ControlOperationStatus? Operation = null, int ControlOperationsVersion = 0, int ManualQualityVersion = 0,int LegacyEgressPacingVersion=0,bool ServiceReady=false,int UdpEmpiricalStabilityVersion=0);
 public static class ServiceProtocol
 {
-    public const string PipeName = "StreamLink-Control-v2";
+    public static string PipeName => WindowsInstance.IsValidation ? WindowsInstance.Name + "-Control-v2" : "StreamLink-Control-v2";
     public static async Task<T> Read<T>(Stream stream, CancellationToken token)
     {
         byte[] head = new byte[4]; await stream.ReadExactlyAsync(head, token); int length = BinaryPrimitives.ReadInt32LittleEndian(head);
