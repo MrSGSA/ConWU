@@ -9,6 +9,7 @@ sealed class DesktopSettings
     public bool Tray { get; set; } = true;
     public bool CloseToTray { get; set; } = true;
     public bool Animations { get; set; } = true;
+    public string UpdateChannel {get;set;}="stable";
     static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "StreamLink", "desktop.json");
     public static DesktopSettings Load()
     {

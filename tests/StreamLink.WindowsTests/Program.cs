@@ -203,7 +203,8 @@ static class Program
         string source = Path.Combine(root, "bundle"), parent = Path.Combine(root, "install"), destination = Path.Combine(parent, "candidate");
         Directory.CreateDirectory(source); File.WriteAllText(Path.Combine(source, "payload.bin"), "synthetic install payload");
         string manifest = Path.Combine(source, "manifest.json");
-        void Manifest(string path, string hash) => File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = typeof(MainWindow).Assembly.GetName().Version!.ToString(3) + "-preview", files = new[] { new { path, sha256 = hash } } }));
+        string release=(typeof(MainWindow).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute),false).Cast<System.Reflection.AssemblyInformationalVersionAttribute>().Single().InformationalVersion).Split('+')[0];
+        void Manifest(string path, string hash) => File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = release, files = new[] { new { path, sha256 = hash } } }));
         string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(source, "payload.bin")))); Manifest("payload.bin", hash);
         var copy = typeof(ServiceInstaller).GetMethod("CopyBundle", BindingFlags.NonPublic | BindingFlags.Static)!;
         void Copy(string from, string to, string list) => copy.Invoke(null, [from, to, parent, list]);
@@ -226,9 +227,16 @@ static class Program
         Manifest("payload.bin", hash); invalid = false;
         try { Copy(source, Path.Combine(root, "outside"), manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
         Check(invalid && !Directory.Exists(Path.Combine(root, "outside")), "Unmanaged install destination was mutated");
-        Check(ServiceInstaller.VerifyBundle(source) == 1, "Read-only candidate bundle preflight failed");
+        invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"self-listed hash-only package cannot pass runtime/provenance preflight");
+        string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
+        var pe=new byte[80];pe[0]=(byte)'M';pe[1]=(byte)'Z';pe[60]=64;pe[64]=(byte)'P';pe[65]=(byte)'E';pe[68]=0x64;pe[69]=0x86;
+        foreach(string file in required){string path=Path.Combine(source,file);Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllBytes(path,pe);}
+        void RuntimeManifest(IEnumerable<string> list,string publisher="UnsignedCandidate")=>File.WriteAllText(manifest,JsonSerializer.Serialize(new{schemaVersion=2,version=release,architecture="win-x64",tunAbi=2,meshProtocol=4,provenance=new{publisherSignature=publisher},files=list.Select(path=>new{path,sha256=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(source,path))))})}));
+        RuntimeManifest(required);Check(ServiceInstaller.VerifyBundle(source)==required.Length,"complete synthetic runtime-header contract passes integrity preflight, without claiming executable/driver validation");
+        RuntimeManifest(required.Where(p=>p!="components/wintun.dll"));invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"regenerating valid hashes cannot omit mandatory Wintun component");
+        RuntimeManifest(required,"VerifiedPublisher");invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"self-declared publisher signature is not trusted");RuntimeManifest(required);
         File.WriteAllBytes(manifest, new byte[] { 0xef, 0xbb, 0xbf }.Concat(File.ReadAllBytes(manifest)).ToArray());
-        Check(ServiceInstaller.VerifyBundle(source) == 1, "UTF-8 BOM from a Windows package writer must remain valid");
+        Check(ServiceInstaller.VerifyBundle(source) == required.Length, "UTF-8 BOM from a Windows package writer must remain valid");
         string log = Path.Combine(root, "child.log");
         using (var job = new ChildJob()) {
             using var child = job.Start(Path.Combine(Environment.SystemDirectory, "cmd.exe"), ["/c", "echo configuration=SYNTHETIC_TEST_SECRET"], log, secrets: ["SYNTHETIC_TEST_SECRET"]);

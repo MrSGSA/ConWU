@@ -12,6 +12,13 @@ if(args.Length>0 && args[0]=="--child") { await Task.Delay(60000); return; }
 int passed=0;
 void Check(bool yes,string message) { if(!yes) throw new Exception(message); passed++; }
 void Reject(Action action,string message) { try {action();} catch(Exception ex) when(ex is IOException or FormatException or ArgumentException) {passed++; return;} throw new Exception(message); }
+Check(ReleaseVersion.TryParse("1.0.0-rc.10",out var rc10)&&ReleaseVersion.TryParse("1.0.0-rc.2",out var rc2)&&rc10.CompareTo(rc2)>0,"numeric prerelease ordering failed");
+Check(ReleaseVersion.TryParse("1.0.0",out var stable)&&stable.CompareTo(rc10)>0,"stable does not outrank RC");
+Check(!ReleaseVersion.TryParse("1.0.0-rc.01",out _)&&!ReleaseVersion.TryParse("01.0.0",out _),"noncanonical semantic version accepted");
+var selectedRelease=ReleaseVersion.Latest(new[]{("v1.0.0-rc1",false,false),("v0.5.6-preview",false,true),("v0.5.5",false,false),("v9.0.0",true,false)},false);
+Check(selectedRelease?.ToString()=="0.5.5","stable channel selected prerelease or draft");
+Check(ReleaseVersion.Latest(new[]{("v1.0.0-rc1",false,true),("v0.5.5",false,false)},true)?.PreRelease=="rc1","preview channel cannot select RC");
+Check(ReleaseVersion.TryParse("1.0.0+abc",out var buildA)&&ReleaseVersion.TryParse("1.0.0+def",out var buildB)&&buildA.CompareTo(buildB)==0,"build metadata changed release precedence");
 byte[] req=Stun.Request(); byte[] response=new byte[36];
 req.CopyTo(response,0); response[0]=1; response[1]=1; response[3]=16;
 // Unknown 1-byte attribute plus three padding bytes, followed by XOR-MAPPED.

@@ -23,11 +23,12 @@ public static class ServiceInstaller
         string source = AppContext.BaseDirectory;
         string manifest = Path.Combine(source, "manifest.json");
         if (!File.Exists(manifest)) throw new IOException("请从完整发布包运行；缺少安装文件清单");
+        VerifyBundle(source);
         string parent = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamLink");
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
         string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
-        new StreamLink.Service.ProfileStore().AuthorizeUiUser(System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
+        var profileStore=new StreamLink.Service.ProfileStore();string? previousUi=profileStore.UiUserSnapshot();
         bool existed = Installed;
         string? previous = null;
         if (existed) {
@@ -35,14 +36,17 @@ public static class ServiceInstaller
             await StopRegistered();
         }
         try {
+            profileStore.AuthorizeUiUser(System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
             await Sc(existed ? "config" : "create", "StreamLink", "binPath=", "\"" + Path.Combine(destination, "StreamLink.Service.exe") + "\"", "start=", "auto", "DisplayName=", "StreamLink P2P Network");
             await Sc("description", "StreamLink", "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
             await Sc("failure", "StreamLink", "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             await Sc("start", "StreamLink");
             await Task.Run(() => { using var service = new ServiceController("StreamLink"); service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30)); });
-        } catch {
-            if (previous != null) { try { await StopRegistered(); await Sc("config", "StreamLink", "binPath=", previous); await Sc("start", "StreamLink"); } catch { } }
-            throw;
+            using var ready=new CancellationTokenSource(15000);while(true){ready.Token.ThrowIfCancellationRequested();var status=await ServiceProtocol.Call(new("status"),ready.Token);if(status.Ok&&status.ServiceReady&&status.ControlOperationsVersion==1&&status.Version==DesktopVersion.Number)break;await Task.Delay(250,ready.Token);}
+        } catch(Exception candidateFailure) {
+            try{profileStore.RestoreUiUser(previousUi);if(previous!=null){await StopRegistered();await Sc("config","StreamLink","binPath=",previous);await Sc("start","StreamLink");await Task.Run(()=>{using var old=new ServiceController("StreamLink");old.WaitForStatus(ServiceControllerStatus.Running,TimeSpan.FromSeconds(30));});}else{await StopRegistered();if(Installed)await Sc("delete","StreamLink");}}
+            catch(Exception rollbackFailure){throw new IOException("候选安装失败，恢复旧服务/授权也失败："+candidateFailure.Message+"；"+rollbackFailure.Message,new AggregateException(candidateFailure,rollbackFailure));}
+            throw new IOException("候选安装未通过本地ServiceReady检查，已恢复旧服务与UI授权；离线对端不作为安装失败条件",candidateFailure);
         }
     }
     static void CopyBundle(string source, string destination, string parent, string manifest)
@@ -83,7 +87,25 @@ public static class ServiceInstaller
         if (!Path.GetFullPath(manifest).Equals(Path.GetFullPath(targetManifest), StringComparison.OrdinalIgnoreCase)) File.WriteAllBytes(targetManifest, manifestBytes);
     }
     sealed record BundleFile(string Path, string Hash);
-    public static int VerifyBundle(string source) => ValidateBundle(Path.GetFullPath(source), ReadManifest(Path.Combine(source, "manifest.json"))).Length;
+    public static int VerifyBundle(string source)
+    {
+        source=Path.GetFullPath(source);byte[] bytes=ReadManifest(Path.Combine(source,"manifest.json"));var files=ValidateBundle(source,bytes);
+        ReadOnlyMemory<byte> json=bytes;if(bytes.AsSpan().StartsWith(new byte[]{0xef,0xbb,0xbf}))json=json[3..];using var doc=JsonDocument.Parse(json);var manifest=doc.RootElement;
+        if(!manifest.TryGetProperty("schemaVersion",out var schema)||schema.GetInt32()!=2||manifest.GetProperty("architecture").GetString()!="win-x64"||manifest.GetProperty("tunAbi").GetInt32()!=2||manifest.GetProperty("meshProtocol").GetInt32()!=4)throw new IOException("发布格式、架构或协议ABI不匹配");
+        string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
+        var paths=files.Select(f=>f.Path.Replace('\\','/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if(required.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少必需运行文件");
+        foreach(string path in new[]{"StreamLink.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
+            using var input=File.OpenRead(Path.Combine(source,path));var head=new byte[64];input.ReadExactly(head);
+            int offset=System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(60));if(head[0]!='M'||head[1]!='Z'||offset<64||offset>input.Length-6)throw new IOException("运行组件PE头无效："+path);
+            input.Position=offset;var pe=new byte[6];input.ReadExactly(pe);if(!pe.AsSpan(0,4).SequenceEqual(new byte[]{0x50,0x45,0,0})||System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(pe.AsSpan(4))!=0x8664)throw new IOException("运行组件非x64："+path);
+        }
+        // Listed hashes prove integrity, never provenance. Candidate bundles
+        // remain explicitly unsigned until a real publisher signature exists.
+        if(!manifest.TryGetProperty("provenance",out var provenance)||provenance.GetProperty("publisherSignature").GetString() is not("UnsignedCandidate" or "VerifiedPublisher"))throw new IOException("发布来源证据缺失");
+        if(provenance.GetProperty("publisherSignature").GetString()=="VerifiedPublisher")throw new IOException("发布者签名晋级尚未实现，拒绝自声明可信来源");
+        return files.Length;
+    }
     static byte[] ReadManifest(string path)
     {
         using var stream = File.OpenRead(path);

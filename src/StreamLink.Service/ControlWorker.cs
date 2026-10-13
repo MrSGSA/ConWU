@@ -19,6 +19,7 @@ public sealed partial class ControlWorker : BackgroundService
     CancellationTokenSource? measureStop;
     ControlReply? snapshot;
     string quality = "";
+    bool initialized;
     readonly SemaphoreSlim requests = new(1, 1);
     readonly FileStream lease;
     public ControlWorker()
@@ -88,7 +89,7 @@ public sealed partial class ControlWorker : BackgroundService
     static async Task ObserveShutdown(Task task){try{await task;}catch(OperationCanceledException){} }
     void PublishReply()
     {
-        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1));
+        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized));
     }
     ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=SensitiveText.Redact(error,current.Profile!),Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
     // Full per-window evidence stays in the runner; the legacy pipe remains
@@ -177,6 +178,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         Recovery.Recover(Log, Path.Combine(ProfileStore.Root, "sessions"));
         Log("StreamLink 已启动"); if (profile.Enabled) Begin();
+        initialized=true;
         PublishReply();
     }
     public async Task StopLocal(CancellationToken token=default) { await End(token); runStop?.Dispose();runStop=null; }

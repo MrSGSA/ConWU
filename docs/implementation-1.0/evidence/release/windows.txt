@@ -1,0 +1,4 @@
+D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\Program.cs(190,35): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\StreamLink.WindowsTests.csproj]
+D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\Program.cs(199,19): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\StreamLink.WindowsTests.csproj]
+D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\Program.cs(199,19): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.WindowsTests\StreamLink.WindowsTests.csproj]
+PASS 109: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and UI busy/success/failure feedback. No live service/network changed.

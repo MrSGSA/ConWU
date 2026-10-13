@@ -653,17 +653,24 @@
         "BASE-01",
         "SEC-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: unified RC SemVer, explicit update channels, required/runtime manifest preflight, local ServiceReady and restoration handling",
+      "product": "Production installer/client; actual fixed packages not built or installed yet",
+      "windowsIo": "109 Windows fixtures and 21 control tests Pass; synthetic PE headers, not signing/installed-service evidence",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/REL-01-02.md",
+        "docs/implementation-1.0/evidence/release/"
+      ],
+      "remaining": [
+        "new fixed RC package pipeline + SBOM + exact source provenance",
+        "real install/upgrade/double-failure/same-network rollback and UI pairing",
+        "trusted publisher signatures unavailable; candidate must be explicit unsigned"
+      ]
     },
     {
       "id": "REL-02",
@@ -673,17 +680,24 @@
         "CTL-01",
         "UI-04"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: unified RC SemVer, explicit update channels, required/runtime manifest preflight, local ServiceReady and restoration handling",
+      "product": "Production installer/client; actual fixed packages not built or installed yet",
+      "windowsIo": "109 Windows fixtures and 21 control tests Pass; synthetic PE headers, not signing/installed-service evidence",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/REL-01-02.md",
+        "docs/implementation-1.0/evidence/release/"
+      ],
+      "remaining": [
+        "new fixed RC package pipeline + SBOM + exact source provenance",
+        "real install/upgrade/double-failure/same-network rollback and UI pairing",
+        "trusted publisher signatures unavailable; candidate must be explicit unsigned"
+      ]
     },
     {
       "id": "VAL-01",

@@ -28,6 +28,7 @@ public sealed partial class MainWindow
         background.Controls.Add(Design.Row(ActionButton(backend.IsService ? "更新后台服务" : "安装后台服务", "正在安装后台服务，请稍候…", async () => { await backend.ReleaseLocal(); await ServiceInstaller.Install(); Apply(await Call(new("status"))); ShowPage("settings"); return "后台服务已安装并启动"; }), ActionButton("卸载后台服务", "正在停止并卸载后台服务…", async () => { if (!backend.IsService) return "当前未安装后台服务，前台连接保持原状态"; await ServiceInstaller.Uninstall(); await backend.ReleaseLocal(); Apply(await Call(new("status"))); ShowPage("settings"); return "后台服务已卸载，配对保留，现为前台模式"; })));
         background.Controls.Add(Design.Label("安装／更新会切换当前连接；卸载会停止网络，保留配对与日志。", 9));
         var about = Card(stack, "关于 StreamLink"); var github = Design.Button("访问 GitHub"); github.Click += (_, _) => OpenUrl("https://github.com/MrSGSA/StreamLink"); about.Controls.Add(Design.Row(github, ActionButton("检查更新", "正在检查 GitHub 发布…", CheckUpdate)));
+        var updates=new ComboBox{Width=260,DropDownStyle=ComboBoxStyle.DropDownList,AccessibleName="更新通道"};updates.Items.AddRange(["正式版本","包含RC/预览版本"]);updates.SelectedIndex=preferences.UpdateChannel=="preview"?1:0;about.Controls.Add(updates);updates.SelectedIndexChanged+=(_,_)=>{preferences.UpdateChannel=updates.SelectedIndex==1?"preview":"stable";preferences.Save();};
         stack.Controls.Add(ActionButton("保存设置", "正在保存设置…", async () => {
             if (selection.SelectedIndex != 0) throw new IOException("公共协调服务器尚未提供，请选择自定义服务器");
             string service = url.Text.Trim(); if (service.Length > 0) { if (!service.EndsWith('/')) service += "/"; Pairing.Create(service, pin.Text.Trim()).Validate(); }
@@ -43,10 +44,10 @@ public sealed partial class MainWindow
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15), MaxResponseContentBufferSize = 262144 }; http.DefaultRequestHeaders.UserAgent.ParseAdd("StreamLink/" + DesktopVersion.Number);
         using var response = await http.GetAsync("https://api.github.com/repos/MrSGSA/StreamLink/releases?per_page=10", lifetime.Token);
         if (response.StatusCode == HttpStatusCode.NotFound) return "仓库目前为私有，请点击“访问 GitHub”登录后查看 Release";
-        response.EnsureSuccessStatusCode(); using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(lifetime.Token)); var latest = json.RootElement.EnumerateArray().FirstOrDefault(r => !r.GetProperty("draft").GetBoolean());
-        if (latest.ValueKind == JsonValueKind.Undefined) return "暂未发现发布版本";
-        string tag = latest.GetProperty("tag_name").GetString() ?? ""; string ver = tag.TrimStart('v').Split('-')[0];
-        return Version.TryParse(ver, out var version) && version > DesktopVersion.Current ? $"发现新版本 {tag}，请前往 GitHub Release 下载" : $"当前版本 {DesktopVersion.Number}；GitHub 最近发布 {tag}";
+        response.EnsureSuccessStatusCode(); using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(OperationToken));
+        var latest=ReleaseVersion.Latest(json.RootElement.EnumerateArray().Select(r=>(r.GetProperty("tag_name").GetString()??"",r.GetProperty("draft").GetBoolean(),r.GetProperty("prerelease").GetBoolean())),preferences.UpdateChannel=="preview");
+        if(latest==null)return "所选更新通道暂未发现版本";
+        return ReleaseVersion.TryParse(DesktopVersion.Release,out var current)&&latest.CompareTo(current)>0?$"发现新版本 {latest}，请前往 GitHub Release 下载":$"当前 {DesktopVersion.Release}；所选通道最新 {latest}";
     }
 }
 
