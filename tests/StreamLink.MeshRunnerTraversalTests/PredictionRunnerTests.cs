@@ -80,7 +80,11 @@ static partial class PredictionRunnerTests
         MeshRuntimeServices Services(int i) => new(m => new MeshDiscoveryClient(m), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
             async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new IOException(); }, _ => throw new IOException("No legacy entry"),
             (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "sessions")) {
-                Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
+                Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i]),
+                // This topology owns synthetic loopback/NAT resources. A real
+                // adapter arriving in another process is outside its generation.
+                // Network/SCM wake is covered by the explicit lifecycle suites.
+                NetworkWake = () => new MeshNetworkWake(watch: false)
             };
         var tasks = Enumerable.Range(0, 2).Select(i => new MeshRunner(profiles[i], s => { logs.Enqueue(i + " " + s); Console.WriteLine(DateTimeOffset.UtcNow.ToString("HH:mm:ss.fff") + " " + i + " " + s); },
             s => states[i] = s, _ => { }, _ => { }, Services(i)).Run(running.Token)).ToArray();
