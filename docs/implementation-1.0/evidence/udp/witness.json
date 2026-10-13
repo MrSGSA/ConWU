@@ -1,0 +1,45 @@
+{
+  "status": "Pass",
+  "checks": 9,
+  "witness": {
+    "socketResourceId": "f9582002-fe29-41e0-b55e-605871b20dcc",
+    "scope": "Real Windows exclusive UDP sockets/authenticated witness responses and same-owner proof; STUN holdout evaluation uses explicit fixtures. No NAT4 WAN, no full probability strategy negotiation, no data throughput claim.",
+    "first": {
+      "SocketId": "f9582002-fe29-41e0-b55e-605871b20dcc",
+      "NetworkGeneration": "828208fa-1662-476a-8e81-15f3ac5c6b28",
+      "Protocol": "udp",
+      "local": "127.0.0.1:60278",
+      "target": "127.0.0.1:60279",
+      "mapped": "127.0.0.1:60278",
+      "ObservedAt": "2026-10-13T13:07:34.4850376+00:00"
+    },
+    "second": {
+      "SocketId": "f9582002-fe29-41e0-b55e-605871b20dcc",
+      "NetworkGeneration": "828208fa-1662-476a-8e81-15f3ac5c6b28",
+      "Protocol": "udp",
+      "local": "127.0.0.1:60278",
+      "target": "127.0.0.1:60280",
+      "mapped": "127.0.0.1:60278",
+      "ObservedAt": "2026-10-13T13:07:34.4865611+00:00"
+    },
+    "strong": {
+      "Stable": true,
+      "EvidenceId": "f3c49840-245e-4982-a76c-e9d417a632fb",
+      "EvidenceKind": "peer-ports",
+      "EvidenceObservedAt": 1791896854,
+      "Targets": "60279,60280",
+      "PeerScope": "127.0.0.1"
+    },
+    "empirical": {
+      "SocketResourceId": "f9582002-fe29-41e0-b55e-605871b20dcc",
+      "NetworkGeneration": "828208fa-1662-476a-8e81-15f3ac5c6b28",
+      "EvidenceLevel": "EmpiricalEimOnly",
+      "Training": 4,
+      "Holdout": 2,
+      "MappingStable": true,
+      "ExperimentalAdmission": false,
+      "Reason": "Disabled",
+      "IsStrongPeerPortProof": false
+    }
+  }
+}

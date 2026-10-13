@@ -332,6 +332,9 @@ public sealed partial class UdpTraversal : IAsyncDisposable
                 try { message = await socket.Receive(stop.Token); }
                 catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
                 byte[] packet = message.Data;
+                if(packet.AsSpan().StartsWith("SLW4"u8)){
+                    try{await ReceiveWitness(message);}catch(SocketException){}continue;
+                }
                 if (packet.Length >= 20 && packet.AsSpan(4, 4).SequenceEqual(new byte[] { 0x21, 0x12, 0xa4, 0x42 }) &&
                     queries.TryGetValue(Convert.ToHexString(packet.AsSpan(8, 12)), out var pending)) {
                     if (message.Source.Equals(pending.Target)) { try {
@@ -383,6 +386,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
         catch (Exception ex) {
             lock (gate) failure = "receive-" + ex.GetType().Name;
             foreach (var query in queries.Values) query.Reply.TrySetException(ex);
+            foreach (var query in witnesses.Values) query.Completion.TrySetException(ex);
         } finally { payloads.Writer.TryComplete(); }
     }
     public async Task<PunchResult> Punch(IEnumerable<IPEndPoint> endpoints, PunchBudget? limits, CancellationToken token)
@@ -438,7 +442,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
     async ValueTask SendPayloadCore(ReadOnlyMemory<byte> packet, CancellationToken token)
     {
         var endpoint = Selected ?? throw new IOException("没有经过验证的直连路径");
-        if (packet.Length is < 1 or > ProbeSize || packet.Span.StartsWith("SLP2"u8) || packet.Span.StartsWith("SLG3"u8)) throw new ArgumentException("负载大小或保留前缀无效");
+        if (packet.Length is < 1 or > ProbeSize || packet.Span.StartsWith("SLP2"u8) || packet.Span.StartsWith("SLG3"u8)||packet.Span.StartsWith("SLW4"u8)) throw new ArgumentException("负载大小或保留前缀无效");
         await socket.Send(packet, endpoint, token);
     }
     public async ValueTask<TraversalDatagram> ReceivePayload(CancellationToken token)

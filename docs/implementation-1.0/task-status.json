@@ -347,17 +347,24 @@
         "NET-03",
         "SEC-03"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: real same-socket authenticated peer-port witness and separately graded EmpiricalEim evaluation; formal negotiation not yet connected",
+      "product": "Mechanism API implemented; formal production capability/Ready integration missing",
+      "windowsIo": "9 actual Windows UDP witness/resource checks Pass; EIM STUN holdout is an explicit fixture",
       "controlledNat": "NotRun",
       "wan": "NotRun",
-      "defaultEnablement": "Unchanged",
+      "defaultEnablement": "Unchanged; new sampling is not advertised/default enabled",
       "changedFiles": [],
       "tests": [],
-      "evidence": [],
-      "remaining": []
+      "evidence": [
+        "docs/implementation-1.0/NET-05.md",
+        "docs/implementation-1.0/evidence/udp/"
+      ],
+      "remaining": [
+        "formal witness authorization/capability/Ready negotiation without circular prerequisite",
+        "separate empirical strategy opt-in/version and bounded preparation",
+        "fixed RC DF PMTU/full business and WAN off/on algorithm comparison"
+      ]
     },
     {
       "id": "NET-06",

@@ -14,6 +14,7 @@ async Task Until(Func<bool> test, string detail, int milliseconds = 4000) {
     var clock = Stopwatch.StartNew(); while (!test()) { if (clock.ElapsedMilliseconds > milliseconds) throw new Exception("Timed out: " + detail); await Task.Delay(20); } Check(true, detail);
 }
 try {
+if(args.Contains("--peer-witness-only")){var witness=await UdpWitnessTests.Run(Check);Directory.CreateDirectory(Path.GetDirectoryName(output)!);await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,witness},new JsonSerializerOptions{WriteIndented=true}));return;}
 if(args.Contains("--relative-session-only")){var relative=RelativeSessionModels.Run(Check);await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,relative},new JsonSerializerOptions{WriteIndented=true}));return;}
 if(args.Contains("--relative-quality-only")){var relative=RelativeQualityTests.Run(Check);await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,relative},new JsonSerializerOptions{WriteIndented=true}));return;}
 if(args.Contains("--diagnostic-readiness-only")){
