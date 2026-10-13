@@ -28,6 +28,12 @@ int client_event_loop();
 int server_event_loop();
 
 int main(int argc, char *argv[]) {
+#ifdef UDP2RAW_PARSER_TEST
+    // Separate offline test executable: the shipped binary cannot take this
+    // branch. Tests call the actual complete network.cpp parser, with no I/O.
+    extern int native_parser_test_main();
+    return native_parser_test_main();
+#endif
 #ifdef UDP2RAW_NATIVE
     if (argc == 2 && strcmp(argv[1], "--native-info") == 0) {
         puts("{\"stage\":\"experimental\",\"client\":true,\"server\":true,"

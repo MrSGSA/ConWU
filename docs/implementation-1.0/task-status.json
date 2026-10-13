@@ -32,17 +32,32 @@
       "dependsOn": [
         "BASE-01"
       ],
-      "status": "InProgress",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
+      "status": "ImplementedUnverified",
+      "code": "Implemented",
+      "product": "Complete production recv_raw0/recv_raw_tcp, native and broker share parser",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
-      "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "changedFiles": [
+        "transport/udp2raw/network.cpp",
+        "transport/udp2raw/client.cpp",
+        "transport/udp2raw/main.cpp",
+        "CMakeLists.txt",
+        "tests/native_parser_test.cpp"
+      ],
+      "tests": [
+        "complete production parser: 25307 checks including 20000 mutations, Pass after 7901 baseline failures",
+        "SO state: 630 cases Pass",
+        "HTTP/bare loopback: 11 tests Pass"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/sec01/"
+      ],
+      "remaining": [
+        "independent Windows raw capture negative-path reachability evidence",
+        "ASan/UBSan full linked parser coverage when suitable runtime available"
+      ]
     },
     {
       "id": "SEC-02",

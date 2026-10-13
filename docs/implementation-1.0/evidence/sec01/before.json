@@ -1,0 +1,9 @@
+{
+  "runId": "rc1-sec01-before",
+  "sourceCommit": "61aa883af0c6398ff3604237e814d10ba96af954",
+  "productionParser": "unmodified network.cpp at 3b285f2",
+  "testBinarySha256": "2477451CB5BFD3DD099B74FFF72592EE9F94F7E9B9D4FCB71CBFD79E2D6C828A",
+  "exitCode": 1,
+  "expectedFailure": true,
+  "scope": "complete production parser offline; no driver or network I/O"
+}

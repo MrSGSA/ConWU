@@ -386,8 +386,8 @@ int client_on_raw_recv_hs2_or_ready(conn_info_t &conn_info, char type, char *dat
 }
 int client_on_raw_recv(conn_info_t &conn_info)  // called when raw fd received a packet.
 {
-    char *data;
-    int data_len;
+    char *data = nullptr;
+    int data_len = 0;
     packet_info_t &send_info = conn_info.raw_info.send_info;
     packet_info_t &recv_info = conn_info.raw_info.recv_info;
 

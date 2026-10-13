@@ -2147,7 +2147,7 @@ int parse_tcp_option(char *option_begin, char *option_end, packet_info_t &recv_i
                 mylog(log_trace, "invaild ts len\n");
                 return -1;
             }
-            if (ptr + 10 > option_end) {
+            if (option_end - ptr < 10) {
                 mylog(log_trace, "ptr+10>option_end for ts\n");
                 return -1;
             }
@@ -2167,11 +2167,10 @@ int parse_tcp_option(char *option_begin, char *option_end, packet_info_t &recv_i
                 return -1;
             } else {
                 int len = (unsigned char)*(ptr + 1);
-                if (len <= 1) {
+                if (len <= 1 || len > option_end - ptr) {
                     mylog(log_trace, "invaild option len %d\n", len);
                     return -1;
                 }
-                // omit check
                 ptr += len;
             }
         }
@@ -2182,15 +2181,19 @@ int parse_tcp_option(char *option_begin, char *option_end, packet_info_t &recv_i
     return 0;
 }
 int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
-    const packet_info_t &send_info = raw_info.send_info;
-    packet_info_t &recv_info = raw_info.recv_info;
+    payload = nullptr;
+    payloadlen = 0;
+    // IP parsing and TCP options are fallible. Commit receive state only after
+    // the complete datagram has passed all checks, including the options.
+    raw_info_t parsed = raw_info;
+    packet_info_t &recv_info = parsed.recv_info;
 
     // static char recv_raw_tcp_buf[buf_len];
 
     char *ip_payload;
     int ip_payloadlen;
 
-    if (recv_raw_ip(raw_info, ip_payload, ip_payloadlen) != 0) {
+    if (recv_raw_ip(parsed, ip_payload, ip_payloadlen) != 0) {
         mylog(log_debug, "recv_raw_ip error\n");
         return -1;
     }
@@ -2200,18 +2203,22 @@ int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
         return -1;
     }
 
+    if (ip_payloadlen < int(sizeof(my_tcphdr))) {
+        mylog(log_debug, "TCP payload shorter than minimum header\n");
+        return -1;
+    }
     my_tcphdr *tcph = (struct my_tcphdr *)ip_payload;
 
     unsigned short tcphdrlen = tcph->doff * 4;
 
-    if (!(tcphdrlen > 0 && tcphdrlen <= 60)) {
+    if (!(tcphdrlen >= sizeof(my_tcphdr) && tcphdrlen <= 60)) {
         mylog(log_debug, "tcph error\n");
-        return 0;
+        return -1;
     }
 
     if (tcphdrlen > ip_payloadlen) {
         mylog(log_debug, "error,tcphdrlen >ip_payloadlen\n");
-        return 0;
+        return -1;
     }
 
     if (tcph->dest != ntohs(uint16_t(filter_port))) {
@@ -2312,7 +2319,7 @@ int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
     }
     printf("<%d %d>\n",recv_info.ts,recv_info.ts_ack);
     */
-    parse_tcp_option(tcp_option, option_end, recv_info);
+    if (parse_tcp_option(tcp_option, option_end, recv_info) != 0) return -1;
 
     recv_info.ack = tcph->ack;
     recv_info.syn = tcph->syn;
@@ -2335,25 +2342,25 @@ int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
     recv_info.psh = tcph->psh;
 
     if (tcph->rst == 1) {
-        raw_info.rst_received++;
+        parsed.rst_received++;
 
         if (max_rst_to_show > 0) {
-            if (raw_info.rst_received < max_rst_to_show) {
-                mylog(log_warn, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received);
-            } else if (raw_info.rst_received == max_rst_to_show) {
-                mylog(log_warn, "[%s,%d]rst==1,cnt=%d >=max_rst_to_show, this log will be muted for current connection\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received);
+            if (parsed.rst_received < max_rst_to_show) {
+                mylog(log_warn, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received);
+            } else if (parsed.rst_received == max_rst_to_show) {
+                mylog(log_warn, "[%s,%d]rst==1,cnt=%d >=max_rst_to_show, this log will be muted for current connection\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received);
             } else {
-                mylog(log_debug, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received);
+                mylog(log_debug, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received);
             }
         } else if (max_rst_to_show == 0) {
-            mylog(log_debug, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received);
+            mylog(log_debug, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received);
         } else {
-            mylog(log_warn, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received);
+            mylog(log_warn, "[%s,%d]rst==1,cnt=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received);
         }
 
-        if (max_rst_allowed >= 0 && raw_info.rst_received == max_rst_allowed + 1) {
-            mylog(log_warn, "[%s,%d]connection disabled because of rst_received=%d > max_rst_allow=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)raw_info.rst_received, (int)max_rst_allowed);
-            raw_info.disabled = 1;
+        if (max_rst_allowed >= 0 && parsed.rst_received == max_rst_allowed + 1) {
+            mylog(log_warn, "[%s,%d]connection disabled because of rst_received=%d > max_rst_allow=%d\n", recv_info.new_src_ip.get_str1(), recv_info.src_port, (int)parsed.rst_received, (int)max_rst_allowed);
+            parsed.disabled = 1;
         }
     }
 
@@ -2370,7 +2377,8 @@ int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
     {
             send_info.ack_seq=recv_info.seq;
     }*/
-    raw_info.recv_info.data_len = payloadlen;
+    recv_info.data_len = payloadlen;
+    raw_info = parsed;
     return 0;
 }
 /*
