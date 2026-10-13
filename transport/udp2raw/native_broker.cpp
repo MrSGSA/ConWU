@@ -8,6 +8,7 @@ namespace {
 HANDLE channel=INVALID_HANDLE_VALUE, halt=nullptr;
 bool enabled=false, wire_metadata=false;
 thread_local native_wire_kind wire_kind=native_wire_kind::handshake;
+thread_local bool wire_secure=false;
 // Overlapped I/O allows shutdown to cancel both a blocked receive and a write.
 // A partial/cancelled frame poisons the channel; it must never be reused.
 bool exact(void *buffer,unsigned count,bool write,DWORD timeout) {
@@ -62,9 +63,10 @@ native_wire_kind native_wire_classify(char type,const char *data,int length) {
     default: return native_wire_kind::handshake;
     }
 }
-native_wire_scope::native_wire_scope(native_wire_kind kind):previous(wire_kind) { wire_kind=kind; }
-native_wire_scope::~native_wire_scope() { wire_kind=previous; }
+native_wire_scope::native_wire_scope(native_wire_kind kind):previous(wire_kind),previous_secure(wire_secure) { wire_kind=kind;wire_secure=true; }
+native_wire_scope::~native_wire_scope() { wire_kind=previous;wire_secure=previous_secure; }
 native_wire_kind native_wire_current() { return wire_kind; }
+bool native_wire_secure() { return wire_secure; }
 bool native_broker_mode() { return enabled; }
 int native_broker_receive(char *packet,unsigned capacity) {
     unsigned char prefix[4]; if(!exact(prefix,4,false,INFINITE)) return -1;

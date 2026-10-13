@@ -6,6 +6,7 @@
 #include "native_attach.h"
 #include "native_so.h"
 #include "native_broker.h"
+#include "native_legacy_control.h"
 #include <atomic>
 #include <thread>
 #include "windivert.h"
@@ -38,6 +39,8 @@ unsigned long long wire_counts[5]{}, wire_bytes[5]{}, wire_failures=0, wire_repo
 std::atomic<unsigned long long> wire_received{0}, wire_received_bytes{0};
 unsigned long long wire_report_at=0, wire_source_changes=0;
 std::string wire_source="Unknown";
+std::mutex wire_statistics;
+bool inject_legacy_now(const char *packet,int length,native_wire_kind kind);
 struct wire_reporter {
     std::mutex gate;
     std::string latest;
@@ -66,7 +69,7 @@ void initialize_reports() {
     if(!worker){CloseHandle(r->wake);delete r;wire_report_id.clear();return;}
     CloseHandle(worker);reports=r;
 }
-void emit_wire_report(bool final=false) {
+void emit_wire_report_locked(bool final=false) {
     if(wire_report_id.empty() || native_broker_mode()) return;
     auto now=GetTickCount64();
     if(!final && wire_report_sequence && now-wire_report_at<1000) return;
@@ -79,13 +82,22 @@ void emit_wire_report(bool final=false) {
         wire_counts[3],wire_bytes[3],wire_counts[4],wire_bytes[4],wire_failures,
         wire_received.load(),wire_received_bytes.load(),queue_drops.load(),suppressed_outbound.load(),final?1:0);
     if(size<=0 || size>=static_cast<int>(sizeof(text)))return;
-    {std::lock_guard<std::mutex> lock(reports->gate);reports->latest.assign(text,size);}
+    std::string lines(text,size);
+    if(native_legacy_control_enabled()) {
+        unsigned long long counts[6];native_legacy_control_stats(counts);char queue[256]{};
+        int n=snprintf(queue,sizeof(queue),"SLGQ1 %s %llu %llu %llu %llu %llu %llu %llu\n",wire_report_id.c_str(),wire_report_sequence,
+            counts[0],counts[1],counts[2],counts[3],counts[4],counts[5]);
+        if(n>0&&n<static_cast<int>(sizeof(queue)))lines.append(queue,n);
+    }
+    {std::lock_guard<std::mutex> lock(reports->gate);reports->latest=std::move(lines);}
     SetEvent(reports->wake);
 }
-void count_wire_send(const char *packet,int length,bool accepted) {
+void emit_wire_report(bool final=false) {std::lock_guard<std::mutex> lock(wire_statistics);emit_wire_report_locked(final);}
+void count_wire_send(const char *packet,int length,bool accepted,native_wire_kind label) {
     if(wire_report_id.empty() || native_broker_mode()) return;
-    if(!accepted) { ++wire_failures; emit_wire_report(); return; }
-    unsigned kind=static_cast<unsigned>(native_wire_current());
+    std::lock_guard<std::mutex> lock(wire_statistics);
+    if(!accepted) { ++wire_failures; emit_wire_report_locked(); return; }
+    unsigned kind=static_cast<unsigned>(label);
     if(kind>4)kind=0;
     ++wire_counts[kind];wire_bytes[kind]+=length;
     if(length>=40 && (static_cast<unsigned char>(packet[0])>>4)==4) {
@@ -98,7 +110,7 @@ void count_wire_send(const char *packet,int length,bool accepted) {
             else if(wire_source!=source)++wire_source_changes;
         }
     }
-    emit_wire_report();
+    emit_wire_report_locked();
 }
 
 #ifdef UDP2RAW_TEST_IO
@@ -107,6 +119,9 @@ sockaddr_in test_peer{};
 #endif
 
 void stop_capture() {
+    // Join any already-started control injection before closing its handle.
+    // In-flight authorization can finish later, but cannot inject old epochs.
+    native_legacy_control_pause();
     bool observed_window=reader.joinable();
     stopping.store(true);
     const bool broker_reader=native_broker_mode() && reader.joinable();
@@ -245,6 +260,7 @@ void init_filter(int port) {
         if(id && strlen(id)==32 && strspn(id,"0123456789abcdef")==32) wire_report_id=id;
     }
     initialize_reports();
+    if(!native_broker_mode()&&!native_legacy_control_init(inject_legacy_now))fail("legacy control authorization failed");
     // Compare the whole capture description, not just the local port. No
     // overlapping old/new handles: retire the previous capture before reopening.
     std::string descriptor=std::to_string(port)+"/"+std::to_string(raw_mode)+"/"+std::to_string(program_mode)+
@@ -330,6 +346,21 @@ void init_filter(int port) {
     reader = std::thread(capture);
     while (!receiving.load()) Sleep(1);
     native_attachment_armed();
+    native_legacy_control_arm();
+}
+
+namespace {
+bool inject_legacy_now(const char *packet,int length,native_wire_kind kind) {
+#ifdef UDP2RAW_TEST_IO
+    bool accepted=send(test_socket,packet,length,0)==length;
+#else
+    if(handle==INVALID_HANDLE_VALUE)return false;
+    WINDIVERT_ADDRESS address{};address.Outbound=1;address.IPChecksum=1;address.TCPChecksum=1;address.UDPChecksum=1;
+    UINT sent=0;bool accepted=wd_send(handle,packet,length,&sent,&address)&&sent==static_cast<UINT>(length);
+    if(!accepted)mylog(log_warn,"WinDivertSend failed, error=%lu\n",GetLastError());
+#endif
+    count_wire_send(packet,length,accepted,kind);return accepted;
+}
 }
 
 int send_raw_packet(raw_info_t &, const char *packet, int length) {
@@ -337,30 +368,16 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
     if (native_attached()) lock.lock();
     if (!native_attachment_packet(packet,length)) return -1;
     if(native_broker_mode()) return native_broker_send(packet,length);
-#ifdef UDP2RAW_TEST_IO
-    bool accepted=send(test_socket, packet, length, 0)==length;
-    count_wire_send(packet,length,accepted);return accepted?0:-1;
-#else
-    if (handle == INVALID_HANDLE_VALUE) return -1;
-    WINDIVERT_ADDRESS address{};
-    address.Outbound = 1;
-    address.IPChecksum = 1;
-    address.TCPChecksum = 1;
-    address.UDPChecksum = 1;
-    UINT sent = 0;
-    if (!wd_send(handle, packet, length, &sent, &address) || sent != static_cast<UINT>(length)) {
-        count_wire_send(packet,length,false);
-        mylog(log_warn, "WinDivertSend failed, error=%lu\n", GetLastError());
-        return -1;
-    }
-    count_wire_send(packet,length,true);
-    return 0;
-#endif
+    auto kind=native_wire_current();
+    if(native_legacy_control_enabled()&&kind!=native_wire_kind::business)
+        return native_legacy_control_enqueue(packet,length,kind)?0:-1;
+    return inject_legacy_now(packet,length,kind)?0:-1;
 }
 
 void native_capture_shutdown() { stop_capture(); }
 
 void native_drain_packets(conn_info_t *client) {
+    if(native_legacy_control_failed()){mylog(log_fatal,"legacy control owner lost\n");myexit(74);}
     if (reader_error.load()) {
         mylog(log_fatal, "native receive loop failed: %lu\n", reader_error.load());
         myexit(-1);

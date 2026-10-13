@@ -13,7 +13,7 @@ set(SOURCES
   ${U}/encrypt.cpp ${U}/log.cpp ${U}/my_ev.cpp
   ${U}/lib/md5.cpp ${U}/lib/pbkdf2-sha1.cpp ${U}/lib/pbkdf2-sha256.cpp
   ${U}/lib/aes_faster_c/aes.cpp ${U}/lib/aes_faster_c/wrapper.cpp
-  ${U}/native_backend.cpp ${U}/native_server.cpp ${U}/native_attach.cpp ${U}/native_so.cpp ${U}/native_broker.cpp)
+  ${U}/native_backend.cpp ${U}/native_server.cpp ${U}/native_attach.cpp ${U}/native_so.cpp ${U}/native_broker.cpp ${U}/native_legacy_control.cpp)
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/git_version.h"
   "const char *gitversion = \"c4995ea+streamlink-native-experimental\";\n")
 function(native_target name)

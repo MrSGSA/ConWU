@@ -7,3 +7,4 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.HelperLedgerTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.TcpObserverTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.LegacyWireTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.LegacyControlTests")]

@@ -6,6 +6,7 @@ public sealed record LegacyTransportResource(Guid ResourceId, string Mode, bool 
     string Target, Guid HelperResourceId, int ProcessId, string State, bool RetirementRequested)
 {
     public LegacyWireReport? Wire { get; init; }
+    public LegacyControlQueueReport? ControlQueue { get; init; }
 }
 public sealed record LegacyTransportUsage(int OpenResources, int Limit, int PeakResources, long Created,
     LegacyTransportResource[] Resources)
@@ -58,6 +59,14 @@ public sealed class LegacyTransportLedger
         internal Guid ResourceId=>Value.ResourceId;
         internal void WireLine(string line)
         {
+            if (LegacyControlQueueReport.TryParse(line, Value.ResourceId, out var queue)) {
+                lock (owner.gate) {
+                    if (completed || Value.ControlQueue is {} oldQueue && (queue!.Sequence <= oldQueue.Sequence ||
+                        oldQueue.Counters().Zip(queue.Counters()).Any(p => p.First > p.Second))) return;
+                    Value = Value with { ControlQueue = queue };
+                }
+                return;
+            }
             if(!LegacyWireReport.TryParse(line,Value.ResourceId,out var next))return;
             lock(owner.gate){
                 if(completed||Value.Wire is{}old&&(next!.Sequence<=old.Sequence||

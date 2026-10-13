@@ -8,6 +8,7 @@ public interface IMeshTransport : IDisposable
 {
     IPEndPoint? ClientEndpoint { get; }
     bool Exited { get; }
+    bool ControlsWirePackets => false;
 }
 // A server multiplexes authenticated peers on the same mapped public port.
 // Outbound clients are independent: changing one peer never recreates the TUN.
@@ -17,14 +18,22 @@ public sealed class MeshTransport : IMeshTransport
     readonly ChildJob job = new();
     readonly string configuration;
     readonly LegacyTransportLedger.Handle? accounting;
+    readonly LegacyControlChannel? control;
     int disposed;
     public IPEndPoint? ClientEndpoint { get; }
-    public bool Exited => job.AnyExited;
+    public bool Exited => job.AnyExited || control?.Failed == true;
+    public bool ControlsWirePackets => true;
+    internal string ControlFailure => control?.Failure ?? "";
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel)
+        : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null) { }
+    internal MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping,
+        string logLevel, Dictionary<string, string>? testEnvironment)
     {
         Directory.CreateDirectory(sessionRoot);
         configuration = Path.Combine(sessionRoot, "raw-" + Guid.NewGuid().ToString("N") + ".conf");
         try {
+            string binary = Path.Combine(components, "udp2raw-native.exe");
+            LegacyNativeCapabilities.Require(binary);
             string binding;
             if (server) binding = $"{mapping?.LocalAddress ?? IPAddress.Any}:{listenPort}";
             else {
@@ -38,15 +47,25 @@ public sealed class MeshTransport : IMeshTransport
             if (profile.Pair.Mode == "faketcp") config += "--fake-http test.ustc.edu.cn\n";
             File.WriteAllText(configuration, config);
             var environment = new Dictionary<string, string> { ["STREAMLINK_ALLOW_DRIVER_INSTALL"] = "1" };
+            if (testEnvironment != null) foreach (var pair in testEnvironment) {
+                if (!pair.Key.StartsWith("STREAMLINK_TEST_", StringComparison.Ordinal)) throw new ArgumentException("Only explicit test backend variables can be injected");
+                environment[pair.Key] = pair.Value;
+            }
+            control = new(accounting.ResourceId, profile.Pair.Mode == "faketcp", server ? listenPort : 0);
+            environment["STREAMLINK_LEGACY_CONTROL"] = control.Name;
+            environment["STREAMLINK_LEGACY_AUTH"] = control.Authorization;
+            environment["STREAMLINK_LEGACY_PARENT"] = Environment.ProcessId.ToString();
             environment["STREAMLINK_LEGACY_WIRE_ID"]=accounting.ResourceId.ToString("N");
             if (server && mapping is UdpMapping udp) { environment["STREAMLINK_UDP_SHARED_BIND"] = "1"; environment["STREAMLINK_STUN_ENDPOINT"] = udp.StunEndpoint.ToString(); }
-            var child = job.StartObserved(Path.Combine(components, "udp2raw-native.exe"), ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment, [ticket.RawKey, ticket.Secret],accounting.WireLine);
+            var child = job.StartObserved(binary, ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment,
+                [ticket.RawKey, ticket.Secret, control.Authorization],accounting.WireLine);
+            control.Start(child.Id);
             accounting.Started(child);
         } catch { Dispose(); throw; }
     }
     public void Dispose() {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         try { job.Dispose(); }
-        finally { accounting?.Dispose(); File.Delete(configuration); }
+        finally { control?.Dispose(); accounting?.Dispose(); File.Delete(configuration); }
     }
 }

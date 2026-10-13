@@ -44,6 +44,8 @@ try {
         if($LASTEXITCODE -ne 0) {throw 'Actual compatibility native injection report / failed sink isolation regression failed'}
         & dotnet run --project tests/StreamLink.LegacyWireTests -c Release -- --native-report (Join-Path $root "artifacts/legacy-native-wire-$releaseVersion.json") --output (Join-Path $root "artifacts/legacy-parent-wire-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Compatibility native report parser / parent resource ledger regression failed'}
+        & dotnet run --project tests/StreamLink.LegacyControlTests -c Release -- --native (Join-Path $root 'out/native/udp2raw-protocol-test.exe') --output (Join-Path $root "artifacts/legacy-native-control-$releaseVersion.json") --rounds 30
+        if($LASTEXITCODE -ne 0) {throw 'Compatibility native authorization / shared control admission / full IP datagram regression failed'}
         & dotnet run --project tests/StreamLink.HelperLedgerTests -c Release -- --output (Join-Path $root "artifacts/kernel-helper-$releaseVersion.json")
         if($LASTEXITCODE -ne 0) {throw 'Kernel helper and explicit compatibility resource accounting regression failed'}
         # Fail short resource/freshness checks before the long load diagnostics.

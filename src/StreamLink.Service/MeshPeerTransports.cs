@@ -36,7 +36,8 @@ internal sealed class MeshPeerTransports(MeshRouter router, Func<string, IMeshTr
             try { pending = (endpoint, create(endpoint)); started = now; }
             catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
         }
-        router.SetCandidate(slot, pending?.Transport.ClientEndpoint ?? active?.Transport.ClientEndpoint, name, detail);
+        var transport = pending?.Transport ?? active?.Transport;
+        router.SetCandidate(slot, transport?.ClientEndpoint, name, detail, transport?.ControlsWirePackets == true);
     }
     void Retry(long now) { failures = Math.Min(failures + 1, 4); nextAttempt = now + Math.Min(15000, 1000 << failures); }
     static void Close((string Endpoint, IMeshTransport Transport)? path) => path?.Transport.Dispose();

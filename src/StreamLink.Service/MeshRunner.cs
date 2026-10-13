@@ -144,6 +144,7 @@ public sealed class MeshRunner
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
+                router?.SetLegacyListenerControl(server?.ControlsWirePackets == true && !server.Exited);
                 // startup can hold up local child recovery or the other direction.
                 if (saving?.IsCompleted == true) {
                     try { await saving; savedDirectory = savingRevision; }
@@ -273,6 +274,7 @@ public sealed class MeshRunner
                             Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
                             TcpHelpers = TcpHelperLedger.Shared.Snapshot(),
                             LegacyTransports = LegacyTransportLedger.Shared.Snapshot(),
+                            CompatibilityNativeControl = LegacyControlGovernor.Shared.Snapshot(),
                             EnhancementAdmission = TraversalResources.Shared.Enhancements.Usage()
                         });
                     nextReport = now + 1000;

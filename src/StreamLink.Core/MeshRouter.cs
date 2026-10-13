@@ -37,8 +37,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public readonly PathRecovery Recovery = new(Environment.TickCount64);
         public Guid LegacyPathId;
         public long NextLegacyControl;
+        public readonly Dictionary<IPEndPoint, bool> NativeControlSources = [];
     }
     readonly object gate = new();
+    bool legacyListenerControlsWire;
+    public void SetLegacyListenerControl(bool controlsWire) { lock (gate) legacyListenerControlsWire = controlsWire; }
     readonly MeshProfile profile;
     readonly IPacketAdapter adapter;
     readonly byte[] local;
@@ -86,12 +89,17 @@ public sealed partial class MeshRouter : IAsyncDisposable
         }
     }
     public void SetCandidate(int slot, IPEndPoint? candidate, string name, string detail)
+        => SetCandidate(slot, candidate, name, detail, false);
+    public void SetCandidate(int slot, IPEndPoint? candidate, string name, string detail, bool nativeControlsWire)
     {
         if (candidate != null && !IPAddress.IsLoopback(candidate.Address)) throw new ArgumentException("数据接口仅允许本机 udp2raw");
         lock (gate) if (peers.TryGetValue(slot, out var peer)) {
             if (peer.Managed != null) return; // negotiated paths cannot fall back to legacy auto-promotion
             bool changed = !Equals(peer.Candidate, candidate);
             peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
+            if (candidate != null) peer.NativeControlSources[candidate] = nativeControlsWire;
+            foreach (var source in peer.NativeControlSources.Keys.Where(source => !Equals(source, peer.Active) && !Equals(source, peer.Candidate) && !peer.Retired.Contains(source)).ToArray())
+                peer.NativeControlSources.Remove(source);
             if (changed && candidate != null && !candidate.Equals(peer.Active)) {
                 peer.Probes.Remove(candidate); peer.NextLegacyControl = 0;
             }
@@ -113,7 +121,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         bool reuse = found && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5;
         long nonce = reuse ? probe.Token : BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
         byte[]? frame = peer.Link.ProbePath(nonce);
-        if (frame != null && SendLegacyControl(frame, endpoint)) peer.Probes[endpoint] = (nonce, reuse ? probe.At : now, now);
+        if (frame != null && SendLegacyControl(peer, frame, endpoint)) peer.Probes[endpoint] = (nonce, reuse ? probe.At : now, now);
     }
     public MeshPeerStatus[] Status()
     {
@@ -133,8 +141,10 @@ public sealed partial class MeshRouter : IAsyncDisposable
         try { return socket.SendTo(packet, endpoint) == packet.Length; }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { return false; }
     }
-    bool SendLegacyControl(byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
-        => packet != null && endpoint != null && TraversalResources.Shared.TrySend(packet.Length, maintenance) && Send(packet, endpoint);
+    bool SendLegacyControl(Peer peer, byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
+        => packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
+            !peer.NativeControlSources.ContainsKey(endpoint) && legacyListenerControlsWire ||
+            TraversalResources.Shared.TrySend(packet.Length, maintenance)) && Send(packet, endpoint);
     void Transmit()
     {
         var buffer = new byte[MeshLink.Mtu];
@@ -166,7 +176,9 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
-                if (result.Reply != null) SendLegacyControl(result.Reply, endpoint, maintenance: buffer[4] == 5 && endpoint.Equals(peer.Active));
+                if (!peer.NativeControlSources.ContainsKey(endpoint) && peer.NativeControlSources.Count < 16)
+                    peer.NativeControlSources[endpoint] = legacyListenerControlsWire;
+                if (result.Reply != null) SendLegacyControl(peer, result.Reply, endpoint, maintenance: buffer[4] == 5 && endpoint.Equals(peer.Active));
                 if (buffer[4] != 1) {
                     if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
@@ -204,15 +216,15 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 legacyServiced = true; peer.NextLegacyControl = now + 1500;
                 if (Healthy(peer)) {
                     byte[]? ping = peer.Link.Ping(out long nonce);
-                    if (SendLegacyControl(ping, peer.Active, maintenance: true))
+                    if (SendLegacyControl(peer, ping, peer.Active, maintenance: true))
                         peer.Recovery.KeepaliveSent(nonce, now);
                     if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) {
-                        SendLegacyControl(peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate);
+                        SendLegacyControl(peer, peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate);
                     }
                 }
                 else {
-                    byte[] hello = peer.Link.Hello(); SendLegacyControl(hello, peer.Candidate);
-                    if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) SendLegacyControl(hello, peer.Active);
+                    byte[] hello = peer.Link.Hello(); SendLegacyControl(peer, hello, peer.Candidate);
+                    if (peer.Active != null && !peer.Active.Equals(peer.Candidate)) SendLegacyControl(peer, hello, peer.Active);
                     if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) Challenge(peer, peer.Candidate);
                 }
             }
