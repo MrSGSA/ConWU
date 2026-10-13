@@ -1,0 +1,3571 @@
+{
+  "status": "Fail",
+  "checks": 549,
+  "rows": [
+    {
+      "elapsedMs": 2574.1543,
+      "shares": [
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20,
+        20
+      ],
+      "stats": {
+        "Requests": 160,
+        "AdmittedPackets": 160,
+        "AdmittedBytes": 20480,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 8,
+        "Pending": 0
+      },
+      "usage": {
+        "OpenUdpResources": 0,
+        "PeakUdpResources": 0,
+        "SearchAdmitted": 120,
+        "MaintenanceAdmitted": 40,
+        "SearchDeferred": 72,
+        "MaintenanceDeferred": 23,
+        "AdmittedBytes": 20480
+      },
+      "scope": "eight logical owners, actual shared controller/timers; no claim of eight real devices"
+    },
+    {
+      "controlledEpochChecks": "Pass",
+      "actualReadOnlyOsRoute": {
+        "Generation": "f9a451f4-f6af-47b5-a967-c1a6fa46484c",
+        "CaptureEpoch": 1,
+        "Source": "10.173.44.88:40001",
+        "Target": "1.1.1.1:443",
+        "InterfaceLuid": 1689399632855040,
+        "InterfaceIndex": 14,
+        "NextHop": "10.173.255.254",
+        "InterfaceName": "Ethernet",
+        "EvidenceLevel": "OsBoundRouteSelection",
+        "Failure": "",
+        "Ready": true,
+        "PacingKey": "WindowsInterface:0006008001000000"
+      },
+      "scope": "deterministic route observer concurrency plus real Windows route lookup; no packet sent, no physical egress capture"
+    },
+    {
+      "authorizedAndRejected": true,
+      "scope": "actual Windows named-pipe credentials/PID/EOF; no simulated authorization result"
+    },
+    {
+      "nativeExitCode": -1,
+      "rawPackets": 0,
+      "permitRequests": 0,
+      "scope": "actual authorized-worker PID with wrong secret, C\u002B\u002B loopback backend; not a simulated authentication assertion"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 2077.4403,
+      "elapsedMs": 3602.4036,
+      "before": {
+        "Requests": 0,
+        "AdmittedPackets": 0,
+        "AdmittedBytes": 0,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 37,
+        "AdmittedPackets": 37,
+        "AdmittedBytes": 13768,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.6948,
+        43.9492,
+        38.2784
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1665.0264,
+      "elapsedMs": 2868.0579,
+      "before": {
+        "Requests": 39,
+        "AdmittedPackets": 39,
+        "AdmittedBytes": 15236,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 71,
+        "AdmittedPackets": 71,
+        "AdmittedBytes": 28670,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1666.4635,
+      "elapsedMs": 3183.8553,
+      "before": {
+        "Requests": 71,
+        "AdmittedPackets": 71,
+        "AdmittedBytes": 28670,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 109,
+        "AdmittedPackets": 109,
+        "AdmittedBytes": 43740,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        46.3628,
+        46.0139,
+        44.1224
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1648.0495,
+      "elapsedMs": 2865.1794,
+      "before": {
+        "Requests": 111,
+        "AdmittedPackets": 110,
+        "AdmittedBytes": 43906,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 143,
+        "AdmittedPackets": 142,
+        "AdmittedBytes": 57340,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1646.0584,
+      "elapsedMs": 3174.5017,
+      "before": {
+        "Requests": 143,
+        "AdmittedPackets": 142,
+        "AdmittedBytes": 57340,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 181,
+        "AdmittedPackets": 180,
+        "AdmittedBytes": 72410,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        43.771,
+        47.4832,
+        45.012
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1665.79,
+      "elapsedMs": 2883.9883,
+      "before": {
+        "Requests": 182,
+        "AdmittedPackets": 180,
+        "AdmittedBytes": 72410,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 214,
+        "AdmittedPackets": 212,
+        "AdmittedBytes": 85844,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1644.3641,
+      "elapsedMs": 3173.1568,
+      "before": {
+        "Requests": 214,
+        "AdmittedPackets": 212,
+        "AdmittedBytes": 85844,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 252,
+        "AdmittedPackets": 250,
+        "AdmittedBytes": 100914,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.1066,
+        46.1966,
+        45.6211
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1664.1752,
+      "elapsedMs": 2874.2628,
+      "before": {
+        "Requests": 253,
+        "AdmittedPackets": 250,
+        "AdmittedBytes": 100914,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 285,
+        "AdmittedPackets": 282,
+        "AdmittedBytes": 114348,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1645.6946,
+      "elapsedMs": 3177.8364,
+      "before": {
+        "Requests": 285,
+        "AdmittedPackets": 282,
+        "AdmittedBytes": 114348,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 322,
+        "AdmittedPackets": 319,
+        "AdmittedBytes": 128116,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.6147,
+        47.6011,
+        60.7384
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1635.4416,
+      "elapsedMs": 2838.3956,
+      "before": {
+        "Requests": 324,
+        "AdmittedPackets": 320,
+        "AdmittedBytes": 129418,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 356,
+        "AdmittedPackets": 352,
+        "AdmittedBytes": 142852,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1644.9294,
+      "elapsedMs": 3179.617,
+      "before": {
+        "Requests": 356,
+        "AdmittedPackets": 352,
+        "AdmittedBytes": 142852,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 394,
+        "AdmittedPackets": 390,
+        "AdmittedBytes": 157922,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        47.1707,
+        46.3803,
+        44.521
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1654.9089,
+      "elapsedMs": 2870.7859,
+      "before": {
+        "Requests": 395,
+        "AdmittedPackets": 390,
+        "AdmittedBytes": 157922,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 427,
+        "AdmittedPackets": 422,
+        "AdmittedBytes": 171356,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1667.1153,
+      "elapsedMs": 3181.7264,
+      "before": {
+        "Requests": 427,
+        "AdmittedPackets": 422,
+        "AdmittedBytes": 171356,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 465,
+        "AdmittedPackets": 460,
+        "AdmittedBytes": 186426,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        47.169,
+        46.3456,
+        45.1061
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1656.5171,
+      "elapsedMs": 2859.2727,
+      "before": {
+        "Requests": 467,
+        "AdmittedPackets": 461,
+        "AdmittedBytes": 186592,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 499,
+        "AdmittedPackets": 493,
+        "AdmittedBytes": 200026,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1646.8532,
+      "elapsedMs": 3177.2932,
+      "before": {
+        "Requests": 499,
+        "AdmittedPackets": 493,
+        "AdmittedBytes": 200026,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 537,
+        "AdmittedPackets": 531,
+        "AdmittedBytes": 215096,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.3515,
+        45.8717,
+        45.337
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 206.121,
+      "elapsedMs": 1419.4567,
+      "before": {
+        "Requests": 538,
+        "AdmittedPackets": 531,
+        "AdmittedBytes": 215096,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 566,
+        "AdmittedPackets": 559,
+        "AdmittedBytes": 223418,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 30,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1661.3912,
+      "elapsedMs": 3177.4457,
+      "before": {
+        "Requests": 566,
+        "AdmittedPackets": 559,
+        "AdmittedBytes": 223418,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 604,
+        "AdmittedPackets": 597,
+        "AdmittedBytes": 238488,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.1909,
+        46.8039,
+        43.5362
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1659.8526,
+      "elapsedMs": 2875.8306,
+      "before": {
+        "Requests": 605,
+        "AdmittedPackets": 597,
+        "AdmittedBytes": 238488,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 637,
+        "AdmittedPackets": 629,
+        "AdmittedBytes": 251922,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1671.0849,
+      "elapsedMs": 3184.0857,
+      "before": {
+        "Requests": 637,
+        "AdmittedPackets": 629,
+        "AdmittedBytes": 251922,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 675,
+        "AdmittedPackets": 667,
+        "AdmittedBytes": 266992,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        46.3187,
+        47.0756,
+        45.2871
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 188.7772,
+      "elapsedMs": 1405.8399,
+      "before": {
+        "Requests": 677,
+        "AdmittedPackets": 668,
+        "AdmittedBytes": 267158,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 705,
+        "AdmittedPackets": 696,
+        "AdmittedBytes": 275480,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 30,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1670.1801,
+      "elapsedMs": 3164.5781,
+      "before": {
+        "Requests": 705,
+        "AdmittedPackets": 696,
+        "AdmittedBytes": 275480,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 743,
+        "AdmittedPackets": 734,
+        "AdmittedBytes": 290550,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.7155,
+        46.788,
+        46.7472
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1663.3311,
+      "elapsedMs": 2879.5923,
+      "before": {
+        "Requests": 744,
+        "AdmittedPackets": 734,
+        "AdmittedBytes": 290550,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 776,
+        "AdmittedPackets": 766,
+        "AdmittedBytes": 303984,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1658.1099,
+      "elapsedMs": 3174.0057,
+      "before": {
+        "Requests": 776,
+        "AdmittedPackets": 766,
+        "AdmittedBytes": 303984,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 814,
+        "AdmittedPackets": 804,
+        "AdmittedBytes": 319054,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.3957,
+        45.959,
+        45.9896
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 182.7048,
+      "elapsedMs": 1399.3835,
+      "before": {
+        "Requests": 815,
+        "AdmittedPackets": 804,
+        "AdmittedBytes": 319054,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 843,
+        "AdmittedPackets": 832,
+        "AdmittedBytes": 327376,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 30,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1652.4128,
+      "elapsedMs": 3185.9429,
+      "before": {
+        "Requests": 843,
+        "AdmittedPackets": 832,
+        "AdmittedBytes": 327376,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 881,
+        "AdmittedPackets": 870,
+        "AdmittedBytes": 342446,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.6431,
+        45.3255,
+        45.812
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1671.0506,
+      "elapsedMs": 2885.7969,
+      "before": {
+        "Requests": 882,
+        "AdmittedPackets": 870,
+        "AdmittedBytes": 342446,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 914,
+        "AdmittedPackets": 902,
+        "AdmittedBytes": 355880,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1651.7213,
+      "elapsedMs": 3179.447,
+      "before": {
+        "Requests": 914,
+        "AdmittedPackets": 902,
+        "AdmittedBytes": 355880,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 952,
+        "AdmittedPackets": 940,
+        "AdmittedBytes": 370950,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.8289,
+        45.729,
+        45.7975
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1656.9213,
+      "elapsedMs": 2870.1494,
+      "before": {
+        "Requests": 953,
+        "AdmittedPackets": 940,
+        "AdmittedBytes": 370950,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 985,
+        "AdmittedPackets": 972,
+        "AdmittedBytes": 384384,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1670.8498,
+      "elapsedMs": 3193.3239,
+      "before": {
+        "Requests": 985,
+        "AdmittedPackets": 972,
+        "AdmittedBytes": 384384,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1023,
+        "AdmittedPackets": 1010,
+        "AdmittedBytes": 399454,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.1298,
+        46.7694,
+        44.4129
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1658.6006,
+      "elapsedMs": 2876.6028,
+      "before": {
+        "Requests": 1024,
+        "AdmittedPackets": 1010,
+        "AdmittedBytes": 399454,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1056,
+        "AdmittedPackets": 1042,
+        "AdmittedBytes": 412888,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1651.2273,
+      "elapsedMs": 3165.2378,
+      "before": {
+        "Requests": 1056,
+        "AdmittedPackets": 1042,
+        "AdmittedBytes": 412888,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1093,
+        "AdmittedPackets": 1079,
+        "AdmittedBytes": 426656,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.492,
+        45.4176,
+        43.5245
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1646.7708,
+      "elapsedMs": 2858.5904,
+      "before": {
+        "Requests": 1095,
+        "AdmittedPackets": 1080,
+        "AdmittedBytes": 427958,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1127,
+        "AdmittedPackets": 1112,
+        "AdmittedBytes": 441392,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1661.8737,
+      "elapsedMs": 3192.1796,
+      "before": {
+        "Requests": 1127,
+        "AdmittedPackets": 1112,
+        "AdmittedBytes": 441392,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1165,
+        "AdmittedPackets": 1150,
+        "AdmittedBytes": 456462,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        45.2063,
+        46.1858,
+        44.7613
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1661.4054,
+      "elapsedMs": 2877.1759,
+      "before": {
+        "Requests": 1167,
+        "AdmittedPackets": 1151,
+        "AdmittedBytes": 456628,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1199,
+        "AdmittedPackets": 1183,
+        "AdmittedBytes": 470062,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1660.1977,
+      "elapsedMs": 3173.0696,
+      "before": {
+        "Requests": 1199,
+        "AdmittedPackets": 1183,
+        "AdmittedBytes": 470062,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1237,
+        "AdmittedPackets": 1221,
+        "AdmittedBytes": 485132,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.2486,
+        47.3485,
+        46.4013
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1658.3579,
+      "elapsedMs": 2873.9698,
+      "before": {
+        "Requests": 1238,
+        "AdmittedPackets": 1221,
+        "AdmittedBytes": 485132,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1270,
+        "AdmittedPackets": 1253,
+        "AdmittedBytes": 498566,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1658.1735,
+      "elapsedMs": 3172.1198,
+      "before": {
+        "Requests": 1270,
+        "AdmittedPackets": 1253,
+        "AdmittedBytes": 498566,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1308,
+        "AdmittedPackets": 1291,
+        "AdmittedBytes": 513636,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        46.5982,
+        45.5492,
+        62.7403
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1667.5757,
+      "elapsedMs": 2883.9056,
+      "before": {
+        "Requests": 1310,
+        "AdmittedPackets": 1292,
+        "AdmittedBytes": 513802,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1342,
+        "AdmittedPackets": 1324,
+        "AdmittedBytes": 527236,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1659.7596,
+      "elapsedMs": 3177.0002,
+      "before": {
+        "Requests": 1342,
+        "AdmittedPackets": 1324,
+        "AdmittedBytes": 527236,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1380,
+        "AdmittedPackets": 1362,
+        "AdmittedBytes": 542306,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.5554,
+        46.0308,
+        44.1469
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1666.3533,
+      "elapsedMs": 2880.7911,
+      "before": {
+        "Requests": 1381,
+        "AdmittedPackets": 1362,
+        "AdmittedBytes": 542306,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1413,
+        "AdmittedPackets": 1394,
+        "AdmittedBytes": 555740,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1653.2445,
+      "elapsedMs": 3184.919,
+      "before": {
+        "Requests": 1413,
+        "AdmittedPackets": 1394,
+        "AdmittedBytes": 555740,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1451,
+        "AdmittedPackets": 1432,
+        "AdmittedBytes": 570810,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.6513,
+        46.5751,
+        45.8596
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1667.3163,
+      "elapsedMs": 2872.6191,
+      "before": {
+        "Requests": 1452,
+        "AdmittedPackets": 1432,
+        "AdmittedBytes": 570810,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1484,
+        "AdmittedPackets": 1464,
+        "AdmittedBytes": 584244,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1671.6103,
+      "elapsedMs": 3184.9185,
+      "before": {
+        "Requests": 1484,
+        "AdmittedPackets": 1464,
+        "AdmittedBytes": 584244,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1522,
+        "AdmittedPackets": 1502,
+        "AdmittedBytes": 599314,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.1588,
+        46.0495,
+        45.841
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1667.7897,
+      "elapsedMs": 2877.1077,
+      "before": {
+        "Requests": 1523,
+        "AdmittedPackets": 1502,
+        "AdmittedBytes": 599314,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1555,
+        "AdmittedPackets": 1534,
+        "AdmittedBytes": 612748,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1665.6451,
+      "elapsedMs": 3183.3338,
+      "before": {
+        "Requests": 1555,
+        "AdmittedPackets": 1534,
+        "AdmittedBytes": 612748,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1593,
+        "AdmittedPackets": 1572,
+        "AdmittedBytes": 627818,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 18,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        46.7819,
+        45.2309,
+        46.3806
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1656.3435,
+      "elapsedMs": 2863.9346,
+      "before": {
+        "Requests": 1595,
+        "AdmittedPackets": 1573,
+        "AdmittedBytes": 627984,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1627,
+        "AdmittedPackets": 1605,
+        "AdmittedBytes": 641418,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1664.6023,
+      "elapsedMs": 3163.7101,
+      "before": {
+        "Requests": 1627,
+        "AdmittedPackets": 1605,
+        "AdmittedBytes": 641418,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1665,
+        "AdmittedPackets": 1643,
+        "AdmittedBytes": 656488,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.0352,
+        46.8228,
+        45.8287
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 188.3115,
+      "elapsedMs": 1391.8007,
+      "before": {
+        "Requests": 1666,
+        "AdmittedPackets": 1643,
+        "AdmittedBytes": 656488,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1696,
+        "AdmittedPackets": 1673,
+        "AdmittedBytes": 665094,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 14,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 16,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 32,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1651.7897,
+      "elapsedMs": 3183.4419,
+      "before": {
+        "Requests": 1696,
+        "AdmittedPackets": 1673,
+        "AdmittedBytes": 665094,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1734,
+        "AdmittedPackets": 1711,
+        "AdmittedBytes": 680164,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.3757,
+        46.4204,
+        45.9785
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1668.8355,
+      "elapsedMs": 2884.1185,
+      "before": {
+        "Requests": 1735,
+        "AdmittedPackets": 1711,
+        "AdmittedBytes": 680164,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1767,
+        "AdmittedPackets": 1743,
+        "AdmittedBytes": 693598,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1669.291,
+      "elapsedMs": 3185.3076,
+      "before": {
+        "Requests": 1767,
+        "AdmittedPackets": 1743,
+        "AdmittedBytes": 693598,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1805,
+        "AdmittedPackets": 1781,
+        "AdmittedBytes": 708668,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.9716,
+        47.1541,
+        45.9165
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1671.1025,
+      "elapsedMs": 2874.6502,
+      "before": {
+        "Requests": 1806,
+        "AdmittedPackets": 1781,
+        "AdmittedBytes": 708668,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1838,
+        "AdmittedPackets": 1813,
+        "AdmittedBytes": 722102,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1659.6998,
+      "elapsedMs": 3174.248,
+      "before": {
+        "Requests": 1838,
+        "AdmittedPackets": 1813,
+        "AdmittedBytes": 722102,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1876,
+        "AdmittedPackets": 1851,
+        "AdmittedBytes": 737172,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 42,
+      "httpGapMs": [
+        45.1272,
+        46.0824,
+        46.4513
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1663.5713,
+      "elapsedMs": 2880.6384,
+      "before": {
+        "Requests": 1878,
+        "AdmittedPackets": 1852,
+        "AdmittedBytes": 737338,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1910,
+        "AdmittedPackets": 1884,
+        "AdmittedBytes": 750772,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1662.6259,
+      "elapsedMs": 3178.0673,
+      "before": {
+        "Requests": 1910,
+        "AdmittedPackets": 1884,
+        "AdmittedBytes": 750772,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1948,
+        "AdmittedPackets": 1922,
+        "AdmittedBytes": 765842,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        45.8121,
+        46.0701,
+        44.0151
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 185.1488,
+      "elapsedMs": 1387.3411,
+      "before": {
+        "Requests": 1949,
+        "AdmittedPackets": 1922,
+        "AdmittedBytes": 765842,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 1977,
+        "AdmittedPackets": 1950,
+        "AdmittedBytes": 774164,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 1,
+          "QueuedControls": 1,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 30,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1661.8758,
+      "elapsedMs": 3177.0056,
+      "before": {
+        "Requests": 1977,
+        "AdmittedPackets": 1950,
+        "AdmittedBytes": 774164,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 2015,
+        "AdmittedPackets": 1988,
+        "AdmittedBytes": 789234,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.5184,
+        45.0949,
+        46.7275
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1648.9899,
+      "elapsedMs": 2861.186,
+      "before": {
+        "Requests": 2016,
+        "AdmittedPackets": 1988,
+        "AdmittedBytes": 789234,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 2048,
+        "AdmittedPackets": 2020,
+        "AdmittedBytes": 802668,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": null,
+      "authenticatedMs": 1648.9066,
+      "elapsedMs": 3183.9124,
+      "before": {
+        "Requests": 2048,
+        "AdmittedPackets": 2020,
+        "AdmittedBytes": 802668,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 2086,
+        "AdmittedPackets": 2058,
+        "AdmittedBytes": 817738,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 17,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 9,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 41,
+      "httpGapMs": [
+        46.1125,
+        45.8444,
+        45.4665
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "udp",
+      "rate": null,
+      "authenticatedMs": 1664.6378,
+      "elapsedMs": 2881.6431,
+      "before": {
+        "Requests": 2087,
+        "AdmittedPackets": 2058,
+        "AdmittedBytes": 817738,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 2119,
+        "AdmittedPackets": 2090,
+        "AdmittedBytes": 831172,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 2,
+          "QueuedControls": 4,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 2,
+          "QueuedControls": 5,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [],
+      "serverPacer": null,
+      "clientPacer": null,
+      "rawPackets": 34,
+      "httpGapMs": [],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    },
+    {
+      "mode": "faketcp",
+      "rate": 10,
+      "authenticatedMs": 1773.4616,
+      "elapsedMs": 3300.0771,
+      "before": {
+        "Requests": 2119,
+        "AdmittedPackets": 2090,
+        "AdmittedBytes": 831172,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 0,
+        "Pending": 0
+      },
+      "after": {
+        "Requests": 2157,
+        "AdmittedPackets": 2128,
+        "AdmittedBytes": 846242,
+        "BudgetDenied": 0,
+        "WindowDenied": 0,
+        "Expired": 0,
+        "TupleRecords": 2,
+        "Pending": 0
+      },
+      "queueReports": [
+        {
+          "Sequence": 3,
+          "QueuedControls": 15,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        },
+        {
+          "Sequence": 3,
+          "QueuedControls": 22,
+          "QueueRejected": 0,
+          "ParentDenied": 0,
+          "Expired": 0,
+          "StaleCapture": 0,
+          "PipeFailures": 0
+        }
+      ],
+      "paced": [
+        {
+          "OfferedPackets": 2,
+          "OfferedBytes": 2892,
+          "InjectedPackets": 2,
+          "InjectedBytes": 2892,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        },
+        {
+          "OfferedPackets": 1,
+          "OfferedBytes": 1446,
+          "InjectedPackets": 1,
+          "InjectedBytes": 1446,
+          "RejectedPackets": 0,
+          "Outstanding": 0,
+          "PeakOutstanding": 1,
+          "Failure": ""
+        }
+      ],
+      "serverPacer": {
+        "Mbps": 10,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 25000,
+        "SentBytes": 2892,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 1.0038,
+        "QueueP95Ms": 2,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:2",
+            "SentBytes": 2892,
+            "Packets": 2,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 4108831.875,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Accepted": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "Sent": {
+            "Packets": 2,
+            "Bytes": 2892
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 2892,
+            "Peers": [
+              {
+                "Peer": "slot:2",
+                "SentBytes": 2892,
+                "Packets": 2,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "clientPacer": {
+        "Mbps": 10,
+        "QueuedBytes": 0,
+        "PeakQueuedBytes": 1446,
+        "QueueLimitBytes": 25000,
+        "SentBytes": 1446,
+        "OverflowDrops": 0,
+        "Cancelled": 0,
+        "SendFailures": 0,
+        "MaximumQueueMs": 0.0285,
+        "QueueP95Ms": 0.1,
+        "PriorityPackets": 0,
+        "Peers": [
+          {
+            "Peer": "slot:1",
+            "SentBytes": 1446,
+            "Packets": 1,
+            "OverflowDrops": 0,
+            "Cancelled": 0,
+            "SendFailures": 0
+          }
+        ],
+        "Failure": "",
+        "TimerWaits": 0,
+        "TimerWaitMs": 0,
+        "BackloggedTokenOverrunBytes": 2225154.25,
+        "BurstBytes": 6144,
+        "WorkerPriority": "AboveNormal",
+        "OldestQueuedMs": 0,
+        "Accounting": {
+          "Offered": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Accepted": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "Sent": {
+            "Packets": 1,
+            "Bytes": 1446
+          },
+          "CapacityRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "UnavailableRejected": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Evicted": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Cancelled": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Failed": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Queued": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "InFlight": {
+            "Packets": 0,
+            "Bytes": 0
+          },
+          "Conserved": true
+        },
+        "Outlets": [
+          {
+            "Outlet": "Unresolved",
+            "QueuedBytes": 0,
+            "PeakQueuedBytes": 1446,
+            "QueueLimitBytes": 25000,
+            "SentBytes": 1446,
+            "Peers": [
+              {
+                "Peer": "slot:1",
+                "SentBytes": 1446,
+                "Packets": 1,
+                "OverflowDrops": 0,
+                "Cancelled": 0,
+                "SendFailures": 0
+              }
+            ]
+          }
+        ],
+        "RateScope": "WholeDevice",
+        "RetiredOutletSentBytes": 0
+      },
+      "rawPackets": 39,
+      "httpGapMs": [
+        47.1824,
+        46.3788,
+        44.7899
+      ],
+      "scope": "actual named pipes/C\u002B\u002B/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"
+    }
+  ],
+  "error": "System.IO.IOException: bounded native handoff telemetry and actual parent receipts reach the production ledger\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003CMain\u003E$\u003Eg__Check|0(Boolean pass, String why) in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 30\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 181\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 184\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext()\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003C\u003Ec__DisplayClass0_0.\u003C\u003C\u003CMain\u003E$\u003Eg__Pair|5\u003Ed.MoveNext() in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 184\r\n--- End of stack trace from previous location ---\r\n   at Program.\u003CMain\u003E$(String[] args) in D:\\Codex_workspace\\UDP2RAW\\product\\tests\\StreamLink.LegacyControlTests\\Program.cs:line 38"
+}

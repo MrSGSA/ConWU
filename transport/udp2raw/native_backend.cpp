@@ -48,9 +48,13 @@ struct wire_reporter {
     HANDLE wake=CreateEventW(nullptr,FALSE,FALSE,nullptr);
 };
 wire_reporter *reports=nullptr; // bounded process-lifetime state, no packet payload
+void emit_wire_report(bool final);
 DWORD WINAPI report_worker(void *state) {
     auto &r=*static_cast<wire_reporter *>(state);
-    while(WaitForSingleObject(r.wake,INFINITE)==WAIT_OBJECT_0) {
+    while(true) {
+        DWORD wait=WaitForSingleObject(r.wake,1000);
+        if(wait==WAIT_TIMEOUT){emit_wire_report(false);continue;}
+        if(wait!=WAIT_OBJECT_0)break;
         std::string line;
         {std::lock_guard<std::mutex> lock(r.gate);line.swap(r.latest);}
         if(line.empty())continue;

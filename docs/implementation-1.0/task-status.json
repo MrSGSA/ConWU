@@ -441,7 +441,8 @@
         "57 short complete protocol checks Pass",
         "72 egress correctness checks Pass",
         "19 formal startup/cancel checks Pass",
-        "expanded 30-round run Fail after 136 assertions; retained, unresolved"
+        "expanded 30-round run Fail after 136 assertions; retained, unresolved",
+        "after periodic telemetry fix: 30 rounds each legacy FakeTCP/UDP and pacing10/0 full business Pass; previous Fail retained"
       ],
       "evidence": [
         "docs/implementation-1.0/QOS-01-02.md",
@@ -472,7 +473,8 @@
         "57 short complete protocol checks Pass",
         "72 egress correctness checks Pass",
         "19 formal startup/cancel checks Pass",
-        "expanded 30-round run Fail after 136 assertions; retained, unresolved"
+        "expanded 30-round run Fail after 136 assertions; retained, unresolved",
+        "after periodic telemetry fix: 30 rounds each legacy FakeTCP/UDP and pacing10/0 full business Pass; previous Fail retained"
       ],
       "evidence": [
         "docs/implementation-1.0/QOS-01-02.md",
