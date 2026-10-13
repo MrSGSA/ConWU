@@ -58,6 +58,10 @@ static class Program
         Check(!bLink.Receive(first).Authenticated, "duplicate data rejected");
         byte[] lost = aLink.Data(ip)!, afterLoss = aLink.Data(ip)!; Check(bLink.Receive(afterLoss).Packet != null, "lost packet does not stall the next packet");
         var tampered = aLink.Data(ip)!; tampered[^1] ^= 1; Check(!bLink.Receive(tampered).Authenticated, "tampered authentication tag rejected");
+        var concurrent=new byte[1024][];Parallel.For(0,concurrent.Length,i=>concurrent[i]=i%2==0?aLink.Data(ip)!:aLink.Ping()!);
+        Check(concurrent.Select(p=>Convert.ToHexString(p.AsSpan(8,16))+"/"+Convert.ToHexString(p.AsSpan(40,8))).Distinct().Count()==concurrent.Length,"concurrent business/control under one logical sender have unique actual directional-key nonce tuples");
+        foreach(var frame in concurrent)Check(bLink.Receive(frame).Authenticated,"concurrent frame authenticates within shared receiver replay state");
+        Check(!bLink.Receive(concurrent[0]).Authenticated,"candidate/active duplicate of the same ciphertext is delivered at most once by the shared session");
         using var restarted = new MeshLink(2, 1, MeshIdentity.SharedKey(b, owner.Self)); Handshake(aLink, restarted);
         Check(restarted.Connected && !restarted.Receive(lost).Authenticated, "restart negotiates a fresh session and rejects old receiver epoch");
         Check(!aLink.Receive(bLink.Ping()!).Authenticated, "retired sender epoch rejected after peer restart");

@@ -93,17 +93,28 @@
       "dependsOn": [
         "BASE-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "ImplementedUnverified",
+      "code": "Implemented: existing shared nonce/replay model retained, same-network persistent revocation floor and output redaction added",
+      "product": "ProfileStore and ControlWorker production, MeshLink unchanged",
+      "windowsIo": "106 Windows profile/worker/UI checks, 1066 mesh protocol checks Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "1024 actual concurrent encrypted business/control frames with unique epoch/nonce, replay rejected",
+        "70 existing epoch restart cases retained",
+        "real DPAPI revocation-floor/log-redaction regression Pass"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/SEC-03.md",
+        "docs/implementation-1.0/evidence/security/"
+      ],
+      "remaining": [
+        "UI-04 safe ordinary-user boundary",
+        "fixed installed-package rollback and real multi-path/multi-device WAN",
+        "existing owner-generated member keys/no PFS remain documented"
+      ]
     },
     {
       "id": "CTL-01",

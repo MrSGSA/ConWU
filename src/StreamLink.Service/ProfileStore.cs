@@ -28,6 +28,14 @@ public sealed class ProfileStore
     public void Save(DeviceProfile profile)
     {
         profile.Validate();
+        if(File.Exists(file)){
+            var previous=Load();
+            if(previous.Mesh?.Directory is{} known&&profile.Mesh is{} next&&previous.Mesh.Pair.Network==next.Pair.Network&&previous.Mesh.OwnerKey==next.OwnerKey){
+                if(next.Directory==null)next.Directory=known;
+                MeshIdentity.ValidateDirectory(next.Directory,next.Pair.Network,next.OwnerKey,known.Revision);
+                if(next.Directory.Revision==known.Revision&&next.Directory.Signature!=known.Signature)throw new IOException("同一授权revision内容冲突，不能回退撤销记录");
+            }
+        }
         File.WriteAllBytes(file + ".tmp", ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)); File.Move(file + ".tmp", file, true);
     }
     public void BackupLegacy(DeviceProfile profile)

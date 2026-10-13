@@ -30,6 +30,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         lock (sync)
         {
+            text=SensitiveText.Redact(text,profile);
             string line = $"{DateTime.Now:HH:mm:ss} {text}"; logs.Enqueue(line); while (logs.Count > 80) logs.Dequeue();
             PublishReply();
             bool error = text.Contains("失败") || text.Contains("未完成") || text.Contains("不可用") || text.Contains("重试") || text.Contains("异常");
@@ -89,7 +90,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1));
     }
-    ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=error,Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
+    ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=SensitiveText.Redact(error,current.Profile!),Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
     // Full per-window evidence stays in the runner; the legacy pipe remains
     // 64KiB. This display copy cannot change evidence used for selection.
     static SessionStatus? DisplayStatus(SessionStatus? source) => source == null ? null : source with {
