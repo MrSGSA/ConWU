@@ -65,17 +65,27 @@
       "dependsOn": [
         "SEC-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
+      "status": "InProgress",
+      "code": "Partial: bounded shared syntax/checksum policy and isolated malformed-frame handling implemented",
+      "product": "native recv_raw_tcp and managed WinDivert receive",
       "windowsIo": "NotRun",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "29659 native assertions including IPv4/IPv6 and 20000 mutations Pass",
+        "22414 shared frames; 0 native/managed mismatches",
+        "11 complete protocol loopback tests Pass"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/sec02/"
+      ],
+      "remaining": [
+        "sanitizer run where applicable toolchain available",
+        "actual WinDivert/offload/negative input isolation evidence",
+        "dependency SBOM and expanded security-input audit"
+      ]
     },
     {
       "id": "SEC-03",

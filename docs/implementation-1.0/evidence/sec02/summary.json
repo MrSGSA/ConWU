@@ -1,0 +1,13 @@
+{
+  "runId": "rc1-sec02-offline-v4-v6",
+  "baselineCommit": "e77f7ae",
+  "parserBinarySha256": "D1D6CD458B56E080DC186AEDBEDB71486FC234CBDB87021E25C6FD78C17D4E4B",
+  "corpusSha256": "884CEA86A5A58D74B8CF127AC720D7F94476C64FE55FB1FE6CF0D0D798F38D63",
+  "windivertSourceSha256": "65EC79C9E6AFA99F648A3F4D1F6DB794640B40D0B65BD438770EA503EE14ECB7",
+  "scope": "complete native parser and C# admission; offline only; no sanitizer claim",
+  "frames": 22414,
+  "checks": 29659,
+  "status": "Pass",
+  "physicalOffloadTest": "NotRun",
+  "sanitizer": "NotRun"
+}

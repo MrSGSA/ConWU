@@ -1378,6 +1378,9 @@ int recv_raw_ip(raw_info_t &raw_info, char *&payload, int &payloadlen) {
     unsigned short iphdrlen;
     int ip_len;
     if (raw_ip_version == AF_INET) {
+        // WinDivert NETWORK defaults to reassembled input. No transport parser
+        // may interpret an IP fragment at an assumed complete TCP/UDP offset.
+        if ((ntohs(iph->frag_off) & 0x3fff) != 0) return -1;
         recv_info.new_src_ip.v4 = iph->saddr;
         recv_info.new_dst_ip.v4 = iph->daddr;
         recv_info.protocol = iph->protocol;
@@ -2262,8 +2265,11 @@ int recv_raw_tcp(raw_info_t &raw_info, char *&payload, int &payloadlen) {
     printf("\n");*/
 
     if (tcp_chk != 0) {
-        mylog(log_debug, "tcp_chk:%x, tcp checksum failed, ignored\n", tcp_chk);
-        // return -1;
+        // Native capture normalizes only offloaded/verified checksums according
+        // to WinDivert metadata before this point. Remaining bad checksums are
+        // malformed input, never an instruction to repair untrusted bytes.
+        mylog(log_debug, "tcp_chk:%x, TCP checksum rejected\n", tcp_chk);
+        return -1;
     }
 
     char *tcp_begin = ip_payload;  // ip packet's data part

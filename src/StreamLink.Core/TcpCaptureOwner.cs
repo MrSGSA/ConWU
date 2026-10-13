@@ -88,6 +88,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
             int size = 40 + BinaryPrimitives.ReadUInt16BigEndian(p[4..]);
             if (p.Length < 60 || p[6] != 6 || size < 60 || size > p.Length || exactLength && size != p.Length ||
                 (p[52] >> 4) < 5 || 40 + (p[52] >> 4) * 4 > size) return false;
+            if(!TcpPacketValidation.Options(p.Slice(60,(p[52]>>4)*4-20)))return false;
             source = new(new IPAddress(p.Slice(8, 16)), BinaryPrimitives.ReadUInt16BigEndian(p[40..]));
             target = new(new IPAddress(p.Slice(24, 16)), BinaryPrimitives.ReadUInt16BigEndian(p[42..]));
             return source.Port != 0 && target.Port != 0 && Ipv6Direct.UnscopedUnicast(source.Address) && Ipv6Direct.UnscopedUnicast(target.Address);
@@ -97,6 +98,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
         if (ip < 20 || p.Length < ip + 20 || declared < ip + 20 || declared > p.Length || exactLength && declared != p.Length) return false;
         int tcp = (p[ip + 12] >> 4) * 4;
         if (tcp < 20 || ip + tcp > declared) return false;
+        if(!TcpPacketValidation.Options(p.Slice(ip+20,tcp-20)))return false;
         source = new(new IPAddress(p.Slice(12, 4)), BinaryPrimitives.ReadUInt16BigEndian(p[ip..]));
         target = new(new IPAddress(p.Slice(16, 4)), BinaryPrimitives.ReadUInt16BigEndian(p[(ip + 2)..]));
         return source.Port != 0 && target.Port != 0;

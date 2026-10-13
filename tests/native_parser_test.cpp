@@ -11,6 +11,13 @@
 
 namespace {
 unsigned cases=0, failures=0;
+FILE *corpus=nullptr;
+void record(const std::vector<char>& p,int result) {
+    if(!corpus)return;
+    fprintf(corpus,"%c ",result==0?'1':'0');
+    for(unsigned char b:p)fprintf(corpus,"%02x",b);
+    fputc('\n',corpus);
+}
 void check(bool pass,const char *name) {
     ++cases;
     if(!pass) { if(failures<12)fprintf(stderr,"parser failure: %s\n",name); ++failures; }
@@ -37,6 +44,17 @@ std::vector<char> frame(int tcp_length,unsigned doff=5,const std::vector<unsigne
     ip->check=csum(reinterpret_cast<unsigned short *>(ip),20);
     return p;
 }
+std::vector<char> frame6(int tcp_length,unsigned doff=5) {
+    auto v4=frame(tcp_length,doff);
+    std::vector<char> p(40+tcp_length,0);auto *ip=reinterpret_cast<my_ip6hdr *>(p.data());
+    ip->version=6;ip->next_header=IPPROTO_TCP;ip->hop_limit=64;ip->payload_len=htons(tcp_length);
+    inet_pton(AF_INET6,"2001:db8::2",&ip->src);inet_pton(AF_INET6,"2001:db8::1",&ip->dst);
+    if(tcp_length)memcpy(p.data()+40,v4.data()+20,tcp_length);
+    if(tcp_length>=20){auto *tcp=reinterpret_cast<my_tcphdr *>(p.data()+40);tcp->check=0;
+        pseudo_header6 pseudo{};pseudo.src=ip->src;pseudo.dst=ip->dst;pseudo.next_header=IPPROTO_TCP;pseudo.tcp_length=htons(tcp_length);
+        tcp->check=csum_with_header(reinterpret_cast<char *>(&pseudo),sizeof(pseudo),reinterpret_cast<unsigned short *>(tcp),tcp_length);}
+    return p;
+}
 void run(const std::vector<char>& p,bool expect_valid,int expected_size=-1) {
     raw_info_t info;
     info.recv_info.seq=73;info.recv_info.ack_seq=41;info.recv_info.ack_seq_counter=3;
@@ -47,6 +65,7 @@ void run(const std::vector<char>& p,bool expect_valid,int expected_size=-1) {
     g_packet_buf_len=static_cast<int>(p.size());g_packet_buf_cnt=1;
     char *payload=reinterpret_cast<char *>(static_cast<uintptr_t>(0x1234));int length=987;
     int result=recv_raw0(info,payload,length);
+    record(p,result);
     check((result==0)==expect_valid,"classification");
     check(g_packet_buf_cnt==0,"one input consumed");
     if(result!=0) {
@@ -64,6 +83,7 @@ int native_parser_test_main() {
     // Even offline inet_ntop used by normal RST logging requires Winsock init.
     WSADATA winsock{};
     if(WSAStartup(MAKEWORD(2,2),&winsock)!=0)return 2;
+    if(const char *path=getenv("STREAMLINK_PARSER_CORPUS")){corpus=fopen(path,"wb");if(!corpus)return 2;}
     log_level=log_never;enable_log_color=0;
     raw_mode=mode_faketcp;raw_ip_version=AF_INET;filter_port=41080;bind_addr_used=0;
     // Minimum IP and TCP lengths, all data offsets, and declared TCP options.
@@ -87,6 +107,18 @@ int native_parser_test_main() {
     bad=frame(20);reinterpret_cast<my_iphdr *>(bad.data())->protocol=IPPROTO_UDP;
     reinterpret_cast<my_iphdr *>(bad.data())->check=0;
     reinterpret_cast<my_iphdr *>(bad.data())->check=csum(reinterpret_cast<unsigned short *>(bad.data()),20);run(bad,false);
+    for(uint16_t flags:{uint16_t(0x2000),uint16_t(1)}) {
+        auto p=frame(20);auto *ip=reinterpret_cast<my_iphdr *>(p.data());
+        ip->frag_off=htons(flags);ip->check=0;ip->check=csum(reinterpret_cast<unsigned short *>(ip),20);run(p,false);
+    }
+    bad=frame(20);bad[36]^=1;run(bad,false);
+    raw_ip_version=AF_INET6;
+    for(int size=0;size<40;++size){auto p=frame6(20);p.resize(size);run(p,false);}
+    for(int length=0;length<=64;++length)for(unsigned doff=0;doff<16;++doff)
+        run(frame6(length,doff),length>=20&&doff>=5&&static_cast<int>(doff*4)<=length);
+    for(unsigned next:{0u,43u,44u,60u}){auto p=frame6(20);p[6]=next;run(p,false);}
+    auto jumbo=frame6(20);jumbo[4]=jumbo[5]=0;run(jumbo,false);
+    raw_ip_version=AF_INET;
     // Deterministic offline mutation corpus. This asserts error/success bounds,
     // not that every random byte pattern is a valid/invalid authenticated frame.
     std::mt19937 random(0x53454301u);
@@ -96,10 +128,12 @@ int native_parser_test_main() {
         raw_info_t info;std::array<unsigned char,sizeof(info)> before{};memcpy(before.data(),&info,sizeof(info));
         memcpy(g_packet_buf,p.data(),p.size());g_packet_buf_len=p.size();g_packet_buf_cnt=1;
         char *payload=nullptr;int length=0;int result=recv_raw0(info,payload,length);
+        record(p,result);
         if(result!=0)check(result<0&&payload==nullptr&&length==0&&memcmp(before.data(),&info,sizeof(info))==0,"mutation error contract");
         else {const auto start=reinterpret_cast<uintptr_t>(g_packet_buf),end=start+p.size(),ptr=reinterpret_cast<uintptr_t>(payload);check(ptr>=start&&ptr<=end&&length>=0&&static_cast<size_t>(length)<=end-ptr,"mutation success bounds");}
     }
     printf("{\"scope\":\"complete production TCP parser offline; no driver or WAN\",\"cases\":%u,\"failures\":%u,\"mutations\":20000,\"status\":\"%s\"}\n",cases,failures,failures?"Fail":"Pass");
+    if(corpus)fclose(corpus);
     WSACleanup();
     return failures?1:0;
 }

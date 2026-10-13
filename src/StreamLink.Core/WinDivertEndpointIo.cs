@@ -55,6 +55,7 @@ public sealed class WinDivertEndpointIo : IEndpointPacketIo
     }
     public ValueTask<EndpointPacket> Receive(CancellationToken token)
     {
+        while(true) {
         token.ThrowIfCancellationRequested();
         byte[] packet = receiveBuffer, address = receiveAddress;
         if (!recv(handle, packet, (uint)packet.Length, out uint length, address)) throw new IOException("Capture receive stopped: " + Marshal.GetLastPInvokeError());
@@ -62,9 +63,13 @@ public sealed class WinDivertEndpointIo : IEndpointPacketIo
         bool outbound = (flags & (1u << 17)) != 0;
         // Same normalization as native backend; only checksums, no seq/payload changes.
         uint required = (flags & (1u << 20)) != 0 ? 1u << 22 : (1u << 21) | (1u << 22);
-        if ((flags & required) != required && !checksums(packet, length, address, 0))
-            throw new IOException("Capture checksum normalization failed");
+        if(length>packet.Length||length<40)continue;
+        if ((flags & required) != required && !checksums(packet, length, address, 0))continue;
+        // A malformed frame affects itself, never the capture owner or peers.
+        // Keep offload normalization, then verify remaining wire bytes/options.
+        if(!TcpPacketValidation.Checksums(packet.AsSpan(0,(int)length)))continue;
         return ValueTask.FromResult(new EndpointPacket(packet.AsSpan(0, checked((int)length)).ToArray(), outbound, (byte[])address.Clone()));
+        }
     }
     public bool Inject(ReadOnlySpan<byte> packet)
     {
