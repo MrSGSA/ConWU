@@ -13,6 +13,7 @@ internal sealed record RunnerServices(
     TimeSpan ConnectingPoll,
     TimeSpan ConnectedPoll)
 {
+    public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
     public static RunnerServices Default { get; } = new(
         pair => new DiscoveryClient(pair),
         log => new StreamSession(Path.Combine(AppContext.BaseDirectory, "components"), log, Path.Combine(ProfileStore.Root, "sessions")),

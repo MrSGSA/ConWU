@@ -93,12 +93,59 @@ try
             Check(sessions.Count == 1 && !sessions.Single().Disposed, "Coordination outage destroyed a working direct path");
             discovery.Fail = false;
             discovery.Peer = discovery.Peer! with { Endpoint = "203.0.113.3:3456", Revision = 2 };
+            await Task.Delay(180);
+            Check(sessions.Count == 1 && !sessions.First().Disposed && sessions.First().IsConnected,
+                "A new announcement destroyed an authenticated healthy old path");
+            sessions.First().Disconnect();
             await Until(() => sessions.Count == 2 && sessions.Last().IsConnected);
-            Check(sessions.First().Disposed, "Changed endpoint did not release the previous session");
+            Check(sessions.First().Disposed, "Failed old path did not adopt the latest candidate and release its session");
             Check(sessions.Last().Options?.LocalSlot == 1, "Reconnect changed the virtual address identity");
         }
         finally { await Stop(running, stop); }
         Check(sessions.All(s => s.Disposed), "Reconnect cleanup leaked a session");
+    }
+    // The default two-slot compatibility runner must respond to the same OS
+    // wake as MeshRunner, even when one HTTPS request never finishes. It must
+    // neither issue duplicate outstanding requests nor dispose a healthy path
+    // merely because its mapping helper failed.
+    using (var stop = new CancellationTokenSource())
+    using (var wake = new MeshNetworkWake(false))
+    {
+        var profile = Profile(); profile.ManualEndpoint = "";
+        var discovery = new FakeDiscovery { BlockPublish = true };
+        var mapping = new FakeMapping(); var sessions = new ConcurrentQueue<FakeSession>();
+        int probes = 0; var logs = new ConcurrentQueue<string>();
+        var services = Services(discovery, () => { var s = ConnectedSession(); sessions.Enqueue(s); return s; }) with {
+            NetworkWake = () => wake,
+            Probe = (_, _, _) => Interlocked.Increment(ref probes) == 1
+                ? Task.FromException<IMapping>(new IOException("interface not ready"))
+                : Task.FromResult<IMapping>(mapping)
+        };
+        var runner = new NetworkRunner(profile, logs.Enqueue, _ => { }, (_, _) => { }, services);
+        Task running = runner.Run(stop.Token);
+        try {
+            await Until(() => logs.Any(l => l.StartsWith("本机入口暂不可用")) && discovery.PublishStarted > 0);
+            Check(probes == 1 && discovery.PublishStarted == 1, "Blocked discovery introduced extra probe or publishing requests");
+            wake.Signal(true);
+            await Until(() => probes == 2 && sessions.Count == 1 && sessions.First().IsConnected);
+            Check(discovery.PublishStarted == 1 && discovery.Reads > 1 && !mapping.Disposed,
+                "Slow HTTPS blocked the wake retry, opposite discovery direction or local component startup");
+            mapping.FailHelper();
+            await Until(() => logs.Any(l => l.StartsWith("映射需要重建")));
+            Check(!mapping.Disposed && sessions.First().IsConnected && !sessions.First().Disposed,
+                "Helper failure released a mapping still referenced by a healthy business path");
+            await Task.Delay(2100); wake.Signal(true);
+            await Until(() => mapping.Refreshes == 1);
+            Check(probes == 2 && sessions.Count == 1 && discovery.PublishStarted == 1,
+                "Wake rebuilt healthy components or bypassed outstanding-request ownership");
+            for (int i = 0; i < 500; i++) wake.Signal(false);
+            await Task.Delay(300);
+            Check(mapping.Refreshes == 1 && !mapping.Disposed, "Notification storm generated repeated helper operations");
+            sessions.First().Disconnect();
+            await Until(() => sessions.First().Disposed && mapping.Disposed);
+        } finally { await Stop(running, stop); }
+        Check(discovery.PublishCancelled && discovery.Disposed && sessions.All(s => s.Disposed),
+            "Runner stop did not join its pending HTTP request and owned components");
     }
 
     // A failed initialization must be observed and replaced, not left in a
@@ -126,7 +173,7 @@ try
     var lines = new List<string>(); var timeline = new ConnectionTimeline(lines.Add);
     timeline.Mark("fixture ready"); await Task.Delay(10); timeline.Mark("fixture connected");
     Check(lines.Count == 2 && lines.All(s => s.Contains("阶段") && s.Contains("累计")), "Stage/total timing evidence missing");
-    Console.WriteLine($"PASS {checks}: startup does not block election/heartbeats, mapping independence, cancellation, discovery outage, endpoint changes, startup retry and metadata budget. In-memory coordination/sessions only; no drivers, adapters, firewall rules, live profiles or public traffic.");
+    Console.WriteLine($"PASS {checks}: startup/discovery independence, network wake, retained helper ownership, cancellation, outage, candidate changes, retry and metadata budget. In-memory coordination/sessions and injected OS hints only; no drivers, adapters, firewall rules, live profiles or public traffic.");
 }
 finally { Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT", null); }
 
@@ -142,9 +189,14 @@ sealed class FakeDiscovery : IDiscoveryClient
     public NodeAnnouncement? Peer;
     public ConcurrentDictionary<int, NodeAnnouncement>? Shared;
     public volatile bool Fail, Disposed;
-    public int Reads;
-    public Task Publish(NodeAnnouncement node, CancellationToken token)
-    { token.ThrowIfCancellationRequested(); if (Fail) throw new IOException("synthetic discovery outage"); Published.Enqueue(node); if (Shared != null) Shared[node.Slot] = node; return Task.CompletedTask; }
+    public volatile bool BlockPublish, PublishCancelled;
+    public int Reads, PublishStarted;
+    public async Task Publish(NodeAnnouncement node, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested(); Interlocked.Increment(ref PublishStarted);
+        if (BlockPublish) { try { await Task.Delay(Timeout.Infinite, token); } catch (OperationCanceledException) { PublishCancelled = true; throw; } }
+        if (Fail) throw new IOException("synthetic discovery outage"); Published.Enqueue(node); if (Shared != null) Shared[node.Slot] = node;
+    }
     public Task<NodeAnnouncement?> Read(int slot, CancellationToken token)
     { token.ThrowIfCancellationRequested(); Interlocked.Increment(ref Reads); if (Fail) throw new IOException("synthetic discovery outage"); return Task.FromResult(Shared?.GetValueOrDefault(slot) ?? Peer); }
     public void Dispose() => Disposed = true;
@@ -162,6 +214,20 @@ sealed class FakeSession(Func<FakeSession, CancellationToken, Task> start) : ISt
         try { await start(this, cancellation); } finally { StartExited = true; }
     }
     public void Connect() { connected = true; StatusChanged?.Invoke(new("已直连", "", "", "faketcp", true, 1, "fixture")); }
+    public void Disconnect() { connected = false; }
     public Task<QualityResult> Measure(int mbps, CancellationToken token) => throw new NotSupportedException();
     public ValueTask DisposeAsync() { if (Started && !StartExited) throw new Exception("Disposed concurrently with Start"); Disposed = true; connected = false; return ValueTask.CompletedTask; }
+}
+sealed class FakeMapping : IMapping, IMappingRefresh
+{
+    readonly TaskCompletionSource helper = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    public System.Net.IPAddress LocalAddress => System.Net.IPAddress.Parse("192.0.2.10");
+    public System.Net.IPEndPoint PublicEndpoint => new(System.Net.IPAddress.Parse("203.0.113.10"), 12345);
+    public event Action<System.Net.IPEndPoint>? Changed { add { } remove { } }
+    public volatile bool Disposed;
+    public int Refreshes;
+    public Task Maintain(CancellationToken token) => helper.Task.WaitAsync(token);
+    public void FailHelper() => helper.TrySetException(new IOException("helper transaction unusable"));
+    public void RequestRefresh() => Interlocked.Increment(ref Refreshes);
+    public ValueTask DisposeAsync() { Disposed = true; return ValueTask.CompletedTask; }
 }
