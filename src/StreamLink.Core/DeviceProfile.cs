@@ -1,9 +1,12 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace StreamLink.Core;
 
 public sealed class DeviceProfile
 {
+    [JsonExtensionData] public Dictionary<string, JsonElement>? AdditionalData { get; set; }
     public int Version { get; set; } = 2;
     public string Device { get; set; } = Guid.NewGuid().ToString("N");
     public Pairing? Pair { get; set; }

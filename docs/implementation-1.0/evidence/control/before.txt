@@ -1,0 +1,5 @@
+Status reply must not expose mutable runtime profile reference
+Status must remain responsive while management gate is occupied
+Metadata save must not cancel or await network worker
+Unknown future profile fields must roundtrip
+{"scope":"isolated Windows control worker; no driver or production service","checks":5,"failures":4,"status":"Fail"}

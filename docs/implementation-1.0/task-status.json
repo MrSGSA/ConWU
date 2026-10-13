@@ -101,17 +101,26 @@
       "dependsOn": [
         "BASE-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "ImplementedUnverified",
+      "code": "Implemented: propagated cancellation, bounded stop, operation IDs, immutable status snapshot, retained owner on timeout",
+      "product": "ControlWorker and foreground backend; 8 authenticated pipe instances",
+      "windowsIo": "Protected local Windows profile and cancellation/ownership tests Pass; pipe integration pending",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
-      "evidence": [],
-      "remaining": []
+      "tests": [
+        "14 isolated control checks Pass",
+        "100 Windows lifecycle/UI checks Pass",
+        "GUI build: zero warnings/errors"
+      ],
+      "evidence": [
+        "docs/implementation-1.0/evidence/control/"
+      ],
+      "remaining": [
+        "actual concurrent pipe integration with candidate service",
+        "exercise timeout/owned native Job teardown on actual capture resources"
+      ]
     },
     {
       "id": "CTL-02",
@@ -156,17 +165,23 @@
       "dependsOn": [
         "CTL-01"
       ],
-      "status": "Todo",
-      "code": "NotReviewed",
-      "product": "NotReviewed",
-      "windowsIo": "NotRun",
+      "status": "InProgress",
+      "code": "Partial: metadata hot save and future-field preservation implemented",
+      "product": "live DeviceName/log updates preserve running worker and network configuration",
+      "windowsIo": "isolated Windows save/ownership fixture Pass",
       "controlledNat": "NotRun",
       "wan": "NotRun",
       "defaultEnablement": "Unchanged",
       "changedFiles": [],
-      "tests": [],
+      "tests": [
+        "pre-fix control failures retained; post-fix hot save and unknown-field roundtrip Pass"
+      ],
       "evidence": [],
-      "remaining": []
+      "remaining": [
+        "user-intent/current-availability separation in settings UI",
+        "explicit impact confirmation for resource-rebuilding settings",
+        "additional per-field/runtime configuration tests"
+      ]
     },
     {
       "id": "UI-03",

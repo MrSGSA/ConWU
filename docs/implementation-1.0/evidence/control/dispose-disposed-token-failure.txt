@@ -1,0 +1,7 @@
+Unhandled exception. System.ObjectDisposedException: The CancellationTokenSource has been disposed.
+   at System.Threading.CancellationTokenSource.Cancel()
+   at StreamLink.Service.ControlWorker.DisposeControlResources() in D:\Codex_workspace\UDP2RAW\product\src\StreamLink.Service\ControlWorker.Operations.cs:line 60
+   at StreamLink.Service.ControlWorker.Dispose() in D:\Codex_workspace\UDP2RAW\product\src\StreamLink.Service\ControlWorker.cs:line 179
+   at Program.<Main>$(String[] args) in D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.ControlTests\Program.cs:line 38
+   at Program.<Main>$(String[] args)
+   at Program.<Main>(String[] args)

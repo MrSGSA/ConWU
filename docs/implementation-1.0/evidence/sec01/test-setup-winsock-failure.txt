@@ -1,0 +1,13 @@
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+parser failure: failure outputs cleared
+Assertion failed: inet_ntop(AF_INET, &v4, res, max_addr_len) != 0, file D:/Codex_workspace/UDP2RAW/product/transport/udp2raw/common.cpp, line 231
