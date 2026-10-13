@@ -1,0 +1,16 @@
+{
+  "runId": "rc1-sec02-full-parser-sanitizers",
+  "baselineCommit": "90209a0",
+  "compiler": "GCC 16.1.1 in existing ArchLinux WSL2",
+  "platform": "Linux parser entry and common production parsing; not Windows I/O",
+  "asan": true,
+  "ubsan": true,
+  "leakCheck": true,
+  "cases": 29659,
+  "mutations": 20000,
+  "status": "Pass",
+  "linuxBinarySha256": "07FFC7BD4042A21D0D0CA3D58232F1347B3E2C9A266B4D537651EF096A2607F9",
+  "windowsBinarySha256": "E3695CBA44713E0648F27EAEF63ADA5823A7B633EF307CC53F062DB3DB44F2DE",
+  "sourceNetworkSha256": "BBA33D503E37EA9185F422BC77FFD35B82A85233074ABB94EEA0FE20D55761F0",
+  "sourceHeaderSha256": "B4966F36FDFCF42D8380584D5EDB8151427F02944FE86C1A7AA6C703293EFE89"
+}

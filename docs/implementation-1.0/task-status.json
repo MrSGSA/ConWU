@@ -76,15 +76,15 @@
       "tests": [
         "29659 native assertions including IPv4/IPv6 and 20000 mutations Pass",
         "22414 shared frames; 0 native/managed mismatches",
-        "11 complete protocol loopback tests Pass"
+        "11 complete protocol loopback tests Pass",
+        "full common production parser on Linux GCC16.1.1 ASan+UBSan: 29659 checks Pass; Windows native Ctest and protocol profile Pass"
       ],
       "evidence": [
         "docs/implementation-1.0/evidence/sec02/"
       ],
       "remaining": [
-        "sanitizer run where applicable toolchain available",
         "actual WinDivert/offload/negative input isolation evidence",
-        "dependency SBOM and expanded security-input audit"
+        "dependency SBOM and expanded input/bounds audit"
       ]
     },
     {

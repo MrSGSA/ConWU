@@ -81,8 +81,10 @@ void run(const std::vector<char>& p,bool expect_valid,int expected_size=-1) {
 }
 int native_parser_test_main() {
     // Even offline inet_ntop used by normal RST logging requires Winsock init.
+#ifdef _WIN32
     WSADATA winsock{};
     if(WSAStartup(MAKEWORD(2,2),&winsock)!=0)return 2;
+#endif
     if(const char *path=getenv("STREAMLINK_PARSER_CORPUS")){corpus=fopen(path,"wb");if(!corpus)return 2;}
     log_level=log_never;enable_log_color=0;
     raw_mode=mode_faketcp;raw_ip_version=AF_INET;filter_port=41080;bind_addr_used=0;
@@ -134,6 +136,8 @@ int native_parser_test_main() {
     }
     printf("{\"scope\":\"complete production TCP parser offline; no driver or WAN\",\"cases\":%u,\"failures\":%u,\"mutations\":20000,\"status\":\"%s\"}\n",cases,failures,failures?"Fail":"Pass");
     if(corpus)fclose(corpus);
+#ifdef _WIN32
     WSACleanup();
+#endif
     return failures?1:0;
 }

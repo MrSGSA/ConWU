@@ -203,33 +203,33 @@ struct pseudo_header6 {
 
 struct packet_info_t  // todo change this to union
 {
-    uint8_t protocol;
+    uint8_t protocol = 0;
 
     // u32_t src_ip;
     // u32_t dst_ip;
-    my_ip_t new_src_ip;
-    my_ip_t new_dst_ip;
+    my_ip_t new_src_ip{};
+    my_ip_t new_dst_ip{};
 
-    uint16_t src_port;
-    uint16_t dst_port;
+    uint16_t src_port = 0;
+    uint16_t dst_port = 0;
 
     // tcp_part:
-    bool syn, ack, psh, rst;
+    bool syn = false, ack = false, psh = false, rst = false;
 
-    u32_t seq, ack_seq;
+    u32_t seq = 0, ack_seq = 0;
 
-    u32_t ack_seq_counter;
+    u32_t ack_seq_counter = 0;
 
-    u32_t ts, ts_ack;
+    u32_t ts = 0, ts_ack = 0;
 
-    uint16_t my_icmp_seq;
+    uint16_t my_icmp_seq = 0;
 
-    bool has_ts;
+    bool has_ts = false;
 
-    i32_t data_len;
+    i32_t data_len = 0;
 
 #ifdef UDP2RAW_LINUX
-    sockaddr_ll addr_ll;
+    sockaddr_ll addr_ll{};
 #endif
 
     packet_info_t();
@@ -242,7 +242,7 @@ struct raw_info_t {
     // int last_recv_len;
     bool peek = 0;
     // bool csum=1;
-    u32_t reserved_send_seq;
+    u32_t reserved_send_seq = 0;
     // uint32_t first_seq,first_ack_seq;
     int rst_received = 0;
     bool disabled = 0;

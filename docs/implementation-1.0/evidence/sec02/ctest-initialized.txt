@@ -1,0 +1,9 @@
+Test project D:/Codex_workspace/UDP2RAW/product/out/native
+    Start 1: native-parser
+1/2 Test #1: native-parser ....................   Passed    0.22 sec
+    Start 2: native-so-state
+2/2 Test #2: native-so-state ..................   Passed    0.04 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Total Test time (real) =   0.30 sec
