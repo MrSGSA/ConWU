@@ -37,6 +37,8 @@ dotnet run --project tests/StreamLink.LegacyControlTests -c Release -- --native 
 
 初次负例产物和日志保留在 `out/m3-legacy-control-*`：夹具缺少IPv4校验和、UDP端口分配冲突及公平等待受线程唤醒顺序影响。前两项修正夹具，第三项修正实际准入控制器；没有降低公平性门槛。错误调用原账本测试缺少 `--native-report` 的执行记录也保留，随后按正确命令通过。原始调试日志不发布，其中含测试协议的加密调试输出。
 
+后续本地夹具改用固定组件路径，私有会话仍独立。已观察到此前随机Temp exe路径留下多份Windows用户入站阻止规则；固定路径减少逐轮新应用通知和规则副本。夹具先核对backend，拒绝以生产WinDivert二进制运行Local测试。不删除既有阻止规则、不增加防护排除。
+
 ## 验收边界
 
 该30轮使用回环UDP承载原始IP报文和内存IP适配器，没有加载物理WinDivert/Wintun，不证明公网NAT穿透、物理RST或八真实Windows公平性。模拟其他控制器耗尽额度的测试没有向公网发起压力流量。

@@ -12,6 +12,20 @@ if(args is ["--native",_,"--output",_,"--rounds",var count])rounds=int.Parse(cou
 if(args.Length is not (4 or 6)||args[0]!="--native"||args[2]!="--output"||rounds is <1 or >30)throw new ArgumentException("--native cpp-test --output result.json [--rounds 30]");
 string binary=args[1],output=args[3];
 binary=Path.GetFullPath(binary);output=Path.GetFullPath(output);Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+// Keep a stable executable path across rounds; only credentials/session files
+// get a private per-round directory. Random executable paths repeatedly trigger
+// Windows application firewall prompts and leave unrelated deny-rule copies.
+var info = new ProcessStartInfo(binary) { UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true };
+info.ArgumentList.Add("--native-info");
+using(var query=Process.Start(info)??throw new IOException("Native capability query could not start")) {
+    var text=query.StandardOutput.ReadToEndAsync();var errors=query.StandardError.ReadToEndAsync();
+    if(!query.WaitForExit(3000)){query.Kill();throw new IOException("Native capability query timed out");}
+    using var capabilities=JsonDocument.Parse(text.GetAwaiter().GetResult());errors.GetAwaiter().GetResult();
+    if(query.ExitCode!=0||capabilities.RootElement.GetProperty("backend").GetString()!="loopback-test-only")
+        throw new ArgumentException("This local regression requires the separate loopback test backend");
+}
+string components=Path.Combine(Path.GetDirectoryName(output)!,"legacy-control-components");Directory.CreateDirectory(components);
+File.Copy(binary,Path.Combine(components,"udp2raw-native.exe"),true);
 int checks=0;var rows=new List<object>();
 void Check(bool pass,string why){if(!pass)throw new IOException(why);checks++;Console.WriteLine("PASS "+why);}
 using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(180,30+rounds*30)));var token=deadline.Token;
@@ -93,7 +107,6 @@ async Task<object> NativeWrongAuthorization()
 async Task<object> Pair(string mode)
 {
     string folder=Path.Combine(Path.GetTempPath(),"streamlink-legacy-control-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
-    string components=Path.Combine(folder,"components");Directory.CreateDirectory(components);File.Copy(binary,Path.Combine(components,"udp2raw-native.exe"));
     var owner=MeshIdentity.Create("https://example.com/","",mode);var guest=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));guest.Directory=owner.Directory;
     var adapters=new[]{new Adapter(),new Adapter()};await using var a=new MeshRouter(owner,adapters[0]);await using var b=new MeshRouter(guest,adapters[1]);
     using var source=new Socket(AddressFamily.InterNetwork,mode=="udp"?SocketType.Dgram:SocketType.Stream,mode=="udp"?ProtocolType.Udp:ProtocolType.Tcp);
