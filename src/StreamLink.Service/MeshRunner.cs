@@ -19,6 +19,7 @@ public sealed class MeshRunner
     readonly object gate = new();
     MeshRouter? router;
     MeshDirectory? pendingDirectory;
+    internal object? ExitDiagnostics { get; private set; }
     public void UpdateDirectory(MeshDirectory directory)
     {
         lock (gate) { MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0); pendingDirectory = directory; router?.ApplyDirectory(directory); }
@@ -306,7 +307,12 @@ public sealed class MeshRunner
             }
         } finally {
             long shutdownStarted = Environment.TickCount64;
-            void ShutdownStage(string stage) { try { log($"ShutdownStage={stage}; elapsedMs={Environment.TickCount64-shutdownStarted}"); } catch { } }
+            void ShutdownStage(string stage) {
+                ExitDiagnostics = new { stage, elapsedMs=Environment.TickCount64-shutdownStarted,
+                    tasks=new {factory=gatheringFactory?.Status.ToString(),probe=probe?.Status.ToString(),adapter=opening?.Status.ToString(),
+                        maintain=maintain?.Status.ToString(),quality=quality?.Status.ToString(),read=reading?.Status.ToString(),publish=publishing?.Status.ToString(),save=saving?.Status.ToString(),release=releasing?.Status.ToString(),router=router?.Completion.Status.ToString()} };
+                try { log($"ShutdownStage={stage}; elapsedMs={Environment.TickCount64-shutdownStarted}; tasks="+System.Text.Json.JsonSerializer.Serialize(ExitDiagnostics)); } catch { }
+            }
             ShutdownStage("cancel");
             cancellation.Cancel();
             ShutdownStage("factory-startup");

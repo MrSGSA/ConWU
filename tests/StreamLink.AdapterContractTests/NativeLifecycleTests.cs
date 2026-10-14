@@ -50,7 +50,7 @@ static class NativeLifecycleTests
             scope="Actual official adapter iterations only when run on an authorized Windows test host. No WAN, third-party driver deletion or production service changes. Repeat same-process leak/installed-service gates separately."},Json));}
     }
 
-    public static async Task<int> RunChild(string components,string output,int iteration,bool contractV2=false)
+    public static async Task<int> RunChild(string components,string output,int iteration,bool contractV2=false,bool splitAxes=false)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(output)!);string journal=Path.ChangeExtension(output,"stages.jsonl");
         object journalGate=new();var watch=Stopwatch.StartNew();string failure="";int checks=0;bool closeCompleted=false;
@@ -59,7 +59,7 @@ static class NativeLifecycleTests
         string? name=null;bool? presentImmediately=null;double? pnpConvergedMs=null;double? pnpQueryMs=null;
         int baselineHandles=Process.GetCurrentProcess().HandleCount;
         NativeAdapter? adapter=null;var cancel=new CancellationTokenSource();var tasks=new List<Task>();
-        ulong? ownedLuid=null;
+        ulong? ownedLuid=null;bool performancePass=false,resourceSafety=false;double? closeElapsedMs=null;
         void Stage(string phase){stages.TryAdd(JsonSerializer.Serialize(new{iteration,phase,elapsedMs=watch.Elapsed.TotalMilliseconds,thread=Environment.CurrentManagedThreadId}));}
         Task Start(Action action)=>Task.Factory.StartNew(action,CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
         try{
@@ -78,11 +78,23 @@ static class NativeLifecycleTests
             // changes the fixture, not the production close contract.
             var written=Stopwatch.StartNew();while(actual.Statistics.WrittenPackets==0&&written.Elapsed<TimeSpan.FromSeconds(1))await Task.Delay(5);
             if(actual.Statistics.WrittenPackets==0)throw new IOException("Native writes were not recorded");checks++;Stage("close-requested");
+            var closeWatch=Stopwatch.StartNew();
             tasks.Add(Start(()=>{actual.Dispose();closeCompleted=true;Stage("dispose-returned");}));
             tasks.Add(Start(()=>{Stage("cancel-requested");cancel.Cancel();Stage("cancel-returned");}));
-            await Task.WhenAll(tasks).WaitAsync(TimeSpan.FromSeconds(3));checks++;Stage("io-and-close-complete");
+            var all=Task.WhenAll(tasks);
+            try{await all.WaitAsync(TimeSpan.FromSeconds(3));performancePass=true;}
+            catch(TimeoutException)when(splitAxes){
+                // Preserve the three-second Fail. This finite observation joins
+                // the SAME owner; it grants no performance exception or second close.
+                failure="PerformanceGate: original three-second I/O+close deadline exceeded";Stage("performance-fail-3s");
+                await all.WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            closeElapsedMs=closeWatch.Elapsed.TotalMilliseconds;
+            if(splitAxes && closeElapsedMs>3000){performancePass=false;failure="PerformanceGate: monotonic I/O+close elapsed exceeds original three-second deadline";}
+            checks++;Stage("io-and-close-complete");
             actual.Stop();actual.Dispose();bool rejected=false;try{_=actual.Statistics;}catch(ObjectDisposedException){rejected=true;}
             if(!rejected)throw new IOException("Late statistics did not reject released resource");checks++;
+            resourceSafety=all.IsCompletedSuccessfully&&closeCompleted&&rejected;
             var queryTime=Stopwatch.StartNew();presentImmediately=IsPresent();pnpQueryMs=queryTime.Elapsed.TotalMilliseconds;
             Stage(presentImmediately.Value?"owned-visible-after-close":"owned-absent-after-close");
             if(presentImmediately.Value){
@@ -97,7 +109,7 @@ static class NativeLifecycleTests
             checks++;
         }catch(Exception ex){failure=ex.ToString();Stage("failure:"+ex.GetType().Name);}
         finally{
-            if(adapter!=null&&!closeCompleted){
+            if(adapter!=null&&!closeCompleted&&!splitAxes){
                 Stage("bounded-cleanup-requested");var actual=adapter;
                 var cleanup=Start(()=>{cancel.Cancel();actual.Dispose();closeCompleted=true;});
                 try{await cleanup.WaitAsync(TimeSpan.FromSeconds(3));}
@@ -105,13 +117,42 @@ static class NativeLifecycleTests
             }
             int? finalHandles=null;try{finalHandles=Process.GetCurrentProcess().HandleCount;}catch{}
             stages.CompleteAdding();try{await writer.WaitAsync(TimeSpan.FromSeconds(2));}catch(Exception ex){failure+=" Journal did not finish: "+ex.Message;}
-            File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=contractV2?3:2,acceptanceVersion=contractV2?"lifecycle-v2":"historical-immediate-pnp",status=failure.Length==0?"Pass":"Fail",iteration,checks,failure,closeCompleted,name,ownedLuid,
+            File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=splitAxes?4:contractV2?3:2,acceptanceVersion=splitAxes?"PF2-02-separated-axes":contractV2?"lifecycle-v2":"historical-immediate-pnp",status=failure.Length==0?"Pass":"Fail",iteration,checks,failure,closeCompleted,name,ownedLuid,
+                performanceGate=performancePass?"Pass":"Fail",resourceSafety=resourceSafety?"Pass":"NotProven",completion=closeCompleted?"Complete":"Incomplete",closeElapsedMs,
                 queryKind=contractV2?"IPHelper-owned-LUID":"Global-NetworkInterface-PnP-enumeration",presentImmediately,queryMs=pnpQueryMs,interfaceConvergedMs=pnpConvergedMs,
                 fullPnpQueryPerformed=!contractV2,baselineHandles,finalHandles,elapsedMs=watch.Elapsed.TotalMilliseconds},Json));
             // Never synchronously Dispose the adapter again here. The parent
             // supervises a stuck native call; it must not block in our finally.
         }
         return failure.Length==0?0:1;
+    }
+
+    public static async Task RunPf2(string components,string output,bool child=false)
+    {
+        if(!child){
+            if(File.Exists(output)||Directory.Exists(output+".rounds"))throw new IOException("Fresh evidence required");
+            var process=await LifecycleProcessWatchdog.Run(output+".child",["--native-lifecycle-pf2-child",components,"--output",output],TimeSpan.FromSeconds(65));
+            File.WriteAllText(output+".watchdog.json",JsonSerializer.Serialize(process,Json));
+            if(process.TimedOut||!process.Reaped||process.Error!=null)throw new IOException("Owned child containment failure; inspect watchdog");
+            Environment.ExitCode=process.ExitCode??1;return;
+        }
+        var rows=new List<JsonElement>();bool safe=true;
+        // Two sequential owners in the same process: the second create is
+        // allowed only after the first actual close and I/O completion.
+        for(int i=1;i<=2;i++){
+            string file=Path.Combine(output+".rounds",i.ToString("D3"),"result.json");
+            await RunChild(components,file,i,contractV2:true,splitAxes:true);
+            using var d=JsonDocument.Parse(File.ReadAllText(file));var row=d.RootElement.Clone();rows.Add(row);
+            safe=row.GetProperty("resourceSafety").GetString()=="Pass"&&row.GetProperty("completion").GetString()=="Complete";
+            bool pnpComplete=row.GetProperty("presentImmediately").ValueKind==JsonValueKind.False||row.GetProperty("interfaceConvergedMs").ValueKind==JsonValueKind.Number;
+            if(!safe||!pnpComplete)break;
+        }
+        bool performance=rows.Count>0&&rows.All(r=>r.GetProperty("performanceGate").GetString()=="Pass");
+        File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=4,status=performance&&safe&&rows.Count==2?"Pass":"Fail",performanceGate=performance?"Pass":"Fail",performanceCoverage=rows.Count==2?"TwoRounds":"Partial",observedRounds=rows.Count,
+            resourceSafety=safe?"Pass":"NotProven",completion=safe?"Complete":"Incomplete",reopen=rows.Count==2&&safe?"Pass":"NotTested",rows,
+            originalThresholdSeconds=3,boundedCompletionObservationAdditionalSeconds=5,officialWintun=true,personalPerformanceExceptionAccepted=false,
+            scope="Two real official adapters, sequential owners in one child. Historical 3.61s Fail unchanged; safety is separate from latency; not self-TUN."},Json));
+        Environment.ExitCode=performance&&safe&&rows.Count==2?0:1;
     }
 
     public static async Task RunV2(string components,string output,int rounds)

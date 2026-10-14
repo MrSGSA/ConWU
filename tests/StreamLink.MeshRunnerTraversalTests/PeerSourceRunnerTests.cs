@@ -1,12 +1,13 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
 static class PeerSourceRunnerTests
 {
-    public static async Task<object> Run(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token)
+    public static async Task<object> Run(string binary, string root, string url, string pin, string mode, Action<bool, string> check, CancellationToken token, string? journal=null)
     {
         int count = mode == "same-public-ip" ? 3 : 2, stable = mode == "server-role" ? 1 : 0;
         var creator = MeshIdentity.Create(url, pin, "faketcp"); var members = new List<MeshProfile> { creator };
@@ -27,7 +28,8 @@ static class PeerSourceRunnerTests
             _ => throw new IOException("No explicit test entry"), (_, _, t) => Task.Delay(Timeout.Infinite, t), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, mode)) {
                 Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
             };
-        var runs = Enumerable.Range(0, count).Select(i => new MeshRunner(profiles[i], s => logs.Enqueue(i + " " + s), s => statuses[i] = s, _ => { }, _ => { }, Services(i)).Run(stop.Token)).ToArray();
+        var runners=Enumerable.Range(0,count).Select(i=>new MeshRunner(profiles[i], s=>logs.Enqueue(i+" "+s), s=>statuses[i]=s,_=>{},_=>{},Services(i))).ToArray();
+        var runs = runners.Select(r=>r.Run(stop.Token)).ToArray();
         bool negative = mode is "old-peer" or "old-server" or "old-native";
         bool Connected(int node, int peer) => statuses[node]?.Peers?.Any(p => p.Slot == peer + 1 && p.Connected) == true;
         try {
@@ -61,7 +63,24 @@ static class PeerSourceRunnerTests
             return new { mode, connectedMs, members = count, helper.Accepted, rawSources = wire.Ios.Length, wire.Packets,
                 learned = factories[stable].Transports.Select(p => p.Diagnostics.PeerSource).ToArray(), realNat = false, wintun = false };
         } finally {
-            stop.Cancel(); foreach (var run in runs) try { await run.WaitAsync(TimeSpan.FromSeconds(10), token); } catch (OperationCanceledException) { }
+            journal??=Path.Combine(root,mode+"-shutdown.jsonl");Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(journal))!);
+            using var sampling=new CancellationTokenSource();var closingWatch=Stopwatch.StartNew();
+            void Snapshot(string phase) {
+                File.AppendAllText(journal,JsonSerializer.Serialize(new {mode,phase,elapsedMs=closingWatch.ElapsedMilliseconds,pid=Environment.ProcessId,
+                    taskStates=runs.Select(t=>t.Status.ToString()).ToArray(),runnerStages=runners.Select(r=>r.ExitDiagnostics).ToArray(),
+                    resources=factories.Select(f=>new {f.Gathers,paths=f.Paths.Select(p=>new {p.PathId,p.LeaseId,p.AttachId,local=p.ActualLocal.ToString(),remote=p.ActualRemote.ToString()}).ToArray(),native=f.Transports.Select(p=>new {pid=p.ProcessId,p.Closed,diagnostics=p.Diagnostics}).ToArray()}).ToArray(),
+                    captures=wire.Ios.Select(io=>new {io.Node,local=io.Local.ToString(),io.Closed}).ToArray(),adapters=adapters.Select(a=>a.Disposed).ToArray(),logs=logs.ToArray(),
+                    scope="Memory adapters and modeled mapping/filter; actual native workers. Not Wintun or physical NAT."})+Environment.NewLine);
+            }
+            Snapshot("before-cancel");
+            // A separate sampler records the blocked stage even if Cancel itself
+            // is synchronous. The external process supervisor remains final containment.
+            Task observer=Task.Run(async()=>{while(!sampling.IsCancellationRequested){Snapshot("waiting");await Task.Delay(500,sampling.Token);}});
+            try {
+                stop.Cancel(); foreach (var run in runs) try { await run.WaitAsync(TimeSpan.FromSeconds(10), token); } catch (OperationCanceledException) { }
+                Snapshot("joined");
+            }catch(Exception ex){Snapshot("failed:"+ex.GetType().Name);throw;}
+            finally{sampling.Cancel();try{await observer;}catch(OperationCanceledException){} }
             check(wire.Ios.All(io => io.Closed) && adapters.All(a => a.Disposed), mode + ": Runner cleanup joins all isolated captures and adapters");
         }
     }

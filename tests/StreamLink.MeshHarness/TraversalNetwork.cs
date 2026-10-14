@@ -19,13 +19,14 @@ static class TraversalNetwork
     public static async Task Run(string[] args)
     {
         if (args[0] == "traversal-prepare") {
-            if (args.Length != 7) throw new ArgumentException("traversal-prepare folder coordination.json local-ip peer-ip tcp|udp host|public");
+            if (args.Length != 7) throw new ArgumentException("traversal-prepare folder coordination.json local-ip peer-ip legacy|tcp|udp host|public");
             string root = Path.GetFullPath(args[1]); Directory.CreateDirectory(root);
             using var coordination = JsonDocument.Parse(File.ReadAllText(args[2]));
             var a = MeshIdentity.Create(coordination.RootElement.GetProperty("url").GetString()!, coordination.RootElement.GetProperty("pin").GetString()!, "faketcp");
             var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-Thinkbook", TraversalMode = "tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
-            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-Akane", TraversalMode = "tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
+            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-A", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
+            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-B", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
+            if(args[5]=="legacy"){local.Profile.ManualEndpoint=args[3]+":44411";local.Profile.ListenPort=44411;remote.Profile.ManualEndpoint=args[4]+":44412";remote.Profile.ListenPort=44412;}
             File.WriteAllText(Path.Combine(root, "local.private.json"), JsonSerializer.Serialize(local));
             File.WriteAllText(Path.Combine(root, "remote.private.json"), JsonSerializer.Serialize(remote));
             Console.WriteLine(JsonSerializer.Serialize(new { localVirtualIp = a.LocalIp, peerVirtualIp = b.LocalIp, localPort = local.SourcePort, peerPort = remote.SourcePort })); return;
@@ -33,7 +34,7 @@ static class TraversalNetwork
         if (args[0] != "traversal-run" || args.Length != 3) throw new ArgumentException("traversal-run node.private.json result.json");
         string file = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[2]), folder = Path.GetDirectoryName(file)!;
         var c = JsonSerializer.Deserialize<TraversalNode>(File.ReadAllText(file))!; c.Profile.Validate();
-        if (c.Kind is not ("tcp" or "udp") || c.Route is not ("host" or "public") || c.LifetimeSeconds is < 30 or > 600) throw new ArgumentException("Invalid isolated test scope");
+        if (c.Kind is not ("tcp" or "udp" or "legacy") || c.Route is not ("host" or "public") || c.LifetimeSeconds is < 30 or > 600) throw new ArgumentException("Invalid isolated test scope");
         if (c.ReflectedPortOffset is < 0 or > 16 || c.ReflectedPortOffset != 0 && (c.Kind != "tcp" || c.Route != "host") ||
             c.PeerSourcePort is < 0 or > 65535 || c.PeerAnnouncedPortOffset is<0 or>16 || c.LocalHelper && (c.Kind != "tcp" || c.Route != "host") ||
             c.RequireLearnedSource && (!c.Profile.TcpPeerReflexive || c.Kind != "tcp" || c.Route != "host" || !c.CaptureBroker))
@@ -47,15 +48,17 @@ static class TraversalNetwork
             MapForTest = ep => c.ReflectedPortOffset == 0 ? ep : new(ep.Address, checked(ep.Port + c.ReflectedPortOffset))
         } : null;
         await using var udpReflector = c.Route == "host" && c.Kind == "udp" ? new UdpReflector(new(IPAddress.Parse(c.Local), c.ReflectorPort)) : null;
-        var factory = c.Route == "host" ? new HostFactory(c, components, folder) : null;
+        var factory = c.Route == "host" && c.Kind!="legacy" ? new HostFactory(c, components, folder) : null;
+        SingleProfile? selectedFactory=null;
         SessionStatus? latest = null; var timeline = new List<object>(); QualityResult? quality = null; int echoes = 0;
-        long connected = 0; string failure = ""; bool adapterCreated = false; var timer = Stopwatch.StartNew();
+        long connected = 0; string failure = "", cleanupFailure=""; Exception? originalRunFailure=null; bool adapterCreated = false, controlReady=false, deadlineReached=false; var timer = Stopwatch.StartNew();
         var services = MeshRuntimeServices.Default with {
             SessionRoot = Path.Combine(folder, "sessions"),
             Adapter = async p => { var adapter = await MeshRuntimeServices.Default.Adapter(p); adapterCreated = true; return adapter; },
             Probe = async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }, // no UPnP/router changes in this independent test
             Record = (_, _) => { },
-            Candidates = async (profile, sessions, log, ct) => (IMeshCandidateFactory?)factory ?? new SingleProfile(await MeshCandidateFactory.Create(profile, Path.Combine(components, "udp2raw-native.exe"), sessions, log, ct) ?? throw new IOException("Capability unavailable"), kind),
+            Candidates = async (profile, sessions, log, ct) => c.Kind=="legacy"?null:selectedFactory=new SingleProfile((IMeshCandidateFactory?)factory ??
+                await MeshCandidateFactory.Create(profile, Path.Combine(components, "udp2raw-native.exe"), sessions, log, ct) ?? throw new IOException("Capability unavailable"), kind),
             QualityServer = (ip, authorize, ct) => Task.WhenAll(Quality.Serve(ip, authorize, ct), EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct)),
             QualityWithPolicy = (profile, ip, authorize, ct) => Task.WhenAll(
                 Quality.Serve(ip, authorize, ct, new(()=>profile.AllowManualQualityRequests)),
@@ -64,8 +67,11 @@ static class TraversalNetwork
         var runner = new MeshRunner(c.Profile, s => { Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
             latest = s; if (s.Connected && connected == 0) { connected = timer.ElapsedMilliseconds; Console.WriteLine("Independent Wintun connected at " + connected + " ms"); }
         }, _ => { }, _ => { }, services);
-        Task running = runner.Run(token);
+        Task running = Task.CompletedTask;
         try {
+            await MeshCoordinatorPreflight.Check(mesh.Pair,token);controlReady=true;
+            if(!File.Exists(Path.Combine(components,"udp2raw-native.exe")))throw new IOException("Native component missing");
+            running=runner.Run(token);
             while (latest?.Connected != true) { if (running.IsCompleted) await running; await Task.Delay(100, token); }
             using (var socket = new UdpClient(new IPEndPoint(IPAddress.Parse(mesh.LocalIp), 0))) {
                 socket.Client.DontFragment = true; socket.Connect(IPAddress.Parse(MeshIdentity.Address(mesh.Pair.Network, peer.Slot)), EchoPort);
@@ -84,27 +90,35 @@ static class TraversalNetwork
                 Console.WriteLine(JsonSerializer.Serialize(quality));
             }
             await running;
-        } catch (OperationCanceledException) when (token.IsCancellationRequested) { if (echoes != 10 || c.MeasureLoad && quality == null) failure = "NoDirectPathOrIncompleteBusinessWithinDeadline"; }
-        catch (Exception ex) { failure = ex.ToString(); Console.Error.WriteLine(failure); }
+        } catch (OperationCanceledException) when (token.IsCancellationRequested) { deadlineReached=true; }
+        catch (Exception ex) { originalRunFailure=ex;failure = ex.ToString(); Console.Error.WriteLine(failure); }
         finally {
-            stop.Cancel(); try { await running; } catch (OperationCanceledException) { } catch (Exception ex) { failure += ex.ToString(); }
+            stop.Cancel(); try { await running; } catch (OperationCanceledException) { } catch (Exception ex) { if(!ReferenceEquals(ex,originalRunFailure))cleanupFailure = ex.ToString(); }
             var evidence = factory?.Evidence();
-            bool learningPass = c.Kind=="udp" || factory?.SourceExpectationPass()==true;
-            bool functionalPass = failure.Length == 0 && echoes == 10 && (!c.MeasureLoad || quality != null) && learningPass;
+            string sourceExpectation = c.Kind=="udp" ? "NotApplicable" : factory!=null ? factory.SourceExpectationPass()?"Pass":"Fail" :
+                !c.RequireLearnedSource ? "NotApplicable" : "Fail";
             // A completed test is not a quality pass. Keep the configured load
             // and measured result separate, especially when nested over an old tunnel.
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
-            await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = functionalPass && (!c.MeasureLoad || loadPass) ? "Pass" : "Fail", c.Kind, c.Route,
-                functionalStatus = functionalPass ? "Pass" : "Fail", loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
-                learningStatus = !c.RequireLearnedSource ? "CorrectAnnouncement_NoLearningRequired" : factory?.LearnedSource == true ? "Pass" : "Fail", c.ReflectedPortOffset, c.PeerAnnouncedPortOffset,c.LocalHelper,
-                transportOutcome=functionalPass?"BusinessUsable":"Fail",scenarioVerdict=c.ExpectedNoDirectPath?(!functionalPass&&connected==0?"Pass":"Fail"):functionalPass?"Pass":"Fail",
+            bool checkExecuted=selectedFactory?.NativePaths.Any(p=>p.Started)==true || connected>0;
+            bool infrastructureReady=controlReady&&adapterCreated&&(selectedFactory?.PreparedCount>0||c.Kind=="legacy"&&connected>0);
+            string transportOutcome=echoes==10?"BusinessUsable":deadlineReached&&connected==0&&checkExecuted?"NoDirectPathWithinBudget":connected>0?"IncompleteBusiness":"NotEstablished";
+            // No-path cases have no selected-source assertion to evaluate.
+            if(c.ExpectedNoDirectPath&&connected==0)sourceExpectation="NotApplicable";
+            var verdict=TraversalVerdict.Evaluate(new(c.ExpectedNoDirectPath,infrastructureReady,checkExecuted,transportOutcome,sourceExpectation,
+                echoes==10&&(!c.MeasureLoad||quality!=null),c.MeasureLoad,loadPass,cleanupFailure.Length==0,failure));
+            Environment.ExitCode=verdict.ExitCode;
+            await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { schemaVersion=4,fixtureVersion="PF2-01-v1",status = verdict.ScenarioVerdict,exitCode=verdict.ExitCode, c.Kind, c.Route,
+                functionalStatus = verdict.FunctionalStatus, loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
+                learningStatus = sourceExpectation, c.ReflectedPortOffset, c.PeerAnnouncedPortOffset,c.LocalHelper,
+                transportOutcome,scenarioVerdict=verdict.ScenarioVerdict,failureCategory=verdict.FailureCategory,infrastructureReady,checkExecuted,controlReady,
+                cleanupOutcome=cleanupFailure.Length==0?"Complete":"Fail",cleanupFailure,coordinatorUri=new Uri(mesh.Pair.Service).GetLeftPart(UriPartial.Authority),runnerExit=runner.ExitDiagnostics,
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
-                scope = c.Route == "host" ? "Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; coordination only uses existing overlay",
-                actualWintun = adapterCreated, actualWinDivert = c.Kind == "tcp" && connected > 0, oldOverlayUnderlay = c.Route == "host", connectedMs = connected, fullMtuEchoes = echoes,
-                quality, session = latest, evidence, failure, timeline }, new JsonSerializerOptions { WriteIndented = true }));
+                scope = c.Route == "host" ? IPAddress.IsLoopback(IPAddress.Parse(c.Local))?"Single Windows host, isolated real Wintun/WinDivert runners over loopback. No two-device or physical NAT claim.":"Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; no relay claim depends on actual route evidence",
+                actualWintun = adapterCreated, actualWinDivert = c.Kind != "udp" && connected > 0, oldOverlayUnderlay = c.Route == "host"&&!IPAddress.IsLoopback(IPAddress.Parse(c.Local)), connectedMs = connected, fullMtuEchoes = echoes,
+                quality, session = latest, evidence,selectedPathDiagnostics=selectedFactory?.NativePaths.Select(p=>p.Diagnostics).ToArray(), failure, timeline }, new JsonSerializerOptions { WriteIndented = true }));
             factory?.Dispose();
         }
-        if (failure.Length != 0 || echoes != 10 || c.MeasureLoad && quality is not { LossPercent: 0, ReceivedMbps: >= 49 } || c.RequireLearnedSource && factory?.LearnedSource != true) Environment.ExitCode = 1;
     }
     static async Task EchoServer(string local, string peer, CancellationToken token)
     {
@@ -112,15 +126,25 @@ static class TraversalNetwork
         while (!token.IsCancellationRequested) { var data = await udp.ReceiveAsync(token); if (data.RemoteEndPoint.Address.Equals(allowed) && data.Buffer.Length == 1252) await udp.SendAsync(data.Buffer, data.RemoteEndPoint, token); }
     }
     sealed class SingleProfile(IMeshCandidateFactory inner, TraversalProfile profile) : IMeshCandidateFactory, IAsyncDisposable {
+        public readonly System.Collections.Concurrent.ConcurrentQueue<NativeDatagramPath> NativePaths=[];
+        public int PreparedCount;
         public TraversalProfile[] Profiles => inner.Profiles.Contains(profile) ? [profile] : throw new IOException("Requested profile unavailable");
         public bool SupportsUdpIpv6 => inner.SupportsUdpIpv6;
         public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
         public bool SupportsTcpPrediction => inner.SupportsTcpPrediction;
         public bool SupportsTcpPeerReflexive => inner.SupportsTcpPeerReflexive;
-        public Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token) => inner.Gather(peer, kind, attempt, token);
-        public Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile kind, Guid attempt, bool allowIpv6,
+        public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile kind, Guid attempt, CancellationToken token) => new Observed(await inner.Gather(peer, kind, attempt, token),this);
+        public async Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile kind, Guid attempt, bool allowIpv6,
             MeshTraversalCandidate? remote, int round, bool predictionAllowed, bool peerSourceAllowed, CancellationToken token) =>
-            inner.GatherSourceAware(peer, kind, attempt, allowIpv6, remote, round, predictionAllowed, peerSourceAllowed, token);
+            new Observed(await inner.GatherSourceAware(peer, kind, attempt, allowIpv6, remote, round, predictionAllowed, peerSourceAllowed, token),this);
+        sealed class Observed(IMeshCandidateResource inner,SingleProfile owner):IMeshCandidateResource {
+            public MeshTraversalCandidate Candidate=>inner.Candidate;
+            public void AuthorizeUdpWitness(MeshTraversalCandidate remote)=>inner.AuthorizeUdpWitness(remote);
+            IPreparedMeshPath Track(IPreparedMeshPath p){if(p.Armed)Interlocked.Increment(ref owner.PreparedCount);if(p is NativeDatagramPath n)owner.NativePaths.Enqueue(n);return p;}
+            public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext c,IPEndPoint r,CancellationToken t)=>Track(await inner.Prepare(c,r,t));
+            public async Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext c,MeshTraversalCandidate r,CancellationToken t)=>Track(await inner.PrepareCandidate(c,r,t));
+            public ValueTask DisposeAsync()=>inner.DisposeAsync();
+        }
         public async ValueTask DisposeAsync() { if (inner is IAsyncDisposable owner) await owner.DisposeAsync(); }
     }
     sealed class HostFactory(TraversalNode config, string components, string folder) : IMeshCandidateFactory, IDisposable, IAsyncDisposable

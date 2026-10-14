@@ -6,6 +6,18 @@ using StreamLink.Service;
 // Explicit isolated integration harness. It never opens the installed control
 // pipe or registers a Windows service. The caller supplies a private profile.
 if (args.Length < 1) throw new ArgumentException("Expected prepare or run");
+if (args[0] == "traversal-verdict-test" && args.Length == 2) { TraversalVerdict.Test(args[1]); return; }
+if(args is ["traversal-negative-infrastructure",var negativeRoot]) {
+    string negativeFolder=Path.GetFullPath(negativeRoot);if(Directory.Exists(negativeFolder))throw new IOException("Fresh negative evidence root required");Directory.CreateDirectory(negativeFolder);
+    var port=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0);port.Start();int number=((System.Net.IPEndPoint)port.LocalEndpoint).Port;port.Stop();
+    var identity=MeshIdentity.Create($"https://127.0.0.1:{number}/",new string('A',64),"faketcp");MeshIdentity.Issue(identity);
+    var node=new TraversalNode(new(){Mesh=identity,TraversalMode="tcp-udp",Enabled=true},"127.0.0.1","127.0.0.1","tcp","public",44411,44401,44402,2,
+        LifetimeSeconds:30,MeasureLoad:false,ExpectedNoDirectPath:true);
+    string config=Path.Combine(negativeFolder,"generated.private.json");File.WriteAllText(config,JsonSerializer.Serialize(node));
+    try{await TraversalNetwork.Run(["traversal-run",config,Path.Combine(negativeFolder,"result.json")]);}
+    finally{File.Delete(config);}
+    return;
+}
 if (args[0].StartsWith("traversal-", StringComparison.Ordinal)) { await TraversalNetwork.Run(args); return; }
 if (args[0] == "prepare") {
     string folder = Path.GetFullPath(args[1]); Directory.CreateDirectory(folder);

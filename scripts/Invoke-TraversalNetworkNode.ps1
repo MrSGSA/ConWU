@@ -19,11 +19,32 @@ try {
   adapters=@(Get-NetAdapter | Select-Object Name,InterfaceDescription,Status,LinkSpeed)
  } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath ($Output+'.environment.json')
  if($node.Route -eq 'host') {
-  $protocol=if($node.Kind -eq 'tcp'){'TCP'}else{'UDP'}
+  $protocol=if($node.Kind -ne 'udp'){'TCP'}else{'UDP'}
   New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Inbound -Action Allow -Protocol $protocol -LocalAddress $node.Local -RemoteAddress $node.Peer -LocalPort @([string]$node.SourcePort,[string]$node.ReflectorPort) | Out-Null
  }
- & (Join-Path $folder 'StreamLink.MeshHarness.exe') traversal-run $Configuration $Output 2>&1 | Tee-Object -FilePath ($Output+'.log')
- if($LASTEXITCODE -ne 0){throw "Independent Wintun test exited $LASTEXITCODE"}
+ $start=[Diagnostics.ProcessStartInfo]::new((Join-Path $folder 'StreamLink.MeshHarness.exe'))
+ $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+ $start.Arguments='traversal-run "'+$Configuration+'" "'+$Output+'"'
+ $owned=[Diagnostics.Process]::Start($start);$stdout=$owned.StandardOutput.ReadToEndAsync();$stderr=$owned.StandardError.ReadToEndAsync()
+ $watch=[Diagnostics.Stopwatch]::StartNew();$limit=[Math]::Min(640,[int]$node.LifetimeSeconds+40);$timedOut=$false
+ try {
+  while(-not $owned.WaitForExit(1000)){
+   if($watch.Elapsed.TotalSeconds -gt $limit){
+    $timedOut=$true
+    [ordered]@{pid=$owned.Id;deadlineSeconds=$limit;timedOut=$true;reaped=$false;phase='before-owned-test-tree-containment';nativeStacksCaptured=$false}|ConvertTo-Json|Set-Content ($Output+'.watchdog.json')
+    # This exact process handle is still live. Kill only its test tree;
+    # WinPS 5.1 lacks Process.Kill(entireProcessTree).
+    & "$env:SystemRoot\System32\taskkill.exe" /PID $owned.Id /T /F > ($Output+'.owned-kill.log') 2>&1
+    if(-not $owned.WaitForExit(5000)){throw 'Owned fixture could not be reaped; do not start another owner'}
+    break
+   }
+  }
+  $stdout.GetAwaiter().GetResult()|Set-Content -LiteralPath ($Output+'.log')
+  $stderr.GetAwaiter().GetResult()|Set-Content -LiteralPath ($Output+'.stderr.log')
+  [ordered]@{pid=$owned.Id;deadlineSeconds=$limit;timedOut=$timedOut;reaped=$owned.HasExited;exitCode=$owned.ExitCode;scope='Only this fixture tree, stable service excluded'}|ConvertTo-Json|Set-Content ($Output+'.watchdog.json')
+  if($timedOut){throw 'Fixture watchdog expired; original gates unchanged; no automatic rerun'}
+  if($owned.ExitCode -ne 0){throw "Independent Wintun test exited $($owned.ExitCode)"}
+ } finally {$owned.Dispose()}
 } catch {
  if(-not(Test-Path -LiteralPath $Output)){[pscustomobject]@{status='Fail';stage='harness/startup';error=$_.Exception.Message;log=$Output+'.log'} | ConvertTo-Json | Set-Content -LiteralPath $Output}
  throw

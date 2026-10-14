@@ -148,7 +148,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded,
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
-                        TraversalProfile.FakeTcpHttpSo => p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
+                        TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
                     ActualTransport = !healthy ? "None" : degraded ? "UDP_DIRECT" : "FakeTCP+HTTP",
                     Recovery = p.Recovery.Snapshot(Environment.TickCount64),

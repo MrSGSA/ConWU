@@ -446,20 +446,28 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
         log($"设备 {e.Peer.Slot} " + (e.Standby ? $"备用已结束，保留原路径：{reason}" : e.Upgrade ? $"FakeTCP 升级未完成，保留原路径：{reason}" : $"{e.Profile} 候选失败：{reason}；机会窗剩余 {Math.Max(0, e.Deadline - Environment.TickCount64)} ms"));
         e.Closing = Close(e);
     }
-    static async Task Close(Entry e)
+    async Task Close(Entry e)
     {
+        void Stage(string phase) { try { log($"TraversalClose slot={e.Peer.Slot}; attempt={e.Attempt:N}; stage={phase}; gathering={e.Gathering?.Status}; preparing={e.Preparing?.Status}; activating={e.Activating?.Status}; retiring={e.Retiring?.Status}; actor={e.Actor?.Phase}"); } catch { } }
+        Stage("cancel");
         e.Stop.Cancel();
         try {
+            Stage("gather-join");
             if (e.Gathering != null) try { e.Resource = await e.Gathering; } catch { }
+            Stage("measure-join");
             if (e.Measuring != null) try { await e.Measuring; } catch { }
+            Stage("prepared-dispose");
             if (e.Preparing != null) try { await (await e.Preparing).DisposeAsync(); } catch { }
+            Stage("activate-join");
             if (e.Activating != null) try { await e.Activating; } catch { }
+            Stage("retiring-join");
             try { if (e.Retiring != null) await e.Retiring; }
             finally {
+                Stage("actor-dispose");
                 try { if (e.Actor != null) await e.Actor.DisposeAsync(); }
-                finally { if (e.Resource != null) await e.Resource.DisposeAsync(); }
+                finally { Stage("resource-dispose"); if (e.Resource != null) await e.Resource.DisposeAsync(); }
             }
-        } finally { e.Stop.Dispose(); }
+        } finally { e.Stop.Dispose(); Stage("complete"); }
     }
     void ObserveCleanup(Entry e) { try { e.Closing!.GetAwaiter().GetResult(); } catch (Exception ex) { log("打洞资源清理：" + ex.Message); } }
     public async ValueTask DisposeAsync()

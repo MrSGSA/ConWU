@@ -27,6 +27,7 @@ static class ControlServer
                 method=context.Request.Method,kind=context.Request.Path.Value?.Split('/').Last(),status=context.Response.StatusCode,elapsedMs=watch.ElapsedMilliseconds})+Environment.NewLine);}
         });
         app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest r) => registry.Watch(c, network, r));
+        app.MapGet("/health", () => new {service="StreamLink isolated coordination",meshProtocol=4,meshTraversal=MeshTraversal.Version,relay=false});
         app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch r) => registry.Traversal(c, network, r));
         app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => registry.Read(c, network));
         app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory d) => registry.Directory(c, network, d));

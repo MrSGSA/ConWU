@@ -24,6 +24,7 @@ bool wireOnly = args.Length == 7 && args[6] == "--wire-only";
 bool predictionOnly = args.Length == 7 && args[6] == "--prediction-only";
 bool predictionRunnerOnly = args.Length == 7 && args[6] == "--prediction-runner-only";
 bool sourceOnly = args.Length == 7 && args[6] == "--source-only";
+if (args.Length == 7 && args[6] == "--source-server-only") sourceOnly = true;
 bool explorationOnly = args.Length == 7 && args[6] == "--exploration-only";
 bool feedbackOnly = args.Length == 7 && args[6] == "--feedback-only";
 bool standbyOnly = args.Length == 7 && args[6] == "--standby-only";
@@ -91,7 +92,11 @@ try {
             rows.Add(await UdpExplorationSocketTests.Run(Path.Combine(root, "exploration-socket-round-" + round), url, pin, Check, token));
         }
     }
-    else if (sourceOnly) { await PeerSourceAdmissionTests.Run(binary, root, Check, token); foreach (string mode in new[] { "client-role", "server-role", "same-public-ip", "old-peer", "old-server", "old-native" }) rows.Add(await PeerSourceRunnerTests.Run(binary, root, url, pin, mode, Check, token)); }
+    else if (sourceOnly) {
+        if(args[6]!="--source-server-only")await PeerSourceAdmissionTests.Run(binary,root,Check,token);
+        string[] modes=args[6]=="--source-server-only" ? ["server-role"] : ["client-role", "server-role", "same-public-ip", "old-peer", "old-server", "old-native"];
+        foreach (string mode in modes) rows.Add(await PeerSourceRunnerTests.Run(binary, root, url, pin, mode, Check, token, output+"."+mode+".shutdown.jsonl"));
+    }
     else if (poolOnly) { await PeerSourceBoundaryTests.Run(Check, token); for (int round = 0; round < rounds; round++) await EndpointPoolTests.Run(Check, token); }
     else if (predictionRunnerOnly) {
         await PredictionRunnerTests.Admission(binary, root, Check, token);
