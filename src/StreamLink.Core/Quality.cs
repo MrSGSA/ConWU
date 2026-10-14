@@ -46,7 +46,12 @@ public static class Quality
                     while(clock.Elapsed.TotalSeconds<request.Seconds&&window.Active&&policy.Allowed){
                         stop.ThrowIfCancellationRequested();
                         int target=(int)(clock.Elapsed.TotalSeconds*request.Mbps*1e6/(Size*8));
-                        for(int n=0;n<16&&sent<target;n++){
+                        // A one-millisecond delay can resume on a coarser
+                        // Windows tick. Sixteen packets per wake caps the test
+                        // near 10 Mbps instead of generating the requested load.
+                        // Catch up within a finite batch; every packet still
+                        // spends the existing shared window/byte/rate budget.
+                        for(int n=0;n<128&&sent<target;n++){
                             if(!window.Admit(QualityDiagnosticPolicy.WireDebitPerPacket))break;
                             BinaryPrimitives.WriteInt32BigEndian(packet.AsSpan(12),sent);await socket.SendAsync(packet,remote,stop);sent++;
                         }

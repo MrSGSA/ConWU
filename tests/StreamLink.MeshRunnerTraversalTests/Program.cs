@@ -154,6 +154,12 @@ try {
             while (adapters.Any(x => x.Incoming.Count != 1)) { if (data.ElapsedMilliseconds > 1800) throw new TimeoutException("actual Runner business data missing"); await Task.Delay(10, token); }
             Check(states.All(s => s?.Connected == true), "full-MTU encrypted bidirectional business survives the original Attempt deadline and control outage");
             rows.Add(new { kind, round, selectedMs, automaticRunner = true, realHttps = true, realSocket = true, nativeTestBackend = kind == TraversalProfile.FakeTcpHttpSo, realNat = false, wintun = false });
+        } catch (Exception ex) {
+            await File.WriteAllTextAsync(output+$".{kind}-{round}-stage-fail.json",JsonSerializer.Serialize(new {kind,round,
+                failure=ex.ToString(),taskStates=tasks.Select(t=>t.Status.ToString()).ToArray(),
+                resources=factories.Select(f=>new {f.Closed,f.Gathers,f.Prepared,native=f.Native?.Diagnostics,pid=f.Native?.ProcessId}).ToArray(),
+                logs=logs.ToArray(),scope="Connection/business failure before teardown; no threshold change or native stack claim"},new JsonSerializerOptions{WriteIndented=true}));
+            throw;
         } finally {
             controlOffline = false; runningStop.Cancel();
             foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(8)); } catch (OperationCanceledException) { }
