@@ -10,7 +10,8 @@ using StreamLink.Service;
 
 sealed record TraversalNode(DeviceProfile Profile, string Local, string Peer, string Kind, string Route, int SourcePort,
     int ReflectorPort, int PeerReflectorPort, int MeasureDelay, int LifetimeSeconds = 100, bool CaptureBroker = false,
-    bool MeasureLoad = true, int ReflectedPortOffset = 0, int PeerSourcePort = 0, bool RequireLearnedSource = false, bool LocalHelper = false);
+    bool MeasureLoad = true, int ReflectedPortOffset = 0, int PeerSourcePort = 0, bool RequireLearnedSource = false, bool LocalHelper = false,
+    int PeerAnnouncedPortOffset = 0, bool ExpectedNoDirectPath = false);
 
 static class TraversalNetwork
 {
@@ -34,7 +35,7 @@ static class TraversalNetwork
         var c = JsonSerializer.Deserialize<TraversalNode>(File.ReadAllText(file))!; c.Profile.Validate();
         if (c.Kind is not ("tcp" or "udp") || c.Route is not ("host" or "public") || c.LifetimeSeconds is < 30 or > 600) throw new ArgumentException("Invalid isolated test scope");
         if (c.ReflectedPortOffset is < 0 or > 16 || c.ReflectedPortOffset != 0 && (c.Kind != "tcp" || c.Route != "host") ||
-            c.PeerSourcePort is < 0 or > 65535 || c.LocalHelper && (c.Kind != "tcp" || c.Route != "host") ||
+            c.PeerSourcePort is < 0 or > 65535 || c.PeerAnnouncedPortOffset is<0 or>16 || c.LocalHelper && (c.Kind != "tcp" || c.Route != "host") ||
             c.RequireLearnedSource && (!c.Profile.TcpPeerReflexive || c.Kind != "tcp" || c.Route != "host" || !c.CaptureBroker))
             throw new ArgumentException("Invalid source-learning fixture scope");
         string components = Path.Combine(AppContext.BaseDirectory, "components");
@@ -88,13 +89,15 @@ static class TraversalNetwork
         finally {
             stop.Cancel(); try { await running; } catch (OperationCanceledException) { } catch (Exception ex) { failure += ex.ToString(); }
             var evidence = factory?.Evidence();
-            bool functionalPass = failure.Length == 0 && echoes == 10 && (!c.MeasureLoad || quality != null) && (!c.RequireLearnedSource || factory?.LearnedSource == true);
+            bool learningPass = c.Kind=="udp" || factory?.SourceExpectationPass()==true;
+            bool functionalPass = failure.Length == 0 && echoes == 10 && (!c.MeasureLoad || quality != null) && learningPass;
             // A completed test is not a quality pass. Keep the configured load
             // and measured result separate, especially when nested over an old tunnel.
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
             await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = functionalPass && (!c.MeasureLoad || loadPass) ? "Pass" : "Fail", c.Kind, c.Route,
                 functionalStatus = functionalPass ? "Pass" : "Fail", loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
-                learningStatus = !c.RequireLearnedSource ? "NotRequired" : factory?.LearnedSource == true ? "Pass" : "Fail", c.ReflectedPortOffset, c.LocalHelper,
+                learningStatus = !c.RequireLearnedSource ? "CorrectAnnouncement_NoLearningRequired" : factory?.LearnedSource == true ? "Pass" : "Fail", c.ReflectedPortOffset, c.PeerAnnouncedPortOffset,c.LocalHelper,
+                transportOutcome=functionalPass?"BusinessUsable":"Fail",scenarioVerdict=c.ExpectedNoDirectPath?(!functionalPass&&connected==0?"Pass":"Fail"):functionalPass?"Pass":"Fail",
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
                 scope = c.Route == "host" ? "Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; coordination only uses existing overlay",
                 actualWintun = adapterCreated, actualWinDivert = c.Kind == "tcp" && connected > 0, oldOverlayUnderlay = c.Route == "host", connectedMs = connected, fullMtuEchoes = echoes,
@@ -127,8 +130,17 @@ static class TraversalNetwork
         TcpEndpointLease? tcp; UdpTraversal? udp; WireObserver? wire; long armed, ended;
         TcpCaptureOwner? capture;
         readonly List<NativeDatagramPath> paths = [];
+        readonly List<IPEndPoint> announcedSources=[];
         NativePathDiagnostics[] diagnostics = [];
         public bool LearnedSource => diagnostics.Any(d => d.PayloadQualified && d.PeerSource is { Learned: true, Frozen: true });
+        public bool SourceExpectationPass() {
+            bool expectedLearning=node.PeerAnnouncedPortOffset!=0;
+            return paths.Count>0 && paths.Zip(announcedSources).Where(p=>p.First.Diagnostics.PayloadQualified).Any(p=>{
+                var source=p.First.Diagnostics.PeerSource;
+                var expected=new IPEndPoint(p.Second.Address,p.Second.Port-node.PeerAnnouncedPortOffset);
+                return p.First.Identity.ActualRemote.Equals(expected) && (source?.Enabled==true?source.Frozen&&source.Learned==expectedLearning:!expectedLearning);
+            });
+        }
         public bool SupportsTcpPeerReflexive => node.Kind == "tcp" && node.CaptureBroker && node.Profile.TcpPeerReflexive;
         public TraversalProfile[] Profiles => [node.Kind == "tcp" ? TraversalProfile.FakeTcpHttpSo : TraversalProfile.UdpDirect];
         public Task<IMeshCandidateResource> GatherSourceAware(MeshMember peer, TraversalProfile kind, Guid attempt, bool allowIpv6,
@@ -176,7 +188,7 @@ static class TraversalNetwork
                 byte[] key = MeshIdentity.SharedKey(owner.node.Profile.Mesh!, peer);
                 try { var result = await NativeDatagramPath.Prepare(owner.binary, owner.root, owner.tcp, owner.generation, context, remote, key, token,
                     captureOwner: owner.capture, countWireControl: candidate.PeerReflexive, peerReflexive: candidate.PeerReflexive);
-                    owner.paths.Add(result); owner.armed = Environment.TickCount64; return result; }
+                    owner.paths.Add(result);owner.announcedSources.Add(remote); owner.armed = Environment.TickCount64; return result; }
                 finally { CryptographicOperations.ZeroMemory(key); }
             }
             public async ValueTask DisposeAsync() { if (owner.ended == 0) owner.ended = Environment.TickCount64; owner.tcp?.Dispose(); if (!transferred && owner.udp != null) await owner.udp.DisposeAsync(); }

@@ -10,7 +10,7 @@ sealed class DesktopSettings
     public bool CloseToTray { get; set; } = true;
     public bool Animations { get; set; } = true;
     public string UpdateChannel {get;set;}="stable";
-    static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "StreamLink", "desktop.json");
+    static string FileName => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), StreamLink.Core.PersonalFeature.InstanceName, "desktop.json");
     public static DesktopSettings Load()
     {
         try { if (File.Exists(FileName)) return JsonSerializer.Deserialize<DesktopSettings>(File.ReadAllText(FileName)) ?? new(); } catch { }

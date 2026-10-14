@@ -5,5 +5,6 @@
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>
     <InformationalVersion>$(StreamLinkReleaseVersion)</InformationalVersion>
+    <DefineConstants Condition="'$(StreamLinkPersonalFeature)'=='true'">$(DefineConstants);STREAMLINK_PERSONAL_FEATURE</DefineConstants>
   </PropertyGroup>
 </Project>

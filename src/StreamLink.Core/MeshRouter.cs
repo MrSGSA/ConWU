@@ -9,6 +9,8 @@ namespace StreamLink.Core;
 public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0)
 {
     public bool Degraded { get; init; }
+    public string TraversalMethod { get; init; } = "None";
+    public string ActualTransport { get; init; } = "None";
     public PathRecoverySnapshot? Recovery { get; init; }
     public DatagramQueueStats? SendQueue { get; init; }
     public PathTrafficSnapshot? Traffic { get; init; }
@@ -144,7 +146,12 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
-                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Recovery = p.Recovery.Snapshot(Environment.TickCount64),
+                p.Sent, p.Received, p.Dropped) { Degraded = degraded,
+                    TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
+                        TraversalProfile.FakeTcpHttpSo => p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
+                        TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
+                    ActualTransport = !healthy ? "None" : degraded ? "UDP_DIRECT" : "FakeTCP+HTTP",
+                    Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
                     Delivery = p.Managed?.Active?.Delivery?.Snapshot(), Standby = StandbyStatus(p),Diagnostics=p.Managed?.Diagnostic?.Status(),Quality=p.Managed?.Quality };

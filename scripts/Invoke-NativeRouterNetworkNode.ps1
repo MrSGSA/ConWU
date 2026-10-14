@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Configuration)
 $ErrorActionPreference='Stop'
+$ProgressPreference='SilentlyContinue'
 $Configuration=[IO.Path]::GetFullPath($Configuration)
 $folder=Split-Path -Parent $Configuration
 $node=Get-Content -LiteralPath $Configuration -Raw | ConvertFrom-Json

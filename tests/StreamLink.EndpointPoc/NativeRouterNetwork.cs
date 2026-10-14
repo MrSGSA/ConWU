@@ -11,7 +11,8 @@ using StreamLink.Core;
 namespace StreamLink.EndpointPoc;
 
 sealed record RouterNetworkConfig(Guid RunId, MeshProfile Profile, string LocalIp, string PeerIp, bool Coordinator,
-    int BasePort, int PeerBasePort, int ReflectorPort, int PeerReflectorPort, int ControlPort, string Binary, string Output, int Rounds = 30);
+    int BasePort, int PeerBasePort, int ReflectorPort, int PeerReflectorPort, int ControlPort, string Binary, string Output, int Rounds = 30,
+    int LocalAnnouncementOffset=0,int PeerAnnouncementOffset=0,bool SourceLearning=false);
 sealed record RouterNetworkControl(Guid RunId, int Round, string Kind, Guid Boot, Guid Attempt, Guid Candidate, Guid Nonce, string Endpoint);
 
 static class NativeRouterNetwork
@@ -35,6 +36,8 @@ static class NativeRouterNetwork
         var localIp = IPAddress.Parse(c.LocalIp); var peerIp = IPAddress.Parse(c.PeerIp);
         if (IPAddress.IsLoopback(localIp) || IPAddress.IsLoopback(peerIp)) throw new ArgumentException("Two real Windows hosts required");
         string root = Path.GetDirectoryName(file)!, binary = Path.GetFullPath(c.Binary, root), output = Path.GetFullPath(c.Output, root);
+        if(File.Exists(output))throw new IOException("Use a fresh result path; prior failure evidence is immutable");
+        string logRoot=Path.Combine(root,Path.GetFileNameWithoutExtension(output)+"-logs");
         var peer = c.Profile.Directory!.Members.Single(m => m.Slot != c.Profile.Self.Slot);
         byte[] shared = MeshIdentity.SharedKey(c.Profile, peer);
         byte[] controlKey = HKDF.DeriveKey(HashAlgorithmName.SHA256, shared, 32, c.RunId.ToByteArray(), "isolated-native-router-control-v1"u8.ToArray());
@@ -44,7 +47,8 @@ static class NativeRouterNetwork
         async Task Until(Func<bool> predicate, string why, int ms = 8000) {
             var time = Stopwatch.StartNew(); while (!predicate()) { if (time.ElapsedMilliseconds > ms) throw new TimeoutException(why); await Task.Delay(10, token); } Check(true, why);
         }
-        await using var reflector = new Reflector(new(localIp, c.ReflectorPort));
+        if(c.LocalAnnouncementOffset is<0 or>16||c.PeerAnnouncementOffset is<0 or>16 || !c.SourceLearning&&(c.LocalAnnouncementOffset!=0||c.PeerAnnouncementOffset!=0))throw new ArgumentException("Invalid predeclared per-end source-learning expectation");
+        await using var reflector = new Reflector(new(localIp, c.ReflectorPort)){MapForTest=ep=>new(ep.Address,checked(ep.Port+c.PeerAnnouncementOffset))};
         TcpListener? listener = null;
         Socket? control = null;
         try {
@@ -77,15 +81,21 @@ static class NativeRouterNetwork
                 var adapter = new Adapter(); await using var router = new MeshRouter(c.Profile, adapter);
                 Guid attempt = Guid.NewGuid(), nonce = Guid.NewGuid(), candidateId = Guid.NewGuid();
                 var offer = new RouterNetworkControl(c.RunId, round, "offer", router.BootId, attempt, candidateId, nonce, observation.Public.ToString());
-                var other = await Exchange(offer); Check(IPEndPoint.Parse(other.Endpoint).Equals(remote), "overlay helper observation matches owned peer tuple");
+                var other = await Exchange(offer);var announced=IPEndPoint.Parse(other.Endpoint);
+                Check(announced.Equals(new IPEndPoint(remote.Address,remote.Port+c.PeerAnnouncementOffset)), "per-end remote announcement matches its predeclared offset");
                 if (!c.Coordinator) { attempt = other.Attempt; nonce = other.Nonce; }
                 var context = new TraversalAttemptContext(c.Profile.Pair.Network, c.Profile.Self.Device, router.BootId, peer.Device, other.Boot, attempt,
                     candidateId, 1, other.Candidate, 1, TraversalProfile.FakeTcpHttpSo, c.Coordinator, c.Coordinator, nonce);
                 using var wire = new WireObserver(Path.Combine(root, "WinDivert.dll"), local, remote);
-                await using var path = await NativeDatagramPath.Prepare(binary, Path.Combine(root, "logs", round.ToString()), lease, generation, context, remote, shared, token);
+                await using var owner=c.SourceLearning?new TcpCaptureOwner(lease,generation,(source,helper)=>new WinDivertEndpointIo(Path.Combine(root,"WinDivert.dll"),source,helper)):null;
+                if(owner!=null)await owner.Ready;
+                await using var path = await NativeDatagramPath.Prepare(binary, Path.Combine(logRoot, round.ToString()), lease, generation, context, announced, shared, token,
+                    captureOwner:owner,countWireControl:c.SourceLearning,peerReflexive:c.SourceLearning);
                 long armed = Environment.TickCount64;
                 await Exchange(offer with { Kind = "ready" });
                 var watch = Stopwatch.StartNew(); await path.StartAndQualify(token);
+                Check(path.Identity.ActualRemote.Equals(remote),"qualified real path freezes the actual expected peer tuple");
+                if(c.SourceLearning)Check(path.Diagnostics.PeerSource is {Frozen:true} source && source.Learned==(c.PeerAnnouncementOffset!=0),"each endpoint learns only when its received remote announcement was shifted");
                 // The same live helper still responds while raw I/O uses its P.
                 var pulse = await attemptRef.Observe(token); Check(pulse.Public.Equals(observation.Public), "helper is not intercepted by native filter");
                 attemptRef.Dispose(); lease.Dispose(); Check(!lease.Closed, "native path retains endpoint after Attempt disposal");
@@ -98,13 +108,16 @@ static class NativeRouterNetwork
                 long revoked = Environment.TickCount64; var capture = wire.Snapshot(armed, revoked);
                 var parsed = JsonSerializer.SerializeToElement(capture);
                 Check(parsed.GetProperty("error").GetInt32() == 0 && parsed.GetProperty("rst").GetInt32() == 0, "no unexpected RST at receiving Windows stack within effective window");
-                Check(parsed.GetProperty("rows").EnumerateArray().Any(p => p.GetProperty("Flags").GetInt32() == 2), "peer emitted real crossed SYN");
-                await router.DisposeAsync(); Check(path.Closed && lease.Closed, "actual child exit releases endpoint and loopback bridge");
+                Check(parsed.GetProperty("rows").EnumerateArray().Any(p => p.GetProperty("Flags").GetInt32() == (c.LocalAnnouncementOffset==0?2:18)),
+                    c.LocalAnnouncementOffset==0?"correctly announced local endpoint receives peer's real bare SYN":"shifted local announcement instead receives peer's SYN+ACK on the authenticated learned reply path");
+                var diagnostics=path.Diagnostics;
+                await router.DisposeAsync();if(owner!=null)await owner.DisposeAsync();Check(path.Closed && lease.Closed, "actual child exit releases endpoint and loopback bridge");
                 await Exchange(offer with { Kind = "retired" });
-                rows.Add(new { round, selectedMs, received = adapter.Incoming.Count, lease = lease.Id, attach = path.AttachId, local = local.ToString(), remote = remote.ToString(), wire = capture });
+                rows.Add(new { round, transportOutcome="BusinessUsable",scenarioVerdict="Pass",selectedMs, received = adapter.Incoming.Count, lease = lease.Id, attach = path.AttachId, local = local.ToString(), remote = remote.ToString(),announced=announced.ToString(),expectedLearning=c.PeerAnnouncementOffset!=0,diagnostics,wire = capture });
                 Console.WriteLine($"Two-Windows native Router {round}/{c.Rounds} pass: {selectedMs}ms");
             }
             await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks, rows, c.RunId, c.LocalIp, c.PeerIp,
+                transportOutcome="BusinessUsable",scenarioVerdict="Pass",c.SourceLearning,c.LocalAnnouncementOffset,c.PeerAnnouncementOffset,
                 nativeDriver = true, twoWindows = true, realNat = false, wintun = false, automatedDiscovery = false,
                 scope = "real SO/HTTP + MeshLink/Router over existing overlay interface, memory IP adapter; no claim about physical WAN NAT traversal" }, new JsonSerializerOptions { WriteIndented = true })); return 0;
         } catch (Exception ex) { await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Fail", checks, rows, failure = ex.ToString() })); throw; }

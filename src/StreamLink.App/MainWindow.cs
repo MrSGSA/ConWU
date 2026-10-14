@@ -141,6 +141,8 @@ public sealed partial class MainWindow : Form
         if (peerDevice != null) peerDevice.Text = "●  " + (s?.PeerName is { Length: > 0 } name ? name : "另一台设备") + (s?.Connected == true ? "  ·  已直连" : "  ·  等待连接");
         if (quality != null) quality.Text = (s?.Degraded == true ? s.Detail + "\n" : "") + (last?.Quality is { Length: > 0 } q ? "最近一次测速：" + q : s?.Degraded == true ? "请按实际用途验证负载质量。" : s?.Detail ?? "业务数据由设备间直接传输。");
         if (p?.Mesh is { } mesh && addresses != null) addresses.Text = "本机 " + mesh.LocalIp + "    ·    " + (mesh.IsOwner ? "网络创建者" : "网络成员") + "    ·    原生 IPv4 组网";
+        if(PersonalFeature.Enabled && quality!=null) quality.Text += "\n"+PersonalFeature.AdapterText(s?.Adapter)+"\n"+
+            string.Join("；",(s?.Peers??[]).Where(x=>x.Connected).Select(x=>$"{x.Name}：建链 {x.TraversalMethod} · 承载 {x.ActualTransport}"));
         UpdateMembers();
         UpdateOverview();
         modeLabel.Text = backend.IsService ? "服务模式 · 关闭界面后继续连接" : preferences.Tray && preferences.CloseToTray ? "前台模式 · 关闭窗口后驻留托盘，退出程序时断开" : "前台模式 · 退出程序时断开，可在设置中安装开机服务";

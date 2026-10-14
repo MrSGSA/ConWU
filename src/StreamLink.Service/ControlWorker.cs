@@ -130,7 +130,19 @@ public sealed partial class ControlWorker : BackgroundService
                 case "mesh-join":
                     var mesh = request.Command == "mesh-create" ? MeshIdentity.Create(request.Service, request.Pin, request.Mode) : MeshIdentity.Import(request.Invite);
                     if (profile.Selection().Policy == PathPolicy.FakeTcpOnly && mesh.Pair.Mode != "faketcp") throw new IOException("仅 FakeTCP 策略不能创建或加入 UDP 网络，请先更改选路策略");
-                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.Slot = 1; profile.LastEntry = 0; store.Save(profile); } break;
+                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.Slot = 1; profile.LastEntry = 0;
+                        if(PersonalFeature.Enabled && mesh.Pair.Mode=="faketcp")profile=PersonalFeature.EnhancedPreset(profile);
+                        if(mesh.Pair.Mode=="udp")profile.TcpPeerReflexive=false;
+                        store.Save(profile); } break;
+                case "personal-preset":
+                    if(running?.IsCompleted==false)throw new IOException("请先停止个人实例再应用增强预设；已有健康连接未重建");
+                    var enhanced=PersonalFeature.EnhancedPreset(profile);
+                    lock(sync){store.Save(enhanced);profile=enhanced;}break;
+                case "personal-check":
+                    if(!PersonalFeature.Enabled)throw new IOException("新方法验证需要个人功能包");
+                    profile.Validate();await PersonalPacketAdapters.Preflight(profile,operation.Stop.Token);
+                    if(profile.Mesh is{} configured)await MeshCoordinatorPreflight.Check(configured.Pair,operation.Stop.Token);
+                    Log("个人新方法准备检查通过："+profile.TraversalMode+"；实际打洞、资格和承载状态在连接后报告，不以开关宣称成功");break;
                 case "mesh-invite":
                     lock (sync) {
                         var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
@@ -168,12 +180,16 @@ public sealed partial class ControlWorker : BackgroundService
                     updated.Enabled=resume;updated.LastEntry=profile.LastEntry;updated.LastStun=profile.LastStun;
                     if(profile.AdditionalData!=null){updated.AdditionalData??=new();foreach(var extra in profile.AdditionalData)updated.AdditionalData.TryAdd(extra.Key,extra.Value.Clone());}
                     bool restart=ProfileChanges.Impact(profile,updated)==ProfileChangeImpact.RestartNetwork;
+                    // Admission failure must precede End; never tear down a
+                    // healthy official adapter to discover an unsigned backend.
+                    if(updated.AdapterBackend!=profile.AdapterBackend)await PersonalPacketAdapters.Preflight(updated,operation.Stop.Token);
                     if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
                     try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":
                     if(running?.IsCompleted==false&&runStop?.IsCancellationRequested==true)throw new IOException("先前网络正在退出，不能启动第二实例");
+                    await PersonalPacketAdapters.Preflight(profile,operation.Stop.Token);
                     lock (sync) { if (profile.Pair == null && profile.Mesh == null) throw new IOException("请先创建或加入网络"); profile.Enabled = true; profile.Validate(); store.Save(profile); } Begin(); break;
                 case "stop":
                     SetOperation(operation,"停止网络",false);lock (sync) { profile.Enabled = false; store.Save(profile); } await End(operation.Stop.Token); break;

@@ -38,14 +38,15 @@ public sealed partial class MainWindow
     void UpdateOverview()
     {
         if(overviewCount is{IsDisposed:false}){var peers=last?.Status?.Peers??[];int connected=peers.Count(p=>p.Connected);overviewCount.Text=$"与本机直连 {connected}/{peers.Length} 台设备";}
-        if(overviewMode is{IsDisposed:false})overviewMode.Text=$"{(backend.IsService?"后台服务":"前台运行")} · 当前策略 {last?.Profile?.PathSelection??"prefer-faketcp"} · 官方 Wintun / WinDivert";
+        if(overviewMode is{IsDisposed:false})overviewMode.Text=$"{(backend.IsService?"后台服务":"前台运行")} · 当前策略 {last?.Profile?.PathSelection??"prefer-faketcp"} · "+(PersonalFeature.Enabled?PersonalFeature.AdapterText(last?.Status?.Adapter):"官方 Wintun / WinDivert");
     }
     void ExportReadOnly()
     {
         using var dialog=new SaveFileDialog{Filter="诊断JSON|*.json",FileName="streamlink-readonly-diagnostic.json"};if(dialog.ShowDialog(this)!=DialogResult.OK)return;
         var state=last?.Status;
         var report=new{schema=1,kind="ReadOnlySnapshot",capturedUtc=DateTimeOffset.UtcNow,version=last?.Version,device=last?.Profile?.DeviceName,virtualIp=last?.Profile?.Mesh?.LocalIp,
-            connected=state?.Connected??false,state=state?.State,peers=state?.Peers?.Select(p=>new{p.Slot,p.Name,p.Ip,p.Connected,p.Degraded,p.RttMs}),businessRelay=false};
+            connected=state?.Connected??false,state=state?.State,adapter=state?.Adapter,personalContract=PersonalFeature.Enabled?PersonalFeature.Contract:null,
+            peers=state?.Peers?.Select(p=>new{p.Slot,p.Name,p.Ip,p.Connected,p.Degraded,p.RttMs,p.TraversalMethod,p.ActualTransport}),businessRelay=false};
         File.WriteAllText(dialog.FileName,JsonSerializer.Serialize(report,new JsonSerializerOptions{WriteIndented=true}));notice.Text="已导出只读诊断；不包含配对凭据或原始控制回复";
     }
 }

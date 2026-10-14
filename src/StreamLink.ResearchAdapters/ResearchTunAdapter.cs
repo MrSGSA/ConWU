@@ -5,7 +5,6 @@ using StreamLink.Core;
 
 namespace StreamLink.ResearchAdapters;
 
-// Deliberately a separate research assembly: the product does not reference it.
 // A signed/approved adapter must already exist; this class cannot install one.
 public sealed class ResearchTunAdapter:IPacketAdapter
 {
@@ -30,6 +29,7 @@ public sealed class ResearchTunAdapter:IPacketAdapter
     int stopped,disposed;
     PacketAdapterStatistics lastStats=new(0,0,0,0,0,0,0,false);
     public ulong InterfaceLuid{get;}
+    public PersonalTunAdmission? Admission {get;}
     public PacketAdapterDescriptor Descriptor=>new(PacketAdapterProviders.NativeExperimental,2,MeshLink.Mtu,true,true,true);
     public ResearchTunAdapter(string dll,uint interfaceIndex,string virtualIp,bool explicitlyApprovedResearchRun)
     {
@@ -48,8 +48,10 @@ public sealed class ResearchTunAdapter:IPacketAdapter
             InterfaceLuid=info.Luid;if(!Api<Configure>("SLT_ConfigureIpv4")(handle,ip.GetAddressBytes()))throw new Win32Exception(Marshal.GetLastPInvokeError());
         }catch{if(handle!=0)close?.Invoke(handle);NativeLibrary.Free(library);throw;}
     }
-    // Assembly-internal managed test seam. No product assembly references this
-    // research project; the public constructor still requires approval/admin.
+    public ResearchTunAdapter(PersonalTunAdmission admission,string virtualIp)
+        :this(admission.Dll,admission.InterfaceIndex,virtualIp,true) { Admission=admission; }
+    // Assembly-internal managed test seam; the product uses only the opaque
+    // PersonalTunAdmission constructor, not this no-kernel fixture.
     // This path loads no DLL and cannot install, open or configure a device.
     internal ResearchTunAdapter(Func<byte[],int> reader,Action stopper,Action closer)
     {

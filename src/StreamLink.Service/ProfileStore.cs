@@ -35,7 +35,7 @@ public sealed class ProfileStore
     }
     public string? UiUserSnapshot()=>AuthorizedUiUser();
     public void RestoreUiUser(string? previous){if(previous!=null){AuthorizeUiUser(previous);return;}string path=Path.Combine(Root,"ui-user.sid");if(File.Exists(path)){if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");File.Delete(path);}}
-    public static string Root => WindowsInstance.IsValidation ? WindowsInstance.ProfileRoot : Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink");
+    public static string Root => WindowsInstance.IsValidation ? WindowsInstance.ProfileRoot : Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : PersonalFeature.DataRoot;
     readonly string file;
     public ProfileStore()
     {

@@ -20,6 +20,12 @@ static class ControlServer
         var builder = WebApplication.CreateBuilder(); builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(k => k.Listen(ip, port, l => l.UseHttps(certificate)));
         await using var app = builder.Build(); var registry = new MeshRegistry(root);
+        object requestGate=new();int requestRows=0;
+        app.Use(async(context,next)=>{
+            var watch=System.Diagnostics.Stopwatch.StartNew();
+            try{await next();}finally{lock(requestGate)if(requestRows++<512)File.AppendAllText(Path.Combine(root,"requests.jsonl"),JsonSerializer.Serialize(new{
+                method=context.Request.Method,kind=context.Request.Path.Value?.Split('/').Last(),status=context.Response.StatusCode,elapsedMs=watch.ElapsedMilliseconds})+Environment.NewLine);}
+        });
         app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest r) => registry.Watch(c, network, r));
         app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch r) => registry.Traversal(c, network, r));
         app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => registry.Read(c, network));

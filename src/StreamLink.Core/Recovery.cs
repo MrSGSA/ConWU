@@ -8,7 +8,7 @@ namespace StreamLink.Core;
 public static class Recovery
 {
     sealed record Owner(int Pid,long StartTicks,string Rule);
-    public static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"StreamLink","sessions");
+    public static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),PersonalFeature.InstanceName,"sessions");
     public static void Record(string folder,string rule)
     {
         using var process=Process.GetCurrentProcess();

@@ -83,8 +83,9 @@ sealed class UserWindow:Form
     {
         if(IsDisposed)return;
         state.Text=s.State;virtualIp=s.VirtualIp;detail.Text=$"本机 {s.VirtualIp} · 直连 {s.DirectPeers}/{s.TotalPeers} · {s.Version}";
+        if(s.PersonalFeatureEdition)detail.Text+="\n"+PersonalFeature.AdapterText(s.Adapter);
         draft.Observe(s);RenderDraft();
-        string text=string.Join("\n",s.Peers.Select(p=>$"{p.Name} · {p.VirtualIp} · {(p.Connected?p.Degraded?"UDP降级直连":"已直连":"等待连接")}"));
+        string text=string.Join("\n",s.Peers.Select(p=>$"{p.Name} · {p.VirtualIp} · {(p.Connected?p.Degraded?"UDP降级直连":"已直连":"等待连接")}"+(s.PersonalFeatureEdition?$" · 建链 {p.TraversalMethod} · 承载 {p.ActualTransport}":"")));
         if(peers.Tag as string!=text){foreach(Control c in peers.Controls.Cast<Control>().ToArray())c.Dispose();peers.Controls.Clear();foreach(string line in text.Split('\n'))peers.Controls.Add(Design.Label(line,10));peers.Tag=text;}
     }
     void RenderDraft()

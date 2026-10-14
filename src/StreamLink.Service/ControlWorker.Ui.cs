@@ -11,7 +11,8 @@ public sealed partial class ControlWorker
     {
         var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;var peers=state?.Peers??[];
         return new(full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",SensitiveText.Redact(state?.State??"网络未启动",p),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
-            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)])).ToArray(),p.LogLevel,SettingsPatchVersion:2);
+            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
+            {Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled};
     }
     internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {

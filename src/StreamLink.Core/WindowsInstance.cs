@@ -6,7 +6,7 @@ namespace StreamLink.Core;
 public static class WindowsInstance
 {
     static string? validation;
-    public static string Name => validation == null ? "StreamLink" : "StreamLink-Validation-" + validation;
+    public static string Name => validation == null ? PersonalFeature.InstanceName : "StreamLink-Validation-" + validation;
     public static bool IsValidation => validation != null;
     public static string? ValidationId => validation;
     public static string ProfileRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink-Validation", validation ?? throw new InvalidOperationException());

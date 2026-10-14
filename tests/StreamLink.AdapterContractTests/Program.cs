@@ -4,6 +4,8 @@ using StreamLink.Core;
 
 if(args is ["--lifecycle-watchdog-hang"]) { Console.WriteLine("intentional isolated watchdog child");Console.Out.Flush();Thread.Sleep(Timeout.Infinite);return; }
 if(args is ["--lifecycle-watchdog-selftest",var watchdogOutput]) { await NativeLifecycleTests.WatchdogSelfTest(watchdogOutput);return; }
+if(args is ["--native-lifecycle-v2-child",var v2Components,"--output",var v2Output,"--rounds",var v2Rounds]){Environment.ExitCode=await NativeLifecycleTests.RunV2Child(Path.GetFullPath(v2Components),Path.GetFullPath(v2Output),int.Parse(v2Rounds));return;}
+if(args is ["--native-lifecycle-v2",var v2Root,"--output",var v2File,"--rounds",var v2Count]){try{await NativeLifecycleTests.RunV2(Path.GetFullPath(v2Root),Path.GetFullPath(v2File),int.Parse(v2Count));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;}
 if(args is ["--native-lifecycle-child",var childComponents,"--output",var childOutput,"--iteration",var iterationText]) {
     Environment.ExitCode=await NativeLifecycleTests.RunChild(Path.GetFullPath(childComponents),Path.GetFullPath(childOutput),int.Parse(iterationText));return;
 }

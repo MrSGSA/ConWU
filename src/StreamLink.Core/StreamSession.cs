@@ -16,6 +16,7 @@ public sealed record SessionStatus(string State, string LocalIp, string PeerIp, 
     public bool Degraded => Peers?.Any(p => p.Connected && p.Degraded) == true;
     public EgressStats? Egress { get; init; }
     public LegacyControlStats? CompatibilityNativeControl { get; init; }
+    public AdapterRuntimeStatus? Adapter { get; init; }
 }
 
 public interface IStreamSession : IAsyncDisposable

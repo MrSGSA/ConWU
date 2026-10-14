@@ -71,6 +71,8 @@ public sealed class MeshRunner
         string publishedEndpoint = "\0", publishingEndpoint = "";
         string firewallMembers = "";
         var timeline = new ConnectionTimeline(log);
+        AdapterRuntimeStatus adapterStatus = new(profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? PacketAdapterProviders.OfficialWintun : PacketAdapterProviders.NativeExperimental,null,"NotOpened","尚未打开虚拟网卡");
+        IPacketAdapter? actualAdapter=null;
         string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
         void Warning(Exception ex)
         {
@@ -79,8 +81,9 @@ public sealed class MeshRunner
         try {
             gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
             timeline.Mark("原生网络开始启动");
-            report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口"));
-            opening = services.Adapter(mesh);
+            report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus});
+            opening = profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? services.Adapter(mesh) :
+                services.ProfileAdapter is {} create ? create(profile,stop) : throw new IOException("此运行环境未提供自研 TUN 准入工厂");
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
                 if (networkWake.Take(now)) {
@@ -94,11 +97,19 @@ public sealed class MeshRunner
                 if (gatheringFactory?.IsCompleted == true) {
                     try { factory = await gatheringFactory; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("新增打洞能力暂不可用：" + ex.Message); }
                     gatheringFactory = null;
+                    log("CandidateFactoryReady profiles="+string.Join(',',factory?.Profiles??[])+" policy="+profile.PathSelection+" udpAllowed="+profile.AllowUdpFallback);
                     if (factory is MeshCandidateFactory ownedFactory && discovery is ITcpObservationControl observationControl)
                         ownedFactory.ConfigureObservation(observationControl, requestBudget, log);
                 }
                 if (opening?.IsCompleted == true) {
-                    var adapter = await opening; opening = null;
+                    IPacketAdapter adapter;
+                    try { adapter=await opening; }
+                    catch(Exception ex) { adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
+                    opening = null;actualAdapter=adapter;
+                    var admitted=(adapter as StreamLink.ResearchAdapters.ResearchTunAdapter)?.Admission;
+                    adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason="已由实际工厂打开；内核验证等级见独立证据",Abi=adapter.Descriptor.Abi,
+                        DeviceInstance=admitted?.DeviceInstance,InterfaceIndex=admitted?.InterfaceIndex,PackageHash=admitted?.PackageHash,
+                        SignatureValid=admitted!=null?true:null,Loaded=admitted!=null?true:null};
                     if(adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
                         log($"虚拟网段路由警告：{warning.Reason}；{warning.Prefix}；现有路由未改动，可在诊断中检查其他 VPN/父网段");
                     try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
@@ -109,6 +120,7 @@ public sealed class MeshRunner
                 }
                 if (traversal == null && router != null && factory != null && factory.Profiles.Any(router.Selection.Allows) && discovery is IMeshTraversalDiscovery controlDiscovery) {
                     traversal = new(mesh, router, controlDiscovery, factory, requestBudget, log, stop);
+                    log("TraversalReady profiles="+string.Join(',',traversal.Capabilities.Profiles)+" coordinator="+controlDiscovery.SupportsTraversal);
                     traversal.Receive(pendingControl); pendingControl = []; lastPublish = 0;
                 }
                 if (router?.Completion.IsCompleted == true) await router.Completion;
@@ -279,6 +291,7 @@ public sealed class MeshRunner
                     int degraded = statuses.Count(p => p.Degraded);
                     report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) {
+                            Adapter = actualAdapter is {} observed ? adapterStatus with {ReadPackets=observed.Statistics.ReadPackets,WrittenPackets=observed.Statistics.WrittenPackets} : adapterStatus,
                             Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
                             TcpHelpers = TcpHelperLedger.Shared.Snapshot(),
                             LegacyTransports = LegacyTransportLedger.Shared.Snapshot(),

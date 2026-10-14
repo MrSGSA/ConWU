@@ -33,7 +33,7 @@ public static class ServiceInstaller
         string manifest = Path.Combine(source, "manifest.json");
         if (!File.Exists(manifest)) throw new IOException("请从完整发布包运行；缺少安装文件清单");
         VerifyBundle(source);
-        string parent = WindowsInstance.IsValidation ? WindowsInstance.InstallParent : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "StreamLink");
+        string parent = WindowsInstance.IsValidation ? WindowsInstance.InstallParent : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), PersonalFeature.InstanceName);
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
         string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
@@ -137,6 +137,11 @@ public static class ServiceInstaller
         string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
         var paths=files.Select(f=>f.Path.Replace('\\','/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if(required.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少必需运行文件");
+        if(PersonalFeature.Enabled) {
+            if(!manifest.TryGetProperty("personalContract",out var contract)||contract.GetString()!=PersonalFeature.Contract)throw new IOException("个人包契约不匹配");
+            string[] personalRequired=["StreamLink.ResearchAdapters.dll","components/self-tun/StreamLinkTun.sys","components/self-tun/StreamLinkTun.inf","components/self-tun/StreamLinkTun.cat","components/self-tun/streamlink-tun-research.dll","components/self-tun/package-identity.json"];
+            if(personalRequired.Any(p=>!paths.Contains(p)))throw new IOException("个人包未包含完整自研 TUN 研发及产品接线文件");
+        }
         foreach(string path in new[]{"StreamLink.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
             using var input=File.OpenRead(Path.Combine(source,path));var head=new byte[64];input.ReadExactly(head);
             int offset=System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(60));if(head[0]!='M'||head[1]!='Z'||offset<64||offset>input.Length-6)throw new IOException("运行组件PE头无效："+path);

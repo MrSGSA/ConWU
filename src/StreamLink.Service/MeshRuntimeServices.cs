@@ -28,6 +28,9 @@ internal sealed record MeshRuntimeServices(
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
     public Func<DeviceProfile,string,Action<string>,CancellationToken,EgressPacer?,Task<IMeshCandidateFactory?>>? CandidatesWithEgress{get;init;}
     public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
+    // Keep the original injected fixture contract; the product uses the same
+    // profile-aware factory in service and elevated foreground modes.
+    public Func<DeviceProfile,CancellationToken,Task<IPacketAdapter>>? ProfileAdapter {get;init;}
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
     public static MeshRuntimeServices Default => new(
@@ -41,6 +44,7 @@ internal sealed record MeshRuntimeServices(
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
         Recovery.Record,
         Path.Combine(ProfileStore.Root, "sessions")) {
+            ProfileAdapter=PersonalPacketAdapters.Open,
             QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests)),
             CandidatesWithEgress=(profile,folder,log,token,pacer)=>MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native.exe"),folder,log,token,pacer)
         };

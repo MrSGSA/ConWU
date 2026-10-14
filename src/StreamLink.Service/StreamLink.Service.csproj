@@ -4,6 +4,7 @@
     <!-- Match the desktop runtime so both executables can share one publish directory. -->
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
     <ProjectReference Include="../StreamLink.Core/StreamLink.Core.csproj" />
+    <ProjectReference Include="../StreamLink.ResearchAdapters/StreamLink.ResearchAdapters.csproj" />
     <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.12" />
   </ItemGroup>
 </Project>

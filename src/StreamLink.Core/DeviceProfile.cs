@@ -18,19 +18,20 @@ public sealed class DeviceProfile
     public bool Enabled { get; set; }
     public string Preference { get; set; } = "auto";
     public int LastEntry { get; set; }
-    public int ListenPort { get; set; } = 42680;
-    public int SourcePort { get; set; } = 42691;
+    public int ListenPort { get; set; } = PersonalFeature.Enabled ? 44680 : 42680;
+    public int SourcePort { get; set; } = PersonalFeature.Enabled ? 44691 : 42691;
     public string ManualEndpoint { get; set; } = "";
     public string[] TcpStun { get; set; } = Stun.TcpServers.ToArray();
     public string[] UdpStun { get; set; } = Stun.UdpServers.ToArray();
     public string LastStun { get; set; } = "";
     public string DeviceName { get; set; } = Environment.MachineName;
     public string TransportMode { get; set; } = "faketcp";
+    public PacketAdapterBackend AdapterBackend { get; set; } = PacketAdapterBackend.OfficialWintun;
     // Staged rollout: existing installations retain the verified explicit path.
     // New traversal is opt-in until the independent Windows/WAN gates pass.
-    public string TraversalMode { get; set; } = "legacy";
+    public string TraversalMode { get; set; } = PersonalFeature.Enabled ? "tcp-udp" : "legacy";
     public string PathSelection { get; set; } = "prefer-faketcp";
-    public bool AllowUdpFallback { get; set; }
+    public bool AllowUdpFallback { get; set; } = PersonalFeature.Enabled;
     // Diagnostics only, off by default. Requires a separately configured raw
     // SYN observer on the authenticated coordinator; never promotes a path.
     public bool TcpSynObservation { get; set; }
@@ -71,6 +72,8 @@ public sealed class DeviceProfile
     public string LogDirectory { get; set; } = "";
     public void Validate()
     {
+        if (!Enum.IsDefined(AdapterBackend)) throw new FormatException("虚拟网卡后端无效");
+        if (AdapterBackend == PacketAdapterBackend.StreamLinkTun && Pair != null) throw new FormatException("自研 TUN 使用原生 Mesh 网络；不支持旧 EasyTier 配对实例");
         if(CapabilityIntents==null||CapabilityIntents.Count>32||CapabilityIntents.Keys.Any(k=>k.Length is<1 or>64||k.Any(char.IsControl)))throw new FormatException("能力意图配置无效");
         if (Version != 2 || !Guid.TryParseExact(Device, "N", out _) || Slot is < 1 or > 2 || LastEntry is < 0 or > 2 || Preference is not ("auto" or "local" or "peer")) throw new FormatException("设备配置无效");
         if (ListenPort is < 1024 or > 65535 || SourcePort is < 1024 or > 65535 || SourcePort == ListenPort) throw new FormatException("源端口与监听端口必须是不同的 1024–65535 端口");

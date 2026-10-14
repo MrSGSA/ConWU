@@ -1,8 +1,16 @@
 using System.IO.Pipes;
 
 namespace StreamLink.Core;
-public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connected,bool Degraded,double? RttMs,string Phase);
-public sealed record UiStatusDto(string Version,string DeviceName,string VirtualIp,string State,bool ServiceReady,bool NetworkEnabled,int DirectPeers,int TotalPeers,UiPeerDto[] Peers,string LogLevel,int SettingsPatchVersion=1);
+public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connected,bool Degraded,double? RttMs,string Phase)
+{
+    public string TraversalMethod {get;init;}="None";
+    public string ActualTransport {get;init;}="None";
+}
+public sealed record UiStatusDto(string Version,string DeviceName,string VirtualIp,string State,bool ServiceReady,bool NetworkEnabled,int DirectPeers,int TotalPeers,UiPeerDto[] Peers,string LogLevel,int SettingsPatchVersion=1)
+{
+    public AdapterRuntimeStatus? Adapter {get;init;}
+    public bool PersonalFeatureEdition {get;init;}
+}
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedDeviceName=null,
@@ -29,7 +37,7 @@ public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Gu
 public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null);
 public static class UiControlProtocol
 {
-    public static string PipeName=>WindowsInstance.IsValidation ? WindowsInstance.Name + "-UI-v1" : "StreamLink-UI-v1";
+    public static string PipeName=>WindowsInstance.Name + "-UI-v1";
     public static async Task<UiControlReply> Call(UiControlRequest request,CancellationToken token=default)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(20000);
