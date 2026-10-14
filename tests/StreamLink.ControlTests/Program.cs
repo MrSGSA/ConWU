@@ -3,17 +3,23 @@ using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Service;
 
-if(args.Length==3&&args[0]=="--ui-linked-client"){await LinkedUserTests.Child(args[1],args[2]);return 0;}
+if(args.Length==4&&args[0]=="--ui-linked-client"){
+    WindowsInstance.ConfigureValidation(args[3]);await LinkedUserTests.Child(args[1],args[2]);return 0;
+}
+// Isolate BOTH profile and pipe names, not only the protected configuration.
+// A local test must never bind or talk to the installed product's UI pipe.
+WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
 int checks=0,failures=0;
 void Check(bool ok,string reason){checks++;if(!ok){failures++;Console.Error.WriteLine(reason);}}
 T Field<T>(ControlWorker worker,string name)=>(T)typeof(ControlWorker).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(worker)!;
 void Set(ControlWorker worker,string name,object value)=>typeof(ControlWorker).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(worker,value);
-string isolated=Path.Combine(Path.GetTempPath(),"StreamLink-control-"+Guid.NewGuid().ToString("N"));
+string isolated=WindowsInstance.ProfileRoot;
 Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",isolated);
 try {
     using var worker=new ControlWorker();
     worker.StartLocal();
     await UiBoundaryTests.Run(worker,Check);
+    await UiPatchTests.Run(worker,Check);
     var first=await worker.Handle(new("status"));
     string originalName=first.Profile!.DeviceName;
     first.Profile.DeviceName="mutated external reply";

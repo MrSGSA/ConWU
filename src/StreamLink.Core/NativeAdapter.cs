@@ -28,6 +28,9 @@ public sealed class NativeAdapter : IPacketAdapter
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint Abi();
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void StopPacket(IntPtr adapter);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint ReadStats(IntPtr adapter,[Out] ulong[] counters);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void NativeCloseTrace(uint phase);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void TracedClose(IntPtr adapter,NativeCloseTrace trace);
+    readonly TracedClose? tracedClose;
     readonly IntPtr library;
     IntPtr adapter;
     readonly Close close;
@@ -54,6 +57,7 @@ public sealed class NativeAdapter : IPacketAdapter
         library = NativeLibrary.Load(Path.GetFullPath(Path.Combine(components, "streamlink-tun.dll")));
         try {
             T Load<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
+            if(NativeLibrary.TryGetExport(library,"sltun_close_with_trace",out var diagnosticClose))tracedClose=Marshal.GetDelegateForFunctionPointer<TracedClose>(diagnosticClose);
             close = Load<Close>("sltun_close"); read = Load<ReadPacket>("sltun_read"); write = Load<WritePacket>("sltun_write");
             if(Load<Abi>("sltun_abi")()!=2)throw new IOException("网卡适配ABI不匹配");
             stop=Load<StopPacket>("sltun_stop");stats=Load<ReadStats>("sltun_stats");
@@ -87,17 +91,26 @@ public sealed class NativeAdapter : IPacketAdapter
     }
     public int Read(byte[] buffer,CancellationToken token){using var cancel=token.Register(Stop);token.ThrowIfCancellationRequested();int length=Read(buffer);token.ThrowIfCancellationRequested();return length;}
     public void Stop(){io.EnterReadLock();try{if(!disposed&&Interlocked.Exchange(ref stopping,1)==0)stop(adapter);}finally{io.ExitReadLock();}}
+    void Trace(string stage){try{LifecycleTrace?.Invoke(stage);}catch{/* diagnostics cannot break native resource cleanup */}}
+    void TraceNative(uint phase)=>Trace(phase switch{
+        1=>"native-stop-handle-close-begin",2=>"native-stop-handle-close-complete",
+        3=>"native-session-end-begin",4=>"native-session-end-complete",
+        5=>"native-adapter-close-begin",6=>"native-adapter-close-complete",
+        7=>"wintun-library-free-begin",8=>"wintun-library-free-complete",_=>"unknown-native-close-phase"});
     // The caller joins both packet pumps before closing the native session.
     public void Dispose() {
         // Signal BEFORE waiting for in-flight native reads. Delegate calls hold
         // a shared guard so stats/write/cancellation cannot race a freed pointer
         // or a library unload, even when a caller violates normal pump ordering.
-        LifecycleTrace?.Invoke("stop-begin");Stop();LifecycleTrace?.Invoke("stop-complete");io.EnterWriteLock();try{
-            if(disposed)return;LifecycleTrace?.Invoke("exclusive-acquired");disposed=true;close(adapter);LifecycleTrace?.Invoke("native-close-complete");adapter=IntPtr.Zero;
+        Trace("stop-begin");Stop();Trace("stop-complete");Trace("exclusive-wait");io.EnterWriteLock();try{
+            if(disposed)return;Trace("exclusive-acquired");disposed=true;Trace("native-close-begin");
+            if(LifecycleTrace!=null&&tracedClose!=null){NativeCloseTrace callback=TraceNative;tracedClose(adapter,callback);GC.KeepAlive(callback);}
+            else {if(LifecycleTrace!=null)Trace("native-close-phase-trace-unavailable");close(adapter);}
+            Trace("native-close-complete");adapter=IntPtr.Zero;
             // The guarded native handle closes here; OS/PnP disappearance is
             // recorded separately. Do not block all statistics/cancel callers
             // behind unbounded interface enumeration or alter foreign drivers.
-            NativeLibrary.Free(library);LifecycleTrace?.Invoke("library-free-complete");
+            Trace("bridge-library-free-begin");NativeLibrary.Free(library);Trace("library-free-complete");
         }finally{io.ExitWriteLock();}
         // Do not dispose the guard: late calls must deterministically observe
         // the adapter's disposed state rather than touch a closed native handle.

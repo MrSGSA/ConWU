@@ -12,8 +12,22 @@ public sealed class ProfileStore
     {
         var sid=new SecurityIdentifier(value);if(!sid.IsAccountSid())throw new IOException("必须授权单一用户SID");
         string target=Path.Combine(Root,"ui-user.sid");if(File.Exists(target)&&(File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");
-        File.WriteAllText(target+".tmp",sid.Value);File.Move(target+".tmp",target,true);
+        string temporary=Path.Combine(Root,"ui-user-"+Guid.NewGuid().ToString("N")+".tmp");
+        try{
+            using(var stream=new FileStream(temporary,FileMode.CreateNew,FileAccess.Write,FileShare.None,4096,FileOptions.WriteThrough)){
+                var bytes=System.Text.Encoding.UTF8.GetBytes(sid.Value);stream.Write(bytes);stream.Flush(true);
+            }
+            File.Move(temporary,target,true);
+        }finally{if(File.Exists(temporary))File.Delete(temporary);}
     }
+    public void AuditUiAuthorization(string action,string? before,string? after)
+    {
+        string path=Path.Combine(Root,"ui-authorization.jsonl");
+        if(File.Exists(path)&&(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("授权审计文件不能是链接");
+        string record=JsonSerializer.Serialize(new{timestamp=DateTimeOffset.UtcNow,action,before,after,actor=WindowsIdentity.GetCurrent().User?.Value});
+        File.AppendAllText(path,record+Environment.NewLine);
+    }
+
     internal string? AuthorizedUiUser()
     {
         string path=Path.Combine(Root,"ui-user.sid");if(!File.Exists(path))return null;if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");

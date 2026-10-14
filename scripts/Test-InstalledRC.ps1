@@ -42,7 +42,8 @@ try {
     # Only this copied fault fixture is modified; the fixed bundle stays intact.
     'intentionally invalid runtime JSON'|Set-Content -LiteralPath (Join-Path $bad 'StreamLink.Service.runtimeconfig.json') -Encoding utf8
     Rehash $bad
-    Invoke-App $good @('--install')
+    # This is an explicit same-account fixture selection, NOT cross-account UAC evidence.
+    Invoke-App $good @('--install','--ui-user-account',$identity.Name)
     $initial=Read-Status $good 'initial-ready'
     Invoke-App $good @('--acceptance-create-network')
     $paired=Read-Status $good 'paired-disabled'

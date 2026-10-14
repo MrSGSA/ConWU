@@ -7,7 +7,9 @@
 #include <atomic>
 #include "wintun.h"
 
+using CloseTrace = void (__cdecl *)(unsigned);
 struct Adapter {
+    CloseTrace trace = nullptr;
     HMODULE library = nullptr;
     WINTUN_ADAPTER_HANDLE adapter = nullptr;
     WINTUN_SESSION_HANDLE session = nullptr;
@@ -20,10 +22,20 @@ struct Adapter {
     WINTUN_RELEASE_RECEIVE_PACKET_FUNC *release = nullptr;
     WINTUN_ALLOCATE_SEND_PACKET_FUNC *allocate = nullptr;
     WINTUN_SEND_PACKET_FUNC *send = nullptr;
-    ~Adapter() { if (stop) CloseHandle(stop);if (session && end) end(session); if (adapter && close) close(adapter); if (library) FreeLibrary(library); }
+    // Diagnostic callbacks are synchronous and installed only for traced close.
+    // The normal production close order and ownership are unchanged.
+    void note(unsigned phase) { if (trace) trace(phase); }
+    ~Adapter() {
+        note(1); if (stop) CloseHandle(stop); note(2);
+        note(3); if (session && end) end(session); note(4);
+        note(5); if (adapter && close) close(adapter); note(6);
+        note(7); if (library) FreeLibrary(library); note(8);
+    }
 };
 #define API extern "C" __declspec(dllexport)
 API void sltun_close(Adapter *a) { delete a; }
+// Additive ABI-2 diagnostic export; old callers still use sltun_close.
+API void sltun_close_with_trace(Adapter *a, CloseTrace trace) { if (a) a->trace = trace; delete a; }
 API DWORD sltun_abi() { return 2; }
 API void sltun_stop(Adapter *a) { if(a&&a->stop)SetEvent(a->stop); }
 API DWORD sltun_stats(Adapter *a, unsigned long long *counts) {if(!a||!counts)return ERROR_INVALID_PARAMETER;for(unsigned i=0;i<7;i++)counts[i]=a->counts[i].load();return ERROR_SUCCESS;}

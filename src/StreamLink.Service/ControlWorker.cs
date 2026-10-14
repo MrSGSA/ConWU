@@ -102,19 +102,25 @@ public sealed partial class ControlWorker : BackgroundService
             Traffic = null, Delivery = null, SendQueue = null
         }).ToArray()
     };
-    public async Task<ControlReply> Handle(ControlRequest request,CancellationToken token=default)
+    public Task<ControlReply> Handle(ControlRequest request,CancellationToken token=default)
+        => HandleCore(request,token,null);
+
+    // UI requests carry their original patch until AFTER the shared mutation gate.
+    async Task<ControlReply> HandleCore(ControlRequest request,CancellationToken token,UiOperation? ui)
     {
         if(request.Command=="status")return Reply();
         if(request.Command=="cancel")return CancelOperation(request.CancelOperationId);
         Operation operation;bool duplicate;
-        try{operation=OpenOperation(request,token,out duplicate);}
+        try{operation=OpenOperation(request,token,out duplicate,ui);}
         catch(Exception ex){return Reply(ex is OperationCanceledException?"操作已取消":ex.Message);}
-        if(duplicate)return Reply() with{Operation=operation.State};
+        if(duplicate)return Reply(operation.State.Completed?operation.State.Error:"") with{Operation=operation.State};
         bool acquired=false,background=false;
         try
         {
             await requests.WaitAsync(operation.Stop.Token);acquired=true;
             operation.Stop.Token.ThrowIfCancellationRequested();
+            if(ui!=null && store.AuthorizedUiUser()!=ui.CallerSid)
+                throw new IOException("该本机用户的UI控制授权已改变");
             SetOperation(operation,"执行中",true);
             string issued = "";
             switch (request.Command)
@@ -141,6 +147,19 @@ public sealed partial class ControlWorker : BackgroundService
                     var pair = request.Command == "create" ? Pairing.Create(request.Service, request.Pin, request.Mode) : Pairing.Import(request.Invite);
                     if (profile.Selection().Policy == PathPolicy.FakeTcpOnly && pair.Mode != "faketcp") throw new IOException("仅 FakeTCP 策略不能创建或加入 UDP 网络，请先更改选路策略");
                     SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Mesh = null; profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; store.Save(profile); } break;
+                case "ui-patch":
+                    if(ui?.Patch==null)throw new FormatException("此命令需要已认证的UI补丁");
+                    lock(sync) {
+                        // Background directory/STUN updates also use sync. Never
+                        // reconstitute a stale whole profile outside this lock.
+                        var patched=ui.Patch.ApplyTo(profile);
+                        store.Save(patched);profile=patched;
+                        if(runningProfile is {} activeUi) {
+                            activeUi.DeviceName=patched.DeviceName;
+                            activeUi.LogLevel=patched.LogLevel;
+                        }
+                    }
+                    break;
                 case "save":
                     var updated = request.Profile ?? throw new FormatException("配置为空"); updated.Validate();
                     if (updated.Device != profile.Device || updated.Pair != profile.Pair || updated.Slot != profile.Slot || JsonSerializer.Serialize(updated.Mesh) != JsonSerializer.Serialize(profile.Mesh)) throw new FormatException("不能通过设置修改配对身份");
@@ -169,9 +188,9 @@ public sealed partial class ControlWorker : BackgroundService
                     measuring = Task.Run(async () => { try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, measurementToken) : await current!.Measure(request.Mbps, measurementToken); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { lock (sync) quality = "测试未完成：" + ex.Message; } finally {CompleteOperation(operation);PublishReply();} }); break;
                 default: throw new FormatException("未知控制命令");
             }
-            if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued } : Reply();
+            if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued,Operation=operation.State } : Reply() with {Operation=operation.State};
         }
-        catch (Exception ex) { CompleteOperation(operation,ex is OperationCanceledException?"操作已取消":ex.Message);PublishReply();return Reply(ex is OperationCanceledException?"操作已取消":ex.Message); }
+        catch (Exception ex) { CompleteOperation(operation,ex is OperationCanceledException?"操作已取消":ex.Message);PublishReply();return Reply(ex is OperationCanceledException?"操作已取消":ex.Message) with {Operation=operation.State}; }
         finally { if(acquired)requests.Release(); }
     }
     public void StartLocal()

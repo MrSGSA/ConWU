@@ -17,9 +17,18 @@ public static class ServiceInstaller
         using var process = Process.Start(info)!; string stdout = await process.StandardOutput.ReadToEndAsync(); string stderr = await process.StandardError.ReadToEndAsync(); await process.WaitForExitAsync();
         if (process.ExitCode != 0) throw new IOException("服务管理失败：" + stdout + stderr);
     }
-    public static async Task Install()
+    public static async Task Install(string? confirmedUiAccount=null)
     {
         if (!WindowsHost.IsAdmin) throw new IOException("安装后台服务需要管理员权限");
+        var profileStore=new StreamLink.Service.ProfileStore();
+        // All installers for this protected profile serialize the authorization
+        // and SCM transaction. No identity is inferred from the elevated token.
+        string installLock=Path.Combine(StreamLink.Service.ProfileStore.Root,"install.lock");
+        if(File.Exists(installLock)&&(File.GetAttributes(installLock)&FileAttributes.ReparsePoint)!=0)throw new IOException("安装锁不能是链接");
+        using var installation=new FileStream(installLock,FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+        string? previousUi=profileStore.UiUserSnapshot();
+        string selectedUi=UiAuthorizationPolicy.SelectForInstall(previousUi,confirmedUiAccount==null?null:UiUserSelection.ResolveAccount(confirmedUiAccount));
+        bool wroteUi=false;
         string source = AppContext.BaseDirectory;
         string manifest = Path.Combine(source, "manifest.json");
         if (!File.Exists(manifest)) throw new IOException("请从完整发布包运行；缺少安装文件清单");
@@ -28,7 +37,6 @@ public static class ServiceInstaller
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
         string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
-        var profileStore=new StreamLink.Service.ProfileStore();string? previousUi=profileStore.UiUserSnapshot();
         bool existed = Installed;
         string? previous = null;
         bool wasRunning=false;int previousStart=2;string previousDisplay="StreamLink P2P Network";object? previousFailure=null,previousDescription=null;
@@ -41,14 +49,25 @@ public static class ServiceInstaller
         }
         await ServiceInstallTransaction.Execute(async()=>{
             if(existed)await StopRegistered();
-            profileStore.AuthorizeUiUser(System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
+            if(profileStore.UiUserSnapshot()!=previousUi)throw new IOException("安装期间UI授权已改变，拒绝覆盖");
+            if(previousUi==null){
+                profileStore.AuthorizeUiUser(selectedUi);wroteUi=true;
+                profileStore.AuditUiAuthorization("install-explicit-grant",previousUi,selectedUi);
+            }
             string command="\""+Path.Combine(destination,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
             await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", "auto", "DisplayName=", "StreamLink P2P Network");
             await Sc("description", WindowsInstance.Name, "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
             await Sc("failure", WindowsInstance.Name, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             await Sc("start", WindowsInstance.Name);
             await WaitRunning();await WaitLocalReady(true);
-        },()=>{profileStore.RestoreUiUser(previousUi);return Task.CompletedTask;},async()=>{
+        },()=>{
+            if(wroteUi){
+                if(profileStore.UiUserSnapshot()!=selectedUi)throw new IOException("UI授权已由其他管理操作改变，未覆盖其新值");
+                profileStore.RestoreUiUser(previousUi);
+                profileStore.AuditUiAuthorization("install-rollback",selectedUi,previousUi);
+            }
+            return Task.CompletedTask;
+        },async()=>{
             await StopRegistered();
             if(previous!=null){
                 await Sc("config",WindowsInstance.Name,"binPath=",previous,"start=",previousStart==2?"auto":previousStart==4?"disabled":"demand","DisplayName=",previousDisplay);

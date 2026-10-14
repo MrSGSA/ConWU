@@ -42,6 +42,7 @@ static class LinkedUserTests
     }
     public static async Task<Result> Run(string profile)
     {
+        if(!WindowsInstance.IsValidation)throw new IOException("Linked-token control test requires an isolated validation instance");
         using var identity=WindowsIdentity.GetCurrent();
         if(!GetTokenInformation(identity.Token,19,out var linked,IntPtr.Size,out _)) throw new Win32Exception(Marshal.GetLastWin32Error(),"No linked UAC ordinary token; this gate must remain unverified");
         string output=Path.Combine(Path.GetTempPath(),"StreamLink-linked-ui-"+Guid.NewGuid().ToString("N")+".json");
@@ -49,7 +50,7 @@ static class LinkedUserTests
         string exe=Environment.ProcessPath!;
         if(exe.EndsWith("dotnet.exe",StringComparison.OrdinalIgnoreCase))throw new IOException("Run the built test apphost for the real linked-token child");
         try {
-            var command=new StringBuilder($"\"{exe}\" --ui-linked-client \"{output}\" \"{profile}\"");
+            var command=new StringBuilder($"\"{exe}\" --ui-linked-client \"{output}\" \"{profile}\" {WindowsInstance.ValidationId}");
             // Documented Unicode user environment, avoiding the implicit
             // environment lookup of CreateProcessWithTokenW in remote sessions.
             if(!CreateEnvironmentBlock(out var environment,linked,false))throw new Win32Exception(Marshal.GetLastWin32Error());

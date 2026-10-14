@@ -48,14 +48,37 @@ public sealed class ResearchTunAdapter:IPacketAdapter
             InterfaceLuid=info.Luid;if(!Api<Configure>("SLT_ConfigureIpv4")(handle,ip.GetAddressBytes()))throw new Win32Exception(Marshal.GetLastPInvokeError());
         }catch{if(handle!=0)close?.Invoke(handle);NativeLibrary.Free(library);throw;}
     }
+    // Assembly-internal managed test seam. No product assembly references this
+    // research project; the public constructor still requires approval/admin.
+    // This path loads no DLL and cannot install, open or configure a device.
+    internal ResearchTunAdapter(Func<byte[],int> reader,Action stopper,Action closer)
+    {
+        library=IntPtr.Zero;handle=1;
+        read=(_,buffer,_)=>reader(buffer);
+        stop=_=>{stopper();return true;};close=_=>{closer();return true;};
+        write=(_,_,_)=>true;
+        stats=(ulong _,out Stats value)=>{value=new Stats{Size=80,Abi=1};return true;};
+    }
+    internal int WaitingLifetimeWriters=>lifetime.WaitingWriteCount;
+    internal int WaitingLifetimeReaders=>lifetime.WaitingReadCount;
     public int Read(byte[] buffer)=>Read(buffer,CancellationToken.None);
     public int Read(byte[] buffer,CancellationToken token)
     {
         if(buffer.Length<MeshLink.Mtu)throw new ArgumentException("研究网卡读取缓冲不足");token.ThrowIfCancellationRequested();
-        lifetime.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed!=0,this);using var cancel=token.Register(Stop);int n=read(handle,buffer,(uint)buffer.Length);if(n<0){token.ThrowIfCancellationRequested();throw new Win32Exception(Marshal.GetLastPInvokeError());}Interlocked.Add(ref readBytes,n);return n;}finally{lifetime.ExitReadLock();}
+        // Register and, crucially, dispose the registration OUTSIDE the read
+        // guard. Dispose may wait for Stop, which also needs that guard while
+        // another thread is already waiting for the lifetime write lock.
+        using var cancel=token.Register(Stop);
+        lifetime.EnterReadLock();try{
+            ObjectDisposedException.ThrowIf(disposed!=0,this);token.ThrowIfCancellationRequested();
+            if(Volatile.Read(ref stopped)!=0)return 0;
+            int n=read(handle,buffer,(uint)buffer.Length);
+            if(n<0){token.ThrowIfCancellationRequested();throw new Win32Exception(Marshal.GetLastPInvokeError());}
+            token.ThrowIfCancellationRequested();Interlocked.Add(ref readBytes,n);return n;
+        }finally{lifetime.ExitReadLock();}
     }
     public bool Write(byte[] packet){if(!MeshPackets.Valid(packet))return false;lifetime.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed!=0,this);bool sent=write(handle,packet,(uint)packet.Length);if(sent)Interlocked.Add(ref writtenBytes,packet.Length);return sent;}finally{lifetime.ExitReadLock();}}
     public PacketAdapterStatistics Statistics{get{lifetime.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed!=0,this);if(stopped!=0)return lastStats with{Stopping=true};if(!stats(handle,out var s)||s.Size!=80||s.Abi!=1)throw new IOException("研究驱动统计无效");return lastStats=new((long)s.Reads,Interlocked.Read(ref readBytes),(long)s.Writes,Interlocked.Read(ref writtenBytes),(long)s.Dropped,(long)s.Malformed,0,false);}finally{lifetime.ExitReadLock();}}}
     public void Stop(){lifetime.EnterReadLock();try{if(disposed==0&&Interlocked.Exchange(ref stopped,1)==0)stop(handle);}finally{lifetime.ExitReadLock();}}
-    public void Dispose(){if(Volatile.Read(ref disposed)!=0)return;Stop();if(!lifetime.TryEnterWriteLock(5000))throw new IOException("研究TUN I/O退出超时，保留DLL与资源，不能伪报关闭");try{if(Interlocked.Exchange(ref disposed,1)==0){close(handle);NativeLibrary.Free(library);}}finally{lifetime.ExitWriteLock();}}
+    public void Dispose(){if(Volatile.Read(ref disposed)!=0)return;Stop();if(!lifetime.TryEnterWriteLock(5000))throw new IOException("研究TUN I/O退出超时，保留DLL与资源，不能伪报关闭");try{if(Interlocked.Exchange(ref disposed,1)==0){close(handle);if(library!=IntPtr.Zero)NativeLibrary.Free(library);}}finally{lifetime.ExitWriteLock();}}
 }

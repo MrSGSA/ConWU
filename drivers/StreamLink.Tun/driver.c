@@ -16,10 +16,11 @@ struct _SLT_ADAPTER {
     EX_RUNDOWN_REF Writes;
     IO_CSQ ReadCsq; KSPIN_LOCK ReadLock; LIST_ENTRY Reads;
     KSPIN_LOCK PacketLock; LIST_ENTRY Packets;
-    volatile LONG PendingReads,Queued,PeakQueued;
+    volatile LONG PendingReads,QueuedReads,Queued,PeakQueued;
     PIO_WORKITEM Work;
     volatile LONG64 OsOffered,OsQueued,OsDropped,UserReads,UserWrites,Malformed,Cancelled;
 };
+#include "read_reservation.h"
 static NDIS_HANDLE SltDriverHandle;
 DRIVER_INITIALIZE DriverEntry;
 MINIPORT_INITIALIZE SltInitialize;
@@ -42,15 +43,15 @@ static VOID SltRef(SLT_ADAPTER *a){InterlockedIncrement(&a->Refs);}
 static VOID SltRelease(SLT_ADAPTER *a){if(InterlockedDecrement(&a->Refs)==0){if(a->Work)IoFreeWorkItem(a->Work);ExFreePoolWithTag(a,SLT_TAG);}}
 static NTSTATUS SltComplete(PIRP irp,NTSTATUS status,ULONG_PTR bytes){irp->IoStatus.Status=status;irp->IoStatus.Information=bytes;IoCompleteRequest(irp,IO_NO_INCREMENT);return status;}
 static SLT_ADAPTER *SltFromCsq(PIO_CSQ csq){return CONTAINING_RECORD(csq,SLT_ADAPTER,ReadCsq);}
-static VOID SltCsqInsert(PIO_CSQ csq,PIRP irp){InsertTailList(&SltFromCsq(csq)->Reads,&irp->Tail.Overlay.ListEntry);}
-static VOID SltCsqRemove(PIO_CSQ csq,PIRP irp){RemoveEntryList(&irp->Tail.Overlay.ListEntry);InterlockedDecrement(&SltFromCsq(csq)->PendingReads);}
+static VOID SltCsqInsert(PIO_CSQ csq,PIRP irp){SLT_ADAPTER *a=SltFromCsq(csq);InsertTailList(&a->Reads,&irp->Tail.Overlay.ListEntry);InterlockedIncrement(&a->QueuedReads);}
+static VOID SltCsqRemove(PIO_CSQ csq,PIRP irp){SLT_ADAPTER *a=SltFromCsq(csq);RemoveEntryList(&irp->Tail.Overlay.ListEntry);InterlockedDecrement(&a->QueuedReads);SltReleaseReadReservation(a,irp);}
 static PIRP SltCsqPeek(PIO_CSQ csq,PIRP irp,PVOID context){
     PLIST_ENTRY head=&SltFromCsq(csq)->Reads,e=irp?irp->Tail.Overlay.ListEntry.Flink:head->Flink;
     while(e!=head){PIRP next=CONTAINING_RECORD(e,IRP,Tail.Overlay.ListEntry);if(!context||IoGetCurrentIrpStackLocation(next)->FileObject==context)return next;e=e->Flink;}return NULL;
 }
 static VOID SltCsqAcquire(PIO_CSQ csq,PKIRQL irql){KeAcquireSpinLock(&SltFromCsq(csq)->ReadLock,irql);}
 static VOID SltCsqRelease(PIO_CSQ csq,KIRQL irql){KeReleaseSpinLock(&SltFromCsq(csq)->ReadLock,irql);}
-static VOID SltCsqCancelled(PIO_CSQ csq,PIRP irp){InterlockedIncrement64(&SltFromCsq(csq)->Cancelled);SltComplete(irp,STATUS_CANCELLED,0);}
+static VOID SltCsqCancelled(PIO_CSQ csq,PIRP irp){SltReleaseReadReservation(SltFromCsq(csq),irp);InterlockedIncrement64(&SltFromCsq(csq)->Cancelled);SltComplete(irp,STATUS_CANCELLED,0);}
 static VOID SltCancelReads(SLT_ADAPTER *a,PFILE_OBJECT file,NTSTATUS status){PIRP irp;while((irp=IoCsqRemoveNextIrp(&a->ReadCsq,file))!=NULL){InterlockedIncrement64(&a->Cancelled);SltComplete(irp,status,0);}}
 static SLT_PACKET *SltPop(SLT_ADAPTER *a){KIRQL level;SLT_PACKET *p=NULL;KeAcquireSpinLock(&a->PacketLock,&level);if(!IsListEmpty(&a->Packets)){p=CONTAINING_RECORD(RemoveHeadList(&a->Packets),SLT_PACKET,Link);InterlockedDecrement(&a->Queued);}KeReleaseSpinLock(&a->PacketLock,level);return p;}
 static VOID SltClear(SLT_ADAPTER *a){SLT_PACKET *p;while((p=SltPop(a))!=NULL){InterlockedIncrement64(&a->OsDropped);ExFreePoolWithTag(p,SLT_TAG);}}
@@ -66,7 +67,9 @@ static VOID SltDrain(PDEVICE_OBJECT device,PVOID context){
         ExFreePoolWithTag(p,SLT_TAG);
     }
     InterlockedExchange(&a->DrainScheduled,0);
-    if(a->Running&&a->Queued>0&&a->PendingReads>0)SltSchedule(a);
+    // A reservation may not have reached the CSQ yet (or was pre-cancelled).
+    // Reschedule only for actual queued IRPs, not outstanding reservations.
+    if(a->Running&&a->Queued>0&&a->QueuedReads>0)SltSchedule(a);
     SltRelease(a);
 }
 static VOID SltSchedule(SLT_ADAPTER *a){if(a->Running&&InterlockedCompareExchange(&a->DrainScheduled,1,0)==0){SltRef(a);IoQueueWorkItem(a->Work,SltDrain,DelayedWorkQueue,a);}}
@@ -96,7 +99,7 @@ NTSTATUS SltDispatch(PDEVICE_OBJECT device,PIRP irp){
         if(stack->Parameters.Read.Length!=SLT_MTU)return SltComplete(irp,STATUS_INVALID_BUFFER_SIZE,0);
         if(!ExAcquireRundownProtection(&a->Writes))return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);
         if(!a->Running){ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);}
-        if(InterlockedIncrement(&a->PendingReads)>SLT_PENDING_READS){InterlockedDecrement(&a->PendingReads);ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_INSUFFICIENT_RESOURCES,0);}
+        if(!SltReserveRead(a,irp)){ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_INSUFFICIENT_RESOURCES,0);}
         IoMarkIrpPending(irp);IoCsqInsertIrp(&a->ReadCsq,irp,NULL);SltSchedule(a);ExReleaseRundownProtection(&a->Writes);return STATUS_PENDING;
     }else if(stack->MajorFunction==IRP_MJ_WRITE){
         ULONG n=stack->Parameters.Write.Length;UCHAR *p=irp->AssociatedIrp.SystemBuffer;PMDL mdl;PNET_BUFFER_LIST nbl;

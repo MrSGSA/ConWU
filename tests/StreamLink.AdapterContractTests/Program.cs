@@ -2,6 +2,11 @@ using System.Net;
 using System.Text.Json;
 using StreamLink.Core;
 
+if(args is ["--lifecycle-watchdog-hang"]) { Console.WriteLine("intentional isolated watchdog child");Console.Out.Flush();Thread.Sleep(Timeout.Infinite);return; }
+if(args is ["--lifecycle-watchdog-selftest",var watchdogOutput]) { await NativeLifecycleTests.WatchdogSelfTest(watchdogOutput);return; }
+if(args is ["--native-lifecycle-child",var childComponents,"--output",var childOutput,"--iteration",var iterationText]) {
+    Environment.ExitCode=await NativeLifecycleTests.RunChild(Path.GetFullPath(childComponents),Path.GetFullPath(childOutput),int.Parse(iterationText));return;
+}
 if(args is ["--native-lifecycle",var components,"--output",var output,"--rounds",var roundText]) { try{await NativeLifecycleTests.Run(Path.GetFullPath(components),Path.GetFullPath(output),int.Parse(roundText));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return; }
 int checks=0;
 void Check(bool ok,string reason){if(!ok)throw new Exception(reason);checks++;}

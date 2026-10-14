@@ -21,13 +21,13 @@ public sealed partial class ControlWorker
     readonly CancellationTokenSource disposing=new();
     ControlOperationStatus? operationStatus;
     int disposed;
-    Operation OpenOperation(ControlRequest request,CancellationToken token,out bool duplicate)
+    Operation OpenOperation(ControlRequest request,CancellationToken token,out bool duplicate,UiOperation? ui=null)
     {
         lock(operationGate){
             duplicate=false;
             token.ThrowIfCancellationRequested();disposing.Token.ThrowIfCancellationRequested();
             Guid id=request.OperationId==Guid.Empty?Guid.NewGuid():request.OperationId;
-            string digest=Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));
+            string digest=Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new { Request=request,Ui=ui })));
             if(operations.TryGetValue(id,out var prior)){
                 if(prior.Command!=request.Command||prior.Digest!=digest)throw new IOException("操作ID已被不同请求使用");
                 duplicate=true;return prior; // Read progress, never repeat mutation.

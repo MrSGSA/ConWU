@@ -51,6 +51,7 @@ try{
     @"
 StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中继。
 普通权限启动 StreamLink.exe 读取指定SID受限接口；安装、配对与高级设置从管理员入口操作。
+首次安装通过 Install-Service.ps1 明确选择日常登录账号；命令行使用 --install --ui-user-account 域\用户名。升级默认保留既有UI授权。
 公共协调服务器尚未预配置，请自行填写可信HTTPS协调地址。
 本包未获发布者签名；文件hash只证明完整性。必过Gate未全通过，不能当1.0正式发布。
 默认官方Wintun/WinDivert；自研驱动不在运行组件内，不会自动加载。
@@ -60,7 +61,7 @@ StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中
     @'
 $ErrorActionPreference='Stop'
 $exe=Join-Path $PSScriptRoot 'StreamLink.exe'
-$process=Start-Process -FilePath $exe -ArgumentList '--install' -Verb RunAs -PassThru -Wait
+$process=Start-Process -FilePath $exe -ArgumentList '--install-ui' -Verb RunAs -PassThru -Wait
 if($process.ExitCode){throw 'Installation failed; inspect local installer error and rollback outcome'}
 '@|Set-Content "$($stage.FullName)/Install-Service.ps1" -Encoding utf8
     & ./scripts/Write-RcSbom.ps1 -Directory $stage.FullName -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json') -Native

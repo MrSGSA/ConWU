@@ -28,7 +28,16 @@ static class Program
             catch (Exception ex) { Environment.ExitCode = 1; File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Fail", error = ex.Message })); }
             return;
         }
-        if(args.Length == 1 && (args[0] == "--install" || args[0] == "--uninstall")) { try { (args[0] == "--install" ? ServiceInstaller.Install() : ServiceInstaller.Uninstall()).GetAwaiter().GetResult(); } catch(Exception ex) { File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"install-error.log"),ex.ToString()); Environment.ExitCode=1; } return; }
+        if(args is ["--install"] or ["--install-ui"] or ["--uninstall"] || args is ["--install","--ui-user-account",_]) {
+            try {
+                if(args[0]=="--uninstall")ServiceInstaller.Uninstall().GetAwaiter().GetResult();
+                else {
+                    string? account=args[0]=="--install-ui"?UiUserSelection.ConfirmForInstall(null):args.Length==3?args[2]:null;
+                    ServiceInstaller.Install(account).GetAwaiter().GetResult();
+                }
+            }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"install-error.log"),ex.ToString());Environment.ExitCode=1;}
+            return;
+        }
         if(args.Length>=2 && args[0]=="--preview") {
             using Form preview=args.Length>2 && args[2]=="connection" ? new SettingsWindow(new()) : new MainWindow(true); preview.StartPosition=FormStartPosition.Manual; preview.Location=new Point(-30000,-30000); preview.ShowInTaskbar=false; preview.Show(); Application.DoEvents(); preview.PerformLayout();
             if(args.Length>2 && preview is MainWindow mainPreview) { mainPreview.PreviewPage(args[2]); Application.DoEvents(); preview.PerformLayout(); }
