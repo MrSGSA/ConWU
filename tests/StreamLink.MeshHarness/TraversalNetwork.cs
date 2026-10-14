@@ -51,7 +51,7 @@ static class TraversalNetwork
         var factory = c.Route == "host" && c.Kind!="legacy" ? new HostFactory(c, components, folder) : null;
         SingleProfile? selectedFactory=null;
         SessionStatus? latest = null; var timeline = new List<object>(); QualityResult? quality = null; int echoes = 0;
-        long connected = 0; string failure = "", cleanupFailure=""; Exception? originalRunFailure=null; bool adapterCreated = false, controlReady=false, deadlineReached=false; var timer = Stopwatch.StartNew();
+        long connected = 0; string failure = "", cleanupFailure=""; Exception? originalRunFailure=null; bool adapterCreated = false, controlReady=false, deadlineReached=false,controlAuthenticationFailed=false,budgetFailureObserved=false; var timer = Stopwatch.StartNew();
         var services = MeshRuntimeServices.Default with {
             SessionRoot = Path.Combine(folder, "sessions"),
             Adapter = async p => { var adapter = await MeshRuntimeServices.Default.Adapter(p); adapterCreated = true; return adapter; },
@@ -64,7 +64,10 @@ static class TraversalNetwork
                 Quality.Serve(ip, authorize, ct, new(()=>profile.AllowManualQualityRequests)),
                 EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct))
         };
-        var runner = new MeshRunner(c.Profile, s => { Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
+        var runner = new MeshRunner(c.Profile, s => {
+            if(s.Contains("401",StringComparison.Ordinal)||s.Contains("403",StringComparison.Ordinal)||s.Contains("已拒绝无效",StringComparison.Ordinal)||s.Contains("认证失败",StringComparison.Ordinal)||s.Contains("CryptographicException",StringComparison.Ordinal))controlAuthenticationFailed=true;
+            if(s.Contains("NoDirectPathWithinBudget",StringComparison.Ordinal))budgetFailureObserved=true;
+            Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
             latest = s; if (s.Connected && connected == 0) { connected = timer.ElapsedMilliseconds; Console.WriteLine("Independent Wintun connected at " + connected + " ms"); }
         }, _ => { }, _ => { }, services);
         Task running = Task.CompletedTask;
@@ -102,7 +105,8 @@ static class TraversalNetwork
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
             bool checkExecuted=selectedFactory?.NativePaths.Any(p=>p.Started)==true || connected>0;
             bool infrastructureReady=controlReady&&adapterCreated&&(selectedFactory?.PreparedCount>0||c.Kind=="legacy"&&connected>0);
-            string transportOutcome=echoes==10?"BusinessUsable":deadlineReached&&connected==0&&checkExecuted?"NoDirectPathWithinBudget":connected>0?"IncompleteBusiness":"NotEstablished";
+            if(controlAuthenticationFailed&&failure.Length==0)failure="ControlOrPeerAuthenticationRejected";
+            string transportOutcome=echoes==10?"BusinessUsable":deadlineReached&&connected==0&&checkExecuted&&budgetFailureObserved?"NoDirectPathWithinBudget":connected>0?"IncompleteBusiness":"NotEstablished";
             // No-path cases have no selected-source assertion to evaluate.
             if(c.ExpectedNoDirectPath&&connected==0)sourceExpectation="NotApplicable";
             var verdict=TraversalVerdict.Evaluate(new(c.ExpectedNoDirectPath,infrastructureReady,checkExecuted,transportOutcome,sourceExpectation,
@@ -111,7 +115,7 @@ static class TraversalNetwork
             await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { schemaVersion=4,fixtureVersion="PF2-01-v1",status = verdict.ScenarioVerdict,exitCode=verdict.ExitCode, c.Kind, c.Route,
                 functionalStatus = verdict.FunctionalStatus, loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
                 learningStatus = sourceExpectation, c.ReflectedPortOffset, c.PeerAnnouncedPortOffset,c.LocalHelper,
-                transportOutcome,scenarioVerdict=verdict.ScenarioVerdict,failureCategory=verdict.FailureCategory,infrastructureReady,checkExecuted,controlReady,
+                transportOutcome,scenarioVerdict=verdict.ScenarioVerdict,failureCategory=verdict.FailureCategory,infrastructureReady,checkExecuted,controlReady,controlAuthenticationFailed,budgetFailureObserved,
                 cleanupOutcome=cleanupFailure.Length==0?"Complete":"Fail",cleanupFailure,coordinatorUri=new Uri(mesh.Pair.Service).GetLeftPart(UriPartial.Authority),runnerExit=runner.ExitDiagnostics,
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
                 scope = c.Route == "host" ? IPAddress.IsLoopback(IPAddress.Parse(c.Local))?"Single Windows host, isolated real Wintun/WinDivert runners over loopback. No two-device or physical NAT claim.":"Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; no relay claim depends on actual route evidence",
