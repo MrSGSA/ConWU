@@ -48,7 +48,7 @@ try{
  $scripts=Join-Path $stage 'tools';New-Item -ItemType Directory -Path $scripts|Out-Null
  Copy-Item -LiteralPath drivers/Manage-PersonalTun.ps1,drivers/Invoke-PersonalTunKernel.ps1,drivers/Complete-PersonalTunGate.ps1,drivers/Collect-PersonalTunVerifier.ps1,drivers/Freeze-SignedTunPackage.ps1,scripts/Get-PersonalHostPreflight.ps1 -Destination $scripts
  $kernelTool=Join-Path $repo "out/personal-publish-$Version-kernel-tool"
- & dotnet publish tests/StreamLink.TunKernelTests -c Release -r win-x64 --self-contained true -o $kernelTool *> (Join-Path $logs 'kernel-tool-publish.log')
+ & dotnet publish tests/StreamLink.TunKernelTests -c Release -r win-x64 --self-contained true "-p:StreamLinkReleaseVersion=$Version" -o $kernelTool *> (Join-Path $logs 'kernel-tool-publish.log')
  if($LASTEXITCODE){throw 'Actual kernel test tool publish failed'}
  # Reuse the exact .NET runtime already in the Windows bundle instead of
  # adding a second full runtime under tools. The research ZIP remains standalone.
