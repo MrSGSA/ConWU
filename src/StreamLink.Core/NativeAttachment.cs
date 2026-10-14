@@ -28,6 +28,8 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     Process? process;
     Task heartbeat = Task.CompletedTask;
     int disposed, childExited, childId;
+    string shutdownPhase = "live";
+    public string ShutdownPhase => Volatile.Read(ref shutdownPhase);
     long startTimestamp;
     uint request = 1;
     public Guid AttachId { get; }
@@ -183,25 +185,33 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
+        Volatile.Write(ref shutdownPhase, "capture-revoke");
         brokerSession?.Revoke(); // serialized with injection; keep the tuple reserved until child exit
         stopping.Cancel();
         try {
+            Volatile.Write(ref shutdownPhase, "heartbeat-join");
             await heartbeat;
             if (Armed && process is { HasExited: false } && pipe.IsConnected) {
+                Volatile.Write(ref shutdownPhase, "shutdown-exchange");
                 try { using var timeout = new CancellationTokenSource(3000); await Exchange(4, 5, timeout.Token); }
                 catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
             }
         } finally {
+            Volatile.Write(ref shutdownPhase, "control-pipe-close");
             pipe.Dispose();
             // Closing the non-inherited Job handle kills only owned children.
             // Release the Lease only on actual exit, never on the IPC timeout.
             var child = process;
             if (child != null) {
+                Volatile.Write(ref shutdownPhase, "child-exit");
                 try { if (!child.HasExited) { child.Kill(); await child.WaitForExitAsync(); } }
                 finally { if (child.HasExited) { Volatile.Write(ref childExited, 1); reference.Dispose(); } }
             } else reference.Dispose();
+            Volatile.Write(ref shutdownPhase, "raw-channel-join");
             if (rawChannel != null) await rawChannel.DisposeAsync();
+            Volatile.Write(ref shutdownPhase, "job-close");
             job.Dispose(); stopping.Dispose();
+            Volatile.Write(ref shutdownPhase, "complete");
         }
     }
     public void Dispose() => DisposeAsync().AsTask().GetAwaiter().GetResult();

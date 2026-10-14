@@ -55,7 +55,10 @@ static class TraversalNetwork
             Probe = async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }, // no UPnP/router changes in this independent test
             Record = (_, _) => { },
             Candidates = async (profile, sessions, log, ct) => (IMeshCandidateFactory?)factory ?? new SingleProfile(await MeshCandidateFactory.Create(profile, Path.Combine(components, "udp2raw-native.exe"), sessions, log, ct) ?? throw new IOException("Capability unavailable"), kind),
-            QualityServer = (ip, authorize, ct) => Task.WhenAll(Quality.Serve(ip, authorize, ct), EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct))
+            QualityServer = (ip, authorize, ct) => Task.WhenAll(Quality.Serve(ip, authorize, ct), EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct)),
+            QualityWithPolicy = (profile, ip, authorize, ct) => Task.WhenAll(
+                Quality.Serve(ip, authorize, ct, new(()=>profile.AllowManualQualityRequests)),
+                EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct))
         };
         var runner = new MeshRunner(c.Profile, s => { Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
             latest = s; if (s.Connected && connected == 0) { connected = timer.ElapsedMilliseconds; Console.WriteLine("Independent Wintun connected at " + connected + " ms"); }

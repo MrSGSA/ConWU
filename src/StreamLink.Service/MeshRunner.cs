@@ -292,18 +292,33 @@ public sealed class MeshRunner
                 await Task.Delay(traversal?.FreshPredictionInProgress == true ? 25 : 100, stop);
             }
         } finally {
+            long shutdownStarted = Environment.TickCount64;
+            void ShutdownStage(string stage) { try { log($"ShutdownStage={stage}; elapsedMs={Environment.TickCount64-shutdownStarted}"); } catch { } }
+            ShutdownStage("cancel");
             cancellation.Cancel();
+            ShutdownStage("factory-startup");
             if (gatheringFactory != null) try { factory = await gatheringFactory; } catch { }
+            ShutdownStage("traversal");
             if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { log("打洞调度退出：" + ex.Message); }
+            ShutdownStage("mapping-probe");
             if (probe != null) { try { mapping = await probe; } catch { } }
+            ShutdownStage("adapter-startup");
             if (opening != null) { try { (await opening).Dispose(); } catch { } }
+            ShutdownStage("maintenance-and-http");
             foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if (ex is not OperationCanceledException) log("退出任务：" + ex.Message); } }
+            ShutdownStage("legacy-clients");
             foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { log("传输清理：" + ex.Message); } }
+            ShutdownStage("listener");
             try { server?.Dispose(); } catch (Exception ex) { log("入口清理：" + ex.Message); }
+            ShutdownStage("mapping");
             if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { log("映射清理：" + ex.Message); } }
+            ShutdownStage("router");
             if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { log("原生网络已停止：" + ex.Message); } router = null; }
+            ShutdownStage("factory");
             if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { log("源端点清理：" + ex.Message); }
+            ShutdownStage("owned-rule-and-record");
             try { services.Firewall(rule, mesh.LocalIp, ""); File.Delete(Path.Combine(folder, "owner.json")); } catch (Exception ex) { log("会话规则等待下次恢复：" + ex.Message); }
+            ShutdownStage("complete");
         }
     }
 }

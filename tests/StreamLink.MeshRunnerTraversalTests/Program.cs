@@ -157,6 +157,14 @@ try {
         } finally {
             controlOffline = false; runningStop.Cancel();
             foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(8)); } catch (OperationCanceledException) { }
+            catch (TimeoutException) {
+                string evidence=output+$".{kind}-{round}-shutdown-fail.json";
+                await File.WriteAllTextAsync(evidence,JsonSerializer.Serialize(new {kind,round,originalDeadlineSeconds=8,
+                    taskStates=tasks.Select(t=>t.Status.ToString()).ToArray(),
+                    resources=factories.Select(f=>new {f.Closed,f.Gathers,f.Prepared,native=f.Native?.Diagnostics,pid=f.Native?.ProcessId}).ToArray(),
+                    logs=logs.ToArray(),scope="Shutdown timeout diagnostic; original failure/deadline retained; no native stacks captured"},new JsonSerializerOptions{WriteIndented=true}));
+                throw;
+            }
             Check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed), "Runner shutdown closes the final endpoint references and adapter");
         }
     }
@@ -192,7 +200,7 @@ sealed class Adapter : IPacketAdapter {
 sealed class Factory(MeshProfile mesh, TraversalProfile kind, string binary, string folder, Reflector reflector, RawProtocolProxy proxy) : IMeshCandidateFactory {
     readonly Guid generation = Guid.NewGuid(); readonly TraversalResources budget = new();
     readonly MeshProfile local = mesh; readonly string exe = binary, root = folder; readonly RawProtocolProxy wire = proxy;
-    public int Gathers, Prepared; public TcpEndpointLease? Tcp; public UdpTraversal? Udp;
+    public int Gathers, Prepared; public TcpEndpointLease? Tcp; public UdpTraversal? Udp; public NativeDatagramPath? Native;
     public bool Closed => (Tcp?.Closed ?? true) && (Udp?.Closed ?? true);
     public TraversalProfile[] Profiles => [kind];
     public async Task<IMeshCandidateResource> Gather(MeshMember peer, TraversalProfile profile, Guid attempt, CancellationToken token) {
@@ -216,7 +224,7 @@ sealed class Factory(MeshProfile mesh, TraversalProfile kind, string binary, str
             if (owner.Udp != null) { var result = owner.Udp.PreparePath(context, owner.generation, remote); transferred = true; return result; }
             byte[] shared = MeshIdentity.SharedKey(owner.local, peer);
             try {
-                return await NativeDatagramPath.Prepare(owner.exe, owner.root, owner.Tcp!, owner.generation, context, remote, shared, token, owner.budget,
+                return owner.Native = await NativeDatagramPath.Prepare(owner.exe, owner.root, owner.Tcp!, owner.generation, context, remote, shared, token, owner.budget,
                     new Dictionary<string,string> { ["STREAMLINK_TEST_BIND"] = "0", ["STREAMLINK_TEST_PEER"] = (context.ProtocolClient ? owner.wire.ClientPort : owner.wire.ServerPort).ToString(), ["STREAMLINK_TEST_HELLO"] = owner.wire.RegistrationToken });
             } finally { CryptographicOperations.ZeroMemory(shared); }
         }

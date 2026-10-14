@@ -13,6 +13,7 @@ public sealed record NativePathDiagnostics(Guid AttemptId, Guid LeaseId, Guid At
 {
     public NativeWireStats? WireControl { get; init; }
     public TcpPeerSourceStats? PeerSource { get; init; }
+    public string ShutdownPhase { get; init; } = "live";
 }
 
 public sealed class NativePathVerificationException(string reason, NativePathDiagnostics diagnostic, Exception inner)
@@ -47,6 +48,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     Task? starting, closing;
     int failed, qualified, reading, bridgeProbeAttempts, authenticatedProbeReceives;
     bool disposed;
+    string shutdownPhase = "live";
     public TraversalControlRound ControlRound { get; }
     readonly NativeWireBudget? wireBudget;
     readonly bool diagnosticNative;
@@ -74,7 +76,8 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public NativePathDiagnostics Diagnostics => new(Context.AttemptId, identity.LeaseId, AttachId,
         identity.ActualLocal.ToString(), (native?.ActualPeer ?? identity.ActualRemote).ToString(), native?.Armed == true, Started, native?.Exited != false,
         Volatile.Read(ref bridgeProbeAttempts), Volatile.Read(ref authenticatedProbeReceives), Volatile.Read(ref qualified) != 0,
-        RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl, PeerSource = native?.PeerSource };
+        RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl, PeerSource = native?.PeerSource,
+            ShutdownPhase = Volatile.Read(ref shutdownPhase) + "/" + (native?.ShutdownPhase ?? "no-attachment") };
     public IPEndPoint BridgeEndpoint => Copy((IPEndPoint)bridge.LocalEndPoint!);
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
 
@@ -257,14 +260,19 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     }
     async Task Close()
     {
+        Volatile.Write(ref shutdownPhase, "cancel");
         stop.Cancel(); proof.TrySetCanceled(); outgoing.Writer.TryComplete();
         try {
+            Volatile.Write(ref shutdownPhase, "startup-join");
             if (starting != null) try { await starting; } catch { }
+            Volatile.Write(ref shutdownPhase, "packet-pumps-join");
             await Task.WhenAll(receiver, sender);
         } finally {
+            Volatile.Write(ref shutdownPhase, "bridge-close");
             bridge.Dispose(); incoming.Writer.TryComplete();
+            Volatile.Write(ref shutdownPhase, "attachment-join");
             try { if (native != null) { native.ProcessExited -= Fault; await native.DisposeAsync(); } }
-            finally { CryptographicOperations.ZeroMemory(key); File.Delete(configuration); stop.Dispose(); }
+            finally { CryptographicOperations.ZeroMemory(key); File.Delete(configuration); stop.Dispose(); Volatile.Write(ref shutdownPhase, "complete"); }
         }
     }
 }
