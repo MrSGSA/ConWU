@@ -15,6 +15,7 @@ struct Adapter {
     WINTUN_SESSION_HANDLE session = nullptr;
     HANDLE event = nullptr;
     HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    NET_LUID luid{};
     std::atomic<unsigned long long> counts[7]{};
     WINTUN_CLOSE_ADAPTER_FUNC *close = nullptr;
     WINTUN_END_SESSION_FUNC *end = nullptr;
@@ -39,6 +40,8 @@ API void sltun_close_with_trace(Adapter *a, CloseTrace trace) { if (a) a->trace 
 API DWORD sltun_abi() { return 2; }
 API void sltun_stop(Adapter *a) { if(a&&a->stop)SetEvent(a->stop); }
 API DWORD sltun_stats(Adapter *a, unsigned long long *counts) {if(!a||!counts)return ERROR_INVALID_PARAMETER;for(unsigned i=0;i<7;i++)counts[i]=a->counts[i].load();return ERROR_SUCCESS;}
+// Additive ABI-2 read-only identity export. No ownership or close behavior changes.
+API DWORD sltun_luid(Adapter *a, unsigned long long *value) {if(!a||!value)return ERROR_INVALID_PARAMETER;*value=a->luid.Value;return ERROR_SUCCESS;}
 
 API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result) {
     *result = nullptr;
@@ -62,7 +65,7 @@ API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, 
     if (!create || !luid || !start || !event) return fail(ERROR_PROC_NOT_FOUND);
     // Never open or take ownership of an existing adapter, even with our name.
     a->adapter = create(name, L"StreamLink", guid); if (!a->adapter) return fail(GetLastError());
-    NET_LUID id{}; luid(a->adapter, &id);
+    NET_LUID id{}; luid(a->adapter, &id);a->luid=id;
     MIB_IPINTERFACE_ROW interfaceRow{}; InitializeIpInterfaceEntry(&interfaceRow);
     interfaceRow.Family = AF_INET; interfaceRow.InterfaceLuid = id;
     DWORD error = GetIpInterfaceEntry(&interfaceRow); if (error) return fail(error);
