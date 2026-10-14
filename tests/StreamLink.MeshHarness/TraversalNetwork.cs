@@ -65,7 +65,7 @@ static class TraversalNetwork
                 EchoServer(ip, MeshIdentity.Address(mesh.Pair.Network, peer.Slot), ct))
         };
         var runner = new MeshRunner(c.Profile, s => {
-            if(s.Contains("401",StringComparison.Ordinal)||s.Contains("403",StringComparison.Ordinal)||s.Contains("已拒绝无效",StringComparison.Ordinal)||s.Contains("认证失败",StringComparison.Ordinal)||s.Contains("CryptographicException",StringComparison.Ordinal))controlAuthenticationFailed=true;
+            if(TraversalVerdict.AuthenticationRejected(s))controlAuthenticationFailed=true;
             if(s.Contains("NoDirectPathWithinBudget",StringComparison.Ordinal))budgetFailureObserved=true;
             Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
             latest = s; if (s.Connected && connected == 0) { connected = timer.ElapsedMilliseconds; Console.WriteLine("Independent Wintun connected at " + connected + " ms"); }

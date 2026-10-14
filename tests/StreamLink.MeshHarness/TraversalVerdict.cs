@@ -7,6 +7,9 @@ sealed record TraversalVerdictInput(bool ExpectedNoDirectPath, bool Infrastructu
 sealed record TraversalVerdict(string ScenarioVerdict, int ExitCode, string FunctionalStatus,
     string FailureCategory, string SourceExpectation)
 {
+    public static bool AuthenticationRejected(string message)=>message.Contains("401 (Unauthorized)",StringComparison.Ordinal)||
+        message.Contains("403 (Forbidden)",StringComparison.Ordinal)||message.Contains("已拒绝无效",StringComparison.Ordinal)||
+        message.Contains("认证失败",StringComparison.Ordinal)||message.Contains("CryptographicException",StringComparison.Ordinal);
     public static TraversalVerdict Evaluate(TraversalVerdictInput i)
     {
         bool functional = i.InfrastructureReady && i.BusinessComplete && i.SourceExpectation != "Fail" && i.Failure.Length == 0;
@@ -22,6 +25,7 @@ sealed record TraversalVerdict(string ScenarioVerdict, int ExitCode, string Func
     }
     public static void Test(string output)
     {
+        if(AuthenticationRejected("elapsedMs=401; source=10.1.1.2:40111")||!AuthenticationRejected("Response status code does not indicate success: 401 (Unauthorized)."))throw new Exception("Authentication classification must not confuse timing/ports with HTTP rejection");
         var good = new TraversalVerdictInput(false, true, true, "BusinessUsable", "NotApplicable", true, false, false, true, "");
         var cases = new[] {
             ("public TCP: no HostFactory required", good, true),
@@ -38,6 +42,6 @@ sealed record TraversalVerdict(string ScenarioVerdict, int ExitCode, string Func
             ("source expectation correct announcement", good with {SourceExpectation="Pass"}, true)
         };
         var rows=cases.Select(c=> { var v=Evaluate(c.Item2); if ((v.ExitCode==0)!=c.Item3 || (v.ScenarioVerdict=="Pass")!=c.Item3) throw new Exception(c.Item1); return new { test=c.Item1,expected=c.Item3,result=v }; }).ToArray();
-        File.WriteAllText(output,JsonSerializer.Serialize(new {status="Pass",checks=rows.Length,scope="Table-driven fixture verdict; no NAT/driver claim",rows},new JsonSerializerOptions{WriteIndented=true}));
+        File.WriteAllText(output,JsonSerializer.Serialize(new {status="Pass",checks=rows.Length+2,scope="Table-driven fixture verdict and authorization classification; no NAT/driver claim",rows},new JsonSerializerOptions{WriteIndented=true}));
     }
 }
