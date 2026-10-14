@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
  [Parameter(Mandatory)][string]$WdkRoot,[Parameter(Mandatory)][string]$Inf2Cat,
- [string]$Version='1.0.0-personal-feature.1')
+ [string]$Version='1.0.0-personal-feature.2')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -46,7 +46,18 @@ try{
  [ordered]@{SchemaVersion=1;SourceCommit=$commit;Architecture='win-x64';DescriptorAbi=2;UserAbi=1;Mtu=1280;HardwareId='ROOT\StreamLinkTun';ServiceName='StreamLinkTun';
   Files=@($members|ForEach-Object{[ordered]@{Name=$_;Sha256=(Get-FileHash -LiteralPath (Join-Path $self $_)).Hash}})}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $self 'package-identity.json') -Encoding utf8NoBOM
  $scripts=Join-Path $stage 'tools';New-Item -ItemType Directory -Path $scripts|Out-Null
- Copy-Item -LiteralPath drivers/Manage-PersonalTun.ps1,scripts/Get-PersonalHostPreflight.ps1 -Destination $scripts
+ Copy-Item -LiteralPath drivers/Manage-PersonalTun.ps1,drivers/Invoke-PersonalTunKernel.ps1,drivers/Complete-PersonalTunGate.ps1,drivers/Collect-PersonalTunVerifier.ps1,drivers/Freeze-SignedTunPackage.ps1,scripts/Get-PersonalHostPreflight.ps1 -Destination $scripts
+ $kernelTool=Join-Path $repo "out/personal-publish-$Version-kernel-tool"
+ & dotnet publish tests/StreamLink.TunKernelTests -c Release -r win-x64 --self-contained true -o $kernelTool *> (Join-Path $logs 'kernel-tool-publish.log')
+ if($LASTEXITCODE){throw 'Actual kernel test tool publish failed'}
+ # Reuse the exact .NET runtime already in the Windows bundle instead of
+ # adding a second full runtime under tools. The research ZIP remains standalone.
+ foreach($file in Get-ChildItem -LiteralPath $kernelTool -File){
+  if($file.Extension -eq '.pdb'){continue}
+  $target=Join-Path $stage $file.Name
+  if(Test-Path -LiteralPath $target){if((Get-FileHash -LiteralPath $target).Hash -ne (Get-FileHash -LiteralPath $file.FullName).Hash){throw "Kernel tool runtime conflict: $($file.Name)"}}
+  else{Copy-Item -LiteralPath $file.FullName -Destination $target}
+ }
  Copy-Item -LiteralPath docs/personal-v3 -Destination (Join-Path $stage 'docs') -Recurse
  Copy-Item -LiteralPath docs/personal-v3/使用与回退.md -Destination (Join-Path $stage '使用与回退.md')
  @'
@@ -77,7 +88,8 @@ if($p.ExitCode){throw 'Personal service install failed; stable StreamLink servic
  Copy-Item -LiteralPath LICENSE,scripts/Deploy-PersonalCoordination.sh,docs/personal-v3/协调部署.md -Destination $coord
  [ordered]@{sourceCommit=$commit;businessRelay=$false;deployment='PreparedOnlyNotDeployed';listen='http://127.0.0.1:42863';separateService='streamlink-personal-v3.service';oldServiceUnchanged=$true}|ConvertTo-Json|Set-Content (Join-Path $coord 'deployment.json')
  $research=Join-Path $candidate 'tun-research';New-Item -ItemType Directory -Path $research|Out-Null
- Copy-Item -LiteralPath $self,drivers/StreamLink.Tun,transport/tun-native,src/StreamLink.ResearchAdapters,drivers/Build-Research.ps1,drivers/New-TunCatalog.ps1,drivers/Manage-PersonalTun.ps1,docs/personal-v3/driver-gates.md -Destination $research -Recurse
+ Copy-Item -LiteralPath $self,drivers/StreamLink.Tun,transport/tun-native,src/StreamLink.ResearchAdapters,drivers/Build-Research.ps1,drivers/New-TunCatalog.ps1,drivers/Manage-PersonalTun.ps1,drivers/Invoke-PersonalTunKernel.ps1,drivers/Complete-PersonalTunGate.ps1,drivers/Collect-PersonalTunVerifier.ps1,drivers/Freeze-SignedTunPackage.ps1,docs/personal-v3/driver-gates.md,docs/personal-v3/PF2-驱动实验流程.md -Destination $research -Recurse
+ Copy-Item -LiteralPath $kernelTool -Destination (Join-Path $research 'tun-kernel-probe') -Recurse
  Copy-Item -LiteralPath (Join-Path $stage 'StreamLink.ResearchAdapters.dll') -Destination $research
  foreach($folder in @($stage,$coord,$research)){Compress-Archive -LiteralPath $folder -DestinationPath ($folder+'.zip') -CompressionLevel Optimal}
  $hashes=@(Get-ChildItem -LiteralPath $candidate -File -Filter '*.zip'|ForEach-Object{[ordered]@{file=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
