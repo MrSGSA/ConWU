@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
 using StreamLink.Core;
+using StreamLink.Service;
 
 namespace StreamLink;
 
@@ -174,6 +175,11 @@ public sealed partial class MainWindow : Form
         e.Cancel = true; if (busy) { notice.Text = "正在执行操作，请完成后再退出"; return; }
         SetBusy(true, backend.IsService ? "正在关闭界面…" : "正在停止前台连接…"); timer.Stop(); lifetime.Cancel();
         try { while (polling) await Task.Delay(50); await ClearPair(true); await backend.DisposeAsync(); }
+        catch(Exception ex){
+            // Explicit application exit still terminates the owning process;
+            // do not turn a failed shutdown into an unhandled async-void crash.
+            try{string message=last?.Profile is{} current?SensitiveText.Redact(ex.Message,current):ex.GetType().Name;File.AppendAllText(Path.Combine(ProfileStore.Root,"exit-error.log"),DateTimeOffset.Now+" "+ex.GetType().Name+": "+message+Environment.NewLine);}catch{}
+        }
         finally { tray.Visible = false; allowClose = true; Close(); }
     }
     protected override void Dispose(bool disposing) { if (disposing) { timer.Dispose(); tray.Dispose(); lifetime.Dispose(); Icon?.Dispose(); } base.Dispose(disposing); }

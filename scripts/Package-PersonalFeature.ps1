@@ -48,6 +48,7 @@ try{
  $scripts=Join-Path $stage 'tools';New-Item -ItemType Directory -Path $scripts|Out-Null
  Copy-Item -LiteralPath drivers/Manage-PersonalTun.ps1,drivers/Invoke-PersonalTunKernel.ps1,drivers/Complete-PersonalTunGate.ps1,drivers/Collect-PersonalTunVerifier.ps1,drivers/Freeze-SignedTunPackage.ps1,drivers/Assert-PersonalTunCatalog.ps1,drivers/Assert-PersonalTunEvidence.ps1,drivers/CatalogTrust.cs,scripts/Get-PersonalHostPreflight.ps1 -Destination $scripts
  Copy-Item -LiteralPath drivers/Read-PersonalTunEvents.ps1 -Destination $scripts
+ Copy-Item -LiteralPath drivers/Assert-PersonalTunProtectedInput.ps1 -Destination $scripts
  $kernelTool=Join-Path $repo "out/personal-publish-$Version-kernel-tool"
  & dotnet publish tests/StreamLink.TunKernelTests -c Release -r win-x64 --self-contained true "-p:StreamLinkReleaseVersion=$Version" -o $kernelTool *> (Join-Path $logs 'kernel-tool-publish.log')
  if($LASTEXITCODE){throw 'Actual kernel test tool publish failed'}
@@ -91,6 +92,7 @@ if($p.ExitCode){throw 'Personal service install failed; stable StreamLink servic
  $research=Join-Path $candidate 'tun-research';New-Item -ItemType Directory -Path $research|Out-Null
  Copy-Item -LiteralPath $self,drivers/StreamLink.Tun,transport/tun-native,src/StreamLink.ResearchAdapters,drivers/Build-Research.ps1,drivers/New-TunCatalog.ps1,drivers/Manage-PersonalTun.ps1,drivers/Invoke-PersonalTunKernel.ps1,drivers/Complete-PersonalTunGate.ps1,drivers/Collect-PersonalTunVerifier.ps1,drivers/Freeze-SignedTunPackage.ps1,drivers/Assert-PersonalTunCatalog.ps1,drivers/Assert-PersonalTunEvidence.ps1,drivers/CatalogTrust.cs,docs/personal-v3/driver-gates.md,docs/personal-v3/PF2-驱动实验流程.md -Destination $research -Recurse
  Copy-Item -LiteralPath drivers/Read-PersonalTunEvents.ps1 -Destination $research
+ Copy-Item -LiteralPath drivers/Assert-PersonalTunProtectedInput.ps1 -Destination $research
  Copy-Item -LiteralPath $kernelTool -Destination (Join-Path $research 'tun-kernel-probe') -Recurse
  Copy-Item -LiteralPath (Join-Path $stage 'StreamLink.ResearchAdapters.dll') -Destination $research
  foreach($folder in @($stage,$coord,$research)){Compress-Archive -LiteralPath $folder -DestinationPath ($folder+'.zip') -CompressionLevel Optimal}

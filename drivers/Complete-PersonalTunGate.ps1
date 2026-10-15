@@ -6,22 +6,8 @@ param([Parameter(Mandatory)][string]$Package,[Parameter(Mandatory)][string]$Kern
  [string]$TargetDeviceInstance,[switch]$AuthorizeTarget,[ValidateRange(1,30)][int]$Days=7)
 $ErrorActionPreference='Stop'
 if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator required for protected gate publication'}
-function Protected-Input([string]$p){
- $at=[IO.Path]::GetFullPath($p);if($at.StartsWith('\\')){throw 'Local protected evidence required'};$first=$true
- $allowed=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
- while($at){
-  $item=Get-Item -LiteralPath $at;if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked evidence or ancestor rejected'}
-  $acl=Get-Acl -LiteralPath $at
-  if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $allowed){throw 'Evidence/ancestor owner is not a trusted system administrator'}
-  foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
-   $write=[Security.AccessControl.FileSystemRights]::WriteData -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
-   if($first){$write=$write -bor [Security.AccessControl.FileSystemRights]::AppendData}
-   if($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $write) -and $rule.IdentityReference.Value -notin $allowed){throw 'Evidence or ancestor can be replaced by a non-administrative identity'}
-  }
-  $first=$false;$at=[IO.Path]::GetDirectoryName($at)
- }
-}
-foreach($p in @($KernelResult,$PermissionResult,$VerifierEvidence)){Protected-Input $p}
+. (Join-Path $PSScriptRoot 'Assert-PersonalTunProtectedInput.ps1')
+foreach($p in @($KernelResult,$PermissionResult,$VerifierEvidence)){Assert-PersonalTunProtectedInput $p}
 $k=Get-Content -LiteralPath $KernelResult -Raw|ConvertFrom-Json;$p=Get-Content -LiteralPath $PermissionResult -Raw|ConvertFrom-Json;$v=Get-Content -LiteralPath $VerifierEvidence -Raw|ConvertFrom-Json
 $hash=(Get-FileHash -LiteralPath (Join-Path $Package 'package-identity.json')).Hash
 & (Join-Path $PSScriptRoot 'Manage-PersonalTun.ps1') -Package $Package -Action Status|Out-Null
@@ -32,7 +18,7 @@ Assert-PersonalTunEvidence $k $p $v $hash (Get-FileHash -LiteralPath $KernelResu
 $base=Split-Path -Parent ([IO.Path]::GetFullPath($VerifierEvidence))
 foreach($file in $v.rawFiles){
  if($file.path -notmatch '^[A-Za-z0-9_.-]+$' -or $file.sha256 -notmatch '^[0-9A-Fa-f]{64}$'){throw 'Invalid Verifier evidence member'}
- $at=Join-Path $base $file.path;Protected-Input $at
+ $at=Join-Path $base $file.path;Assert-PersonalTunProtectedInput $at
  if((Get-FileHash -LiteralPath $at).Hash -ne $file.sha256){throw 'Verifier raw evidence hash mismatch'}
 }
 $OutputRoot=[IO.Path]::GetFullPath($OutputRoot)

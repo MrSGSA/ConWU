@@ -19,6 +19,7 @@ static class ShutdownFailureTests
         stop.Cancel();bool refused=false;try{await run.WaitAsync(TimeSpan.FromSeconds(10),token);}catch(MeshShutdownException){refused=true;}
         check(refused&&!runner.CleanupComplete&&factory.Disposed,"an owned factory close failure cannot be reported as completed cleanup");
         check(adapter.Disposed,"cleanup still releases the independent adapter after another owner failure");
+        check(runner.UnprovenOwnerCount==1,"failed owner remains strongly retained instead of relying on finalization");
         return new{scope="Real Runner cleanup with injected owner-close failure; memory adapter, no kernel",refused,runner.CleanupComplete,runner.ExitDiagnostics,logs=logs.ToArray()};
     }
     sealed class FaultFactory:IMeshCandidateFactory,IAsyncDisposable {

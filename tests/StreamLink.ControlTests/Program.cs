@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Service;
+if(args is ["--unproven-owner-child",var ownershipOutput]){await UnprovenOwnershipTests.Child(ownershipOutput);return 0;}
 
 if(args.Length==4&&args[0]=="--ui-linked-client"){
     WindowsInstance.ConfigureValidation(args[3]);await LinkedUserTests.Child(args[1],args[2]);return 0;
@@ -13,6 +14,7 @@ int checks=0,failures=0;
 void Check(bool ok,string reason){checks++;if(!ok){failures++;Console.Error.WriteLine(reason);}}
 T Field<T>(ControlWorker worker,string name)=>(T)typeof(ControlWorker).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.GetValue(worker)!;
 void Set(ControlWorker worker,string name,object value)=>typeof(ControlWorker).GetField(name,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(worker,value);
+await UnprovenOwnershipTests.Run(Check);
 string isolated=WindowsInstance.ProfileRoot;
 Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",isolated);
 try {

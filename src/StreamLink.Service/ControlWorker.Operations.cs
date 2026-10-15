@@ -21,6 +21,17 @@ public sealed partial class ControlWorker
     readonly CancellationTokenSource disposing=new();
     ControlOperationStatus? operationStatus;
     int disposed;
+    static readonly object quarantineGate=new();
+    static readonly List<ControlWorker> quarantinedWorkers=[];
+    void ReleaseControlOwnership(){
+        if(Volatile.Read(ref resourceShutdownUnproven)){
+            // Strongly retain the worker, its failed owners and file lock.
+            // A FileStream finalizer must not admit a second owner in this PID.
+            lock(quarantineGate)quarantinedWorkers.Add(this);
+            return;
+        }
+        lease.Dispose();
+    }
     Operation OpenOperation(ControlRequest request,CancellationToken token,out bool duplicate,UiOperation? ui=null)
     {
         lock(operationGate){
@@ -66,7 +77,7 @@ public sealed partial class ControlWorker
         // A timed-out worker retains its single-instance lock. Disposal must not
         // allow a second owner while native/lease references may still be live.
         var finished=Task.WhenAll(held.Select(ObserveShutdown));
-        if(finished.IsCompleted){lease.Dispose();return;}
-        _=finished.ContinueWith(_=>lease.Dispose(),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+        if(finished.IsCompleted){ReleaseControlOwnership();return;}
+        _=finished.ContinueWith(_=>ReleaseControlOwnership(),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
     }
 }

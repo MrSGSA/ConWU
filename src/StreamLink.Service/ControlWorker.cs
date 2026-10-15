@@ -51,7 +51,7 @@ public sealed partial class ControlWorker : BackgroundService
     }
     void Begin()
     {
-        if(Volatile.Read(ref resourceShutdownUnproven))throw new IOException("上次原生资源退出未获证实，不能启动新的源端点所有者；请保留日志并重启个人后台进程，原 0.3.2 不受影响");
+        RequireResourceOwnership();
         if (running != null && !running.IsCompleted) return;
         if (profile.Mesh == null && profile.Pair != null && !File.Exists(Path.Combine(AppContext.BaseDirectory, "components", "easytier-core.exe"))) {
             lock (sync) status = new("旧网络需要迁移", "", "", profile.Pair.Mode, false, null, "此轻量包仅包含原生组网。原配对已保留；请在双方新版上创建并加入多机网络，或使用旧版恢复连接。");
@@ -85,11 +85,18 @@ public sealed partial class ControlWorker : BackgroundService
             lock(sync){status=new("停止未完成","","","faketcp",false,null,$"{resource} 尚未退出；所有权仍保留，拒绝启动第二实例");PublishReply();}
             throw new IOException(resource+" 退出超过15秒，未提前释放仍被使用的资源");
         }
+        RequireResourceOwnership(); // completed task is not proof that its owners closed
         running = null; runner = null; meshRunner = null;runningProfile=null;
         measureStop?.Dispose();measureStop=null;measuring=null;
         lock (sync) { quality = ""; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); PublishReply();}
     }
     static async Task ObserveShutdown(Task task){try{await task;}catch(OperationCanceledException){} }
+    void RequireResourceOwnership(){
+        if(!Volatile.Read(ref resourceShutdownUnproven))return;
+        const string reason="上次原生资源退出未获证实，不能释放所有权或启动第二后台；请保留日志并重启个人后台进程，原 0.3.2 不受影响";
+        lock(sync){status=new("资源退出未完成","","","faketcp",false,null,reason);PublishReply();}
+        throw new IOException(reason);
+    }
     void PublishReply()
     {
         lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized,1));
@@ -192,6 +199,7 @@ public sealed partial class ControlWorker : BackgroundService
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":
+                    RequireResourceOwnership();
                     if(running?.IsCompleted==false&&runStop?.IsCancellationRequested==true)throw new IOException("先前网络正在退出，不能启动第二实例");
                     await PersonalPacketAdapters.Preflight(profile,operation.Stop.Token);
                     lock (sync) { if (profile.Pair == null && profile.Mesh == null) throw new IOException("请先创建或加入网络"); profile.Enabled = true; profile.Validate(); store.Save(profile); } Begin(); break;

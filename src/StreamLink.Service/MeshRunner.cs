@@ -22,6 +22,8 @@ public sealed class MeshRunner
     MeshDirectory? pendingDirectory;
     internal object? ExitDiagnostics { get; private set; }
     internal bool CleanupComplete {get;private set;}
+    readonly List<object> unprovenOwners=[];
+    internal int UnprovenOwnerCount {get{lock(gate)return unprovenOwners.Count;}}
     public void UpdateDirectory(MeshDirectory directory)
     {
         lock (gate) { MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0); pendingDirectory = directory; router?.ApplyDirectory(directory); }
@@ -310,7 +312,7 @@ public sealed class MeshRunner
         } finally {
             long shutdownStarted = Environment.TickCount64;
             var cleanupFailures=new List<string>();
-            void CleanupFailed(string stage,Exception ex){cleanupFailures.Add(stage+":"+ex.GetType().Name+":"+ex.Message);try{log("资源退出未完成："+cleanupFailures[^1]);}catch{}}
+            void CleanupFailed(string stage,Exception ex,object? owner=null){if(owner!=null)lock(gate)unprovenOwners.Add(owner);cleanupFailures.Add(stage+":"+ex.GetType().Name+":"+ex.Message);try{log("资源退出未完成："+cleanupFailures[^1]);}catch{}}
             void ShutdownStage(string stage) {
                 ExitDiagnostics = new { stage, elapsedMs=Environment.TickCount64-shutdownStarted,
                     cleanupComplete=CleanupComplete,failures=cleanupFailures.ToArray(),
@@ -323,23 +325,23 @@ public sealed class MeshRunner
             ShutdownStage("factory-startup");
             if (gatheringFactory != null) try { factory = await gatheringFactory; } catch { }
             ShutdownStage("traversal");
-            if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { CleanupFailed("traversal",ex); }
+            if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { CleanupFailed("traversal",ex,traversal); }
             ShutdownStage("mapping-probe");
             if (probe != null) { try { mapping = await probe; } catch { } }
             ShutdownStage("adapter-startup");
-            if (opening != null) { IPacketAdapter? opened=null;try{opened=await opening;}catch{}if(opened!=null)try{opened.Dispose();}catch(Exception ex){CleanupFailed("adapter-startup",ex);} }
+            if (opening != null) { IPacketAdapter? opened=null;try{opened=await opening;}catch{}if(opened!=null)try{opened.Dispose();}catch(Exception ex){CleanupFailed("adapter-startup",ex,opened);} }
             ShutdownStage("maintenance-and-http");
             foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if(ex is not OperationCanceledException){if(ReferenceEquals(task,releasing))CleanupFailed("mapping-release",ex);else try{log("退出任务已结束："+ex.Message);}catch{}} } }
             ShutdownStage("legacy-clients");
-            foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { CleanupFailed("legacy-client",ex); } }
+            foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { CleanupFailed("legacy-client",ex,client); } }
             ShutdownStage("listener");
-            try { server?.Dispose(); } catch (Exception ex) { CleanupFailed("listener",ex); }
+            try { server?.Dispose(); } catch (Exception ex) { CleanupFailed("listener",ex,server); }
             ShutdownStage("mapping");
-            if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { CleanupFailed("mapping",ex); } }
+            if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { CleanupFailed("mapping",ex,mapping); } }
             ShutdownStage("router");
-            if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { CleanupFailed("router",ex); } router = null; }
+            if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { CleanupFailed("router",ex,router); } router = null; }
             ShutdownStage("factory");
-            if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { CleanupFailed("factory",ex); }
+            if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { CleanupFailed("factory",ex,ownedFactory); }
             ShutdownStage("owned-rule-and-record");
             try { services.Firewall(rule, mesh.LocalIp, ""); File.Delete(Path.Combine(folder, "owner.json")); } catch (Exception ex) { CleanupFailed("owned-rule-and-record",ex); }
             CleanupComplete=cleanupFailures.Count==0;
