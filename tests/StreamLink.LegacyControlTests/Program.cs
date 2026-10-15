@@ -128,11 +128,9 @@ async Task<object> Pair(string mode,int? rate=null)
     string folder=Path.Combine(Path.GetTempPath(),"streamlink-legacy-control-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
     var owner=MeshIdentity.Create("https://example.com/","",mode);var guest=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));guest.Directory=owner.Directory;
     var adapters=new[]{new Adapter(),new Adapter()};await using var a=new MeshRouter(owner,adapters[0]);await using var b=new MeshRouter(guest,adapters[1]);
-    using var source=new Socket(AddressFamily.InterNetwork,mode=="udp"?SocketType.Dgram:SocketType.Stream,mode=="udp"?ProtocolType.Udp:ProtocolType.Tcp);
-    source.Bind(new IPEndPoint(IPAddress.Loopback,0));int rawPort=((IPEndPoint)source.LocalEndPoint!).Port;
+    int rawPort=NativeTestPorts.Take();
     using var serverCarrier=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));int serverIo=((IPEndPoint)serverCarrier.Client.LocalEndPoint!).Port;serverCarrier.Dispose();
     using var clientCarrier=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));int clientIo=((IPEndPoint)clientCarrier.Client.LocalEndPoint!).Port;clientCarrier.Dispose();
-    source.Dispose();
     await using var proxy=new Proxy(rawPort,new(IPAddress.Loopback,serverIo));
     using var serverPacer=rate.HasValue?new EgressPacer(rate.Value):null;
     using var clientPacer=rate.HasValue?new EgressPacer(rate.Value):null;

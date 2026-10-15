@@ -14,8 +14,10 @@ $runner=Join-Path $OutputDirectory 'run.ps1'
 $ErrorActionPreference='Stop'
 try{
  $settings=Get-Content (Join-Path $PSScriptRoot 'launch.json') -Raw|ConvertFrom-Json
- $argsText=($settings.args|ForEach-Object{if($_.Contains('"')){throw 'Quoted test argument refused'};'"'+$_+'"'}) -join ' '
- $p=Start-Process -FilePath $settings.exe -ArgumentList $argsText -WindowStyle Hidden -PassThru
+ $argsText=if($settings.args){($settings.args|ForEach-Object{if($_.Contains('"')){throw 'Quoted test argument refused'};'"'+$_+'"'}) -join ' '}else{''}
+ $start=@{FilePath=$settings.exe;WindowStyle='Hidden';PassThru=$true}
+ if($argsText){$start.ArgumentList=$argsText}
+ $p=Start-Process @start
  if(-not $p.WaitForExit(120000)){$p.Kill($true);throw 'Owned test timeout'}
  @{exit=$p.ExitCode;admin=([Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)}|ConvertTo-Json|Set-Content (Join-Path $PSScriptRoot 'launch-result.json')
 }catch{@{error=$_.Exception.Message}|ConvertTo-Json|Set-Content (Join-Path $PSScriptRoot 'launch-result.json')}

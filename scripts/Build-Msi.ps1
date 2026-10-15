@@ -94,8 +94,8 @@ foreach($item in $all){
  }
  if($fileId -eq 'LauncherExe'){
   foreach($value in @(@('ProductCode','[ProductCode]'),@('InstallLocation','[INSTALLFOLDER]'))){$component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key=$registryKey;Name=$value[0];Type='string';Value=$value[1]}))|Out-Null}
-  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
-  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'Shortcut' @{Id='StartMenuUninstall';Directory='ApplicationMenuFolder';Name='卸载 '+$productName;Target='[SystemFolder]msiexec.exe';Arguments='/x [ProductCode]';Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'RemoveFolder' @{Id='RemoveApplicationMenu';Directory='ApplicationMenuFolder';On='uninstall'}))|Out-Null
  }

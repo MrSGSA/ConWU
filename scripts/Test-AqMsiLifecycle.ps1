@@ -100,6 +100,13 @@ try {
  $preUi=@()
  if(Test-Path (Join-Path $install 'StreamLink.exe')){$preUi=StartTray 'before-update'}
  MsiRun '/i' $Msi 'install-or-upgrade'
+ $shell=New-Object -ComObject WScript.Shell
+ foreach($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'StreamLink'))){
+  $link=Join-Path $folder ('StreamLink Validation '+$ValidationInstance.Substring(0,8)+'.lnk')
+  Check (Test-Path -LiteralPath $link) 'installed application shortcut exists'
+  $shortcut=$shell.CreateShortcut($link)
+  Check ($shortcut.TargetPath -eq (Join-Path $install 'StreamLink.exe') -and $shortcut.Arguments.Trim() -eq ('--validation-instance '+$ValidationInstance) -and $shortcut.IconLocation.Length -gt 0) 'shortcut targets actual launcher with icon and isolated arguments'
+ }
  if($preUi.Count){Gone $preUi 'upgrade'}
  # Restart before any acceptance-status call: the first UI request is from an
  # ordinary InteractiveToken process, without an administrator priming it.

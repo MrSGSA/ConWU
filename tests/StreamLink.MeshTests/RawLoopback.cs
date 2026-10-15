@@ -18,7 +18,7 @@ sealed class RawLoopback : IAsyncDisposable
     readonly Dictionary<(int, int), IPEndPoint> clients = [];
     readonly Task pump;
     public bool SawHttp { get; private set; }
-    int Port() { while (true) { using var socket = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0)); int port = ((IPEndPoint)socket.Client.LocalEndPoint!).Port; if (allocated.Add(port)) return port; } }
+    int Port() => NativeTestPorts.Take(allocated);
     public RawLoopback(string executable, MeshProfile profile, params IPEndPoint[] applications)
     {
         Directory.CreateDirectory(root);

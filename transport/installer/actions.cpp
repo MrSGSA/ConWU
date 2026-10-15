@@ -95,7 +95,11 @@ void close_clients(MSIHANDLE h,const context &c,bool includeLegacy){
 void snapshot_service(const context &c){
     PSECURITY_DESCRIPTOR descriptor=nullptr;if(!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;KA;;;SY)(A;;KA;;;BA)",SDDL_REVISION_1,&descriptor,nullptr))throw std::wstring(L"无法保护安装恢复记录。");
     SECURITY_ATTRIBUTES attributes{sizeof(attributes),descriptor,FALSE};registry saved;DWORD disposition=0;
-    LONG result=RegCreateKeyExW(HKEY_LOCAL_MACHINE,c.transaction.c_str(),0,nullptr,0,KEY_ALL_ACCESS|KEY_WOW64_64KEY,&attributes,&saved.value,&disposition);LocalFree(descriptor);
+    // Create shared parent keys using their normal inherited permissions. A
+    // descriptor on a multi-level create would also restrict new parents.
+    registry parent;LONG result=RegCreateKeyExW(HKEY_LOCAL_MACHINE,L"Software\\StreamLink\\InstallerTransactions",0,nullptr,0,KEY_CREATE_SUB_KEY|KEY_WOW64_64KEY,nullptr,&parent.value,nullptr);
+    if(result==ERROR_SUCCESS){result=RegCreateKeyExW(parent.value,c.attempt.c_str(),0,nullptr,0,KEY_ALL_ACCESS|KEY_WOW64_64KEY,&attributes,&saved.value,&disposition);}
+    LocalFree(descriptor);
     if(result!=ERROR_SUCCESS||disposition!=REG_CREATED_NEW_KEY)throw std::wstring(L"安装恢复记录未能建立，或上次恢复尚待完成。");
     service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT)};if(!manager.value)throw std::wstring(L"无法查询服务管理器。");
     service_handle service{OpenServiceW(manager.value,c.service.c_str(),SERVICE_QUERY_CONFIG|SERVICE_QUERY_STATUS)};
