@@ -10,7 +10,6 @@ static class Program
 {
     static int count;
     static void Check(bool value, string reason) { if (!value) throw new Exception(reason); count++; }
-    static T Field<T>(object value, string name) => (T)value.GetType().GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(value)!;
     static async Task Lifecycle()
     {
         string root = Path.Combine(Path.GetTempPath(), "StreamLink-test-" + Guid.NewGuid().ToString("N"));
@@ -64,106 +63,8 @@ static class Program
                 Check(!rejected.Ok && rejected.Profile!.Mesh!.Pair.Network == selected.Mesh!.Pair.Network && beforeRejected.SequenceEqual(File.ReadAllBytes(Path.Combine(ProfileStore.Root, "profile.dpapi"))),
                     command + ": incompatible UDP request cannot replace identity or stored configuration before policy validation");
             }
-            using (var oldSettings = new SettingsWindow(selected, supportsSelection: false))
-                Check(!Field<ComboBox>(oldSettings, "selection").Enabled && !Field<CheckBox>(oldSettings, "udpFallback").Enabled, "UI disables unsupported settings on old backend");
-            var calibrationProfile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;
-            calibrationProfile.TraversalMode = "tcp"; calibrationProfile.TcpSynObservation = true;
-            // Exercise explicit opt-in from an off state in either edition;
-            // the personal creation preset independently enables source learning.
-            calibrationProfile.TcpPeerReflexive = false;
-            calibrationProfile.CapabilityIntents[nameof(DeviceProfile.TcpPeerReflexive)] = false;
-            using (var calibrationSettings = new SettingsWindow(calibrationProfile)) {
-                var box = Field<CheckBox>(calibrationSettings, "tcpCalibration");
-                var predicted = Field<CheckBox>(calibrationSettings, "tcpPrediction");
-                Check(!predicted.Enabled && !predicted.Checked, "Prediction requires explicit calibration, not just observer capability");
-                Check(box.Enabled && !box.Checked, "Calibration requires both managed TCP and observer; default remains unchecked");
-                box.Checked = true; calibrationSettings.Result.Validate();
-                Check(calibrationSettings.Result.TcpPortCalibration, "Explicit calibration opt-in is stored in the editable profile");
-                Check(predicted.Enabled && !predicted.Checked, "Calibration alone never opts into actual predicted attempts");
-                predicted.Checked = true; calibrationSettings.Result.Validate();
-                Check(calibrationSettings.Result.TcpPortPrediction, "Explicit prediction opt-in survives profile validation");
-                string? screenshot = Environment.GetEnvironmentVariable("STREAMLINK_TEST_SCREENSHOT");
-                if (!string.IsNullOrEmpty(screenshot)) {
-                    calibrationSettings.StartPosition = FormStartPosition.Manual; calibrationSettings.Location = new(-30000, -30000); calibrationSettings.ShowInTaskbar = false;
-                    calibrationSettings.Show(); Application.DoEvents(); using var bitmap = new Bitmap(calibrationSettings.Width, calibrationSettings.Height);
-                    calibrationSettings.DrawToBitmap(bitmap, new(0, 0, bitmap.Width, bitmap.Height)); bitmap.Save(screenshot, System.Drawing.Imaging.ImageFormat.Png);
-                }
-                Field<CheckBox>(calibrationSettings, "tcpObservation").Checked = false;
-                Check(!box.Enabled && !box.Checked && !calibrationSettings.Result.TcpPortCalibration, "Disabling the observer removes dependent calibration opt-in");
-                Check(!predicted.Enabled && !predicted.Checked && !calibrationSettings.Result.TcpPortPrediction, "Disabling an observation dependency also clears actual prediction opt-in");
-                Field<CheckBox>(calibrationSettings, "tcpObservation").Checked = true; box.Checked = true;
-                Field<ComboBox>(calibrationSettings, "traversal").SelectedIndex = 0;
-                Check(!box.Enabled && !calibrationSettings.Result.TcpPortCalibration, "Returning to compatible mode cannot retain an invisible calibration option");
-            }
-            using (var oldCalibration = new SettingsWindow(calibrationProfile, supportsCalibration: false))
-                Check(!Field<CheckBox>(oldCalibration, "tcpCalibration").Enabled, "New frontend cannot enable calibration on an old backend");
-            using (var oldPrediction = new SettingsWindow(calibrationProfile, supportsPrediction: false))
-                Check(!Field<CheckBox>(oldPrediction, "tcpPrediction").Enabled, "New frontend cannot enable predicted paths on a backend without capability");
-            using (var sourceSettings = new SettingsWindow(calibrationProfile)) {
-                var sourceBox = Field<CheckBox>(sourceSettings, "tcpPeerSource");
-                Check(sourceBox.Enabled && !sourceBox.Checked, "Source learning UI is available only in explicit TCP mode and starts unchecked");
-                sourceBox.Checked = true;
-                Check(sourceSettings.Result.TcpPeerReflexive, "Checking the source-learning option updates the actual saved profile");
-                Field<ComboBox>(sourceSettings, "traversal").SelectedIndex = 0;
-                Check(!sourceBox.Enabled && !sourceBox.Checked && !sourceSettings.Result.TcpPeerReflexive, "Compatible mode removes hidden source-learning opt-in");
-            }
-            using (var oldSource = new SettingsWindow(calibrationProfile, supportsPeerSource: false))
-                Check(!Field<CheckBox>(oldSource, "tcpPeerSource").Enabled, "Old backend cannot be opted into source learning from the new frontend");
-            var explorationProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;
-            explorationProfile.TraversalMode="tcp-udp";explorationProfile.PathSelection="prefer-faketcp";explorationProfile.AllowUdpFallback=true;
-            using(var explorationSettings=new SettingsWindow(explorationProfile)){
-                var box=Field<CheckBox>(explorationSettings,"udpExploration");
-                Check(box.Enabled&&!box.Checked,"UDP exploration starts unchecked behind explicit fallback permission");
-                box.Checked=true;explorationSettings.Result.Validate();
-                Check(explorationSettings.Result.UdpExploration,"UDP exploration checkbox updates the actual profile");
-                Field<CheckBox>(explorationSettings,"udpFallback").Checked=false;
-                Check(!box.Enabled&&!box.Checked&&!explorationSettings.Result.UdpExploration,"removing fallback clears hidden expensive UDP opt-in");
-            }
-            using(var oldExploration=new SettingsWindow(explorationProfile,supportsUdpExploration:false))
-                Check(!Field<CheckBox>(oldExploration,"udpExploration").Enabled,"old backend cannot silently accept UDP source expansion");
-            Check((await worker.Handle(new("status"))).UdpExplorationVersion==1,"backend independently advertises UDP expansion IPC version");
-            Check(new ControlReply(true,"",null,null,"",[]).UdpExplorationVersion==0,"old IPC reply defaults to no UDP expansion capability");
-            var feedbackProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;feedbackProfile.TraversalMode="tcp";
-            using(var feedbackSettings=new SettingsWindow(feedbackProfile)){
-                var box=Field<CheckBox>(feedbackSettings,"qualityFeedback");Check(box.Enabled&&!box.Checked,"receipt experiment begins unchecked in explicit managed mode");
-                box.Checked=true;feedbackSettings.Result.Validate();Check(feedbackSettings.Result.QualityFeedback,"receipt checkbox updates the actual profile opt-in");
-                Field<ComboBox>(feedbackSettings,"traversal").SelectedIndex=0;
-                Check(!box.Enabled&&!box.Checked&&!feedbackSettings.Result.QualityFeedback,"returning to compatibility clears hidden receipt overhead permission");
-                Check(feedbackSettings.Result.CapabilityIntents[nameof(DeviceProfile.QualityFeedback)]==true,"temporary compatibility unavailability preserves enabled user intent");
-                Field<ComboBox>(feedbackSettings,"traversal").SelectedIndex=1;
-                Check(box.Enabled&&box.Checked&&feedbackSettings.Result.QualityFeedback,"supported mode restores previously chosen intent");
-                box.Checked=false;
-                Check(feedbackSettings.Result.CapabilityIntents[nameof(DeviceProfile.QualityFeedback)]==false,"explicit user disable is distinct from legacy unspecified default");
-            }
-            using(var oldFeedback=new SettingsWindow(feedbackProfile,supportsQualityFeedback:false))Check(!Field<CheckBox>(oldFeedback,"qualityFeedback").Enabled,"old backend cannot be opted into receipt traffic from a new frontend");
             Check((await worker.Handle(new("status"))).QualityFeedbackVersion==1,"backend declares its independent receipt IPC capability");
-            using(var standbySettings=new SettingsWindow(feedbackProfile)){
-                var box=Field<CheckBox>(standbySettings,"standbyPaths");Check(box.Enabled&&!box.Checked,"standby starts off behind explicit managed-mode permission");
-                box.Checked=true;standbySettings.Result.Validate();Check(standbySettings.Result.StandbyPaths,"standby checkbox updates actual backend profile opt-in");
-                Field<ComboBox>(standbySettings,"traversal").SelectedIndex=0;
-                Check(!box.Enabled&&!box.Checked&&!standbySettings.Result.StandbyPaths,"compatibility mode clears hidden standby resource permission");
-            }
-            using(var oldStandby=new SettingsWindow(feedbackProfile,supportsStandbyPaths:false))Check(!Field<CheckBox>(oldStandby,"standbyPaths").Enabled,"old service cannot be asked to retain unsupported standby resources");
-            Check((await worker.Handle(new("status"))).StandbyPathsVersion==1,"backend independently advertises standby IPC version");
-            var diagnosticProfile=JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(feedbackProfile))!;
-            diagnosticProfile.TraversalMode="tcp";diagnosticProfile.StandbyPaths=true;diagnosticProfile.ManagedEgressMbps=70;
-            using(var diagnostics=new SettingsWindow(diagnosticProfile)){
-                var box=Field<CheckBox>(diagnostics,"pathDiagnostics");Check(box.Enabled&&!box.Checked,"explicit paced standby can opt into idle-only diagnostic, initially off");
-                box.Checked=true;diagnostics.Result.Validate();Check(diagnostics.Result.PathDiagnostics,"diagnostic opt-in updates actual profile with a bounded goal");
-                Field<CheckBox>(diagnostics,"standbyPaths").Checked=false;Check(!box.Enabled&&!box.Checked&&!diagnostics.Result.PathDiagnostics,"removing standby permission clears hidden high-rate diagnostic permission");
-            }
-            using(var oldDiagnostics=new SettingsWindow(diagnosticProfile,supportsDiagnostics:false))Check(!Field<CheckBox>(oldDiagnostics,"pathDiagnostics").Enabled,"old backend cannot enable unsupported diagnostic from new UI");
-            Check((await worker.Handle(new("status"))).PathDiagnosticsVersion==1,"backend declares independent diagnostic IPC version");
-            using(var qualitySettings=new SettingsWindow(diagnosticProfile)){
-                var choice=Field<ComboBox>(qualitySettings,"selection");choice.SelectedIndex=2;
-                Check(choice.SelectedIndex==0,"AutoQuality cannot be enabled from UI without explicit diagnostic consent");
-                Field<CheckBox>(qualitySettings,"pathDiagnostics").Checked=true;choice.SelectedIndex=2;
-                qualitySettings.Result.Validate();Check(qualitySettings.Result.PathSelection=="auto-quality","UI stores explicit automatic quality policy after all prerequisites");
-                Field<CheckBox>(qualitySettings,"standbyPaths").Checked=false;
-                Check(choice.SelectedIndex==0&&qualitySettings.Result.PathSelection=="prefer-faketcp","removing standby permission restores conservative selection and clears probes");
-            }
-            using(var oldQuality=new SettingsWindow(diagnosticProfile,supportsAutoQuality:false))Check(Field<ComboBox>(oldQuality,"selection").Items.Count==2,"old backend cannot opt into the new quality selection contract");
-            Check((await worker.Handle(new("status"))).AutoQualityVersion==1,"backend independently declares automatic quality selection IPC capability");
+            Check((await worker.Handle(new("status"))).AutoQualityVersion==1,"backend declares automatic quality selection IPC capability");
             Guid diagnosticId=Guid.NewGuid();
             var fullWindows=Enumerable.Range(0,12).Select(i=>new PathDiagnosticWindow(diagnosticId,i,i<6?1:2,Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid(),50,
                 new(25000,0,5000,25000,35000000,0,4,10,"Completed"),new(diagnosticId,i,25000,25000,32000000,0,0,0,0,0,1,0,1000,"ReportedAtCutoff"),100000)).ToArray();
@@ -178,7 +79,7 @@ static class Program
                 Check(decoded.Status!.Peers!.Length==7&&decoded.Status.Peers.All(p=>p.Diagnostics is{Windows.Length:0,State:"Done"}),
                     "actual bounded pipe serialization carries seven diagnostic summaries without enlarging the protocol");
             }
-            Check(fullStatus.Peers!.All(p=>p.Diagnostics!.Windows.Length==12),"desktop snapshot cannot discard runner evidence needed for current selection");
+            Check(fullStatus.Peers!.All(p=>p.Diagnostics!.Windows.Length==12),"UI snapshot cannot discard runner evidence needed for current selection");
             string backup = Directory.GetFiles(ProfileStore.Root, "profile-before-native-*.dpapi").Single();
             var restored = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(backup), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine))!;
             Check(restored.Pair == saved && restored.Mesh == null, "Legacy migration backup cannot restore the original pairing");
@@ -207,7 +108,7 @@ static class Program
         string source = Path.Combine(root, "bundle"), parent = Path.Combine(root, "install"), destination = Path.Combine(parent, "candidate");
         Directory.CreateDirectory(source); File.WriteAllText(Path.Combine(source, "payload.bin"), "synthetic install payload");
         string manifest = Path.Combine(source, "manifest.json");
-        string release=(typeof(MainWindow).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute),false).Cast<System.Reflection.AssemblyInformationalVersionAttribute>().Single().InformationalVersion).Split('+')[0];
+        string release=(typeof(ServiceInstaller).Assembly.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute),false).Cast<System.Reflection.AssemblyInformationalVersionAttribute>().Single().InformationalVersion).Split('+')[0];
         void Manifest(string path, string hash) => File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = release, files = new[] { new { path, sha256 = hash } } }));
         string hash = Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(source, "payload.bin")))); Manifest("payload.bin", hash);
         var copy = typeof(ServiceInstaller).GetMethod("CopyBundle", BindingFlags.NonPublic | BindingFlags.Static)!;
@@ -225,7 +126,7 @@ static class Program
             try { Copy(source, destination, manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
             Check(invalid, "Non-canonical/absolute/alias bundle path accepted: " + path);
         }
-        File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = typeof(MainWindow).Assembly.GetName().Version!.ToString(3) + "-preview", files = new[] { new { path = "payload.bin", sha256 = hash }, new { path = "PAYLOAD.bin", sha256 = hash } } }));
+        File.WriteAllText(manifest, JsonSerializer.Serialize(new { version = typeof(ServiceInstaller).Assembly.GetName().Version!.ToString(3) + "-preview", files = new[] { new { path = "payload.bin", sha256 = hash }, new { path = "PAYLOAD.bin", sha256 = hash } } }));
         invalid = false; try { Copy(source, destination, manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
         Check(invalid, "Case-insensitive duplicate bundle path accepted");
         Manifest("payload.bin", hash); invalid = false;
@@ -233,10 +134,11 @@ static class Program
         Check(invalid && !Directory.Exists(Path.Combine(root, "outside")), "Unmanaged install destination was mutated");
         invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"self-listed hash-only package cannot pass runtime/provenance preflight");
         string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
-        if(PersonalFeature.Enabled)required=[..required,"web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
+        required=[..required,"web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
         var pe=new byte[80];pe[0]=(byte)'M';pe[1]=(byte)'Z';pe[60]=64;pe[64]=(byte)'P';pe[65]=(byte)'E';pe[68]=0x64;pe[69]=0x86;
         foreach(string file in required){string path=Path.Combine(source,file);Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllBytes(path,pe);}
         void RuntimeManifest(IEnumerable<string> list,string publisher="UnsignedCandidate")=>File.WriteAllText(manifest,JsonSerializer.Serialize(new{schemaVersion=2,version=release,architecture="win-x64",tunAbi=2,meshProtocol=4,personalContract=PersonalFeature.Contract,provenance=new{publisherSignature=publisher},files=list.Select(path=>new{path,sha256=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(Path.Combine(source,path))))})}));
+        RuntimeManifest(required.Where(p=>p!="web/StreamLink.Web.exe"));invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"Web-only product cannot pass preflight with its Web host missing");
         RuntimeManifest(required);Check(ServiceInstaller.VerifyBundle(source)==required.Length,"complete synthetic runtime-header contract passes integrity preflight, without claiming executable/driver validation");
         RuntimeManifest(required.Where(p=>p!="components/wintun.dll"));invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"regenerating valid hashes cannot omit mandatory Wintun component");
         RuntimeManifest(required,"VerifiedPublisher");invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"self-declared publisher signature is not trusted");RuntimeManifest(required);
@@ -251,32 +153,12 @@ static class Program
         // Keep test artifacts in an isolated temporary directory; never touch SCM, drivers, routes or the live profile.
         Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT", null);
     }
-    static async Task Feedback()
-    {
-        using var window = new MainWindow(); // Never Show: no status poll or backend is started.
-        var method = typeof(MainWindow).GetMethod("Run", BindingFlags.NonPublic | BindingFlags.Instance)!;
-        Task Run(string message, Func<Task<string>> action) => (Task)method.Invoke(window, [message, action])!;
-        var pending = new TaskCompletionSource<string>();
-        Task first = Run("正在测试忙碌反馈…", () => pending.Task);
-        Check(Field<bool>(window, "busy"), "Busy not immediate");
-        Check(Field<Label>(window, "notice").Text == "正在测试忙碌反馈…", "Pending feedback missing");
-        Check(Field<List<Control>>(window, "actions").All(c => !c.Enabled), "Conflicting buttons still active");
-        bool repeated = false;
-        await Run("duplicate", () => { repeated = true; return Task.FromResult(""); });
-        Check(!repeated, "Repeated action was executed");
-        pending.SetResult("操作完成"); await first;
-        Check(!Field<bool>(window, "busy") && Field<Label>(window, "notice").Text == "操作完成", "Success feedback not restored");
-        Check(Field<List<Control>>(window, "actions").All(c => c.Enabled), "Buttons not restored after success");
-        await Run("正在模拟失败…", () => throw new IOException("可重试的测试错误"));
-        Check(!Field<bool>(window, "busy") && Field<Label>(window, "notice").Text == "可重试的测试错误", "Failure feedback missing");
-        Check(Field<List<Control>>(window, "actions").All(c => c.Enabled), "Buttons not restored after failure");
-    }
     [STAThread] static void Main()
     {
         ApplicationConfiguration.Initialize();
         using var host = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new(-30000, -30000) };
         host.Shown += async (_, _) => {
-            try { await Lifecycle(); await InstallationTransaction(); await Feedback(); Console.WriteLine($"PASS {count}: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and UI busy/success/failure feedback. No live service/network changed."); }
+            try { await Lifecycle(); await InstallationTransaction(); Console.WriteLine($"PASS {count}: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and installation recovery. No live service/network changed."); }
             catch (Exception e) { Console.Error.WriteLine(e); Environment.ExitCode = 1; }
             finally { host.Close(); }
         };

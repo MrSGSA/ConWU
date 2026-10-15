@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.0-aq1-personal.4',[ValidateSet('Full','InstallerRefresh')][string]$Profile='Full')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.0-aq1-personal.5',[ValidateSet('Full','InstallerRefresh')][string]$Profile='Full')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
@@ -35,6 +35,7 @@ try {
  Managed 'NativeInputTests' @((Join-Path $OutputDirectory 'parser-corpus.txt'))
  foreach($name in @('Tests','PairingTests','WindowsTests','ConnectionTests','MappingTests','MeshTests','TraversalTests','MeshConnectionTests','MeshWatchTests','ControlTests','AdapterContractTests','Rc2PortableTests','QualityTests')){Managed $name}
  Managed 'PersonalFeatureTests' @((Join-Path $OutputDirectory 'personal.json'))
+ Managed 'RenderingTests' @((Join-Path $OutputDirectory 'tray/result.json'))
  Managed 'WebTests'
  Managed 'ManagedPathTests' @('--output',(Join-Path $OutputDirectory 'managed.json'))
  Managed 'NominationTests' @('--output',(Join-Path $OutputDirectory 'nomination.json'))

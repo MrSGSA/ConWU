@@ -16,8 +16,11 @@ static class NetworkScopeTests
         }
         var external = new IPEndPoint(IPAddress.Parse("1.1.1.1"), 3478);
         string physical = EgressRouteSnapshot.Capture(external);
-        check(!physical.StartsWith("Unavailable") && physical.Contains(Stun.LocalAddress(external).ToString()),
-            "actual external IPv4 best route agrees with the bound source selection without sending a probe");
+        string boundSource=Stun.LocalAddress(external).ToString();
+        string afterSource=EgressRouteSnapshot.Capture(external);
+        Console.WriteLine($"ROUTE external-before={physical}; socket-source={boundSource}; external-after={afterSource}");
+        check(!physical.StartsWith("Unavailable") && physical.Contains("/"+boundSource+"/") && physical==afterSource,
+            "actual external IPv4 best route agrees with the bound source selection without sending a probe; before="+physical+"; socket="+boundSource+"; after="+afterSource);
         check(EgressRouteSnapshot.Capture(external) == physical,"repeated read-only external route snapshot stays stable without configuration changes");
         for (int round = 0; round < rounds; round++) {
             await Boundary(binary, root, TraversalProfile.FakeTcpHttpSo, check, token);

@@ -36,7 +36,7 @@ public static partial class ServiceInstaller
         VerifyBundle(source);
         string parent = WindowsInstance.IsValidation ? WindowsInstance.InstallParent : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), PersonalFeature.InstanceName);
         string bundleId = Convert.ToHexString(SHA256.HashData(ReadManifest(manifest)))[..10].ToLowerInvariant();
-        string destination = Path.Combine(parent, DesktopVersion.Number + "-" + bundleId);
+        string destination = Path.Combine(parent, ApplicationVersion.Number + "-" + bundleId);
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
         bool existed = Installed;
         string? previous = null;
@@ -87,7 +87,7 @@ public static partial class ServiceInstaller
         while(true){
             ready.Token.ThrowIfCancellationRequested();
             try {var status=await ServiceProtocol.Call(new("status"),ready.Token);
-                if(status.Ok&&(!candidate||status.ServiceReady&&status.ControlOperationsVersion==1&&status.Version==DesktopVersion.Number))return;
+                if(status.Ok&&(!candidate||status.ServiceReady&&status.ControlOperationsVersion==1&&status.Version==ApplicationVersion.Number))return;
             }catch(Exception ex)when(!ready.IsCancellationRequested&&ex is IOException or System.TimeoutException){ }
             await Task.Delay(250,ready.Token);
         }
@@ -138,10 +138,10 @@ public static partial class ServiceInstaller
         string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
         var paths=files.Select(f=>f.Path.Replace('\\','/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if(required.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少必需运行文件");
+        string[] webRequired=["web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
+        if(webRequired.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少 WebUI 运行文件");
         if(PersonalFeature.Enabled) {
             if(!manifest.TryGetProperty("personalContract",out var contract)||contract.GetString()!=PersonalFeature.Contract)throw new IOException("个人包契约不匹配");
-            string[] personalRequired=["web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
-            if(personalRequired.Any(p=>!paths.Contains(p)))throw new IOException("AQ-1 个人包缺少 WebUI 运行文件");
             if(paths.Any(p=>p.Contains("self-tun",StringComparison.OrdinalIgnoreCase)||p.EndsWith("StreamLink.ResearchAdapters.dll",StringComparison.OrdinalIgnoreCase)||p.Contains("easytier",StringComparison.OrdinalIgnoreCase)))throw new IOException("AQ-1 产品包不能包含自研驱动或旧组网组件");
         }
         foreach(string path in new[]{"StreamLink.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
@@ -167,7 +167,7 @@ public static partial class ServiceInstaller
         ReadOnlyMemory<byte> json = manifest;
         if (manifest.AsSpan().StartsWith(new byte[] { 0xef, 0xbb, 0xbf })) json = json[3..];
         using var document = JsonDocument.Parse(json);
-        if (document.RootElement.GetProperty("version").GetString() != DesktopVersion.Release) throw new IOException("发布清单版本不符");
+        if (document.RootElement.GetProperty("version").GetString() != ApplicationVersion.Release) throw new IOException("发布清单版本不符");
         var entries = document.RootElement.GetProperty("files");
         if (entries.GetArrayLength() is < 1 or > 4096) throw new IOException("发布文件数量无效");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase); var files = new List<BundleFile>();

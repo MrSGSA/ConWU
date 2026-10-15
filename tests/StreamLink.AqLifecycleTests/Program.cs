@@ -13,10 +13,11 @@ string components=Path.GetFullPath(args[0]),output=Path.GetFullPath(args[1]);
 if(File.Exists(output))throw new IOException("Fresh evidence required");
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 var rows=new List<object>();string failure="";bool allPerformance=true,allPnp=true;int completed=0;
+int attemptedRound=0;List<object> lastStages=[];
 var mesh=MeshIdentity.Create("https://example.com/","","faketcp");
 try {
  for(int round=1;round<=5;round++) {
-  var stages=new List<object>();object gate=new();var elapsed=Stopwatch.StartNew();
+  attemptedRound=round;var stages=new List<object>();lastStages=stages;object gate=new();var elapsed=Stopwatch.StartNew();
   void Trace(string phase){lock(gate)stages.Add(new{phase,ms=elapsed.Elapsed.TotalMilliseconds});}
   var adapter=new NativeAdapter(components,mesh.Pair.Network,1,Trace);
   ulong luid=adapter.InterfaceLuid??throw new IOException("Missing owned LUID");
@@ -48,7 +49,7 @@ try {
  }
 }catch(Exception e){failure=e.ToString();}
 bool pass=failure.Length==0&&completed==5&&allPerformance&&allPnp;
-File.WriteAllText(output,JsonSerializer.Serialize(new{status=pass?"Pass":"Fail",contract="AQ-1-observed-device-PnP",completedRounds=completed,requestedRounds=5,sameProcess=true,sameAdapterIdentity=true,performanceGate=allPerformance&&completed==5?"Pass":"FailOrPartial",resourceSafety=completed==5?"Pass":"Partial",pnpConvergence=allPnp&&completed==5?"Pass":"FailOrPartial",reopen=completed==5?"Pass":"NotProven",rows,failure,
+File.WriteAllText(output,JsonSerializer.Serialize(new{status=pass?"Pass":"Fail",contract="AQ-1-observed-device-PnP",completedRounds=completed,requestedRounds=5,sameProcess=true,sameAdapterIdentity=true,performanceGate=allPerformance&&completed==5?"Pass":"FailOrPartial",resourceSafety=completed==5?"Pass":"Partial",pnpConvergence=allPnp&&completed==5?"Pass":"FailOrPartial",reopen=completed==5?"Pass":"NotProven",rows,failure,failedRound=failure.Length>0?new{round=attemptedRound,stages=lastStages}:null,
  scope="Actual official adapter with production managed owner and frozen native bundle; SetupAPI DIGCF_PRESENT + exact NetCfgInstanceId measures PnP, IPHelper cached row recorded separately. Original 3s close and 5s PnP thresholds unchanged; prior IPHelper-only Fail retained; not WAN or installed service full network. No forced termination counted as safety."},new JsonSerializerOptions{WriteIndented=true}));
 Environment.ExitCode=pass?0:1;
 

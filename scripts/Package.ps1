@@ -1,5 +1,6 @@
 param([string]$EasyTierDirectory='C:\Program Files\easytier-manager-pro\resource',[switch]$SkipBuild,[string]$NativeBinary='out/native/udp2raw-native.exe',[string]$ReleaseVersion='0.5.6',[switch]$IncludeLegacy)
 $ErrorActionPreference='Stop'
+throw 'This historical desktop packaging pipeline is retired. Use scripts/Package-AqPersonal.ps1 for the WebUI product.'
 $root=Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
@@ -232,9 +233,9 @@ try {
     Copy-Item .\docs\StreamLink-Codex-Execution-Plan-20261011.md $stage\开发验收规格.md
     Copy-Item -LiteralPath $receipt -Destination $stage\构建来源.json
     if(Test-Path $verification) {Copy-Item $verification $stage\验证摘要.json}
-    $preview=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--preview',(Join-Path $root 'artifacts\desktop-preview.png')) -WindowStyle Hidden -PassThru -Wait
-    if($preview.ExitCode -ne 0) {throw 'Desktop preview failed'}
-    Copy-Item .\artifacts\desktop-preview.png $stage\界面预览.png
+    $preview=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--tray-preview',(Join-Path $root 'artifacts\tray-preview.png')) -WindowStyle Hidden -PassThru -Wait
+    if($preview.ExitCode -ne 0) {throw 'Tray preview failed'}
+    Copy-Item .\artifacts\tray-preview.png $stage\界面预览.png
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
         [ordered]@{path=[IO.Path]::GetRelativePath($stage,$_.FullName);length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash}
     })

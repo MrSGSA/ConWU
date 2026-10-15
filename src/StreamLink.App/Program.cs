@@ -40,41 +40,36 @@ static class Program
             catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
         }
         if (args.Length == 2 && args[0] == "--verify-bundle") {
-            try { int files = ServiceInstaller.VerifyBundle(AppContext.BaseDirectory); File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Pass", files, version = DesktopVersion.Release })); }
+            try { int files = ServiceInstaller.VerifyBundle(AppContext.BaseDirectory); File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Pass", files, version = ApplicationVersion.Release })); }
             catch (Exception ex) { Environment.ExitCode = 1; File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Fail", error = ex.Message })); }
             return;
         }
-        if(args is ["--install"] or ["--install-ui"] or ["--uninstall"] || args is ["--install","--ui-user-account",_]) {
+        if(args is ["--install"] or ["--uninstall"] || args is ["--install","--ui-user-account",_]) {
             try {
                 if(args[0]=="--uninstall"){
                     if(MsiInstallation.ProductCode!=null)MsiInstallation.Maintain(true).GetAwaiter().GetResult();
                     else ServiceInstaller.Uninstall().GetAwaiter().GetResult();
                 }
                 else {
-                    string? account=args[0]=="--install-ui"?UiUserSelection.ConfirmForInstall(null):args.Length==3?args[2]:null;
+                    string? account=args.Length==3?args[2]:null;
                     ServiceInstaller.Install(account).GetAwaiter().GetResult();
                 }
             }catch(Exception ex){File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"install-error.log"),ex.ToString());Environment.ExitCode=1;}
             return;
         }
-        if(args.Length>=2 && args[0]=="--preview") {
-            using Form preview=args.Length>2 && args[2]=="connection" ? new SettingsWindow(new()) : new MainWindow(true); preview.StartPosition=FormStartPosition.Manual; preview.Location=new Point(-30000,-30000); preview.ShowInTaskbar=false; preview.Show(); Application.DoEvents(); preview.PerformLayout();
-            if(args.Length>2 && preview is MainWindow mainPreview) { mainPreview.PreviewPage(args[2]); Application.DoEvents(); preview.PerformLayout(); }
-            using var bitmap=new Bitmap(preview.Width,preview.Height);
-            preview.DrawToBitmap(bitmap,new Rectangle(0,0,bitmap.Width,bitmap.Height));
-            bitmap.Save(Path.GetFullPath(args[1]),System.Drawing.Imaging.ImageFormat.Png);
-            IEnumerable<object> Layout(Control c) { yield return new {Type=c.GetType().Name,Text=c.Text,Width=c.Width,Height=c.Height,X=c.Left,Y=c.Top,Dpi=c.DeviceDpi,Font=c.Font.Size,Auto=c.AutoSize}; foreach(Control child in c.Controls) foreach(var item in Layout(child)) yield return item; }
-            File.WriteAllText(Path.GetFullPath(args[1])+".json",System.Text.Json.JsonSerializer.Serialize(new {preview.Width,preview.Height,preview.DeviceDpi,Layout=Layout(preview).ToArray()})); return;
+        if(args is ["--tray-preview",var previewPath]) {
+            using var menu=new TrayMenu(()=>{},()=>{});
+            menu.Show(new Point(-20000,-20000));Application.DoEvents();
+            using var bitmap=new Bitmap(menu.Width,menu.Height);menu.DrawToBitmap(bitmap,new Rectangle(Point.Empty,bitmap.Size));
+            bitmap.Save(Path.GetFullPath(previewPath),System.Drawing.Imaging.ImageFormat.Png);menu.Close();return;
         }
-        if(StreamLink.Core.PersonalFeature.Enabled && args.Length==0) {
-            using var panelSingle=new Mutex(true,"Local\\"+StreamLink.Core.WindowsInstance.Name+"-WebTray",out bool panelFirst);
-            if(!panelFirst){MessageBox.Show("StreamLink 已在托盘运行，请双击托盘图标打开面板。");return;}
-            if(StreamLink.Core.WindowsHost.IsAdmin){MessageBox.Show("浏览器面板请从普通权限启动 StreamLink.exe。管理员桌面入口可使用 --desktop；安装后台时程序会单独请求提升。","StreamLink");return;}
-            Application.Run(new WebTrayContext());return;
+        // Preserve old shortcuts as aliases, with WebUI as the only business UI.
+        if(args.Length!=0 && args is not ["--desktop"]) {
+            Environment.ExitCode=2;MessageBox.Show("无法识别启动参数。请从桌面快捷方式或 StreamLink.exe 打开 WebUI。","StreamLink");return;
         }
-        using var single = new Mutex(true, "Local\\"+StreamLink.Core.WindowsInstance.Name+(StreamLink.Core.WindowsHost.IsAdmin?"-Desktop":"-UserDesktop"), out bool first);
-        if(!first) { MessageBox.Show("StreamLink 已在运行。"); return; }
-        Application.Run(StreamLink.Core.WindowsHost.IsAdmin?new MainWindow():new UserWindow());
-    }    
+        if(StreamLink.Core.WindowsHost.IsAdmin){MessageBox.Show("请使用日常账号、普通权限打开 StreamLink。安装与修复请运行 MSI 安装包。","StreamLink");return;}
+        using var panelSingle=new Mutex(true,"Local\\"+StreamLink.Core.WindowsInstance.Name+"-WebTray",out bool panelFirst);
+        if(!panelFirst){AppExitWindow.OpenExisting();return;}
+        Application.Run(new WebTrayContext());
+    }
 }
-

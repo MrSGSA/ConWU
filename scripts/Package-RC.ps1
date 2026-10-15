@@ -1,5 +1,6 @@
 param([string]$Version='1.0.0-rc1')
 $ErrorActionPreference='Stop'
+throw 'This historical desktop packaging pipeline is retired. Use scripts/Package-AqPersonal.ps1 for the WebUI product.'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
 try{
@@ -61,7 +62,8 @@ StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中
     @'
 $ErrorActionPreference='Stop'
 $exe=Join-Path $PSScriptRoot 'StreamLink.exe'
-$process=Start-Process -FilePath $exe -ArgumentList '--install-ui' -Verb RunAs -PassThru -Wait
+$account=[Security.Principal.WindowsIdentity]::GetCurrent().Name
+$process=Start-Process -FilePath $exe -ArgumentList @('--install','--ui-user-account',('"'+$account+'"')) -Verb RunAs -PassThru -Wait
 if($process.ExitCode){throw 'Installation failed; inspect local installer error and rollback outcome'}
 '@|Set-Content "$($stage.FullName)/Install-Service.ps1" -Encoding utf8
     & ./scripts/Write-RcSbom.ps1 -Directory $stage.FullName -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json') -Native

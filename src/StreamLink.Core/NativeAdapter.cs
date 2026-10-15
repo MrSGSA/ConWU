@@ -73,7 +73,9 @@ public sealed class NativeAdapter : IPacketAdapter
                 error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter,callback);
                 GC.KeepAlive(callback);
             }else error=Load<Open>("sltun_open")(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter);
-            if (error != 0) throw new Win32Exception((int)error,"原生虚拟网卡创建失败；阶段="+openStage);
+            if (error != 0) throw new Win32Exception((int)error,error==4319&&openStage=="adapter-create-begin"
+                ? "Windows 未完成 Wintun 网卡准备（4319），请稍后重新连接；持续出现时请重启 Windows。阶段="+openStage
+                : "原生虚拟网卡创建失败；阶段="+openStage);
             if(NativeLibrary.TryGetExport(library,"sltun_luid",out var identityExport)) {
                 error=Marshal.GetDelegateForFunctionPointer<ReadLuid>(identityExport)(adapter,out var identity);
                 if(error!=0||identity==0)throw new IOException("网卡实际 LUID 身份无效");InterfaceLuid=identity;

@@ -79,12 +79,12 @@ public static class UiControlProtocol
         try {
             await pipe.ConnectAsync(3000,deadline.Token);ControlServerIdentity.Verify(pipe);
             await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);
-        } catch(UnauthorizedAccessException ex){throw new UiBackendException("AccessDenied","当前 Windows 账号未获个人后台访问权限，请从托盘修复安装并核对日常使用账号。",ex);}
+        } catch(UnauthorizedAccessException ex){throw new UiBackendException("AccessDenied","当前 Windows 账号未获个人后台访问权限，请运行 MSI 修复安装并核对日常使用账号。",ex);}
         catch(Exception ex)when(ex is IOException or TimeoutException && ex is not UiBackendException){
             string state=OperatingSystem.IsWindows()?ControlServerIdentity.Availability():"Unavailable";
             throw state switch {
-                "NotInstalled"=>new UiBackendException(state,"尚未安装个人后台，请从托盘选择安装。",ex),
-                "Stopped"=>new UiBackendException(state,"个人后台已停止，请从托盘启动个人服务。",ex),
+                "NotInstalled"=>new UiBackendException(state,"尚未安装个人后台，请运行 MSI 安装包。",ex),
+                "Stopped"=>new UiBackendException(state,"个人后台已停止，请在 Windows 服务中启动 StreamLink 个人后台，或运行 MSI 修复安装。",ex),
                 "AccessDenied"=>new UiBackendException(state,"当前 Windows 账号无法查询个人后台，请修复安装并核对授权。",ex),
                 _=>new UiBackendException("ServiceError","个人服务正在运行，但本地控制连接未完成。请修复安装或查看诊断日志。",ex)
             };

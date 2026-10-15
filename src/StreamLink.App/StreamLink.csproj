@@ -15,6 +15,6 @@
     <ApplicationIcon>Assets\streamlink.ico</ApplicationIcon>
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
-  <ItemGroup><EmbeddedResource Include="Assets\pearl-background.png" /><EmbeddedResource Include="Assets\streamlink.ico" LogicalName="StreamLink.AppIcon.ico" /></ItemGroup>
+  <ItemGroup><EmbeddedResource Include="Assets\streamlink.ico" LogicalName="StreamLink.AppIcon.ico" /></ItemGroup>
 
 </Project>
