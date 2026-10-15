@@ -43,13 +43,18 @@ API DWORD sltun_stats(Adapter *a, unsigned long long *counts) {if(!a||!counts)re
 // Additive ABI-2 read-only identity export. No ownership or close behavior changes.
 API DWORD sltun_luid(Adapter *a, unsigned long long *value) {if(!a||!value)return ERROR_INVALID_PARAMETER;*value=a->luid.Value;return ERROR_SUCCESS;}
 
-API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result) {
+static DWORD open_adapter(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result, CloseTrace trace) {
+    if (!result) return ERROR_INVALID_PARAMETER;
     *result = nullptr;
+    if (!dll || !name || !guid || !ip) return ERROR_INVALID_PARAMETER;
     Adapter *a = new Adapter();
+    a->trace = trace;
     auto fail = [a](DWORD error) { delete a; return error ? error : ERROR_GEN_FAILURE; };
     if(!a->stop)return fail(GetLastError());
+    a->note(101);
     a->library = LoadLibraryExW(dll, nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (!a->library) return fail(GetLastError());
+    a->note(102);
 #define LOAD(field, type, symbol) a->field = reinterpret_cast<type *>(GetProcAddress(a->library, symbol)); if (!a->field) return fail(ERROR_PROC_NOT_FOUND)
     LOAD(close, WINTUN_CLOSE_ADAPTER_FUNC, "WintunCloseAdapter");
     LOAD(end, WINTUN_END_SESSION_FUNC, "WintunEndSession");
@@ -64,23 +69,31 @@ API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, 
     auto event = reinterpret_cast<WINTUN_GET_READ_WAIT_EVENT_FUNC *>(GetProcAddress(a->library, "WintunGetReadWaitEvent"));
     if (!create || !luid || !start || !event) return fail(ERROR_PROC_NOT_FOUND);
     // Never open or take ownership of an existing adapter, even with our name.
-    a->adapter = create(name, L"StreamLink", guid); if (!a->adapter) return fail(GetLastError());
+    a->note(103); a->adapter = create(name, L"StreamLink", guid); if (!a->adapter) return fail(GetLastError()); a->note(104);
     NET_LUID id{}; luid(a->adapter, &id);a->luid=id;
     MIB_IPINTERFACE_ROW interfaceRow{}; InitializeIpInterfaceEntry(&interfaceRow);
     interfaceRow.Family = AF_INET; interfaceRow.InterfaceLuid = id;
-    DWORD error = GetIpInterfaceEntry(&interfaceRow); if (error) return fail(error);
+    a->note(105); DWORD error = GetIpInterfaceEntry(&interfaceRow); if (error) return fail(error); a->note(106);
     interfaceRow.NlMtu = 1280; interfaceRow.SitePrefixLength = 0;
     interfaceRow.ForwardingEnabled = FALSE; interfaceRow.WeakHostSend = FALSE; interfaceRow.WeakHostReceive = FALSE;
     interfaceRow.RouterDiscoveryBehavior = RouterDiscoveryDisabled; interfaceRow.DadTransmits = 0;
-    error = SetIpInterfaceEntry(&interfaceRow); if (error) return fail(error);
+    a->note(107); error = SetIpInterfaceEntry(&interfaceRow); if (error) return fail(error); a->note(108);
     MIB_UNICASTIPADDRESS_ROW address{}; InitializeUnicastIpAddressEntry(&address);
     address.InterfaceLuid = id; address.Address.Ipv4.sin_family = AF_INET;
     std::memcpy(&address.Address.Ipv4.sin_addr, ip, 4);
     address.OnLinkPrefixLength = 24; address.DadState = IpDadStatePreferred;
-    error = CreateUnicastIpAddressEntry(&address); if (error) return fail(error);
-    a->session = start(a->adapter, 0x400000); if (!a->session) return fail(GetLastError());
-    a->event = event(a->session); if (!a->event) return fail(GetLastError());
+    a->note(109); error = CreateUnicastIpAddressEntry(&address); if (error) return fail(error); a->note(110);
+    a->note(111); a->session = start(a->adapter, 0x400000); if (!a->session) return fail(GetLastError()); a->note(112);
+    a->note(113); a->event = event(a->session); if (!a->event) return fail(GetLastError()); a->note(114);
+    a->note(115); a->trace = nullptr; // The synchronous open never retains a managed callback.
     *result = a; return ERROR_SUCCESS;
+}
+API DWORD sltun_open(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result) {
+    return open_adapter(dll, name, guid, ip, result, nullptr);
+}
+// Additive ABI-2 diagnostic export. No retry, wait or ownership change.
+API DWORD sltun_open_with_trace(const wchar_t *dll, const wchar_t *name, const GUID *guid, const BYTE *ip, Adapter **result, CloseTrace trace) {
+    return open_adapter(dll, name, guid, ip, result, trace);
 }
 
 API DWORD sltun_read(Adapter *a, BYTE *buffer, DWORD capacity, DWORD *length) {
