@@ -70,11 +70,11 @@ static class TraversalNetwork
             Console.WriteLine(s); lock (timeline) timeline.Add(new { elapsedMs = timer.ElapsedMilliseconds, message = s }); }, s => {
             latest = s; if (s.Connected && connected == 0) { connected = timer.ElapsedMilliseconds; Console.WriteLine("Independent Wintun connected at " + connected + " ms"); }
         }, _ => { }, _ => { }, services);
-        Task running = Task.CompletedTask;
+        Task running = Task.CompletedTask; bool runnerStarted = false;
         try {
             await MeshCoordinatorPreflight.Check(mesh.Pair,token);controlReady=true;
             if(!File.Exists(Path.Combine(components,"udp2raw-native.exe")))throw new IOException("Native component missing");
-            running=runner.Run(token);
+            runnerStarted=true; running=runner.Run(token);
             while (latest?.Connected != true) { if (running.IsCompleted) await running; await Task.Delay(100, token); }
             using (var socket = new UdpClient(new IPEndPoint(IPAddress.Parse(mesh.LocalIp), 0))) {
                 socket.Client.DontFragment = true; socket.Connect(IPAddress.Parse(MeshIdentity.Address(mesh.Pair.Network, peer.Slot)), EchoPort);
@@ -103,7 +103,8 @@ static class TraversalNetwork
             // A completed test is not a quality pass. Keep the configured load
             // and measured result separate, especially when nested over an old tunnel.
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
-            if(!runner.CleanupComplete&&cleanupFailure.Length==0)cleanupFailure="MeshRunner resource cleanup was not proven; inspect runnerExit";
+            bool cleanupComplete=TraversalVerdict.CleanupSatisfied(runnerStarted,runner.CleanupComplete);
+            if(!cleanupComplete&&cleanupFailure.Length==0)cleanupFailure="MeshRunner resource cleanup was not proven; inspect runnerExit";
             var preparedEvidence=selectedFactory?.Checks.Select(p=>p.CheckEvidence).ToArray()??[];
             bool checkExecuted=preparedEvidence.Any(p=>p.Executed) || connected>0;
             bool infrastructureReady=controlReady&&adapterCreated&&(selectedFactory?.PreparedCount>0||c.Kind=="legacy"&&connected>0);
@@ -118,7 +119,7 @@ static class TraversalNetwork
                 functionalStatus = verdict.FunctionalStatus, loadStatus = quality == null ? "NotTested" : loadPass ? "Pass" : "Fail",
                 learningStatus = sourceExpectation, c.ReflectedPortOffset, c.PeerAnnouncedPortOffset,c.LocalHelper,
                 transportOutcome,scenarioVerdict=verdict.ScenarioVerdict,failureCategory=verdict.FailureCategory,infrastructureReady,checkExecuted,controlReady,controlAuthenticationFailed,budgetFailureObserved,
-                cleanupOutcome=cleanupFailure.Length==0?"Complete":"Fail",cleanupFailure,coordinatorUri=new Uri(mesh.Pair.Service).GetLeftPart(UriPartial.Authority),runnerExit=runner.ExitDiagnostics,
+                cleanupOutcome=!runnerStarted?"NotStarted":cleanupFailure.Length==0?"Complete":"Fail",cleanupFailure,runnerStarted,coordinatorUri=new Uri(mesh.Pair.Service).GetLeftPart(UriPartial.Authority),runnerExit=runner.ExitDiagnostics,
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
                 scope = c.Route == "host" ? IPAddress.IsLoopback(IPAddress.Parse(c.Local))?"Single Windows host, isolated real Wintun/WinDivert runners over loopback. No two-device or physical NAT claim.":"Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; no relay claim depends on actual route evidence",
                 actualWintun = adapterCreated, actualWinDivert = c.Kind != "udp" && connected > 0, oldOverlayUnderlay = c.Route == "host"&&!IPAddress.IsLoopback(IPAddress.Parse(c.Local)), connectedMs = connected, fullMtuEchoes = echoes,
