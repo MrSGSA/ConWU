@@ -37,7 +37,7 @@ static class UdpExplorationTests
         Reject(()=>MeshUdpExploration.Validate(stable,TraversalProfile.FakeTcpHttpSo),"UDP probability permission cannot be interpreted as TCP prediction");
         Reject(()=>MeshUdpExploration.Validate(stable with{Endpoint="[2001:db8::1]:42000"},TraversalProfile.UdpDirect),"IPv6 does not use the IPv4 single-stable-endpoint model");
         check(!JsonSerializer.Serialize(ca with{UdpExploration=0}).Contains("UdpExploration")&&!JsonSerializer.Serialize(stable with{Exploration=null}).Contains("Exploration"),"inactive extensions do not alter legacy signing metadata");
-        var profile=new DeviceProfile{UdpExploration=true};Reject(profile.Validate,"default legacy mode cannot silently accept exploration configuration");
+        var profile=new DeviceProfile{UdpExploration=true,TraversalMode="legacy",AllowUdpFallback=false};Reject(profile.Validate,"explicit legacy mode cannot silently accept exploration configuration");
         profile.TraversalMode="tcp-udp";Reject(profile.Validate,"UDP exploration requires explicit fallback permission");profile.AllowUdpFallback=true;profile.Validate();check(true,"opt-in TCP/UDP fallback mode accepts configuration");
         profile.PathSelection="faketcp-only";Reject(profile.Validate,"FakeTcpOnly cannot activate UDP multi-source exploration");
         check(!new DeviceProfile().UdpExploration,"existing and new profiles keep UDP exploration disabled");

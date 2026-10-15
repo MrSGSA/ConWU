@@ -25,7 +25,7 @@
     "unknownIsNotPass": true,
     "physicalUnderlayRequired": true
   },
-  "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true},
+  "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true, "pnpConvergenceSeconds": 5, "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"},
   "userTrial": {"application": "Moonlight or actual user streaming application", "minutes": 10, "status": "PendingUserTrial"},
   "regression": {
     "affectedTestsAfterChanges": true,

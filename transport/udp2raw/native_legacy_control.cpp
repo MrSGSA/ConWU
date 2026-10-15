@@ -1,6 +1,8 @@
 #include "common.h"
 #include "native_legacy_control.h"
+#include "log.h"
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <mutex>
 #include <thread>
@@ -20,7 +22,7 @@ struct controller {
     std::atomic<unsigned long long> stats[6]{}; // queued, full/closed, parent denied, expired, stale capture, IPC fault
     legacy_inject inject;
     std::string name; unsigned parent; unsigned char authorization[64]{};
-    std::map<std::string,unsigned long long> http_until; // worker-only, bounded; preserves legacy GET -> bare gap
+    std::map<std::string,std::chrono::steady_clock::time_point> http_until; // worker-only, bounded; preserves legacy GET -> bare gap
 };
 controller *control=nullptr; // bounded process lifetime, parent JobObject owns exit
 bool exact(controller &c,void *bytes,unsigned count,bool write,DWORD timeout=1000) {
@@ -70,8 +72,11 @@ void run(controller &c) {
             if(!metadata(next,sequence,frame)){fault(c);return;}
             std::string tuple(reinterpret_cast<char*>(frame+24),12);tuple.append(reinterpret_cast<char*>(frame+8),8);
             auto http=c.http_until.find(tuple);
-            auto clock=GetTickCount64();
-            if(http!=c.http_until.end()&&clock<http->second)Sleep(static_cast<DWORD>(http->second-clock));
+            // GetTickCount64 is quantized on Windows: subtracting two ticks
+            // can shorten a 32ms interval by one system tick. Preserve the
+            // existing HTTP gap using a monotonic high-resolution deadline.
+            if(http!=c.http_until.end())
+                while(std::chrono::steady_clock::now()<http->second)std::this_thread::sleep_until(http->second);
             if(GetTickCount64()-next.at>250){c.stats[3]++;continue;}
             if(!exact(c,frame,56,true)||!exact(c,reply,16,false)){fault(c);return;}
             unsigned char expected[16]{};word(expected,sequence,8);expected[8]=reply[8];
@@ -80,11 +85,16 @@ void run(controller &c) {
             std::lock_guard<std::mutex> lock(c.gate);
             if(!c.armed||c.epoch!=next.epoch){c.stats[4]++;continue;}
             if(GetTickCount64()-next.at>250){c.stats[3]++;continue;}
+            auto injection_at=std::chrono::steady_clock::now();
             bool sent=c.inject(next.packet.data(),static_cast<int>(next.packet.size()),next.kind);
+            if(sent&&http!=c.http_until.end()) {
+                auto us=std::chrono::duration_cast<std::chrono::microseconds>(injection_at-(http->second-std::chrono::milliseconds(32))).count();
+                mylog(log_debug,"[legacy-http-spacing] elapsed_us=%llu\n",static_cast<unsigned long long>(us));
+            }
             unsigned headers=frame[44]|(unsigned(frame[45])<<8);
             if(sent&&frame[17]==6&&next.packet.size()>=headers+4&&!memcmp(next.packet.data()+headers,"GET ",4)) {
                 if(c.http_until.size()>=64)c.http_until.erase(c.http_until.begin());
-                c.http_until[tuple]=GetTickCount64()+32;
+                c.http_until[tuple]=std::chrono::steady_clock::now()+std::chrono::milliseconds(32);
             }
         }
     }

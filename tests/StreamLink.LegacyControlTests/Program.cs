@@ -162,7 +162,12 @@ async Task<object> Pair(string mode,int? rate=null)
         Check(received.SequenceEqual(packet),mode+": reverse business packet remains a datagram with no control round-trip wait");
         await Task.Delay(1200,token);var after=LegacyControlGovernor.Shared.Snapshot();
         Check(after.AdmittedPackets>before.AdmittedPackets&&!server.Exited&&!client.Exited,mode+": controls were actually admitted while both protocol workers stayed live");
-        if(mode=="faketcp")Check(proxy.HttpGaps.All(g=>g>=30)&&proxy.HttpGaps.Count>=2,"actual legacy HTTP GET/bare spacing survives the asynchronous control queue");
+        // Receiving UDP on a scheduled managed continuation can drain two
+        // buffered packets back-to-back. Keep that observation, but measure
+        // the actual native injection boundary for the unchanged 32ms gate.
+        string ReadLiveLog(string file){using var stream=new FileStream(file,FileMode.Open,FileAccess.Read,FileShare.ReadWrite);using var reader=new StreamReader(stream);return reader.ReadToEnd();}
+        var nativeHttpGaps=Directory.GetFiles(folder,"*.log").SelectMany(file=>System.Text.RegularExpressions.Regex.Matches(ReadLiveLog(file),@"\[legacy-http-spacing\] elapsed_us=(\d+)").Select(m=>long.Parse(m.Groups[1].Value))).ToArray();
+        if(mode=="faketcp")Check(nativeHttpGaps.Length>=2&&nativeHttpGaps.All(us=>us>=32000),"actual native HTTP GET/bare injection gap >=32ms; nativeUs="+string.Join(',',nativeHttpGaps)+" receiveMs="+string.Join(',',proxy.HttpGaps));
         if(mode=="faketcp"){
             using var pressure=new CancellationTokenSource();
             var filling=Task.Run(async()=>{while(!pressure.IsCancellationRequested){TraversalResources.Shared.TrySend(64,true);TraversalResources.Shared.TrySend(64);await Task.Delay(1,pressure.Token);}});
@@ -179,7 +184,7 @@ async Task<object> Pair(string mode,int? rate=null)
         var paced=LegacyTransportLedger.Shared.Snapshot().Resources.Where(r=>!r.RetirementRequested&&r.BusinessEgress!=null).Select(r=>r.BusinessEgress!).ToArray();
         if(rate.HasValue)Check(paced.Length==2&&paced.All(s=>s.InjectedPackets>0&&s.InjectedBytes>1280&&s.Failure.Length==0)&&serverPacer!.Snapshot().SentBytes==paced[0].InjectedBytes&&clientPacer!.Snapshot().SentBytes==paced[1].InjectedBytes,"actual native compatibility business uses shared outer-byte pacer and successful parent injection receipts, rate="+rate);
         if(rate.HasValue){var native=LegacyTransportLedger.Shared.Snapshot().Resources.Where(r=>!r.RetirementRequested).Select(r=>r.BusinessHandoff).Where(r=>r!=null).ToArray();Check(native.Length==2&&native.All(n=>n!.Injected>0&&n.PeakOutstanding<=64&&n.Faults==0),"bounded native handoff telemetry and actual parent receipts reach the production ledger");}
-        return new{mode,rate,authenticatedMs,elapsedMs=clock.Elapsed.TotalMilliseconds,before,after,queueReports,paced,serverPacer=serverPacer?.Snapshot(),clientPacer=clientPacer?.Snapshot(),rawPackets=proxy.Packets,httpGapMs=proxy.HttpGaps.ToArray(),
+        return new{mode,rate,authenticatedMs,elapsedMs=clock.Elapsed.TotalMilliseconds,before,after,queueReports,paced,serverPacer=serverPacer?.Snapshot(),clientPacer=clientPacer?.Snapshot(),rawPackets=proxy.Packets,httpGapMs=proxy.HttpGaps.ToArray(),nativeHttpGapUs=nativeHttpGaps,
             scope="actual named pipes/C++/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"};
     }finally{client?.Dispose();server?.Dispose();}
 }

@@ -27,7 +27,7 @@ static class QualityFeedbackNegotiationTests
         rejected=false;try{MeshMetadata.Open(b,a.Self,sealedMessage with{Data=sealedMessage.Data[..^1]+(sealedMessage.Data[^1]=='A'?'B':'A')});}catch(Exception ex)when(ex is CryptographicException or FormatException){rejected=true;}
         check(rejected,"modified receipt capability ciphertext cannot replace a signed announcement");
         check(!new DeviceProfile().QualityFeedback&&new ControlReply(true,"",null,null,"",[]).QualityFeedbackVersion==0,"old profile/IPC defaults are off rather than silently approving control overhead");
-        rejected=false;try{new DeviceProfile{QualityFeedback=true}.Validate();}catch(FormatException){rejected=true;}
+        rejected=false;try{new DeviceProfile{QualityFeedback=true,TraversalMode="legacy"}.Validate();}catch(FormatException){rejected=true;}
         check(rejected,"compatible unmanaged mode cannot hold an invisible receipt experiment");
         var timed=mine with{StandbyPaths=1,PathDiagnostics=1,DiagnosticMbps=50,DiagnosticTiming=1};
         var timedRemote=timed with{BootId=theirs.BootId};var standby=candidate with{Standby=true};

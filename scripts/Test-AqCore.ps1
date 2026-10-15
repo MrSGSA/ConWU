@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.0-aq1-personal.1')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.0-aq1-personal.2')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
@@ -55,9 +55,10 @@ try {
  Run 'browser' 'node' @('scripts/Test-AqBrowser.cjs',(Join-Path $OutputDirectory 'browser')) 120
  Run 'https-coordination' 'pwsh' @('-NoProfile','-File','scripts/Test-Coordination.ps1') 180 @{StreamLinkPersonalFeature='true';StreamLinkReleaseVersion=$Version}
  $dirty=@(& git status --porcelain).Count -gt 0
- $pass=@($rows|Where-Object status -eq 'Fail').Count -eq 0
+ $pass=@($rows|Where-Object status -eq 'Fail').Count -eq 0 -and -not $dirty
  [ordered]@{schemaVersion=1;spec='AQ-1';sourceCommit=$commit;sourceDirtyAfter=$dirty;version=$Version;status=$(if($pass){'Pass'}else{'Fail'});steps=$rows.ToArray();
   scope='Frozen personal core, deterministic/native-loopback/actual Windows control + headless Edge. Separate bundle/official-driver/SCM results required; physical WAN and user streaming not claimed.';
-  excluded='Archived research drivers; disabled prediction runtime historical freshness failure; extra transports; formal eight-stack/long-run matrices'}|ConvertTo-Json -Depth 10|Set-Content (Join-Path $OutputDirectory 'result.json') -Encoding utf8NoBOM
+  ordinaryTokenGate=$(if((Get-Content (Join-Path $OutputDirectory 'ControlTests.log') -Raw).Contains('BLOCKED ordinary-token')){'BlockedEnvironment'}else{'SeeControlTestsLog'});
+  excluded='Archived research drivers; disabled prediction runtime historical freshness failure; extra transports; formal eight-stack/long-run matrices; unverified ordinary/cross-account interactive launch'}|ConvertTo-Json -Depth 10|Set-Content (Join-Path $OutputDirectory 'result.json') -Encoding utf8NoBOM
  if(-not $pass){exit 1}
 }finally{Pop-Location}

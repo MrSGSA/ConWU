@@ -75,7 +75,7 @@ static class AdmissionTests
         }
 
         string native = Path.Combine(Path.GetDirectoryName(executable)!, "udp2raw-native.exe");
-        var config = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp" };
+        var config = new DeviceProfile { Mesh = mesh, TraversalMode = "tcp", AllowUdpFallback = false };
         var production = await MeshCandidateFactory.Create(config, native, root, _ => { }, token);
         check(production?.Profiles.SequenceEqual(new[] { TraversalProfile.FakeTcpHttpSo }) == true, "production capability preflight requires explicit prepared/SO flags on the WinDivert build without loading a driver");
         var wrongBackend = await MeshCandidateFactory.Create(config, executable, root, _ => { }, token);

@@ -68,6 +68,10 @@ static class Program
                 Check(!Field<ComboBox>(oldSettings, "selection").Enabled && !Field<CheckBox>(oldSettings, "udpFallback").Enabled, "UI disables unsupported settings on old backend");
             var calibrationProfile = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!;
             calibrationProfile.TraversalMode = "tcp"; calibrationProfile.TcpSynObservation = true;
+            // Exercise explicit opt-in from an off state in either edition;
+            // the personal creation preset independently enables source learning.
+            calibrationProfile.TcpPeerReflexive = false;
+            calibrationProfile.CapabilityIntents[nameof(DeviceProfile.TcpPeerReflexive)] = false;
             using (var calibrationSettings = new SettingsWindow(calibrationProfile)) {
                 var box = Field<CheckBox>(calibrationSettings, "tcpCalibration");
                 var predicted = Field<CheckBox>(calibrationSettings, "tcpPrediction");

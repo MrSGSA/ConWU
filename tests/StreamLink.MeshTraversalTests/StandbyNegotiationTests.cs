@@ -20,7 +20,7 @@ static class StandbyNegotiationTests
         Reject(()=>MeshTraversal.ValidateCapabilities(mine with{StandbyPaths=2}),"unknown standby capability versions are rejected");
         check(!JsonSerializer.Serialize(mine with{StandbyPaths=0}).Contains("StandbyPaths")&&!JsonSerializer.Serialize(c with{Standby=false}).Contains("Standby"),"ordinary signed shapes omit standby defaults for old-peer compatibility");
         check(!new DeviceProfile().StandbyPaths&&new ControlReply(true,"",null,null,"",[]).StandbyPathsVersion==0,"old profile and backend reply never opt into retained resources");
-        Reject(()=>new DeviceProfile{StandbyPaths=true}.Validate(),"legacy ownership cannot silently enable retained managed standby");
+        Reject(()=>new DeviceProfile{StandbyPaths=true,TraversalMode="legacy"}.Validate(),"legacy ownership cannot silently enable retained managed standby");
         var message=offer.Outbound! with{Stage=MeshTraversalStage.Standby,PeerCandidate=c with{Id=Guid.NewGuid()}};
         MeshTraversal.ValidateShape(message);
         check(MeshTraversal.Context(a.Pair.Network,message,true).Standby,"standby reconciliation binds candidate purpose into the path authentication digest");

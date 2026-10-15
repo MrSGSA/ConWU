@@ -34,8 +34,8 @@ static class PeerSourceTests
             a.Self.Slot, a.Self.Slot, candidate with { Id = Guid.NewGuid(), Endpoint = "192.0.2.2:41000" }, ordinary.Outbound.Candidate,
             MeshTraversalStage.Ready, now + 55, ""));
         Reject(() => ordinary.Receive(ready), "even a valid signed Ready cannot introduce source learning after an ordinary unnegotiated Offer");
-        var profile = new DeviceProfile { TcpPeerReflexive = true };
-        Reject(profile.Validate, "default legacy mode cannot save a silently ineffective source-learning option");
+        var profile = new DeviceProfile { TcpPeerReflexive = true, TraversalMode = "legacy" };
+        Reject(profile.Validate, "explicit legacy mode cannot save a silently ineffective source-learning option");
         profile.TraversalMode = "tcp"; profile.Validate(); check(true, "explicit TCP mode accepts the opt-in configuration");
         check(!new DeviceProfile().TcpPeerReflexive, "existing and new profiles keep source learning disabled by default");
     }

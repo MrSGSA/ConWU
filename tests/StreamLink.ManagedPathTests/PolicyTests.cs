@@ -11,7 +11,9 @@ static class PolicyTests
             check(rejected, why);
         }
         var saved = JsonSerializer.Deserialize<DeviceProfile>("{\"Version\":2}")!;
-        saved.Validate(); check(saved.PathSelection == "prefer-faketcp" && !saved.AllowUdpFallback, "old profile defaults to FakeTCP preference without silently consenting to UDP fallback");
+        saved.Validate(); check(saved.PathSelection == "prefer-faketcp" && saved.AllowUdpFallback == PersonalFeature.Enabled, "missing policy fields use the declared edition defaults; formal defaults do not silently consent to UDP fallback");
+        var explicitOff = JsonSerializer.Deserialize<DeviceProfile>("{\"Version\":2,\"AllowUdpFallback\":false}")!;
+        explicitOff.Validate(); check(!explicitOff.AllowUdpFallback,"explicit saved UDP refusal survives either edition's default");
         saved.AllowUdpFallback = true; saved.PathSelection = "faketcp-only";
         var restored = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(saved))!;
         restored.Validate(); check(!restored.Selection().Allows(TraversalProfile.UdpDirect), "persisted FakeTcpOnly overrides a previously enabled fallback checkbox");
