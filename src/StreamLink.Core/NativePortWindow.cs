@@ -9,7 +9,7 @@ namespace StreamLink.Core;
 // a NAT strategy: the caller must negotiate the exact guesses and establish
 // the stable-side precondition. It cannot turn arbitrary forecasts into peers.
 [SupportedOSPlatform("windows")]
-public sealed class NativePortWindow : IPreparedMeshPath
+public sealed class NativePortWindow : IPreparedMeshPath, ITraversalCheckEvidence
 {
     readonly object gate = new();
     readonly NativeAttemptGroup group;
@@ -25,6 +25,8 @@ public sealed class NativePortWindow : IPreparedMeshPath
     public TraversalControlRound ControlRound => group.ControlRound;
     public bool Claimed => group.Claimed;
     public IReadOnlyList<NativePathDiagnostics> Diagnostics => paths.Select(p => p.Diagnostics).ToArray();
+    public TraversalCheckSnapshot CheckEvidence {get{lock(gate){var rows=paths.Select(p=>p.CheckEvidence).ToArray();return new(Context.AttemptId,Context.Profile,activation!=null,
+        rows.Any(r=>r.Started),rows.Sum(r=>r.SendAttempts),rows.Sum(r=>r.SendsCompleted),"NativeBrokerInjectionWindow",transferred?.Diagnostics);}}}
     NativePortWindow(TraversalAttemptContext context, TraversalResources resources, Func<bool> claim, long roundStartedAt, TraversalControlRound? controlRound)
     { Context = context; group = new(resources, claim, roundStartedAt, controlRound); }
 

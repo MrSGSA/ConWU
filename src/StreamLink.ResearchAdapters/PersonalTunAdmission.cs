@@ -70,6 +70,7 @@ public sealed class PersonalTunAdmission
             if (!Hash(file).Equals(member.Sha256, StringComparison.OrdinalIgnoreCase)) throw new IOException("自研 TUN 包文件与固定身份不匹配");
         }
         string packageHash = Hash(identityPath);
+        CatalogTrust.RequirePackage(package);
         string approvalPath = Path.Combine(approvals, "target-approval.json"), evidencePath = Path.Combine(approvals, "kernel-gate.json");
         ProtectedFile(approvalPath, approvals); ProtectedFile(evidencePath, approvals);
         var approval = JsonSerializer.Deserialize<TunTargetApproval>(File.ReadAllText(approvalPath)) ?? throw new IOException("本机 TUN 准入为空");

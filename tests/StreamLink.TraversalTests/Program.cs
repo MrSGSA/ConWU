@@ -180,6 +180,7 @@ static partial class Program
     static async Task Main(string[] args)
     {
         if (args.Length > 1 && args[0] == "--observe") { await ObserveOnly(args[1..]); return; }
+        if(args is ["--prepared-evidence",var evidenceOutput]){await PreparedEvidence(evidenceOutput);return;}
         if (args.Length == 2 && args[0] == "--managed") { await ManagedUdp(args[1]); return; }
         if (args.Length == 2 && args[0] == "--managed-smoke") { await ManagedUdp(args[1], 1); return; }
         if (args.Length == 2 && args[0] == "--probability-smoke") { await Probability(args[1], 1); return; }

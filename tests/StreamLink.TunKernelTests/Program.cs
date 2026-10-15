@@ -5,6 +5,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.InteropServices;
 using System.Security.Principal;
+using System.Security.Cryptography;
 using System.Text.Json;
 using Microsoft.Win32;
 using Microsoft.Win32.SafeHandles;
@@ -15,25 +16,39 @@ if(args is ["--contract-test",var contractOutput]) {
     if(packet.Length!=31||Packets.Payload(packet,49174)?.Length!=3)throw new Exception("packet framing");
     File.WriteAllText(contractOutput,JsonSerializer.Serialize(new {status="Pass",scope="Tool packet/layout contracts; no kernel handle opened",checks=2}));return;
 }
-if(args.Length!=3 || args[0] is not ("--run" or "--permission-check"))throw new ArgumentException("--run/--permission-check protected-lab-plan.json fresh-result.json; never run on daily hosts");
+if(args.Length!=3 || args[0] is not ("--run" or "--permission-check" or "--exit-with-pending"))throw new ArgumentException("--run/--permission-check protected-lab-plan.json fresh-result.json; never run on daily hosts");
 var plan=JsonSerializer.Deserialize<LabPlan>(File.ReadAllText(args[1]))??throw new IOException("Missing plan");
+string planSha256=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(args[1])));
+var startedUtc=DateTimeOffset.UtcNow;
 string output=Path.GetFullPath(args[2]);if(File.Exists(output))throw new IOException("Never overwrite kernel evidence");
 string machine=(string?)Registry.GetValue(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Cryptography","MachineGuid",null)??"";
 string model=(string?)Registry.GetValue(@"HKEY_LOCAL_MACHINE\HARDWARE\DESCRIPTION\System\BIOS","SystemProductName",null)??"";
 if(!plan.AuthorizedRecoverableLab||!plan.RecoveryConfirmed||plan.GuestMachineGuid!=machine||plan.HostMachineGuid==machine||
     plan.HostMachineGuid.Length==0||!new[]{"Virtual Machine","VMware Virtual Platform","VirtualBox","KVM","Standard PC"}.Any(s=>model.Contains(s,StringComparison.OrdinalIgnoreCase))||
-    plan.InterfaceIndex==0||plan.PackageHash.Length!=64||plan.RunId==Guid.Empty)throw new IOException("Explicit isolated, recoverable guest identity required; no device opened");
+    plan.InterfaceIndex==0||plan.PackageHash.Length!=64||plan.RunId==Guid.Empty||plan.DeviceInstance is null||
+    !System.Text.RegularExpressions.Regex.IsMatch(plan.DeviceInstance,@"^ROOT\\STREAMLINKTUN\\[A-Za-z0-9_&-]+$"))throw new IOException("Explicit isolated, recoverable guest identity required; no device opened");
 bool admin=new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
 string device=@"\\.\StreamLinkTun-"+plan.InterfaceIndex;
 if(args[0]=="--permission-check"){
     if(admin)throw new IOException("Permission negative must run as standard user inside the same lab guest");
     using var denied=KernelIo.Open(device);int error=Marshal.GetLastPInvokeError();
     bool pass=denied.IsInvalid&&error==5;
-    File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=1,tool="StreamLink.TunKernelTests",evidenceLevel="DriverKernelIO",plan.RunId,plan.PackageHash,machine,
+    File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=2,tool="StreamLink.TunKernelTests",evidenceLevel="DriverKernelIO",plan.RunId,plan.PackageHash,plan.DeviceInstance,plan.InterfaceIndex,PlanSha256=planSha256,machine,
         permissions=pass?"Pass":"Fail",openError=error,admin=false,device,scope="Actual standard-user CreateFile denial; missing device is not accepted"},new JsonSerializerOptions{WriteIndented=true}));
     Environment.ExitCode=pass?0:1;return;
 }
 if(!admin)throw new IOException("Admin is required inside the authorized lab guest");
+if(args[0]=="--exit-with-pending"){
+    // An owned child intentionally exits with genuine pending IRPs. Keep all
+    // pinned buffers/events alive; only OS process teardown cancels them.
+    var exiting=new KernelIo(device);var pending=new List<KernelIo.Operation>();
+    for(int i=0;i<16;i++)pending.Add(exiting.BeginRead());
+    uint observed=BinaryPrimitives.ReadUInt32LittleEndian(exiting.Control(0x00126408,80).AsSpan(72));
+    if(observed==0)throw new IOException("Process-exit test did not obtain actual pending reads");
+    File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=2,tool="StreamLink.TunKernelTests",evidenceLevel="DriverKernelIO",plan.RunId,plan.PackageHash,device,
+        pid=Environment.ProcessId,pendingReads=observed,status="PendingReadsPreparedForOwnedProcessExit"}));
+    GC.KeepAlive(pending);GC.KeepAlive(exiting);Environment.Exit(0);return;
+}
 var rows=new List<object>();string failure="";bool ioPass=false,cancelPass=false,cleanupPass=false;var watch=Stopwatch.StartNew();
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
 void Stage(string phase,object? data=null){File.AppendAllText(output+".jsonl",JsonSerializer.Serialize(new{phase,elapsedMs=watch.ElapsedMilliseconds,data})+Environment.NewLine);}
@@ -49,14 +64,10 @@ try{
     for(int i=0;i<10;i++){
         byte[] payload=new byte[1252];Random.Shared.NextBytes(payload);
         using var read=kernel.BeginRead();await udp.SendAsync(payload,new IPEndPoint(peer,49173));
-        byte[]? seen=null;for(int probe=0;probe<8;probe++){
-            var result=read.Complete(TimeSpan.FromSeconds(2));if(result.Error!=0)throw new Win32Exception(result.Error);
-            seen=Packets.Payload(result.Bytes,49173);if(seen!=null)break;
-            if(probe==7)throw new IOException("OS -> NDIS -> READ full-MTU packet missing");
-            // Other OS control packets are not a test pass. A fresh READ is
-            // needed, so fail with raw evidence rather than hiding them.
-            throw new IOException("Unexpected OS packet; isolate guest traffic before retry");
-        }
+        var result=read.Complete(TimeSpan.FromSeconds(2));if(result.Error!=0)throw new Win32Exception(result.Error);
+        byte[]? seen=Packets.Payload(result.Bytes,49173);
+        // Other OS packets are not a pass. Preserve the first polluted read.
+        if(seen==null)throw new IOException("Unexpected OS packet; isolate guest traffic before retry");
         if(seen==null||!seen.SequenceEqual(payload))throw new IOException("Actual outbound payload mismatch");
         kernel.Write(Packets.Inbound(peer,local,49173,49174,payload));
         using var limit=new CancellationTokenSource(2000);var inbound=await udp.ReceiveAsync(limit.Token);
@@ -88,21 +99,46 @@ try{
     if(pendingCount!=0)throw new IOException("Actual CSQ pending read count did not drain");
     if(BinaryPrimitives.ReadUInt64LittleEndian(stats.AsSpan(56))<=cancelledBefore)throw new IOException("No actual kernel cancellation counter advance");
     cancelPass=true;Stage("cancel-and-csq-drained",new{pendingCount});
+    using(var pendingClose=kernel.BeginRead()){
+        uint pendingAtClose=BinaryPrimitives.ReadUInt32LittleEndian(kernel.Control(0x00126408,80).AsSpan(72));
+        if(pendingAtClose==0||!pendingClose.Pending)throw new IOException("Close test did not hold an actual pending READ");
+        kernel.CloseHandleForCleanupTest();
+        var cancelled=pendingClose.CompleteAfterHandleClose(TimeSpan.FromSeconds(2));
+        if(cancelled.Error!=995)throw new IOException("Last-handle cleanup did not cancel the retained READ: "+cancelled.Error);
+        rows.Add(new{kind="pending-read-last-handle-close",pendingAtClose,cancelled.Error});
+    }
     kernel.Dispose();kernel=null;
-    using(var reopened=new KernelIo(device)){_=reopened.Control(0x00126404,32);}cleanupPass=true;Stage("closed-and-reopened");
+    using(var reopened=new KernelIo(device)){_=reopened.Control(0x00126404,32);}Stage("pending-close-and-reopen-pass");
+    string childResult=output+".process-exit.json";
+    string executable=Environment.ProcessPath??throw new IOException("Current probe executable unavailable");
+    var start=new ProcessStartInfo(executable){UseShellExecute=false,CreateNoWindow=true};
+    if(string.Equals(Path.GetFileNameWithoutExtension(executable),"dotnet",StringComparison.OrdinalIgnoreCase))start.ArgumentList.Add(typeof(KernelIo).Assembly.Location);
+    foreach(var arg in new[]{"--exit-with-pending",Path.GetFullPath(args[1]),childResult})start.ArgumentList.Add(arg);
+    using(var child=Process.Start(start)??throw new IOException("Owned process-exit fixture did not start")){
+        using var exitDeadline=new CancellationTokenSource(20000);
+        try{await child.WaitForExitAsync(exitDeadline.Token);}catch{if(!child.HasExited){child.Kill(true);await child.WaitForExitAsync(new CancellationTokenSource(5000).Token);}throw;}
+        if(child.ExitCode!=0||!File.Exists(childResult))throw new IOException("Owned process-exit child did not prepare verified pending I/O");
+        using var c=JsonDocument.Parse(File.ReadAllText(childResult));var r=c.RootElement;
+        if(r.GetProperty("RunId").GetGuid()!=plan.RunId||r.GetProperty("pid").GetInt32()!=child.Id||r.GetProperty("pendingReads").GetUInt32()==0||
+            r.GetProperty("PackageHash").GetString()!=plan.PackageHash||r.GetProperty("device").GetString()!=device||r.GetProperty("status").GetString()!="PendingReadsPreparedForOwnedProcessExit")throw new IOException("Process-exit proof identity mismatch");
+        using var reopened=new KernelIo(device);
+        if(BinaryPrimitives.ReadUInt32LittleEndian(reopened.Control(0x00126408,80).AsSpan(72))!=0)throw new IOException("Process-exit pending reads did not drain");
+        rows.Add(new{kind="owned-process-exit-with-pending",pid=child.Id,resultHash=Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(childResult)))});
+    }
+    cleanupPass=true;Stage("owned-process-exit-and-reopen-pass");
 }catch(Exception ex){failure=ex.ToString();Stage("fail",new{failure});}
 finally{
     // An incomplete operation keeps its pinned buffer and OVERLAPPED alive.
     // Do not unload anything or free pending storage to manufacture completion.
     if(kernel!=null){try{kernel.Dispose();}catch(Exception ex){failure+="\n"+ex;}}
-    File.WriteAllText(output,JsonSerializer.Serialize(new {schemaVersion=1,tool="StreamLink.TunKernelTests",evidenceLevel="DriverKernelIO",plan.RunId,plan.PackageHash,
+    File.WriteAllText(output,JsonSerializer.Serialize(new {schemaVersion=2,tool="StreamLink.TunKernelTests",evidenceLevel="DriverKernelIO",plan.RunId,plan.PackageHash,plan.DeviceInstance,plan.InterfaceIndex,PlanSha256=planSha256,StartedUtc=startedUtc,FinishedUtc=DateTimeOffset.UtcNow,
         machine,model,device,status=failure.Length==0?"Pass":"Fail",kernelIo=ioPass?"Pass":"Fail",cancellation=cancelPass?"Pass":"Fail",cleanup=cleanupPass?"Pass":"Fail",
-        permissions="SeparateStandardUserRunRequired",verifier="SeparateBootedTargetedVerifierRunRequired",rows,failure,
+        cleanupCoverage="CancellationJoined+PendingLastHandleClose+OwnedProcessExit+Reopen",pnpPower="SeparateGuestRunRequired",permissions="SeparateStandardUserRunRequired",verifier="SeparateBootedTargetedVerifierRunRequired",rows,failure,
         scope="Actual installed research device, IRPs, NDIS and OS UDP; guest evidence only. No host loading or approval generated by this executable."},new JsonSerializerOptions{WriteIndented=true}));
 }
 Environment.ExitCode=failure.Length==0?0:1;
 
-sealed record LabPlan(Guid RunId,string GuestMachineGuid,string HostMachineGuid,uint InterfaceIndex,string PackageHash,bool AuthorizedRecoverableLab,bool RecoveryConfirmed);
+sealed record LabPlan(Guid RunId,string GuestMachineGuid,string HostMachineGuid,uint InterfaceIndex,string PackageHash,bool AuthorizedRecoverableLab,bool RecoveryConfirmed,string DeviceInstance);
 sealed class KernelIo:IDisposable
 {
     [StructLayout(LayoutKind.Sequential)]public struct Overlapped{public IntPtr Internal,InternalHigh;public uint Offset,OffsetHigh;public IntPtr Event;}
@@ -119,11 +155,13 @@ sealed class KernelIo:IDisposable
     public byte[] Control(uint code,int size){using var o=new Operation(this,new byte[size],code,false);var r=o.Complete(TimeSpan.FromSeconds(2));if(r.Error!=0)throw new Win32Exception(r.Error);if(r.Bytes.Length!=size)throw new IOException("IOCTL length mismatch");return r.Bytes;}
     public void Write(byte[] bytes){using var o=new Operation(this,bytes,0,true);var r=o.Complete(TimeSpan.FromSeconds(2));if(r.Error!=0||r.Bytes.Length!=bytes.Length)throw new IOException("Kernel WRITE failure: "+r.Error);}
     public void Dispose(){if(operations.Count!=0)throw new IOException("Outstanding IRP resources retained until owned supervisor ends process");handle.Dispose();}
+    public void CloseHandleForCleanupTest()=>handle.Dispose();
     public sealed class Operation:IDisposable
     {
         readonly KernelIo owner;readonly byte[] bytes;readonly GCHandle pinned;readonly IntPtr overlapped;readonly ManualResetEvent completed=new(false);
         bool observed;int immediateError;uint immediateCount;bool pending;
         public bool CompletionObservedOnce=>observed;
+        public bool Pending=>pending&&!observed;
         public Operation(KernelIo k,byte[] buffer,uint code,bool writing){owner=k;bytes=buffer;pinned=GCHandle.Alloc(buffer,GCHandleType.Pinned);overlapped=Marshal.AllocHGlobal(32);
             Marshal.StructureToPtr(new Overlapped{Event=completed.SafeWaitHandle.DangerousGetHandle()},overlapped,false);owner.operations.Add(this);
             bool ok=code!=0?DeviceIoControl(k.handle,code,IntPtr.Zero,0,pinned.AddrOfPinnedObject(),(uint)bytes.Length,out immediateCount,overlapped):
@@ -135,8 +173,21 @@ sealed class KernelIo:IDisposable
             if(pending){if(!completed.WaitOne(deadline))throw new TimeoutException("Actual pending IRP not completed; pinned state retained");bool ok=GetOverlappedResult(owner.handle,overlapped,out count,false);error=ok?0:Marshal.GetLastPInvokeError();}
             observed=true;owner.operations.Remove(this);return(bytes.AsSpan(0,checked((int)Math.Min(count,(uint)bytes.Length))).ToArray(),error);
         }
+        public (byte[] Bytes,int Error) CompleteAfterHandleClose(TimeSpan deadline){
+            if(observed||!pending||!owner.handle.IsClosed)throw new IOException("Pending cleanup observation requires the exact closed owner");
+            if(!completed.WaitOne(deadline))throw new TimeoutException("Close has not completed its IRP; pinned storage retained");
+            // The event proves I/O Manager has finished writing the OVERLAPPED.
+            // GetOverlappedResult cannot be called with an already closed handle.
+            uint status=unchecked((uint)Marshal.ReadInt64(overlapped));
+            if(status==0x103)throw new IOException("Signalled IRP remains STATUS_PENDING; storage retained");
+            uint count=unchecked((uint)Marshal.ReadInt64(overlapped,8));
+            int error=status==0?0:unchecked((int)RtlNtStatusToDosError(status));
+            observed=true;owner.operations.Remove(this);
+            return(bytes.AsSpan(0,checked((int)Math.Min(count,(uint)bytes.Length))).ToArray(),error);
+        }
         public void Dispose(){if(!observed)return;Marshal.FreeHGlobal(overlapped);pinned.Free();completed.Dispose();}
     }
+    [DllImport("ntdll.dll")]static extern uint RtlNtStatusToDosError(uint status);
 }
 static class Packets
 {

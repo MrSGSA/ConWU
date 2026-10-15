@@ -20,6 +20,7 @@ bool ipv6Only = args.Length == 7 && args[6] == "--ipv6-only";
 bool egressOnly = args.Length == 7 && args[6] == "--egress-only";
 bool nativeIpv6Only = args.Length == 7 && args[6] == "--native-ipv6-only";
 bool lifecycleOnly = args.Length == 7 && args[6] == "--lifecycle-only";
+bool shutdownFailureOnly = args.Length==7&&args[6]=="--shutdown-failure-only";
 bool wireOnly = args.Length == 7 && args[6] == "--wire-only";
 bool predictionOnly = args.Length == 7 && args[6] == "--prediction-only";
 bool predictionRunnerOnly = args.Length == 7 && args[6] == "--prediction-runner-only";
@@ -41,7 +42,7 @@ bool relativeNativeOnly=args.Length==7&&args[6]=="--relative-quality-native-only
 bool relativeUdpOnly=args.Length==7&&args[6]=="--relative-quality-udp-only";
 bool networkOnly = args.Length == 7 && args[6] == "--network-only";
 bool poolOnly = args.Length == 7 && args[6] == "--pool-only";
-if ((!relativeNativeOnly && !relativeUdpOnly && !networkOnly && !upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && !diagnosticRunnerOnly && !nativeDiagnosticRunnerOnly && !diagnosticBusyOnly && !qualityUdpOnly && !qualityNativeOnly && !qualityFaultOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
+if ((!relativeNativeOnly && !relativeUdpOnly && !networkOnly && !upgradeOnly && !baselineOnly && !opportunityOnly && !tcpRetryOnly && !gatewayOnly && !ipv6Only && !nativeIpv6Only && !egressOnly && !lifecycleOnly && !shutdownFailureOnly && !wireOnly && !predictionOnly && !predictionRunnerOnly && !poolOnly && !sourceOnly && !explorationOnly && !feedbackOnly && !standbyOnly && !udpStandbyOnly && !diagnosticOnly && !diagnosticLoadOnly && !diagnosticRunnerOnly && !nativeDiagnosticRunnerOnly && !diagnosticBusyOnly && !qualityUdpOnly && !qualityNativeOnly && !qualityFaultOnly && args.Length != 6) || args[0] != "--native" || args[2] != "--rounds" || args[4] != "--output") throw new ArgumentException("--native exe --rounds 30 --output result.json [--pool-only or another existing mode]");
 string binary = Path.GetFullPath(args[1]), output = Path.GetFullPath(args[5]); int rounds = int.Parse(args[3]);
 string root = Path.Combine(Path.GetTempPath(), "streamlink-runner-traversal-" + Guid.NewGuid().ToString("N")); Directory.CreateDirectory(root);
 Directory.CreateDirectory(Path.GetDirectoryName(output)!);
@@ -69,7 +70,8 @@ app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, T
 await app.StartAsync(token);
 string url = app.Urls.Single(), pin = Convert.ToHexString(SHA256.HashData(certificate.RawData));
 try {
-    if(relativeNativeOnly) rows.Add(await NativeIpv6RunnerTests.RunRelativeQuality(binary,root,url,pin,Check,token));
+    if(shutdownFailureOnly)rows.Add(await ShutdownFailureTests.Run(root,url,pin,Check,token));
+    else if(relativeNativeOnly) rows.Add(await NativeIpv6RunnerTests.RunRelativeQuality(binary,root,url,pin,Check,token));
     else if(relativeUdpOnly) rows.Add(await Ipv6Tests.RunRelativeQuality(root,url,pin,Check,token));
     else if(networkOnly) rows.Add(await NetworkScopeTests.Run(binary,root,url,pin,rounds,Check,token));
     else if(qualityUdpOnly)rows.Add(await Ipv6Tests.RunQualityRetain(root,url,pin,Check,token));
@@ -109,7 +111,7 @@ try {
         await SharedBrokerRunner.Run(binary, root, url, pin, Check, token);
         rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token));
     }
-    else if (lifecycleOnly) rows.Add(await LifecycleTests.Run(binary, root, url, pin, controlFailure, Check, token));
+    else if (lifecycleOnly) { rows.Add(await ShutdownFailureTests.Run(root,url,pin,Check,token));rows.Add(await LifecycleTests.Run(binary, root, url, pin, controlFailure, Check, token)); }
     else {
     if (nativeIpv6Only || egressOnly || args.Length == 6) rows.Add(await NativeIpv6RunnerTests.Run(binary, root, url, pin, Check, token, egressOnly));
     if (egressOnly) rows.Add(await Ipv6Tests.Run(root, url, pin, rounds, Check, token, true));

@@ -7,6 +7,7 @@
 #define SLT_TAG 'nTLS'
 typedef struct _SLT_PACKET { LIST_ENTRY Link; ULONG Length; UCHAR Data[SLT_MTU]; } SLT_PACKET;
 typedef struct _SLT_ADAPTER SLT_ADAPTER;
+typedef struct _SLT_FILE { SLT_ADAPTER *Adapter; EX_RUNDOWN_REF Dispatch; volatile LONG Closing; } SLT_FILE;
 typedef struct _SLT_EXTENSION { KSPIN_LOCK Gate; SLT_ADAPTER *Adapter; } SLT_EXTENSION;
 struct _SLT_ADAPTER {
     NDIS_HANDLE Miniport,DeviceHandle,NblPool;
@@ -21,6 +22,7 @@ struct _SLT_ADAPTER {
     volatile LONG64 OsOffered,OsQueued,OsDropped,UserReads,UserWrites,Malformed,Cancelled;
 };
 #include "read_reservation.h"
+#include "file_admission.h"
 static NDIS_HANDLE SltDriverHandle;
 DRIVER_INITIALIZE DriverEntry;
 MINIPORT_INITIALIZE SltInitialize;
@@ -74,20 +76,31 @@ static VOID SltDrain(PDEVICE_OBJECT device,PVOID context){
 }
 static VOID SltSchedule(SLT_ADAPTER *a){if(a->Running&&InterlockedCompareExchange(&a->DrainScheduled,1,0)==0){SltRef(a);IoQueueWorkItem(a->Work,SltDrain,DelayedWorkQueue,a);}}
 static BOOLEAN SltIpv4(const UCHAR *p,ULONG n){ULONG h;if(n<20||n>SLT_MTU||(p[0]>>4)!=4)return FALSE;h=(p[0]&15)*4;return h>=20&&h<=n&&((ULONG)p[2]*256+p[3])==n;}
-static VOID SltStopData(SLT_ADAPTER *a){InterlockedExchange(&a->Running,0);if(InterlockedExchange(&a->RundownClosed,1)==0)ExWaitForRundownProtectionRelease(&a->Writes);SltCancelReads(a,NULL,STATUS_DEVICE_NOT_READY);SltClear(a);}
+static VOID SltStopData(SLT_ADAPTER *a){InterlockedExchange(&a->Running,0);if(InterlockedExchange(&a->RundownClosed,1)==0){KeEnterCriticalRegion();ExWaitForRundownProtectionRelease(&a->Writes);KeLeaveCriticalRegion();}SltCancelReads(a,NULL,STATUS_DEVICE_NOT_READY);SltClear(a);}
 static VOID SltStartData(SLT_ADAPTER *a){if(!a->Stopped&&!a->Paused&&a->PowerD0){if(InterlockedExchange(&a->RundownClosed,0)!=0)ExReInitializeRundownProtection(&a->Writes);InterlockedExchange(&a->Running,1);}}
 
 NTSTATUS SltDispatch(PDEVICE_OBJECT device,PIRP irp){
-    PIO_STACK_LOCATION stack=IoGetCurrentIrpStackLocation(irp);PFILE_OBJECT file=stack->FileObject;SLT_ADAPTER *a=file?file->FsContext:NULL;NTSTATUS status=STATUS_INVALID_DEVICE_REQUEST;ULONG_PTR used=0;
+    PIO_STACK_LOCATION stack=IoGetCurrentIrpStackLocation(irp);PFILE_OBJECT file=stack->FileObject;SLT_FILE *owned=file?file->FsContext:NULL;SLT_ADAPTER *a=owned?owned->Adapter:NULL;NTSTATUS status=STATUS_INVALID_DEVICE_REQUEST;ULONG_PTR used=0;
     if(stack->MajorFunction==IRP_MJ_CREATE){
-        SLT_EXTENSION *ext=NdisGetDeviceReservedExtension(device);KIRQL level;KeAcquireSpinLock(&ext->Gate,&level);a=ext->Adapter;
-        if(a&&!a->Stopped&&InterlockedCompareExchange(&a->Opened,1,0)==0){SltRef(a);file->FsContext=a;status=STATUS_SUCCESS;}else status=STATUS_DEVICE_NOT_READY;
+        SLT_EXTENSION *ext=NdisGetDeviceReservedExtension(device);KIRQL level;
+        if(!file)return SltComplete(irp,STATUS_INVALID_PARAMETER,0);
+        owned=ExAllocatePool2(POOL_FLAG_NON_PAGED,sizeof(*owned),SLT_TAG);if(!owned)return SltComplete(irp,STATUS_INSUFFICIENT_RESOURCES,0);
+        ExInitializeRundownProtection(&owned->Dispatch);
+        KeAcquireSpinLock(&ext->Gate,&level);a=ext->Adapter;
+        if(a&&!a->Stopped&&InterlockedCompareExchange(&a->Opened,1,0)==0){SltRef(a);owned->Adapter=a;file->FsContext=owned;status=STATUS_SUCCESS;}else status=STATUS_DEVICE_NOT_READY;
+        if(!NT_SUCCESS(status))ExFreePoolWithTag(owned,SLT_TAG);
         KeReleaseSpinLock(&ext->Gate,level);return SltComplete(irp,status,0);
     }
     if(!a)return SltComplete(irp,STATUS_ACCESS_DENIED,0);
-    if(stack->MajorFunction==IRP_MJ_CLEANUP){SltCancelReads(a,file,STATUS_CANCELLED);SltClear(a);return SltComplete(irp,STATUS_SUCCESS,0);}
-    if(stack->MajorFunction==IRP_MJ_CLOSE){file->FsContext=NULL;InterlockedExchange(&a->Opened,0);SltRelease(a);return SltComplete(irp,STATUS_SUCCESS,0);}
-    if(a->Stopped)return SltComplete(irp,STATUS_DEVICE_REMOVED,0);
+    if(stack->MajorFunction==IRP_MJ_CLEANUP){
+        // Close dispatch admission BEFORE draining the CSQ. Never wait while
+        // holding a spin lock or the miniport's data rundown. A READ that has
+        // entered must finish inserting/cancelling before this queue is drained.
+        SltBeginFileCleanup(owned);SltCancelReads(a,file,STATUS_CANCELLED);SltClear(a);return SltComplete(irp,STATUS_SUCCESS,0);
+    }
+    if(stack->MajorFunction==IRP_MJ_CLOSE){file->FsContext=NULL;InterlockedExchange(&a->Opened,0);SltRelease(a);ExFreePoolWithTag(owned,SLT_TAG);return SltComplete(irp,STATUS_SUCCESS,0);}
+    if(!SltEnterFile(owned))return SltComplete(irp,STATUS_FILE_CLOSED,0);
+    if(a->Stopped){SltLeaveFile(owned);return SltComplete(irp,STATUS_DEVICE_REMOVED,0);}
     if(stack->MajorFunction==IRP_MJ_DEVICE_CONTROL){
         ULONG code=stack->Parameters.DeviceIoControl.IoControlCode,length=stack->Parameters.DeviceIoControl.OutputBufferLength;
         if(code==SLT_IOCTL_INFO&&length>=sizeof(SLT_INFO)){
@@ -96,17 +109,17 @@ NTSTATUS SltDispatch(PDEVICE_OBJECT device,PIRP irp){
             SLT_STATS stats={0};stats.Size=sizeof(stats);stats.Abi=SLT_ABI;stats.OsOffered=a->OsOffered;stats.OsQueued=a->OsQueued;stats.OsDropped=a->OsDropped;stats.UserReads=a->UserReads;stats.UserWrites=a->UserWrites;stats.Malformed=a->Malformed;stats.Cancelled=a->Cancelled;stats.Queued=a->Queued;stats.PeakQueued=a->PeakQueued;stats.PendingReads=a->PendingReads;RtlCopyMemory(irp->AssociatedIrp.SystemBuffer,&stats,sizeof(stats));status=STATUS_SUCCESS;used=sizeof(stats);
         }else status=(code==SLT_IOCTL_INFO||code==SLT_IOCTL_STATS)?STATUS_BUFFER_TOO_SMALL:STATUS_INVALID_DEVICE_REQUEST;
     }else if(stack->MajorFunction==IRP_MJ_READ){
-        if(stack->Parameters.Read.Length!=SLT_MTU)return SltComplete(irp,STATUS_INVALID_BUFFER_SIZE,0);
-        if(!ExAcquireRundownProtection(&a->Writes))return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);
-        if(!a->Running){ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);}
-        if(!SltReserveRead(a,irp)){ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_INSUFFICIENT_RESOURCES,0);}
-        IoMarkIrpPending(irp);IoCsqInsertIrp(&a->ReadCsq,irp,NULL);SltSchedule(a);ExReleaseRundownProtection(&a->Writes);return STATUS_PENDING;
+        if(stack->Parameters.Read.Length!=SLT_MTU){status=STATUS_INVALID_BUFFER_SIZE;goto completed;}
+        if(!ExAcquireRundownProtection(&a->Writes)){status=STATUS_DEVICE_NOT_READY;goto completed;}
+        if(!a->Running){ExReleaseRundownProtection(&a->Writes);status=STATUS_DEVICE_NOT_READY;goto completed;}
+        if(!SltReserveRead(a,irp)){ExReleaseRundownProtection(&a->Writes);status=STATUS_INSUFFICIENT_RESOURCES;goto completed;}
+        IoMarkIrpPending(irp);IoCsqInsertIrp(&a->ReadCsq,irp,NULL);SltSchedule(a);ExReleaseRundownProtection(&a->Writes);SltLeaveFile(owned);return STATUS_PENDING;
     }else if(stack->MajorFunction==IRP_MJ_WRITE){
         ULONG n=stack->Parameters.Write.Length;UCHAR *p=irp->AssociatedIrp.SystemBuffer;PMDL mdl;PNET_BUFFER_LIST nbl;
-        if(!p||!SltIpv4(p,n)){InterlockedIncrement64(&a->Malformed);return SltComplete(irp,STATUS_INVALID_PARAMETER,0);}
-        if(!ExAcquireRundownProtection(&a->Writes))return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);
-        if(!a->Running){ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_DEVICE_NOT_READY,0);}
-        if(InterlockedIncrement(&a->Writers)>16){InterlockedDecrement(&a->Writers);ExReleaseRundownProtection(&a->Writes);return SltComplete(irp,STATUS_INSUFFICIENT_RESOURCES,0);}
+        if(!p||!SltIpv4(p,n)){InterlockedIncrement64(&a->Malformed);status=STATUS_INVALID_PARAMETER;goto completed;}
+        if(!ExAcquireRundownProtection(&a->Writes)){status=STATUS_DEVICE_NOT_READY;goto completed;}
+        if(!a->Running){ExReleaseRundownProtection(&a->Writes);status=STATUS_DEVICE_NOT_READY;goto completed;}
+        if(InterlockedIncrement(&a->Writers)>16){InterlockedDecrement(&a->Writers);ExReleaseRundownProtection(&a->Writes);status=STATUS_INSUFFICIENT_RESOURCES;goto completed;}
         mdl=IoAllocateMdl(p,n,FALSE,FALSE,NULL);nbl=NULL;if(mdl){MmBuildMdlForNonPagedPool(mdl);nbl=NdisAllocateNetBufferAndNetBufferList(a->NblPool,0,0,mdl,0,n);}
         if(!nbl){if(mdl)IoFreeMdl(mdl);status=STATUS_INSUFFICIENT_RESOURCES;}else{
             nbl->SourceHandle=a->Miniport;NdisSetNblFlag(nbl,NDIS_NBL_FLAGS_IS_IPV4);NET_BUFFER_LIST_INFO(nbl,NetBufferListFrameType)=(PVOID)(ULONG_PTR)RtlUshortByteSwap(0x0800);
@@ -114,7 +127,8 @@ NTSTATUS SltDispatch(PDEVICE_OBJECT device,PIRP irp){
             NdisFreeNetBufferList(nbl);IoFreeMdl(mdl);InterlockedIncrement64(&a->UserWrites);status=STATUS_SUCCESS;used=n;
         }InterlockedDecrement(&a->Writers);ExReleaseRundownProtection(&a->Writes);
     }
-    return SltComplete(irp,status,used);
+completed:
+    SltLeaveFile(owned);return SltComplete(irp,status,used);
 }
 
 VOID SltSend(NDIS_HANDLE context,PNET_BUFFER_LIST lists,NDIS_PORT_NUMBER port,ULONG flags){
@@ -124,14 +138,14 @@ VOID SltSend(NDIS_HANDLE context,PNET_BUFFER_LIST lists,NDIS_PORT_NUMBER port,UL
         for(nb=NET_BUFFER_LIST_FIRST_NB(nbl);nb;nb=NET_BUFFER_NEXT_NB(nb)){
             ULONG n=NET_BUFFER_DATA_LENGTH(nb);SLT_PACKET *packet;PUCHAR bytes;KIRQL level;BOOLEAN accepted=FALSE;
             InterlockedIncrement64(&a->OsOffered);
-            if(!a->Running||!a->Opened||n>SLT_MTU||n<20){InterlockedIncrement64(&a->OsDropped);result=NDIS_STATUS_RESOURCES;continue;}
+            if(!a->Running||a->Opened!=1||n>SLT_MTU||n<20){InterlockedIncrement64(&a->OsDropped);result=NDIS_STATUS_RESOURCES;continue;}
             packet=ExAllocatePool2(POOL_FLAG_NON_PAGED,sizeof(*packet),SLT_TAG);
             if(!packet){InterlockedIncrement64(&a->OsDropped);result=NDIS_STATUS_RESOURCES;continue;}
             bytes=NdisGetDataBuffer(nb,n,packet->Data,1,0);
             if(!bytes||!SltIpv4(bytes,n)){InterlockedIncrement64(&a->Malformed);ExFreePoolWithTag(packet,SLT_TAG);result=NDIS_STATUS_INVALID_PACKET;continue;}
             if(bytes!=packet->Data)RtlCopyMemory(packet->Data,bytes,n);packet->Length=n;
             KeAcquireSpinLock(&a->PacketLock,&level);
-            if(a->Running&&a->Opened&&a->Queued<SLT_QUEUE_PACKETS){InsertTailList(&a->Packets,&packet->Link);a->Queued++;if(a->Queued>a->PeakQueued)a->PeakQueued=a->Queued;accepted=TRUE;}
+            if(a->Running&&a->Opened==1&&a->Queued<SLT_QUEUE_PACKETS){InsertTailList(&a->Packets,&packet->Link);a->Queued++;if(a->Queued>a->PeakQueued)a->PeakQueued=a->Queued;accepted=TRUE;}
             KeReleaseSpinLock(&a->PacketLock,level);
             if(accepted){InterlockedIncrement64(&a->OsQueued);SltSchedule(a);}else{InterlockedIncrement64(&a->OsDropped);ExFreePoolWithTag(packet,SLT_TAG);result=NDIS_STATUS_RESOURCES;}
         }NET_BUFFER_LIST_STATUS(nbl)=result;

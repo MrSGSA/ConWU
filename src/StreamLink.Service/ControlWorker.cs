@@ -20,6 +20,7 @@ public sealed partial class ControlWorker : BackgroundService
     ControlReply? snapshot;
     string quality = "";
     bool initialized;
+    bool resourceShutdownUnproven;
     readonly SemaphoreSlim requests = new(1, 1);
     readonly FileStream lease;
     public ControlWorker()
@@ -50,6 +51,7 @@ public sealed partial class ControlWorker : BackgroundService
     }
     void Begin()
     {
+        if(Volatile.Read(ref resourceShutdownUnproven))throw new IOException("上次原生资源退出未获证实，不能启动新的源端点所有者；请保留日志并重启个人后台进程，原 0.3.2 不受影响");
         if (running != null && !running.IsCompleted) return;
         if (profile.Mesh == null && profile.Pair != null && !File.Exists(Path.Combine(AppContext.BaseDirectory, "components", "easytier-core.exe"))) {
             lock (sync) status = new("旧网络需要迁移", "", "", profile.Pair.Mode, false, null, "此轻量包仅包含原生组网。原配对已保留；请在双方新版上创建并加入多机网络，或使用旧版恢复连接。");
@@ -67,6 +69,7 @@ public sealed partial class ControlWorker : BackgroundService
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (MeshRevokedException ex) { lock (sync) { profile.Enabled = false; store.Save(profile); status = new("已移出网络", "", "", "faketcp", false, null, ex.Message); } Log(ex.Message); break; }
+                catch (MeshShutdownException ex) { Volatile.Write(ref resourceShutdownUnproven,true);lock(sync){status=new("资源退出未完成","","","faketcp",false,null,ex.Message);PublishReply();}Log(ex.Message);break; }
                 catch (Exception ex) { Log("后台连接将重试：" + ex.Message); }
                 try { await Task.Delay(10000, token); } catch (OperationCanceledException) { break; }
             }
@@ -140,8 +143,9 @@ public sealed partial class ControlWorker : BackgroundService
                     lock(sync){store.Save(enhanced);profile=enhanced;}break;
                 case "personal-check":
                     if(!PersonalFeature.Enabled)throw new IOException("新方法验证需要个人功能包");
+                    if(profile.Mesh is not {} configured)throw new IOException("请先创建或加入个人多机网络，再检查新方法与协调服务的准备状态");
                     profile.Validate();await PersonalPacketAdapters.Preflight(profile,operation.Stop.Token);
-                    if(profile.Mesh is{} configured)await MeshCoordinatorPreflight.Check(configured.Pair,operation.Stop.Token);
+                    await MeshCoordinatorPreflight.Check(configured.Pair,operation.Stop.Token);
                     Log("个人新方法准备检查通过："+profile.TraversalMode+"；实际打洞、资格和承载状态在连接后报告，不以开关宣称成功");break;
                 case "mesh-invite":
                     lock (sync) {
@@ -201,7 +205,7 @@ public sealed partial class ControlWorker : BackgroundService
                     measureStop?.Dispose();measureStop=CancellationTokenSource.CreateLinkedTokenSource(runStop!.Token,operation.Stop.Token);
                     var current = runner; var currentMesh = meshRunner; var measurementToken = measureStop.Token;
                     background=true;SetOperation(operation,"测速中",true);
-                    measuring = Task.Run(async () => { try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, measurementToken) : await current!.Measure(request.Mbps, measurementToken); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { lock (sync) quality = "测试未完成：" + ex.Message; } finally {CompleteOperation(operation);PublishReply();} }); break;
+                    measuring = Task.Run(async () => { string error="";try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, measurementToken) : await current!.Measure(request.Mbps, measurementToken); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { error=ex is OperationCanceledException?"操作已取消":ex.Message;lock (sync) quality = "测试未完成：" + error; } finally {CompleteOperation(operation,error);PublishReply();} }); break;
                 default: throw new FormatException("未知控制命令");
             }
             if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued,Operation=operation.State } : Reply() with {Operation=operation.State};

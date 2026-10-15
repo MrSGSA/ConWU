@@ -33,6 +33,10 @@ Windows 包根目录的 `StreamLink.TunKernelTests.exe`（研究 ZIP 中为独�
 
 工具要求十次 1280B 内层包的 OS→NDIS→READ 与 WRITE→NDIS→OS、30 次真实取消/送包竞争、最多 16 个实际待完成 READ 的取消、内核统计归零、关闭及重开。记录实际取消计数；没有真实 CSQ pending 就不算取消覆盖。用户态唯一观察不等于已证明内核绝无双完成，须结合定向 Verifier 和崩溃/转储证据。
 
+自主审查候选还加入最后句柄关闭时保留真实 pending READ，以及自有子进程带 16 个 READ 退出后重新打开设备的检查。事件确认完成前保留所有缓冲与 OVERLAPPED；不得拿已关闭句柄调用 GetOverlappedResult。当前仅工具代码/构建已验，没有实验内核执行结果。
+
+新结果 schema=2，标准用户使用完全相同的 `lab-plan.json` 字节副本。Gate 绑定 RunId、计划 SHA、设备实例和接口、KernelResult 原始 SHA、当前启动周期以及完整原始文件集合。旧版本运行结果不能直接发行新 Gate。读取安全日志失败记 Unknown，不能当成没有错误。签名冻结/安装/Gate 必须检查指定 CAT 中 SYS/INF 的成员和 `/kp`；产品再检查实际加载设备与映像，不依赖任意可信 CAT。
+
 权限负例在**同一来宾**的标准用户下执行 `--permission-check <lab-plan.json> <结果>`。仅 ERROR_ACCESS_DENIED 接受，缺设备不算通过。计划应只读提供给标准用户；将其真实输出由管理员复核后导入受保护证据目录。不要把标准用户目录中的可变文件直接当批准依据。
 
 定向 Verifier 的启用/重启需另行授权并只限来宾的 StreamLinkTun.sys。不要使用 `/all`。已启用且重启后重新跑内核测试，脚本记录前后实际 `/query` 和 `/querysettings`。`Collect-PersonalTunVerifier.ps1 -RunRoot <本次目录> -OperatorReviewed` 采集运行状态、当前启动周期系统 BugCheck 和 CodeIntegrity 记录；操作人须审阅设置、NDIS/IRQL、转储及错误，不因文件存在就通过。
@@ -42,3 +46,5 @@ Windows 包根目录的 `StreamLink.TunKernelTests.exe`（研究 ZIP 中为独�
 `Complete-PersonalTunGate.ps1` 只接受同一个固定包/来宾/RunId 的内核、标准用户拒绝、实际 Verifier 和受保护原始文件 hash；模板、缺文件、旧 hash 或非管理员可写证据被拒绝。默认只发行 kernel-gate。只有明确 `-AuthorizeTarget`、精确目标机器及设备身份才创建短期 target-approval。管理员发行是信任决定，hash 不是第三方认证或证据防伪。
 
 产品继续检查固定 Program Files 路径、ACL、CAT 信任、实际加载 SYS、目标 PnP/接口和当前批准。VM Gate **不证明宿主自研 TUN 已运行**。两个日用宿主各需可接受签名、自己的加载授权和目标适配证据；其后才能先 C2 一端替换、再 C3 双端替换，验证完整 FakeTCP/Wintun 的对应业务对照及回退。当前工具编译/拒绝分支可以验证，实际 IRP/NDIS/电源/PnP/Verifier 与 C2/C3 在缺来宾或签名时明确 BlockedExternal，不宣布本人完整目标通过。
+
+仍需代码/产品验证的独立事项：异常退出后用户 DLL 添加的地址可能留在持久 ROOT 网卡上，目前没有完整的受保护地址归属恢复。不要直接接管或删除同网段地址；此项为 PartialCode，连同 PnP/电源与完整 provider 崩溃恢复，必须在日用前解决/验证。内核探针的进程退出检查不证明产品地址恢复通过。

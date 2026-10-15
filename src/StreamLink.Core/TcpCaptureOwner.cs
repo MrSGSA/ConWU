@@ -234,7 +234,7 @@ public sealed class TcpCaptureOwner : IAsyncDisposable
                 if (wireBudget != null && !wireBudget.Admit(kind, packet.Length)) return false;
                 if (peerReflexive && SynHeader(packet, out byte flags, out uint seq, out _, out _) && flags == 2)
                     ownIss ??= seq;
-                try { bool sent = owner.io.Inject(packet); if (sent) owner.injected++; return sent; }
+                try { bool sent = owner.io.Inject(packet); if (sent) { owner.injected++;wireBudget?.InjectionCompleted(); } return sent; }
                 catch (Exception ex) { owner.failure = "inject-" + ex.GetType().Name; throw; }
             }
         }

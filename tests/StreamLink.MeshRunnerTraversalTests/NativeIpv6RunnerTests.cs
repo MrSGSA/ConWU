@@ -210,6 +210,7 @@ static class NativeIpv6RunnerTests
         public bool PollNetworkChange() => inner.PollNetworkChange();
         public int Gathers; public readonly ConcurrentQueue<ValidatedPathIdentity> Paths = [];
         public readonly ConcurrentQueue<NativeDatagramPath> Transports = [];
+        public readonly ConcurrentQueue<ITraversalCheckEvidence> PreparedChecks=[];
         public TraversalProfile[] Profiles => inner.Profiles; public bool SupportsFakeTcpIpv6 => inner.SupportsFakeTcpIpv6;
         public bool SupportsTcpPeerReflexive => inner.SupportsTcpPeerReflexive;
         public bool SupportsUdpExploration => inner.SupportsUdpExploration;
@@ -239,8 +240,9 @@ static class NativeIpv6RunnerTests
             public TimeSpan ExplorationRemaining => inner.ExplorationRemaining;
             public object? ExplorationStats => inner.ExplorationStats;
             public void AuthorizeUdpWitness(MeshTraversalCandidate remote)=>inner.AuthorizeUdpWitness(remote);
-            public async Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext c, MeshTraversalCandidate r, CancellationToken t) => new Prepared(await inner.PrepareCandidate(c, r, t), owner);
-            public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext c, IPEndPoint r, CancellationToken t) => new Prepared(await inner.Prepare(c, r, t), owner);
+            IPreparedMeshPath Track(IPreparedMeshPath p){if(p is ITraversalCheckEvidence evidence)owner.PreparedChecks.Enqueue(evidence);return new Prepared(p,owner);}
+            public async Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext c, MeshTraversalCandidate r, CancellationToken t) => Track(await inner.PrepareCandidate(c, r, t));
+            public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext c, IPEndPoint r, CancellationToken t) => Track(await inner.Prepare(c, r, t));
             public ValueTask DisposeAsync() => inner.DisposeAsync();
         }
         sealed class Prepared(IPreparedMeshPath inner, Inspect owner) : IPreparedMeshPath {

@@ -10,6 +10,14 @@ public interface IPreparedMeshPath : IAsyncDisposable
     TimeSpan RemainingAttemptTime { get; }
     Task<IMeshDatagramPath> Activate(CancellationToken token);
 }
+// Local, read-only execution evidence. This must not wrap or replace the
+// prepared object: reference identity controls transfer of the winning owner.
+public interface ITraversalCheckEvidence { TraversalCheckSnapshot CheckEvidence { get; } }
+public sealed record TraversalCheckSnapshot(Guid AttemptId,TraversalProfile Profile,bool ActivationRequested,bool Started,
+    long SendAttempts,long SendsCompleted,string EvidenceLevel,NativePathDiagnostics? Native=null)
+{
+    public bool Executed=>ActivationRequested&&Started&&SendsCompleted>0;
+}
 public enum MeshAttemptPhase { Offering, Preparing, Ready, Starting, Selected, Cancelled, Reserving, AwaitMeasure, Measuring, AwaitMeasured, AwaitReady, Standby }
 
 // Production peer handshake. The runner owns gathering/admission; this object

@@ -22,6 +22,9 @@ try {
  }
  # Rebuild before evidence collection. The test backend never loads WinDivert.
  Invoke-Check 'native-build' 'pwsh' @('-NoProfile','-File','scripts\Build.ps1')
+ Invoke-Check 'native-parser' (Join-Path $root 'out/native/udp2raw-parser-test.exe') @()
+ Invoke-Check 'native-so-state' (Join-Path $root 'out/native/native-so-state-test.exe') @()
+ Invoke-Check 'native-tun-file-admission' (Join-Path $root 'out/native/native-tun-file-admission-test.exe') @()
  Invoke-Check 'network-wake' 'dotnet' @('run','--project','tests\StreamLink.MeshConnectionTests','-c','Release','--','--network-wake-only',(Join-Path $OutputDirectory 'network-wake.json'))
  Invoke-Check 'tcp-mapping-wake' 'dotnet' @('run','--project','tests\StreamLink.MappingTests','-c','Release','--','--tcp-mapping-wake-only',(Join-Path $OutputDirectory 'tcp-mapping-wake.json'))
  Invoke-Check 'legacy-native-wire' 'python' @('tests\legacy_wire_loopback.py','--output',(Join-Path $OutputDirectory 'legacy-native-wire.json'))
@@ -72,6 +75,7 @@ try {
  Invoke-Check 'standby-udp-runner' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--no-build','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','1','--output',(Join-Path $OutputDirectory 'standby-udp-runner.json'),'--udp-standby-only')
  Invoke-Check 'delivery-feedback-runner' 'dotnet' @('run','--project','tests\StreamLink.MeshRunnerTraversalTests','-c','Release','--no-build','--','--native',(Join-Path $root 'out\native\udp2raw-protocol-test.exe'),'--rounds','1','--output',(Join-Path $OutputDirectory 'delivery-feedback-runner.json'),'--feedback-only')
  Invoke-Check 'udp-foundation' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release')
+ Invoke-Check 'udp-prepared-evidence' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--prepared-evidence',(Join-Path $OutputDirectory 'udp-prepared-evidence.json'))
  Invoke-Check 'shared-enhancement-admission' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--enhancement',(Join-Path $OutputDirectory 'enhancement-admission.json'))
  Invoke-Check 'udp-managed' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--managed',(Join-Path $OutputDirectory 'udp-managed.json'))
  Invoke-Check 'udp-exploration' 'dotnet' @('run','--project','tests\StreamLink.TraversalTests','-c','Release','--no-build','--','--probability',(Join-Path $OutputDirectory 'udp-exploration.json'))

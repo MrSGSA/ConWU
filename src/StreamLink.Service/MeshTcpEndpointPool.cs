@@ -56,6 +56,10 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
         if (isolation != null && !Guid.TryParseExact(isolation, "N", out _)) throw new ArgumentException("A source partition requires the authenticated peer device ID");
         if (standby && isolation == null) throw new ArgumentException("Standby partition requires the authenticated peer ID");
         string key = source + "/" + reflector + "/" + isolation + (standby ? "/standby" : "");
+        bool needsRoom;lock(gate)needsRoom=!slots.ContainsKey(key)&&slots.Count>=TraversalLimits.TcpResources;
+        // A changed reflector list must not strand healthy but unused helpers
+        // forever. Existing borrow/session references continue to prevent eviction.
+        if(needsRoom)await PruneUnused(linked.Token);
         Slot slot;
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed, this);

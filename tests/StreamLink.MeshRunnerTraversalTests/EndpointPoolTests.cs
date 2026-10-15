@@ -95,6 +95,20 @@ static class EndpointPoolTests
         await Isolation(check, token);
         await Shutdown(check, token);
         await Factory(check, token);
+        await ReflectorChurn(check,token);
+    }
+    static async Task ReflectorChurn(Action<bool,string> check,CancellationToken token){
+        var reflectors=new List<Reflector>();var captures=new List<Io>();
+        await using var pool=new MeshTcpEndpointPool(Guid.NewGuid(),(_,_)=>{var io=new Io();captures.Add(io);return io;},new());
+        try{
+            for(int i=0;i<=TraversalLimits.TcpResources;i++)reflectors.Add(new Reflector());
+            using var held=await pool.Acquire(IPAddress.Loopback,reflectors[0].Endpoint,token);
+            var idle=new List<TcpEndpointLease>();
+            for(int i=1;i<TraversalLimits.TcpResources;i++){using var use=await pool.Acquire(IPAddress.Loopback,reflectors[i].Endpoint,token);idle.Add(use.Lease);}
+            using var next=await pool.Acquire(IPAddress.Loopback,reflectors[^1].Endpoint,token);
+            check(!held.Lease.Closed&&held.Lease.QueryUsable&&!next.Lease.Closed,"ordinary SO pool frees idle reflector slots without evicting a borrowed source");
+            check(idle.All(l=>l.Closed)&&captures.Take(TraversalLimits.TcpResources).Skip(1).All(c=>c.Closed),"reflector replacement joins and releases every evicted helper/capture owner");
+        }finally{await pool.DisposeAsync();foreach(var r in reflectors)await r.DisposeAsync();}
     }
     static async Task Factory(Action<bool, string> check, CancellationToken token)
     {

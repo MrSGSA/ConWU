@@ -64,7 +64,7 @@ static class NativeLifecycleTests
         Task Start(Action action)=>Task.Factory.StartNew(action,CancellationToken.None,TaskCreationOptions.LongRunning,TaskScheduler.Default);
         try{
             var mesh=MeshIdentity.Create("https://example.com/","","faketcp");name="StreamLink-"+mesh.Pair.Network[..8]+"-1";
-            Stage("create-begin:"+name);adapter=new NativeAdapter(components,mesh.Pair.Network,1);Stage("create-complete");
+            Stage("create-begin:"+name);adapter=new NativeAdapter(components,mesh.Pair.Network,1,Stage);Stage("create-complete");
             typeof(NativeAdapter).GetProperty("LifecycleTrace",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(adapter,(Action<string>)Stage);
             ownedLuid=adapter.InterfaceLuid;
             bool IsPresent()=>contractV2?ownedLuid is{} luid&&Present(luid):NetworkInterface.GetAllNetworkInterfaces().Any(n=>n.Name==name);
@@ -136,23 +136,50 @@ static class NativeLifecycleTests
             if(process.TimedOut||!process.Reaped||process.Error!=null)throw new IOException("Owned child containment failure; inspect watchdog");
             Environment.ExitCode=process.ExitCode??1;return;
         }
-        var rows=new List<JsonElement>();bool safe=true;
+        var rows=new List<JsonElement>();
         // Two sequential owners in the same process: the second create is
         // allowed only after the first actual close and I/O completion.
         for(int i=1;i<=2;i++){
             string file=Path.Combine(output+".rounds",i.ToString("D3"),"result.json");
             await RunChild(components,file,i,contractV2:true,splitAxes:true);
             using var d=JsonDocument.Parse(File.ReadAllText(file));var row=d.RootElement.Clone();rows.Add(row);
-            safe=row.GetProperty("resourceSafety").GetString()=="Pass"&&row.GetProperty("completion").GetString()=="Complete";
-            bool pnpComplete=row.GetProperty("presentImmediately").ValueKind==JsonValueKind.False||row.GetProperty("interfaceConvergedMs").ValueKind==JsonValueKind.Number;
-            if(!safe||!pnpComplete)break;
+            if(row.GetProperty("resourceSafety").GetString()!="Pass"||row.GetProperty("completion").GetString()!="Complete"||!PnpComplete(row))break;
         }
-        bool performance=rows.Count>0&&rows.All(r=>r.GetProperty("performanceGate").GetString()=="Pass");
-        File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=4,status=performance&&safe&&rows.Count==2?"Pass":"Fail",performanceGate=performance?"Pass":"Fail",performanceCoverage=rows.Count==2?"TwoRounds":"Partial",observedRounds=rows.Count,
-            resourceSafety=safe?"Pass":"NotProven",completion=safe?"Complete":"Incomplete",reopen=rows.Count==2&&safe?"Pass":"NotTested",rows,
+        var axes=Summarize(rows);
+        File.WriteAllText(output,JsonSerializer.Serialize(new{schemaVersion=5,status=axes.Passed?"Pass":"Fail",performanceGate=axes.Performance?"Pass":"Fail",performanceCoverage=rows.Count==2?"TwoRounds":"Partial",observedRounds=rows.Count,
+            resourceSafety=axes.ResourceSafety?"Pass":"NotProven",completion=axes.Complete?"Complete":"Incomplete",pnpConvergence=axes.Pnp?"Pass":"NotProven",reopen=axes.Reopen?"Pass":"NotProven",rows,
             originalThresholdSeconds=3,boundedCompletionObservationAdditionalSeconds=5,officialWintun=true,personalPerformanceExceptionAccepted=false,
             scope="Two real official adapters, sequential owners in one child. Historical 3.61s Fail unchanged; safety is separate from latency; not self-TUN."},Json));
-        Environment.ExitCode=performance&&safe&&rows.Count==2?0:1;
+        Environment.ExitCode=axes.Passed?0:1;
+    }
+
+    static bool PnpComplete(JsonElement row)=>row.GetProperty("presentImmediately").ValueKind==JsonValueKind.False||
+        (row.GetProperty("interfaceConvergedMs").ValueKind==JsonValueKind.Number&&row.GetProperty("interfaceConvergedMs").TryGetDouble(out double ms)&&ms is >=0 and <=5000);
+    sealed record LifecycleAxes(bool Performance,bool ResourceSafety,bool Complete,bool Pnp,bool Reopen,bool Passed);
+    static LifecycleAxes Summarize(IReadOnlyList<JsonElement> rows){
+        bool observed=rows.Count>0;
+        bool performance=observed&&rows.All(r=>r.GetProperty("performanceGate").GetString()=="Pass");
+        bool safe=observed&&rows.All(r=>r.GetProperty("resourceSafety").GetString()=="Pass");
+        bool complete=observed&&rows.All(r=>r.GetProperty("completion").GetString()=="Complete");
+        bool pnp=observed&&rows.All(PnpComplete);
+        bool reopened=rows.Count==2&&safe&&complete&&pnp;
+        return new(performance,safe,complete,pnp,reopened,reopened&&performance&&rows.All(r=>r.GetProperty("status").GetString()=="Pass"));
+    }
+    public static void AxesContractTest(string output){
+        if(File.Exists(output))throw new IOException("Fresh evidence required");
+        JsonElement Row(bool performance=true,bool safe=true,bool pnp=true,string? status=null)=>JsonSerializer.SerializeToElement(new{
+            status=status??(performance&&safe&&pnp?"Pass":"Fail"),performanceGate=performance?"Pass":"Fail",resourceSafety=safe?"Pass":"NotProven",completion=safe?"Complete":"Incomplete",
+            presentImmediately=!pnp,interfaceConvergedMs=(double?)null});
+        var cases=new[]{
+            ("both completed and converged",new[]{Row(),Row()},true,true,true),
+            ("second PnP timeout cannot become top-level Pass",new[]{Row(),Row(pnp:false)},false,true,false),
+            ("safe slow close keeps performance Fail",new[]{Row(performance:false),Row()},false,true,true),
+            ("first round safety is not overwritten",new[]{Row(safe:false),Row()},false,false,false),
+            ("partial coverage does not prove reopen",new[]{Row()},false,true,false),
+            ("other child failure is not ignored",new[]{Row(),Row(status:"Fail")},false,true,true),
+            ("no observed owner proves nothing",Array.Empty<JsonElement>(),false,false,false)};
+        var results=cases.Select(c=>{var a=Summarize(c.Item2);if(a.Passed!=c.Item3||a.ResourceSafety!=c.Item4||a.Reopen!=c.Item5)throw new Exception(c.Item1);return new{test=c.Item1,axes=a};}).ToArray();
+        File.WriteAllText(output,JsonSerializer.Serialize(new{status="Pass",checks=results.Length,results,scope="Lifecycle aggregation regression only; no adapter or driver loaded; original 3s and 5s thresholds unchanged"},Json));
     }
 
     public static async Task RunV2(string components,string output,int rounds)

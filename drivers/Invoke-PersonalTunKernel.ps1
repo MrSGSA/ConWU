@@ -16,6 +16,8 @@ $Package=[IO.Path]::GetFullPath($Package);$Probe=[IO.Path]::GetFullPath($Probe)
 & (Join-Path $PSScriptRoot 'Manage-PersonalTun.ps1') -Package $Package -Action Status |Out-Null
 $identity=Get-Content (Join-Path $Package 'package-identity.json') -Raw|ConvertFrom-Json
 if((Get-AuthenticodeSignature (Join-Path $Package 'StreamLinkTun.cat')).Status -ne 'Valid'){throw 'Guest catalog must already be signed and trusted. No trust or boot policy is changed.'}
+. (Join-Path $PSScriptRoot 'Assert-PersonalTunCatalog.ps1')
+Assert-PersonalTunCatalog $Package -KernelPolicy
 $adapter=@(Get-CimInstance Win32_NetworkAdapter|Where-Object PNPDeviceID -eq $DeviceInstance)
 $driver=@(Get-CimInstance Win32_SystemDriver -Filter "Name='StreamLinkTun'")
 if($adapter.Count -ne 1 -or $driver.Count -ne 1 -or $driver[0].State -ne 'Running'){throw 'Actual selected research device is not uniquely loaded'}
@@ -31,7 +33,7 @@ $acl=[Security.AccessControl.DirectorySecurity]::new();$acl.SetAccessRuleProtect
 foreach($sid in @('S-1-5-18','S-1-5-32-544')){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new([Security.Principal.SecurityIdentifier]::new($sid),'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}
 $acl.SetOwner([Security.Principal.SecurityIdentifier]::new('S-1-5-32-544'));Set-Acl -LiteralPath $root -AclObject $acl
 $plan=Join-Path $root 'lab-plan.json';$result=Join-Path $root 'kernel-result.json'
-[ordered]@{RunId=$run;GuestMachineGuid=$machine;HostMachineGuid=$HostMachineGuid;InterfaceIndex=$index;
+[ordered]@{RunId=$run;GuestMachineGuid=$machine;HostMachineGuid=$HostMachineGuid;InterfaceIndex=$index;DeviceInstance=$DeviceInstance;
  PackageHash=(Get-FileHash (Join-Path $Package 'package-identity.json')).Hash;AuthorizedRecoverableLab=$true;RecoveryConfirmed=$true}|ConvertTo-Json|Set-Content $plan
 $process=$null;$address=$null
 try{
@@ -44,8 +46,8 @@ try{
 }finally{
  if($process){if(-not $process.HasExited){$process.Kill($true);$process.WaitForExit(5000)|Out-Null};$process.Dispose()}
  if($address){$address|Remove-NetIPAddress -Confirm:$false}
- Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-CodeIntegrity/Operational';StartTime=(Get-Date).AddMinutes(-10)} -ErrorAction SilentlyContinue|
-  Select-Object TimeCreated,Id,LevelDisplayName,Message|ConvertTo-Json -Depth 4|Set-Content (Join-Path $root 'code-integrity.json')
+ . (Join-Path $PSScriptRoot 'Read-PersonalTunEvents.ps1')
+ Read-PersonalTunEvents 'Microsoft-Windows-CodeIntegrity/Operational' (Get-Date).AddMinutes(-10)|ConvertTo-Json -Depth 6|Set-Content (Join-Path $root 'code-integrity.json')
  & verifier.exe /querysettings > (Join-Path $root 'verifier-query.txt')
  & verifier.exe /query > (Join-Path $root 'verifier-after.txt')
 }

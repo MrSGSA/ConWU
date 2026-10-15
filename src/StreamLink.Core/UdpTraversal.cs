@@ -321,7 +321,7 @@ public sealed partial class UdpTraversal : IAsyncDisposable
             sent++;
             group?.Admitted(kind, remote);
         }
-        try { await socket.Send(Encode(kind, nonce), remote, stop.Token); group?.Sent(probeSource); }
+        try { await socket.Send(Encode(kind, nonce), remote, stop.Token);Interlocked.Increment(ref completedCheckSends);group?.Sent(probeSource); }
         catch (SocketException ex) { lock (gate) failure = ex.SocketErrorCode == SocketError.MessageSize && kind >= 3 ? "mtu-too-small" : "send-" + ex.SocketErrorCode; }
     }
     async Task Receive()

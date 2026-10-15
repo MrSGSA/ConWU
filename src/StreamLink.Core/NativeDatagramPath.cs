@@ -29,7 +29,7 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 // uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
 [SupportedOSPlatform("windows")]
-public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, IWireControlPath, IPathDiagnosticWire, IPathResourceLifetime
+public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, ITraversalCheckEvidence, IWireControlPath, IPathDiagnosticWire, IPathResourceLifetime
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
     readonly object gate = new();
@@ -66,6 +66,8 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     public bool Failed => Volatile.Read(ref failed) != 0 || native?.Exited == true;
     public bool Armed => !Volatile.Read(ref disposed) && native?.Armed == true && !Failed;
     public bool Started => native?.Started == true;
+    public TraversalCheckSnapshot CheckEvidence=>new(Context.AttemptId,Context.Profile,Volatile.Read(ref starting)!=null,Started,
+        WireControl?.HandshakePackets??Volatile.Read(ref bridgeProbeAttempts),WireControl?.InjectedPackets??0,"NativeBrokerInjection",Diagnostics);
     public bool Closed { get { lock (gate) return closing?.IsCompleted == true; } }
     public TimeSpan RemainingAttemptTime => native?.RemainingRound ?? TimeSpan.Zero;
     public Guid AttachId => native?.AttachId ?? Guid.Empty;

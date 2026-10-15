@@ -103,7 +103,9 @@ static class TraversalNetwork
             // A completed test is not a quality pass. Keep the configured load
             // and measured result separate, especially when nested over an old tunnel.
             bool loadPass = quality is { LossPercent: 0, ReceivedMbps: >= 49 };
-            bool checkExecuted=selectedFactory?.NativePaths.Any(p=>p.Started)==true || connected>0;
+            if(!runner.CleanupComplete&&cleanupFailure.Length==0)cleanupFailure="MeshRunner resource cleanup was not proven; inspect runnerExit";
+            var preparedEvidence=selectedFactory?.Checks.Select(p=>p.CheckEvidence).ToArray()??[];
+            bool checkExecuted=preparedEvidence.Any(p=>p.Executed) || connected>0;
             bool infrastructureReady=controlReady&&adapterCreated&&(selectedFactory?.PreparedCount>0||c.Kind=="legacy"&&connected>0);
             if(controlAuthenticationFailed&&failure.Length==0)failure="ControlOrPeerAuthenticationRejected";
             string transportOutcome=echoes==10?"BusinessUsable":deadlineReached&&connected==0&&checkExecuted&&budgetFailureObserved?"NoDirectPathWithinBudget":connected>0?"IncompleteBusiness":"NotEstablished";
@@ -120,7 +122,7 @@ static class TraversalNetwork
                 loadCriterion = "50 Mbps requested for 20 seconds; at least 49 Mbps received and zero reported loss; not a latency or long-duration gate",
                 scope = c.Route == "host" ? IPAddress.IsLoopback(IPAddress.Parse(c.Local))?"Single Windows host, isolated real Wintun/WinDivert runners over loopback. No two-device or physical NAT claim.":"Two real Windows Wintun/WinDivert endpoints over an existing overlay; no new public NAT reachability claim" : "Production physical-egress collector and Wintun; no relay claim depends on actual route evidence",
                 actualWintun = adapterCreated, actualWinDivert = c.Kind != "udp" && connected > 0, oldOverlayUnderlay = c.Route == "host"&&!IPAddress.IsLoopback(IPAddress.Parse(c.Local)), connectedMs = connected, fullMtuEchoes = echoes,
-                quality, session = latest, evidence,selectedPathDiagnostics=selectedFactory?.NativePaths.Select(p=>p.Diagnostics).ToArray(), failure, timeline }, new JsonSerializerOptions { WriteIndented = true }));
+                quality, session = latest, evidence,preparedCheckEvidence=preparedEvidence,selectedPathDiagnostics=preparedEvidence.Where(p=>p.Native!=null).Select(p=>p.Native).ToArray(), failure, timeline }, new JsonSerializerOptions { WriteIndented = true }));
             factory?.Dispose();
         }
     }
@@ -130,7 +132,7 @@ static class TraversalNetwork
         while (!token.IsCancellationRequested) { var data = await udp.ReceiveAsync(token); if (data.RemoteEndPoint.Address.Equals(allowed) && data.Buffer.Length == 1252) await udp.SendAsync(data.Buffer, data.RemoteEndPoint, token); }
     }
     sealed class SingleProfile(IMeshCandidateFactory inner, TraversalProfile profile) : IMeshCandidateFactory, IAsyncDisposable {
-        public readonly System.Collections.Concurrent.ConcurrentQueue<NativeDatagramPath> NativePaths=[];
+        public readonly System.Collections.Concurrent.ConcurrentQueue<ITraversalCheckEvidence> Checks=[];
         public int PreparedCount;
         public TraversalProfile[] Profiles => inner.Profiles.Contains(profile) ? [profile] : throw new IOException("Requested profile unavailable");
         public bool SupportsUdpIpv6 => inner.SupportsUdpIpv6;
@@ -144,7 +146,7 @@ static class TraversalNetwork
         sealed class Observed(IMeshCandidateResource inner,SingleProfile owner):IMeshCandidateResource {
             public MeshTraversalCandidate Candidate=>inner.Candidate;
             public void AuthorizeUdpWitness(MeshTraversalCandidate remote)=>inner.AuthorizeUdpWitness(remote);
-            IPreparedMeshPath Track(IPreparedMeshPath p){if(p.Armed)Interlocked.Increment(ref owner.PreparedCount);if(p is NativeDatagramPath n)owner.NativePaths.Enqueue(n);return p;}
+            IPreparedMeshPath Track(IPreparedMeshPath p){if(p.Armed)Interlocked.Increment(ref owner.PreparedCount);if(p is ITraversalCheckEvidence evidence)owner.Checks.Enqueue(evidence);return p;}
             public async Task<IPreparedMeshPath> Prepare(TraversalAttemptContext c,IPEndPoint r,CancellationToken t)=>Track(await inner.Prepare(c,r,t));
             public async Task<IPreparedMeshPath> PrepareCandidate(TraversalAttemptContext c,MeshTraversalCandidate r,CancellationToken t)=>Track(await inner.PrepareCandidate(c,r,t));
             public ValueTask DisposeAsync()=>inner.DisposeAsync();

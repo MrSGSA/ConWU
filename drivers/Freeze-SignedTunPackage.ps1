@@ -8,6 +8,8 @@ $names=@('StreamLinkTun.sys','StreamLinkTun.inf','StreamLinkTun.cat','streamlink
 if(@($v.Files|Select-Object -ExpandProperty Name -Unique).Count -ne 4 -or @($v.Files|Where-Object Name -notin $names).Count){throw 'Exact package allow-list required'}
 foreach($name in $names){if((Get-Item -LiteralPath (Join-Path $Package $name)).Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked member rejected'}}
 if((Get-AuthenticodeSignature -LiteralPath (Join-Path $Package 'StreamLinkTun.cat')).Status -ne 'Valid'){throw 'Catalog is not signed/trusted; no identity changed'}
+. (Join-Path $PSScriptRoot 'Assert-PersonalTunCatalog.ps1')
+Assert-PersonalTunCatalog $Package -KernelPolicy
 $backup=$identity+'.unsigned-'+[DateTime]::UtcNow.ToString('yyyyMMddTHHmmssfffffff')
 if($PSCmdlet.ShouldProcess($identity,'Back up unsigned identity and refreeze exact signed package; old approvals become invalid')){
  Copy-Item -LiteralPath $identity -Destination $backup

@@ -33,6 +33,8 @@ $toolSignature=Get-AuthenticodeSignature -LiteralPath $DevCon
 if($toolSignature.Status -ne 'Valid' -or $toolSignature.SignerCertificate.Subject -notmatch 'Microsoft'){throw 'Microsoft WDK tool signature not verified'}
 if($Action -eq 'InstallLab'){
  if($cat.Status -ne 'Valid'){throw 'Unsigned/untrusted catalog rejected; no device was created. Obtain approved signing; do not disable security policy.'}
+ . (Join-Path $PSScriptRoot 'Assert-PersonalTunCatalog.ps1')
+ Assert-PersonalTunCatalog $Package -KernelPolicy
  if($devices.Count){throw 'Owned device already exists; inspect it, never create a second instance automatically'}
  if($PSCmdlet.ShouldProcess('ROOT\StreamLinkTun on explicitly authorized lab','Create exactly one root adapter and install current signed INF')){
   & $DevCon install (Join-Path $Package 'StreamLinkTun.inf') 'ROOT\StreamLinkTun'

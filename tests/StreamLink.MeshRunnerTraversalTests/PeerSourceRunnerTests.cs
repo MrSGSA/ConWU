@@ -46,6 +46,10 @@ static class PeerSourceRunnerTests
             check(factories.All(f => f.Candidates.Any(c => c.PeerReflexive)) && statuses.All(s => s?.Degraded != true), mode + ": formal factory and signed control enable source learning without UDP or relay");
             check(factories[stable].Transports.Where(p => !p.Failed).Count(p => p.Diagnostics.PeerSource is { Learned: true, Frozen: true }) == count - 1,
                 mode + ": selected real native paths retain authenticated learned source endpoints");
+            check(factories[stable].Transports.Where(p=>!p.Failed).All(p=>p.CheckEvidence.Executed&&p.CheckEvidence.SendsCompleted>0),
+                mode+": execution evidence distinguishes successful broker injection from preparation/queued probes");
+            check(factories[stable].PreparedChecks.Any(p=>p.CheckEvidence.Executed&&p.CheckEvidence.Native!=null),
+                mode+": formal EpochPrepared preserves execution evidence without changing transfer identity");
             if (count == 3) {
                 check(factories[stable].Paths.Select(p => p.LeaseId).Distinct().Count() == 2 && factories[stable].Paths.Select(p => p.ActualLocal.Port).Distinct().Count() == 2,
                     "two members sharing a public IP have distinct actual retained TCP sources at the stable node");
@@ -61,7 +65,7 @@ static class PeerSourceRunnerTests
             }
             check(adapters[stable].Incoming.Count == count - 1, mode + ": full-size authenticated bidirectional business reaches every direct member");
             return new { mode, connectedMs, members = count, helper.Accepted, rawSources = wire.Ios.Length, wire.Packets,
-                learned = factories[stable].Transports.Select(p => p.Diagnostics.PeerSource).ToArray(), realNat = false, wintun = false };
+                learned = factories[stable].Transports.Select(p => p.Diagnostics.PeerSource).ToArray(),checks=factories[stable].Transports.Select(p=>p.CheckEvidence).ToArray(), realNat = false, wintun = false };
         } finally {
             journal??=Path.Combine(root,mode+"-shutdown.jsonl");Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(journal))!);
             using var sampling=new CancellationTokenSource();var closingWatch=Stopwatch.StartNew();

@@ -228,13 +228,15 @@ internal sealed partial class MeshCandidateFactory
         }
         public async ValueTask DisposeAsync() { if (Interlocked.Exchange(ref disposed, 1) != 0) return; try { await inner.DisposeAsync(); } finally { reference.Dispose(); } }
     }
-    sealed class EpochPrepared(MeshCandidateFactory owner, NetworkEpoch epoch, IPreparedMeshPath inner) : IPreparedMeshPath
+    sealed class EpochPrepared(MeshCandidateFactory owner, NetworkEpoch epoch, IPreparedMeshPath inner) : IPreparedMeshPath, ITraversalCheckEvidence
     {
         readonly IDisposable reference = owner.HoldEpoch(epoch);
         int disposed, nativeTransferred;
         readonly object gate = new();
         Task<IMeshDatagramPath>? activation;
         public TraversalAttemptContext Context => inner.Context;
+        public TraversalCheckSnapshot CheckEvidence=>inner is ITraversalCheckEvidence evidence?evidence.CheckEvidence:
+            new(inner.Context.AttemptId,inner.Context.Profile,activation!=null,false,0,0,"NoExecutionEvidence");
         public bool Armed => epoch.Id == owner.CurrentGeneration && inner.Armed;
         public TimeSpan RemainingAttemptTime => epoch.Id == owner.CurrentGeneration ? inner.RemainingAttemptTime : TimeSpan.Zero;
         public Task<IMeshDatagramPath> Activate(CancellationToken token)

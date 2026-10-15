@@ -31,6 +31,7 @@ public sealed class NativeAdapter : IPacketAdapter
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate uint ReadLuid(IntPtr adapter,out ulong luid);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void NativeCloseTrace(uint phase);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void TracedClose(IntPtr adapter,NativeCloseTrace trace);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)] delegate uint TracedOpen(string dll,string name,ref Guid guid,byte[] ip,out IntPtr adapter,NativeCloseTrace trace);
     readonly TracedClose? tracedClose;
     readonly IntPtr library;
     IntPtr adapter;
@@ -47,8 +48,9 @@ public sealed class NativeAdapter : IPacketAdapter
     public ulong? InterfaceLuid {get;}
     public PacketAdapterStatistics Statistics{get{io.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed,this);var c=new ulong[7];uint error=stats(adapter,c);if(error!=0)throw new Win32Exception((int)error);return new((long)c[0],(long)c[1],(long)c[2],(long)c[3],(long)c[4],(long)c[5],(long)c[6],Volatile.Read(ref stopping)!=0);}finally{io.ExitReadLock();}}}
     bool disposed;
-    public NativeAdapter(string components, string network, int slot)
+    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null)
     {
+        LifecycleTrace=lifecycleTrace;
         if (!WindowsHost.IsAdmin) throw new IOException("创建虚拟网卡需要管理员权限");
         string prefix = MeshIdentity.Prefix(network) + ".";
         var conflicts=OverlayRouteConflicts.Inspect(IPAddress.Parse(prefix+"0"));
@@ -65,8 +67,13 @@ public sealed class NativeAdapter : IPacketAdapter
             stop=Load<StopPacket>("sltun_stop");stats=Load<ReadStats>("sltun_stats");
             PacketAdapterProviders.RequireProduction(Descriptor);
             var guid = new Guid(SHA256.HashData(Encoding.ASCII.GetBytes($"streamlink-wintun-v4/{network}/{slot}")).AsSpan(0, 16));
-            uint error = Load<Open>("sltun_open")(driver, $"StreamLink-{network[..8]}-{slot}", ref guid, IPAddress.Parse(MeshIdentity.Address(network, slot)).GetAddressBytes(), out adapter);
-            if (error != 0) throw new Win32Exception((int)error, "原生虚拟网卡创建失败");
+            string openStage="bridge-open";uint error;
+            if(NativeLibrary.TryGetExport(library,"sltun_open_with_trace",out var diagnosticOpen)){
+                NativeCloseTrace callback=phase=>{if(phase>=100)openStage=OpenStage(phase);Trace(phase>=100?openStage:"open-rollback/"+CloseStage(phase));};
+                error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter,callback);
+                GC.KeepAlive(callback);
+            }else error=Load<Open>("sltun_open")(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter);
+            if (error != 0) throw new Win32Exception((int)error,"原生虚拟网卡创建失败；阶段="+openStage);
             if(NativeLibrary.TryGetExport(library,"sltun_luid",out var identityExport)) {
                 error=Marshal.GetDelegateForFunctionPointer<ReadLuid>(identityExport)(adapter,out var identity);
                 if(error!=0||identity==0)throw new IOException("网卡实际 LUID 身份无效");InterfaceLuid=identity;
@@ -98,11 +105,17 @@ public sealed class NativeAdapter : IPacketAdapter
     public int Read(byte[] buffer,CancellationToken token){using var cancel=token.Register(Stop);token.ThrowIfCancellationRequested();int length=Read(buffer);token.ThrowIfCancellationRequested();return length;}
     public void Stop(){io.EnterReadLock();try{if(!disposed&&Interlocked.Exchange(ref stopping,1)==0)stop(adapter);}finally{io.ExitReadLock();}}
     void Trace(string stage){try{LifecycleTrace?.Invoke(stage);}catch{/* diagnostics cannot break native resource cleanup */}}
-    void TraceNative(uint phase)=>Trace(phase switch{
+    static string OpenStage(uint phase)=>phase switch{
+        101=>"wintun-load-begin",102=>"wintun-load-complete",103=>"adapter-create-begin",104=>"adapter-create-complete",
+        105=>"ipv4-interface-get-begin",106=>"ipv4-interface-get-complete",107=>"ipv4-interface-set-begin",108=>"ipv4-interface-set-complete",
+        109=>"ipv4-address-create-begin",110=>"ipv4-address-create-complete",111=>"session-start-begin",112=>"session-start-complete",
+        113=>"read-event-get-begin",114=>"read-event-get-complete",115=>"adapter-open-complete",_=>"unknown-open-phase"};
+    static string CloseStage(uint phase)=>phase switch{
         1=>"native-stop-handle-close-begin",2=>"native-stop-handle-close-complete",
         3=>"native-session-end-begin",4=>"native-session-end-complete",
         5=>"native-adapter-close-begin",6=>"native-adapter-close-complete",
-        7=>"wintun-library-free-begin",8=>"wintun-library-free-complete",_=>"unknown-native-close-phase"});
+        7=>"wintun-library-free-begin",8=>"wintun-library-free-complete",_=>"unknown-native-close-phase"};
+    void TraceNative(uint phase)=>Trace(CloseStage(phase));
     // The caller joins both packet pumps before closing the native session.
     public void Dispose() {
         // Signal BEFORE waiting for in-flight native reads. Delegate calls hold

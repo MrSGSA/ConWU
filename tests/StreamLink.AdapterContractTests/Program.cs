@@ -3,6 +3,8 @@ using System.Text.Json;
 using StreamLink.Core;
 
 if(args is ["--lifecycle-watchdog-hang"]) { Console.WriteLine("intentional isolated watchdog child");Console.Out.Flush();Thread.Sleep(Timeout.Infinite);return; }
+if(args is ["--lifecycle-axes-contract",var axesOutput]){NativeLifecycleTests.AxesContractTest(Path.GetFullPath(axesOutput));return;}
+if(args is ["--bridge-open-diagnostics",var bridge, var bridgeOutput]){BridgeOpenDiagnostics.Run(Path.GetFullPath(bridge),Path.GetFullPath(bridgeOutput));return;}
 if(args is ["--native-lifecycle-pf2",var pf2Components,"--output",var pf2Output]){await NativeLifecycleTests.RunPf2(Path.GetFullPath(pf2Components),Path.GetFullPath(pf2Output));return;}
 if(args is ["--native-lifecycle-pf2-child",var pf2ChildComponents,"--output",var pf2ChildOutput]){await NativeLifecycleTests.RunPf2(Path.GetFullPath(pf2ChildComponents),Path.GetFullPath(pf2ChildOutput),true);return;}
 if(args is ["--lifecycle-watchdog-selftest",var watchdogOutput]) { await NativeLifecycleTests.WatchdogSelfTest(watchdogOutput);return; }

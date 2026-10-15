@@ -45,7 +45,7 @@ using(var worker=new ControlWorker()){
     Check(!failed.Ok&&failed.Profile!.AdapterBackend==PacketAdapterBackend.OfficialWintun,"failed self-TUN admission preserves stored backend before network teardown");
     var preset=await worker.Handle(new("personal-preset"));
     Check(preset.Ok&&preset.Profile!.TcpPeerReflexive&&preset.Profile.TraversalMode=="tcp-udp","real control command saves effective enhanced preset");
-    var ready=await worker.Handle(new("personal-check"));Check(ready.Ok,"prepared-method command consumes validated configuration");
+    var ready=await worker.Handle(new("personal-check"));Check(!ready.Ok&&ready.Error.Contains("先创建或加入"),"unpaired configuration cannot skip coordinator checks and claim prepared");
     await worker.StopLocal();
 }
 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[0]))!);

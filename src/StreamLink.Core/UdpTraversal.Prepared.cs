@@ -5,6 +5,7 @@ namespace StreamLink.Core;
 public sealed partial class UdpTraversal
 {
     bool preparedAttached;
+    long completedCheckSends;
     // Transfers the original owner reference to a preparation adapter. Its
     // Activate returns a separate retained path; disposing this adapter retires
     // only the owner and never the router's winning socket reference.
@@ -20,7 +21,7 @@ public sealed partial class UdpTraversal
             preparedAttached = true; return result;
         }
     }
-    sealed class PreparedUdp(UdpTraversal owner, TraversalAttemptContext context, Guid generation, IPEndPoint remote) : IPreparedMeshPath
+    sealed class PreparedUdp(UdpTraversal owner, TraversalAttemptContext context, Guid generation, IPEndPoint remote) : IPreparedMeshPath, ITraversalCheckEvidence
     {
         readonly object gate = new();
         readonly CancellationTokenSource stop = new();
@@ -28,6 +29,8 @@ public sealed partial class UdpTraversal
         Task? closing;
         bool disposed;
         public TraversalAttemptContext Context => context;
+        public TraversalCheckSnapshot CheckEvidence {get{lock(owner.gate)return new(context.AttemptId,context.Profile,Volatile.Read(ref activation)!=null,owner.started!=0,
+            owner.sent,Interlocked.Read(ref owner.completedCheckSends),"SameUdpSocketSendCompletion");}}
         public bool Armed { get { lock (owner.gate) return !Volatile.Read(ref disposed) && owner.disposed == 0 && !owner.resourceClosed && !owner.receiving.IsCompleted && owner.GatewayEligible; } }
         public TimeSpan RemainingAttemptTime => owner.RemainingAttemptTime;
         public Task<IMeshDatagramPath> Activate(CancellationToken token)

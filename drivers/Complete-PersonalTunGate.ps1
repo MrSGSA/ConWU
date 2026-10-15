@@ -7,13 +7,18 @@ param([Parameter(Mandatory)][string]$Package,[Parameter(Mandatory)][string]$Kern
 $ErrorActionPreference='Stop'
 if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw 'Administrator required for protected gate publication'}
 function Protected-Input([string]$p){
- $item=Get-Item -LiteralPath $p
- if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked evidence rejected'}
- $acl=Get-Acl -LiteralPath $p;$allowed=@('S-1-5-18','S-1-5-32-544')
- if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $allowed){throw 'Evidence owner is not SYSTEM/Administrators'}
- foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
-  $write=[Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
-  if($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $write) -and $rule.IdentityReference.Value -notin $allowed){throw 'Evidence writable by a non-administrative identity'}
+ $at=[IO.Path]::GetFullPath($p);if($at.StartsWith('\\')){throw 'Local protected evidence required'};$first=$true
+ $allowed=@('S-1-5-18','S-1-5-32-544','S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+ while($at){
+  $item=Get-Item -LiteralPath $at;if($item.Attributes -band [IO.FileAttributes]::ReparsePoint){throw 'Linked evidence or ancestor rejected'}
+  $acl=Get-Acl -LiteralPath $at
+  if($acl.GetOwner([Security.Principal.SecurityIdentifier]).Value -notin $allowed){throw 'Evidence/ancestor owner is not a trusted system administrator'}
+  foreach($rule in $acl.GetAccessRules($true,$true,[Security.Principal.SecurityIdentifier])){
+   $write=[Security.AccessControl.FileSystemRights]::WriteData -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+   if($first){$write=$write -bor [Security.AccessControl.FileSystemRights]::AppendData}
+   if($rule.AccessControlType -eq 'Allow' -and ($rule.FileSystemRights -band $write) -and $rule.IdentityReference.Value -notin $allowed){throw 'Evidence or ancestor can be replaced by a non-administrative identity'}
+  }
+  $first=$false;$at=[IO.Path]::GetDirectoryName($at)
  }
 }
 foreach($p in @($KernelResult,$PermissionResult,$VerifierEvidence)){Protected-Input $p}
@@ -21,11 +26,9 @@ $k=Get-Content -LiteralPath $KernelResult -Raw|ConvertFrom-Json;$p=Get-Content -
 $hash=(Get-FileHash -LiteralPath (Join-Path $Package 'package-identity.json')).Hash
 & (Join-Path $PSScriptRoot 'Manage-PersonalTun.ps1') -Package $Package -Action Status|Out-Null
 if((Get-AuthenticodeSignature -LiteralPath (Join-Path $Package 'StreamLinkTun.cat')).Status -ne 'Valid'){throw 'Sign and refreeze package before publishing gates'}
-if($k.tool -ne 'StreamLink.TunKernelTests' -or $k.evidenceLevel -ne 'DriverKernelIO' -or $k.status -ne 'Pass' -or
- $k.kernelIo -ne 'Pass' -or $k.cancellation -ne 'Pass' -or $k.cleanup -ne 'Pass' -or $k.PackageHash -ne $hash -or
- $p.permissions -ne 'Pass' -or $p.admin -ne $false -or $p.openError -ne 5 -or $p.PackageHash -ne $hash -or $p.machine -ne $k.machine -or $p.RunId -ne $k.RunId){throw 'Actual kernel/standard-user evidence does not match this exact package/run'}
-if($v.schemaVersion -ne 1 -or $v.packageHash -ne $hash -or $v.machine -ne $k.machine -or $v.driver -ne 'StreamLinkTun.sys' -or
- $v.bootedWithVerifier -ne $true -or $v.result -ne 'Pass' -or $v.operatorReviewed -ne $true -or -not $v.rawFiles){throw 'Booted targeted Verifier run and explicit operator review required, not a NotTested template'}
+. (Join-Path $PSScriptRoot 'Assert-PersonalTunCatalog.ps1');Assert-PersonalTunCatalog $Package -KernelPolicy
+. (Join-Path $PSScriptRoot 'Assert-PersonalTunEvidence.ps1')
+Assert-PersonalTunEvidence $k $p $v $hash (Get-FileHash -LiteralPath $KernelResult).Hash
 $base=Split-Path -Parent ([IO.Path]::GetFullPath($VerifierEvidence))
 foreach($file in $v.rawFiles){
  if($file.path -notmatch '^[A-Za-z0-9_.-]+$' -or $file.sha256 -notmatch '^[0-9A-Fa-f]{64}$'){throw 'Invalid Verifier evidence member'}

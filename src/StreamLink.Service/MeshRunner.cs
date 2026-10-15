@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using StreamLink.Core;
 
 namespace StreamLink.Service;
+public sealed class MeshShutdownException(string[] failures):IOException("网络资源退出未获证实："+string.Join("; ",failures));
 
 public sealed class MeshRunner
 {
@@ -20,6 +21,7 @@ public sealed class MeshRunner
     MeshRouter? router;
     MeshDirectory? pendingDirectory;
     internal object? ExitDiagnostics { get; private set; }
+    internal bool CleanupComplete {get;private set;}
     public void UpdateDirectory(MeshDirectory directory)
     {
         lock (gate) { MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0); pendingDirectory = directory; router?.ApplyDirectory(directory); }
@@ -307,37 +309,42 @@ public sealed class MeshRunner
             }
         } finally {
             long shutdownStarted = Environment.TickCount64;
+            var cleanupFailures=new List<string>();
+            void CleanupFailed(string stage,Exception ex){cleanupFailures.Add(stage+":"+ex.GetType().Name+":"+ex.Message);try{log("资源退出未完成："+cleanupFailures[^1]);}catch{}}
             void ShutdownStage(string stage) {
                 ExitDiagnostics = new { stage, elapsedMs=Environment.TickCount64-shutdownStarted,
+                    cleanupComplete=CleanupComplete,failures=cleanupFailures.ToArray(),
                     tasks=new {factory=gatheringFactory?.Status.ToString(),probe=probe?.Status.ToString(),adapter=opening?.Status.ToString(),
                         maintain=maintain?.Status.ToString(),quality=quality?.Status.ToString(),read=reading?.Status.ToString(),publish=publishing?.Status.ToString(),save=saving?.Status.ToString(),release=releasing?.Status.ToString(),router=router?.Completion.Status.ToString()} };
                 try { log($"ShutdownStage={stage}; elapsedMs={Environment.TickCount64-shutdownStarted}; tasks="+System.Text.Json.JsonSerializer.Serialize(ExitDiagnostics)); } catch { }
             }
             ShutdownStage("cancel");
-            cancellation.Cancel();
+            try{cancellation.Cancel();}catch(Exception ex){CleanupFailed("cancel",ex);}
             ShutdownStage("factory-startup");
             if (gatheringFactory != null) try { factory = await gatheringFactory; } catch { }
             ShutdownStage("traversal");
-            if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { log("打洞调度退出：" + ex.Message); }
+            if (traversal != null) try { await traversal.DisposeAsync(); } catch (Exception ex) { CleanupFailed("traversal",ex); }
             ShutdownStage("mapping-probe");
             if (probe != null) { try { mapping = await probe; } catch { } }
             ShutdownStage("adapter-startup");
-            if (opening != null) { try { (await opening).Dispose(); } catch { } }
+            if (opening != null) { IPacketAdapter? opened=null;try{opened=await opening;}catch{}if(opened!=null)try{opened.Dispose();}catch(Exception ex){CleanupFailed("adapter-startup",ex);} }
             ShutdownStage("maintenance-and-http");
-            foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if (ex is not OperationCanceledException) log("退出任务：" + ex.Message); } }
+            foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if(ex is not OperationCanceledException){if(ReferenceEquals(task,releasing))CleanupFailed("mapping-release",ex);else try{log("退出任务已结束："+ex.Message);}catch{}} } }
             ShutdownStage("legacy-clients");
-            foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { log("传输清理：" + ex.Message); } }
+            foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { CleanupFailed("legacy-client",ex); } }
             ShutdownStage("listener");
-            try { server?.Dispose(); } catch (Exception ex) { log("入口清理：" + ex.Message); }
+            try { server?.Dispose(); } catch (Exception ex) { CleanupFailed("listener",ex); }
             ShutdownStage("mapping");
-            if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { log("映射清理：" + ex.Message); } }
+            if (mapping != null) { try { await mapping.DisposeAsync(); } catch (Exception ex) { CleanupFailed("mapping",ex); } }
             ShutdownStage("router");
-            if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { log("原生网络已停止：" + ex.Message); } router = null; }
+            if (router != null) { try { await router.DisposeAsync(); } catch (Exception ex) { CleanupFailed("router",ex); } router = null; }
             ShutdownStage("factory");
-            if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { log("源端点清理：" + ex.Message); }
+            if (factory is IAsyncDisposable ownedFactory) try { await ownedFactory.DisposeAsync(); } catch (Exception ex) { CleanupFailed("factory",ex); }
             ShutdownStage("owned-rule-and-record");
-            try { services.Firewall(rule, mesh.LocalIp, ""); File.Delete(Path.Combine(folder, "owner.json")); } catch (Exception ex) { log("会话规则等待下次恢复：" + ex.Message); }
-            ShutdownStage("complete");
+            try { services.Firewall(rule, mesh.LocalIp, ""); File.Delete(Path.Combine(folder, "owner.json")); } catch (Exception ex) { CleanupFailed("owned-rule-and-record",ex); }
+            CleanupComplete=cleanupFailures.Count==0;
+            ShutdownStage(CleanupComplete?"complete":"incomplete");
+            if(!CleanupComplete)throw new MeshShutdownException(cleanupFailures.ToArray());
         }
     }
 }
