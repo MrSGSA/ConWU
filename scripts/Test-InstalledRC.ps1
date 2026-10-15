@@ -1,6 +1,7 @@
 param([Parameter(Mandatory)][string]$Bundle,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
 $Bundle=[IO.Path]::GetFullPath($Bundle)
+if(Test-Path -LiteralPath (Join-Path $Bundle 'layout-manifest.json')){$Bundle=Join-Path $Bundle 'app'}
 $scope=[guid]::NewGuid().ToString('N');$service='StreamLink-Validation-'+$scope
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 if(-not $OutputDirectory){$OutputDirectory=Join-Path $repo ('artifacts/installed-rc-'+$scope)}

@@ -7,6 +7,16 @@ namespace StreamLink.Core;
 [SupportedOSPlatform("windows")]
 static class ControlServerIdentity
 {
+    public static string Availability()
+    {
+        IntPtr manager=OpenSCManager(null,null,1),service=IntPtr.Zero;
+        try {
+            if(manager==IntPtr.Zero)return "Unavailable";
+            service=OpenService(manager,WindowsInstance.Name,4);
+            if(service==IntPtr.Zero)return Marshal.GetLastWin32Error()==1060?"NotInstalled":"AccessDenied";
+            return QueryServiceStatusEx(service,0,out var status,Marshal.SizeOf<Status>(),out _)?status.State==4?"Running":"Stopped":"Unavailable";
+        } finally {if(service!=IntPtr.Zero)CloseServiceHandle(service);if(manager!=IntPtr.Zero)CloseServiceHandle(manager);}
+    }
     [StructLayout(LayoutKind.Sequential)] struct Status { public uint Type, State, Accepted, Win32Exit, ServiceExit, Checkpoint, Hint, Pid, Flags; }
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint pid);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern IntPtr OpenSCManager(string? machine, string? database, uint access);

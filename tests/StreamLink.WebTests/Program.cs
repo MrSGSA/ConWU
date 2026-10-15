@@ -19,8 +19,9 @@ if(args is ["--browser-fixture",var assetRoot]) {
 }
 var root=Path.GetFullPath(args.FirstOrDefault()??"src/StreamLink.Web/wwwroot");
 int checks=0,failures=0,calls=0;
+string? backendFailure=null;
 void Check(bool ok,string name){checks++;if(!ok){failures++;Console.Error.WriteLine("FAIL "+name);}}
-Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);return Task.FromResult(new UiControlReply(true,"",null));}
+Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);if(backendFailure!=null)throw backendFailure=="Stopped"?new UiBackendException("Stopped","个人后台已停止"):new IOException("private backend details");return Task.FromResult(new UiControlReply(true,"",null));}
 await using(var panel=await WebPanel.Start(Backend,root)) {
  using var client=new HttpClient(new HttpClientHandler{UseCookies=true,AllowAutoRedirect=false}){BaseAddress=new(panel.Origin)};
  async Task<HttpResponseMessage> Send(string method,string path,object? body=null,string? origin=null,string? csrf=null,string? host=null){
@@ -46,6 +47,13 @@ await using(var panel=await WebPanel.Start(Backend,root)) {
  Check((await Send("POST","/api/command",new{method="save",operationId=Guid.NewGuid(),profile=new{Enabled=true}},panel.Origin,csrf)).StatusCode==HttpStatusCode.BadRequest,"arbitrary whole-profile payload denied by schema");
  Check((await Send("GET","/api/status?token=secret")).StatusCode==HttpStatusCode.Forbidden,"URL token parameters disallowed");
  Check((await Send("GET","/StreamLink.Core.dll")).StatusCode==HttpStatusCode.NotFound,"non-whitelisted filesystem resource inaccessible");
+ backendFailure="Stopped";
+ var stopped=await Send("GET","/api/status");var stoppedBody=await stopped.Content.ReadFromJsonAsync<JsonElement>();
+ Check(stopped.StatusCode==HttpStatusCode.ServiceUnavailable&&stoppedBody.GetProperty("code").GetString()=="Stopped"&&stoppedBody.GetProperty("error").GetString()=="个人后台已停止","stopped backend is distinguishable from missing authorization");
+ backendFailure="Unknown";
+ var unknown=await Send("GET","/api/status");string unknownBody=await unknown.Content.ReadAsStringAsync();
+ Check(unknown.StatusCode==HttpStatusCode.ServiceUnavailable&&!unknownBody.Contains("private backend details"),"unrecognized backend exception remains sanitized");
+ backendFailure=null;Check((await Send("GET","/api/status")).IsSuccessStatusCode,"existing panel session recovers when backend returns");
 }
 
 WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));

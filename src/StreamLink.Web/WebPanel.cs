@@ -83,8 +83,8 @@ public sealed class WebPanel : IAsyncDisposable
         if (!await slots.WaitAsync(0)) { response.StatusCode = 429; return; }
         try {
             string path = request.Path.Value ?? "/";
-            if (request.Method == "GET" && path is "/" or "/app.js" or "/style.css") {
-                response.ContentType = path switch { "/app.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", _ => "text/html; charset=utf-8" };
+            if (request.Method == "GET" && path is "/" or "/app.js" or "/style.css" or "/icon.svg") {
+                response.ContentType = path switch { "/app.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
                 await response.SendFileAsync(Path.Combine(assets,path == "/" ? "index.html" : path[1..]),context.RequestAborted); return;
             }
             bool post = request.Method == "POST";
@@ -118,7 +118,8 @@ public sealed class WebPanel : IAsyncDisposable
             try { await response.WriteAsJsonAsync(await call(command,deadline.Token),context.RequestAborted); }
             catch (Exception ex) when (ex is IOException or TimeoutException or OperationCanceledException or UnauthorizedAccessException) {
                 response.StatusCode = 503;
-                await response.WriteAsJsonAsync(new {ok=false,error="个人后台暂不可用。请从托盘安装或启动个人服务，并确认当前账号已获授权。"},context.RequestAborted);
+                var known=ex as UiBackendException;
+                await response.WriteAsJsonAsync(new {ok=false,code=known?.Code??"Unavailable",error=known?.Message??"本地后台连接暂未完成，请从托盘检查个人服务状态。"},context.RequestAborted);
             }
         } catch (Exception ex) when (ex is JsonException or BadHttpRequestException) { response.StatusCode = 400; }
         finally { slots.Release(); }

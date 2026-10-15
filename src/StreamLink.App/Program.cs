@@ -12,6 +12,22 @@ static class Program
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
         if(args.Length>=2&&args[0]=="--validation-instance") { StreamLink.Core.WindowsInstance.ConfigureValidation(args[1]);args=args[2..]; }
+        if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--validation-tray"]){
+            if(StreamLink.Core.WindowsHost.IsAdmin)throw new UnauthorizedAccessException("Tray validation requires an ordinary user");
+            Application.Run(new WebTrayContext(openBrowser:false));return;
+        }
+        if(args is ["--msi-configure",_,_] or ["--msi-rollback",_] or ["--msi-commit",_] or ["--msi-ready"] or ["--start-service"]){
+            try {
+                switch(args[0]){
+                    case "--msi-configure":ServiceInstaller.ConfigureMsi(args[1],args[2]).GetAwaiter().GetResult();break;
+                    case "--msi-rollback":ServiceInstaller.RollbackMsiAuthorization(args[1]);break;
+                    case "--msi-commit":ServiceInstaller.CommitMsiAuthorization(args[1]);break;
+                    case "--msi-ready":ServiceInstaller.VerifyMsiReady().GetAwaiter().GetResult();break;
+                    case "--start-service":if(!StreamLink.Core.WindowsHost.IsAdmin)throw new UnauthorizedAccessException("启动服务需要管理员权限");ServiceInstaller.StartIfNeeded().GetAwaiter().GetResult();break;
+                }
+            }catch(Exception ex){Environment.ExitCode=1;try{File.AppendAllText(Path.Combine(StreamLink.Service.ProfileStore.Root,"installer-error.log"),DateTimeOffset.UtcNow+" "+args[0]+" "+ex+Environment.NewLine);}catch{}}
+            return;
+        }
         if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-status",var output]) {
             try {
                 var status=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
@@ -30,7 +46,10 @@ static class Program
         }
         if(args is ["--install"] or ["--install-ui"] or ["--uninstall"] || args is ["--install","--ui-user-account",_]) {
             try {
-                if(args[0]=="--uninstall")ServiceInstaller.Uninstall().GetAwaiter().GetResult();
+                if(args[0]=="--uninstall"){
+                    if(MsiInstallation.ProductCode!=null)MsiInstallation.Maintain(true).GetAwaiter().GetResult();
+                    else ServiceInstaller.Uninstall().GetAwaiter().GetResult();
+                }
                 else {
                     string? account=args[0]=="--install-ui"?UiUserSelection.ConfirmForInstall(null):args.Length==3?args[2]:null;
                     ServiceInstaller.Install(account).GetAwaiter().GetResult();

@@ -13,6 +13,7 @@ public sealed partial class MainWindow : Form
     readonly SemaphoreSlim uiGate = new(1, 1);
     readonly System.Windows.Forms.Timer timer = new() { Interval = 2500 };
     readonly NotifyIcon tray = new();
+    readonly AppExitWindow exitWindow;
     readonly Panel content = new ScrollViewport { Dock = DockStyle.Fill, AutoScroll = true, Padding = new(28, 18, 28, 20) };
     readonly Label notice = Design.Label("准备就绪", 10), modeLabel = Design.Label("", 9);
     readonly ProgressBar progress = new() { Style = ProgressBarStyle.Marquee, Height = 3, Dock = DockStyle.Top, Visible = false, MarqueeAnimationSpeed = 25 };
@@ -39,6 +40,7 @@ public sealed partial class MainWindow : Form
     public MainWindow(bool preview = false)
     {
         SuspendLayout();
+        exitWindow=new AppExitWindow(()=>{exiting=true;Close();});
         this.preview = preview;
         Text = $"StreamLink · {DesktopVersion.Release}"; ClientSize = new(1080, 740); MinimumSize = new(940, 680);
         AutoScaleMode = AutoScaleMode.None; Font = Design.Font(); ForeColor = Design.Ink; StartPosition = FormStartPosition.CenterScreen; Icon = MakeIcon();
@@ -68,12 +70,7 @@ public sealed partial class MainWindow : Form
         AutoScaleMode = AutoScaleMode.Dpi; AutoScaleDimensions = new(96, 96); ResumeLayout(true);
     }
     static Icon MakeIcon()
-    {
-        using var bitmap = new Bitmap(32, 32); using var g = Graphics.FromImage(bitmap); g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias; g.Clear(Color.Transparent);
-        using var pen = new Pen(Design.Accent, 5); g.DrawLine(pen, 9, 23, 23, 9); using var a = new SolidBrush(Color.FromArgb(71, 183, 224)); using var b = new SolidBrush(Design.Accent); g.FillEllipse(a, 1, 15, 16, 16); g.FillEllipse(b, 15, 1, 16, 16);
-        IntPtr handle = bitmap.GetHicon(); try { return (Icon)Icon.FromHandle(handle).Clone(); } finally { DestroyIcon(handle); }
-    }
-    [System.Runtime.InteropServices.DllImport("user32.dll")] static extern bool DestroyIcon(IntPtr handle);
+        =>ApplicationBranding.CreateIcon();
     void Restore() { Show(); WindowState = FormWindowState.Normal; Activate(); }
     void ApplyTray() { tray.Visible = !preview && preferences.Tray; }
     RoundedButton ActionButton(string text, string pending, Func<Task<string>> action, bool primary = false)
@@ -182,7 +179,7 @@ public sealed partial class MainWindow : Form
         }
         finally { tray.Visible = false; allowClose = true; Close(); }
     }
-    protected override void Dispose(bool disposing) { if (disposing) { timer.Dispose(); tray.Dispose(); lifetime.Dispose(); Icon?.Dispose(); } base.Dispose(disposing); }
+    protected override void Dispose(bool disposing) { if (disposing) { timer.Dispose(); tray.Dispose(); exitWindow.Dispose();lifetime.Dispose(); Icon?.Dispose(); } base.Dispose(disposing); }
     protected override void OnShown(EventArgs e){base.OnShown(e);ClampToWorkArea();}
     void ClampToWorkArea(){var work=Screen.FromControl(this).WorkingArea;MinimumSize=new(Math.Min(MinimumSize.Width,work.Width-20),Math.Min(MinimumSize.Height,work.Height-20));if(Width>work.Width||Height>work.Height)Size=new(Math.Min(Width,work.Width),Math.Min(Height,work.Height));}
 }

@@ -64,6 +64,10 @@ public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Guid OperationId=default,UiNetworkAction? Network=null,int PeerSlot=0,int Mbps=50,Guid CancelOperationId=default);
 public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null);
+public sealed class UiBackendException(string code,string message,Exception? inner=null):IOException(message,inner)
+{
+    public string Code {get;}=code;
+}
 public static class UiControlProtocol
 {
     public static string PipeName=>WindowsInstance.Name + "-UI-v1";
@@ -72,7 +76,18 @@ public static class UiControlProtocol
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(20000);
         if(!OperatingSystem.IsWindows())throw new PlatformNotSupportedException();
         using var pipe=new NamedPipeClientStream(".",PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification);
-        await pipe.ConnectAsync(3000,deadline.Token);ControlServerIdentity.Verify(pipe);
-        await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);
+        try {
+            await pipe.ConnectAsync(3000,deadline.Token);ControlServerIdentity.Verify(pipe);
+            await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);
+        } catch(UnauthorizedAccessException ex){throw new UiBackendException("AccessDenied","当前 Windows 账号未获个人后台访问权限，请从托盘修复安装并核对日常使用账号。",ex);}
+        catch(Exception ex)when(ex is IOException or TimeoutException && ex is not UiBackendException){
+            string state=OperatingSystem.IsWindows()?ControlServerIdentity.Availability():"Unavailable";
+            throw state switch {
+                "NotInstalled"=>new UiBackendException(state,"尚未安装个人后台，请从托盘选择安装。",ex),
+                "Stopped"=>new UiBackendException(state,"个人后台已停止，请从托盘启动个人服务。",ex),
+                "AccessDenied"=>new UiBackendException(state,"当前 Windows 账号无法查询个人后台，请修复安装并核对授权。",ex),
+                _=>new UiBackendException("ServiceError","个人服务正在运行，但本地控制连接未完成。请修复安装或查看诊断日志。",ex)
+            };
+        }
     }
 }

@@ -11,6 +11,25 @@ static class LocalControlPipe
 {
     [StructLayout(LayoutKind.Sequential)] struct SecurityAttributes { public int Length; public IntPtr Descriptor; public int Inherit; }
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] static extern SafePipeHandle CreateNamedPipe(string name, uint openMode, uint pipeMode, uint maxInstances, uint outputSize, uint inputSize, uint timeout, ref SecurityAttributes attributes);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern bool GetNamedPipeClientProcessId(SafePipeHandle pipe,out uint pid);
+    [DllImport("kernel32.dll",SetLastError=true)] static extern IntPtr OpenProcess(uint access,bool inherit,uint pid);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process,uint access,out IntPtr token);
+    [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    public static string ClientSid(NamedPipeServerStream pipe)
+    {
+        IntPtr process=IntPtr.Zero,token=IntPtr.Zero;
+        try {
+            // PIPE_REJECT_REMOTE_CLIENTS and the SID-only pipe ACL form the
+            // first boundary. Bind the second check to the kernel-reported
+            // local process token, without impersonating the client in the
+            // service. The process handle pins its identity against PID reuse.
+            if(!GetNamedPipeClientProcessId(pipe.SafePipeHandle,out uint pid)||pid==0)throw new Win32Exception(Marshal.GetLastWin32Error(),"Cannot identify local UI process");
+            process=OpenProcess(0x1000,false,pid);
+            if(process==IntPtr.Zero||!OpenProcessToken(process,8,out token))throw new Win32Exception(Marshal.GetLastWin32Error(),"Cannot query local UI process token");
+            using var identity=new WindowsIdentity(token);
+            return identity.User?.Value??throw new IOException("UI client has no user SID");
+        } finally {if(token!=IntPtr.Zero)CloseHandle(token);if(process!=IntPtr.Zero)CloseHandle(process);}
+    }
     public static NamedPipeServerStream Create(bool firstInstance = true,string? authorizedUiSid=null)
     {
         var acl = new PipeSecurity(); acl.SetAccessRuleProtection(true, false);

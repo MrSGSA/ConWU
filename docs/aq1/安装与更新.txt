@@ -1,0 +1,30 @@
+StreamLink 个人候选：安装、更新和卸载
+
+推荐安装
+1. 双击 StreamLink-…-x64.msi，按提示安装并完成 UAC。安装完成后可直接启动 StreamLink。
+2. 桌面和开始菜单都有带 S 图标的 StreamLink。日常使用普通账号打开；首次安装为运行安装程序的日常账号授权，后续更新保留既有授权。
+3. 两端填同一 HTTPS 协调地址，创建/六位码加入并核对双方校验码。现有个人协调为 https://streamlink-personal.space4sgsa.com/ 。
+4. 用设备页的对端虚拟 IP 启动串流；先低码率，再测试目标码率和实际声音、输入、画面。真实双机效果仍需本人试用。
+
+更新
+运行较新版本 MSI 即可。安装程序关闭先前的 StreamLink 界面/托盘/本机面板，安全停止个人服务，再更新并重新启动。
+受保护的配对、设备配置和日志位于 %ProgramData%\StreamLink-PersonalFeature，更新保留这些内容。
+旧 0.3.2 的界面会退出；旧 StreamLink 网络服务、旧配置和回退文件保留。若旧版正在以前台方式维持网络，安装会提示先在旧版停止网络并退出，避免强制切断唯一通道。
+失败时 Windows 安装事务恢复文件与原服务配置；原授权也单独恢复。安装期间不要强行启动第二个后台进程。
+
+卸载与修复
+Windows“设置 → 应用 → 已安装的应用 → StreamLink”可修复或卸载，开始菜单也提供卸载入口。
+卸载先关闭界面并停止个人服务，删除本次安装的程序和快捷方式。配对配置和日志继续保留；不删除共享 Wintun/WinDivert 驱动，不卸载旧 0.3.2。
+托盘的“修复／卸载安装”打开 Windows 安装程序；“启动个人后台”用于服务已停止时恢复。
+
+文件布局
+%ProgramFiles%\StreamLink\StreamLink.exe：日常启动入口。
+%ProgramFiles%\StreamLink\app\：程序、运行库、WebUI 和官方驱动组件。无需手工整理或删除其中 DLL。
+顶层的使用说明与布局清单用于诊断。无需预装 .NET、Node、Python 或 WSL。
+
+ZIP 备用方式
+解压 windows.zip，普通双击顶层 StreamLink.exe。内部程序在 app 目录。已有 MSI 安装时，更新和卸载统一交给 Windows 安装程序。
+
+边界
+此版是个人试用候选；实际双机串流、物理穿透覆盖和正式八实例验证仍按交付报告记录。
+默认业务仍为 FakeTCP＋HTTP 前导＋MeshLink，HTTPS 为协调控制。关闭耗时偶有超过 3 秒目标，请等待停止完成。

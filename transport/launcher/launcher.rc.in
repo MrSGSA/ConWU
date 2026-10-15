@@ -1,0 +1,27 @@
+#include <windows.h>
+1 ICON "@CMAKE_CURRENT_SOURCE_DIR@/src/StreamLink.App/Assets/streamlink.ico"
+1 RT_MANIFEST "@CMAKE_CURRENT_SOURCE_DIR@/src/StreamLink.App/app.manifest"
+1 VERSIONINFO
+FILEVERSION @STREAMLINK_PACKAGE_FILE_VERSION_RC@
+PRODUCTVERSION @STREAMLINK_PACKAGE_FILE_VERSION_RC@
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+ BLOCK "StringFileInfo"
+ BEGIN
+  BLOCK "040904b0"
+  BEGIN
+   VALUE "CompanyName", "StreamLink"
+   VALUE "FileDescription", "StreamLink Launcher"
+   VALUE "FileVersion", "@STREAMLINK_PACKAGE_FILE_VERSION@"
+   VALUE "InternalName", "StreamLink.Launcher"
+   VALUE "OriginalFilename", "StreamLink.exe"
+   VALUE "ProductName", "StreamLink"
+   VALUE "ProductVersion", "@STREAMLINK_PACKAGE_FILE_VERSION@"
+  END
+ END
+ BLOCK "VarFileInfo"
+ BEGIN
+  VALUE "Translation", 0x0409, 1200
+ END
+END

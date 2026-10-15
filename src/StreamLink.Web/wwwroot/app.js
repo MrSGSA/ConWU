@@ -1,12 +1,12 @@
 'use strict';
 const $ = id => document.getElementById(id);
-let csrf = '', state = null, busy = false, connectionDirty = false, metadataDirty = false, connectionBase = null, metadataBase = null, lastTraffic = null, cooldownUntil = 0;
+let csrf = '', state = null, busy = false, backendFailure = false, connectionDirty = false, metadataDirty = false, connectionBase = null, metadataBase = null, lastTraffic = null, cooldownUntil = 0;
 const titles = {overview:'网络总览',devices:'设备与链路',network:'创建与加入',settings:'连接策略',diagnostics:'诊断与设置'};
 function notice(text, error=false) { $('notice').textContent=text; $('notice').hidden=!text; $('notice').classList.toggle('error',error); }
 function show(page) {document.querySelectorAll('.page').forEach(e=>e.hidden=e.id!==page); document.querySelectorAll('.nav').forEach(e=>{e.classList.toggle('active',e.dataset.page===page);e.setAttribute('aria-current',e.dataset.page===page?'page':'false');});$('page-title').textContent=titles[page];}
 async function api(path, body) {
  const response=await fetch(path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json','X-StreamLink-CSRF':csrf}:{},body:body?JSON.stringify(body):undefined});
- if(!response.ok){if(response.status===401)throw Error('面板会话已过期，请双击托盘图标重新打开。');if(response.status===409)throw Error('重复请求已拒绝，或会话额度已满；请刷新状态，必要时从托盘重新打开。');let message;try{message=(await response.json()).error;}catch{}throw Error(message||`本机面板请求未完成（${response.status}）`);}
+ if(!response.ok){if(response.status===401)throw Error('面板会话已过期，请双击托盘图标重新打开。');if(response.status===409)throw Error('重复请求已拒绝，或会话额度已满；请刷新状态，必要时从托盘重新打开。');let detail;try{detail=await response.json();}catch{}if(response.status===503){backendFailure=true;$('backend-state').textContent=({NotInstalled:'尚未安装后台',Stopped:'个人后台已停止',AccessDenied:'账号未获授权',ServiceError:'后台控制连接异常'})[detail?.code]||'后台暂未连接';}throw Error(detail?.error||`本机面板请求未完成（${response.status}）`);}
  return response.json();
 }
 async function command(method, extra={}, quiet=false) {
@@ -16,7 +16,7 @@ async function command(method, extra={}, quiet=false) {
 }
 async function network(action,fields={},quiet=false){return command('network',{network:{action,...fields}},quiet);}
 function safe(fn){return async e=>{try{await fn(e);}catch(ex){notice(ex.message,true);}};}
-async function refresh(){const reply=await api('/api/status');if(!reply.ok)throw Error(reply.error);render(reply.status);}
+async function refresh(){const reply=await api('/api/status');if(!reply.ok)throw Error(reply.error);render(reply.status);if(backendFailure){backendFailure=false;notice('');}}
 function text(tag,value,cls=''){const n=document.createElement(tag);n.textContent=value;if(cls)n.className=cls;return n;}
 function copy(value){if(!value)throw Error('暂无可复制的地址');return navigator.clipboard.writeText(value).then(()=>notice('地址已复制'));}
 function render(s){

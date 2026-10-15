@@ -7,7 +7,7 @@ using System.Text.Json;
 using StreamLink.Core;
 
 namespace StreamLink;
-public static class ServiceInstaller
+public static partial class ServiceInstaller
 {
     public static bool Installed { get { using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name); return key != null; } }
     static async Task Sc(params string[] args)
@@ -20,6 +20,7 @@ public static class ServiceInstaller
     public static async Task Install(string? confirmedUiAccount=null)
     {
         if (!WindowsHost.IsAdmin) throw new IOException("安装后台服务需要管理员权限");
+        if(!WindowsInstance.IsValidation&&MsiInstallation.ProductCode!=null)throw new IOException("此安装由 Windows 安装程序管理，请运行新版 MSI 更新，或从托盘选择修复安装。");
         var profileStore=new StreamLink.Service.ProfileStore();
         // All installers for this protected profile serialize the authorization
         // and SCM transaction. No identity is inferred from the elevated token.

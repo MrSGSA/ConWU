@@ -32,12 +32,19 @@ public sealed partial class ControlWorker
     async Task ServeUi(NamedPipeServerStream pipe,string allowed,CancellationToken token)
     {
         using(pipe)using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
+            string stage="client-identity";bool authorized=false;
             deadline.CancelAfter(20000);try{
-                string? caller=null;pipe.RunAsClient(()=>caller=WindowsIdentity.GetCurrent(true)?.User?.Value);
+                string caller=LocalControlPipe.ClientSid(pipe);
                 if(caller!=allowed)return;
+                authorized=true;stage="read-request";
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
+                stage="handle-request";
                 await ServiceProtocol.Write(pipe,await HandleUi(request,caller,deadline.Token),deadline.Token);
-            }catch(Exception)when(deadline.IsCancellationRequested){}catch(Exception ex){Log("受限UI请求拒绝："+ex.GetType().Name);}
+            }catch(Exception)when(deadline.IsCancellationRequested){}catch(Exception ex){
+                string missing=ex is FileNotFoundException file?" assembly="+Path.GetFileName(file.FileName??"unknown"):"";
+                Log("受限UI请求失败：stage="+stage+" "+ex.GetType().Name+missing);
+                if(authorized&&stage=="handle-request")try{await ServiceProtocol.Write(pipe,new UiControlReply(false,"个人服务处理请求时发生内部错误，请修复安装并查看诊断日志。",null),deadline.Token);}catch(IOException){}
+            }
         }
     }
     internal async Task RunUiControl(CancellationToken token)

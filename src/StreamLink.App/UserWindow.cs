@@ -7,6 +7,7 @@ namespace StreamLink;
 sealed class UserWindow:Form
 {
     readonly CancellationTokenSource stop=new();
+    readonly AppExitWindow exitWindow;
     readonly System.Windows.Forms.Timer timer=new(){Interval=2500};
     readonly Label state=Design.Label("正在读取本机后台状态",18,true),detail=Design.Label("",10),notice=Design.Label("",9),editState=Design.Label("",9);
     readonly TextBox name=new(){Width=280,MaxLength=64,AccessibleName="本机设备名称"};
@@ -20,7 +21,8 @@ sealed class UserWindow:Form
     string virtualIp="";
     public UserWindow()
     {
-        Text="StreamLink · 本机网络";Size=new(900,650);Font=Design.Font();AutoScaleDimensions=new(96,96);AutoScaleMode=AutoScaleMode.Dpi;
+        exitWindow=new AppExitWindow(Close);
+        Text="StreamLink · 本机网络";Icon=ApplicationBranding.CreateIcon();Size=new(900,650);Font=Design.Font();AutoScaleDimensions=new(96,96);AutoScaleMode=AutoScaleMode.Dpi;
         var surface=new PearlPanel{Dock=DockStyle.Fill};Controls.Add(surface);var scroll=new ScrollViewport{Dock=DockStyle.Fill,AutoScroll=true,Padding=new(24)};surface.Controls.Add(scroll);
         var stack=Design.Stack();scroll.Controls.Add(stack);stack.Controls.Add(Design.Label("StreamLink",26,true));stack.Controls.Add(Design.Label("设备直连 · 协调服务不转发业务",10));stack.Controls.Add(state);stack.Controls.Add(detail);stack.Controls.Add(peers);
         var start=Action("启动网络",()=>Call("start"));var end=Action("停止网络",()=>Call("stop"));
@@ -34,7 +36,7 @@ sealed class UserWindow:Form
         stack.Controls.Add(editState);
         var manage=Design.Button("配对与高级管理");manage.Width=210;manage.Click+=(_,_)=>Elevate();stack.Controls.Add(Design.Row(manage));stack.Controls.Add(Design.Label("安装驱动、配对与高级连接设置需要管理员授权。日常状态与以上设置不读取密钥。",9));stack.Controls.Add(notice);
         timer.Tick+=async(_,_)=>await Poll();Shown+=async(_,_)=>{if(Width>Screen.FromControl(this).WorkingArea.Width)Width=Screen.FromControl(this).WorkingArea.Width;if(Height>Screen.FromControl(this).WorkingArea.Height)Height=Screen.FromControl(this).WorkingArea.Height;await Poll();timer.Start();};
-        FormClosed+=(_,_)=>{stop.Cancel();timer.Stop();timer.Dispose();};
+        FormClosed+=(_,_)=>{stop.Cancel();timer.Stop();timer.Dispose();exitWindow.Dispose();};
     }
     Button Action(string text,Func<Task> action)
     {

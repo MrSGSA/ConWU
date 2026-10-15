@@ -14,3 +14,4 @@ artifacts/
 .env
 .env.*
 **/__pycache__/
+.wix/
