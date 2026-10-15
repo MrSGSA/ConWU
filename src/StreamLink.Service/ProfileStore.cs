@@ -72,4 +72,9 @@ public sealed class ProfileStore
         string backup = Path.Combine(Root, "profile-before-native-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8] + ".dpapi");
         File.WriteAllBytes(backup, ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine));
     }
+    public void BackupResearchProfile()
+    {
+        if (!File.Exists(file)) return;
+        File.Copy(file, Path.Combine(Root, "profile-before-aq1-" + Guid.NewGuid().ToString("N") + ".dpapi"), false);
+    }
 }

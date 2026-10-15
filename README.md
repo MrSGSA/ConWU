@@ -1,3 +1,12 @@
+# StreamLink AQ-1 · 个人候选
+
+当前接续 `9e321517`，唯一执行规格是 Reborn 中的 AQ-1 交接包。本轮交付官方 Wintun / WinDivert、FakeTCP＋HTTP 与 HTTPS 控制、受限本机 WebUI 的同一产品核心；实际验收状态以交付目录报告为准。
+
+运行与回退见 [AQ-1 使用说明](docs/aq1/使用与回退.txt)。构建入口为 `scripts/Package-AqPersonal.ps1`，不要求 WDK、自研驱动或旧组网软件。正式八实例与本人双机串流分别验收，不能由本地测试推导通过。
+
+以下保留历史 README 作为来源记录，历史版本状态和旧研发顺序不覆盖 AQ-1。
+
+---
 # StreamLink — Windows P2P 直连组网
 
 通过自动映射与 udp2raw 为 Windows 设备提供虚拟 IP，重点改善特定 QoS 环境下的 UDP 传输。完整包内置所需组件，无需预装 Lucky、EasyTier、WSL、Python 或 .NET。业务数据始终由设备间直传。

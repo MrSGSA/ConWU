@@ -1,0 +1,70 @@
+using System.Net;
+using System.Net.Http.Json;
+using System.Reflection;
+using System.Security.Principal;
+using System.Text.Json;
+using StreamLink.Core;
+using StreamLink.Service;
+using StreamLink.Web;
+
+if(args is ["--browser-fixture",var assetRoot]) {
+ WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
+ using var fixture=new ControlWorker();fixture.StartLocal();
+ string sid=WindowsIdentity.GetCurrent().User!.Value;new ProfileStore().AuthorizeUiUser(sid);
+ var handler=typeof(ControlWorker).GetMethod("HandleUi",BindingFlags.Instance|BindingFlags.NonPublic)!;
+ Task<UiControlReply> Call(UiControlRequest command,CancellationToken token)=>(Task<UiControlReply>)handler.Invoke(fixture,[command,sid,token])!;
+ await using var panel=await WebPanel.Start(Call,Path.GetFullPath(assetRoot));
+ while(await Console.In.ReadLineAsync() is {} input){if(input=="open"){Console.WriteLine(panel.OpenLink());await Console.Out.FlushAsync();}else if(input=="quit")break;}
+ await fixture.StopLocal();return 0;
+}
+var root=Path.GetFullPath(args.FirstOrDefault()??"src/StreamLink.Web/wwwroot");
+int checks=0,failures=0,calls=0;
+void Check(bool ok,string name){checks++;if(!ok){failures++;Console.Error.WriteLine("FAIL "+name);}}
+Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);return Task.FromResult(new UiControlReply(true,"",null));}
+await using(var panel=await WebPanel.Start(Backend,root)) {
+ using var client=new HttpClient(new HttpClientHandler{UseCookies=true,AllowAutoRedirect=false}){BaseAddress=new(panel.Origin)};
+ async Task<HttpResponseMessage> Send(string method,string path,object? body=null,string? origin=null,string? csrf=null,string? host=null){
+  var req=new HttpRequestMessage(new HttpMethod(method),path);if(body!=null)req.Content=JsonContent.Create(body);
+  if(origin!=null)req.Headers.Add("Origin",origin);if(csrf!=null)req.Headers.Add("X-StreamLink-CSRF",csrf);if(host!=null)req.Headers.Host=host;
+  return await client.SendAsync(req);
+ }
+ var staticPage=await Send("GET","/");Check(staticPage.IsSuccessStatusCode&&staticPage.Headers.Contains("Content-Security-Policy"),"static page and restrictive CSP");
+ Check((await Send("GET","/api/status")).StatusCode==HttpStatusCode.Unauthorized,"loopback alone grants no control");
+ Check((await Send("GET","/",host:"attacker.example")).StatusCode==HttpStatusCode.Forbidden,"DNS rebinding Host denied");
+ var ticket=new Uri(panel.OpenLink()).Fragment[1..];
+ Check((await Send("POST","/api/session",new{ticket},"https://attacker.example")).StatusCode==HttpStatusCode.Forbidden,"cross-origin bootstrap denied");
+ var boot=await Send("POST","/api/session",new{ticket},panel.Origin);Check(boot.IsSuccessStatusCode,"one-use local bootstrap");
+ string csrf=(await boot.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("csrf").GetString()!;
+ var cookie=boot.Headers.GetValues("Set-Cookie").Single();Check(cookie.Contains("httponly",StringComparison.OrdinalIgnoreCase)&&cookie.Contains("samesite=strict",StringComparison.OrdinalIgnoreCase),"HttpOnly SameSite cookie");
+ Check((await Send("POST","/api/session",new{ticket},panel.Origin)).StatusCode==HttpStatusCode.Unauthorized,"bootstrap replay rejected");
+ Check((await Send("GET","/api/status")).IsSuccessStatusCode&&calls==1,"authenticated status routed to restricted interface");
+ var request=new UiControlRequest("stop",OperationId:Guid.NewGuid());
+ Check((await Send("POST","/api/command",request,panel.Origin)).StatusCode==HttpStatusCode.Forbidden,"missing CSRF rejected");
+ Check((await Send("POST","/api/command",request,"https://attacker.example",csrf)).StatusCode==HttpStatusCode.Forbidden,"cross-site mutation rejected");
+ Check((await Send("POST","/api/command",request,panel.Origin,csrf)).IsSuccessStatusCode&&calls==2,"authenticated command forwarded once");
+ Check((await Send("POST","/api/command",request,panel.Origin,csrf)).StatusCode==HttpStatusCode.Conflict&&calls==2,"operation replay never forwarded");
+ Check((await Send("POST","/api/command",new{method="save",operationId=Guid.NewGuid(),profile=new{Enabled=true}},panel.Origin,csrf)).StatusCode==HttpStatusCode.BadRequest,"arbitrary whole-profile payload denied by schema");
+ Check((await Send("GET","/api/status?token=secret")).StatusCode==HttpStatusCode.Forbidden,"URL token parameters disallowed");
+ Check((await Send("GET","/StreamLink.Core.dll")).StatusCode==HttpStatusCode.NotFound,"non-whitelisted filesystem resource inaccessible");
+}
+
+WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
+using(var worker=new ControlWorker()) {
+ worker.StartLocal();var store=new ProfileStore();string sid=WindowsIdentity.GetCurrent().User!.Value;store.AuthorizeUiUser(sid);
+ var method=typeof(ControlWorker).GetMethod("HandleUi",BindingFlags.Instance|BindingFlags.NonPublic)!;
+ Task<UiControlReply> Ui(UiControlRequest request)=>(Task<UiControlReply>)method.Invoke(worker,[request,sid,CancellationToken.None])!;
+ var created=await worker.Handle(new("mesh-create",Service:"https://example.com/"));Check(created.Ok,"isolated real service mesh created without network start");
+ var before=(await Ui(new("status"))).Status!;
+ var settings=before.Settings! with{AllowManualQualityRequests=true};
+ var good=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:settings,ExpectedRevision:before.SettingsRevision)));
+ Check(good.Ok&&good.Status!.Settings!.AllowManualQualityRequests,"restricted settings save persists allowed fields");
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:settings with{ListenPort=45001},ExpectedRevision:before.SettingsRevision)))).Ok,"stale network settings rejected");
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create",Service:"https://example.com/",ExpectedNetwork:before.NetworkId)))).Ok,"network replacement requires explicit confirmation before I/O");
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("approve",Verification:"123456",Candidate:Guid.NewGuid().ToString("N"))))).Ok,"approval without authenticated exchange rejected");
+ Check(!(await Ui(new("mesh-invite"))).Ok&&!(await Ui(new("save"))).Ok,"legacy privileged methods stay inaccessible");
+ var full=(await worker.Handle(new("status"))).Profile!;var json=JsonSerializer.Serialize((await Ui(new("status"))).Status);
+ foreach(var secret in new[]{full.Mesh!.OwnerPrivate,full.Mesh.SigningPrivate,full.Mesh.ExchangePrivate,full.Mesh.Pair.Secret})Check(!json.Contains(secret),"secret absent from expanded DTO");
+ await worker.StopLocal();
+}
+Console.WriteLine(JsonSerializer.Serialize(new{scope="actual loopback HTTP + isolated Windows service, no physical link claim",checks,failures,status=failures==0?"Pass":"Fail"}));
+return failures==0?0:1;

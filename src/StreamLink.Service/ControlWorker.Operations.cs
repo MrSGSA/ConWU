@@ -24,6 +24,7 @@ public sealed partial class ControlWorker
     static readonly object quarantineGate=new();
     static readonly List<ControlWorker> quarantinedWorkers=[];
     void ReleaseControlOwnership(){
+        ResetUiPair("后台已退出");
         if(Volatile.Read(ref resourceShutdownUnproven)){
             // Strongly retain the worker, its failed owners and file lock.
             // A FileStream finalizer must not admit a second owner in this PID.

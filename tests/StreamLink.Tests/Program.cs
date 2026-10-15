@@ -128,7 +128,7 @@ Check(EntryElection.Choose(one with {LastEntry=2},two)==2,"Last successful direc
 Check(EntryElection.Choose(one with {LastEntry=2,Preference="local"},two with {LastEntry=2})==1,"Explicit preference must override old history when both entries are candidates");
 Check(EntryElection.Choose(one,two,1)==2,"Failed entry not excluded");
 Reject(()=>DeviceProfile.ValidateServers(["x:3478\r\n--injected"]),"STUN injection accepted");
-Reject(()=>new DeviceProfile {SourcePort=42680}.Validate(),"Overlapping mapping ports accepted");
+Reject(()=>new DeviceProfile {SourcePort=42680,ListenPort=42680}.Validate(),"Overlapping mapping ports accepted");
 using(var packet=new MemoryStream()) {
     await ServiceProtocol.Write(packet,new ControlRequest("status"),CancellationToken.None); packet.Position=0;
     Check((await ServiceProtocol.Read<ControlRequest>(packet,CancellationToken.None)).Command=="status","Control framing");

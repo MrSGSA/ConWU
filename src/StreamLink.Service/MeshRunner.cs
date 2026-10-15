@@ -111,10 +111,7 @@ public sealed class MeshRunner
                     try { adapter=await opening; }
                     catch(Exception ex) { adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
                     opening = null;actualAdapter=adapter;
-                    var admitted=(adapter as StreamLink.ResearchAdapters.ResearchTunAdapter)?.Admission;
-                    adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason="已由实际工厂打开；内核验证等级见独立证据",Abi=adapter.Descriptor.Abi,
-                        DeviceInstance=admitted?.DeviceInstance,InterfaceIndex=admitted?.InterfaceIndex,PackageHash=admitted?.PackageHash,
-                        SignatureValid=admitted!=null?true:null,Loaded=admitted!=null?true:null};
+                    adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason="已由实际工厂打开官方 Wintun",Abi=adapter.Descriptor.Abi,Loaded=true};
                     if(adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
                         log($"虚拟网段路由警告：{warning.Reason}；{warning.Prefix}；现有路由未改动，可在诊断中检查其他 VPN/父网段");
                     try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
@@ -294,9 +291,10 @@ public sealed class MeshRunner
                         nextTrafficReport = now + 30000;
                     }
                     int degraded = statuses.Count(p => p.Degraded);
-                    report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP 降级）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
-                        $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP 降级，未验证目标负载质量" : ""), first?.Name ?? "", statuses) {
+                    report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
+                        $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP，质量单独评估" : ""), first?.Name ?? "", statuses) {
                             Adapter = actualAdapter is {} observed ? adapterStatus with {ReadPackets=observed.Statistics.ReadPackets,WrittenPackets=observed.Statistics.WrittenPackets} : adapterStatus,
+                            AdapterStatistics = actualAdapter?.Statistics,
                             Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
                             TcpHelpers = TcpHelperLedger.Shared.Snapshot(),
                             LegacyTransports = LegacyTransportLedger.Shared.Snapshot(),

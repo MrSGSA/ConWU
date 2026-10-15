@@ -18,6 +18,9 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public MeshStandbyStatus? Standby { get; init; }
     public PathDiagnosticSessionStatus? Diagnostics{get;init;}
     public PathQualityAssessment? Quality { get; init; }
+    public string OuterSource {get;init;}="Unknown";
+    public string OuterTarget {get;init;}="Unknown";
+    public NativePathDiagnostics? NativeEvidence {get;init;}
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -145,12 +148,15 @@ public sealed partial class MeshRouter : IAsyncDisposable
         lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => {
             bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
-                p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 降级直连 · 未验证目标负载质量" : "P2P 直连" : p.Detail,
+                p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded,
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
                     ActualTransport = !healthy ? "None" : degraded ? "UDP_DIRECT" : "FakeTCP+HTTP",
+                    OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
+                    OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
+                    NativeEvidence=OperatingSystem.IsWindows()?(p.Managed?.Active?.Transport as NativeDatagramPath)?.Diagnostics:null,
                     Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "specVersion": "AQ-1",
+  "scope": "PersonalTrial; same product core, formal E2/E3 separately assessed",
+  "userConfirmedScope": "Thinkbook and Akane; this run completes local development and runnable packages only. Remote deployment/WAN trial deferred by user.",
+  "startCommit": "9e32151751831b4ce97371b9a8923a2779cfd4cd",
+  "startDirty": false,
+  "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
+  "primaryProfile": "FakeTcpHttpDatagram",
+  "control": "HTTPS",
+  "adapters": ["official Wintun 0.14.1", "WinDivert 2.2.2"],
+  "preserve": ["0.3.2 service and configuration", "all existing management paths", "HTTP/SEQ wire semantics", "2000ms observation freshness", "90s quality cooldown", "bounded resource ownership"],
+  "outOfScopeByUserDecision": ["ResearchTunDriver", "ResearchWfpReplacement", "mandatory true TLS dataplane research"],
+  "implementation": ["official adapter packaging and visible research-profile migration", "restricted service API and local WebUI", "physical route evidence and bounded quality collection", "needed defects found by separate security and product reviews"],
+  "baselineOrder": ["Q2 final application physical route first when second endpoint is available", "Q0/Q1 only to localize a measured defect", "Q3 same build enhanced path", "Q4 shared-egress checks"],
+  "quality": {
+    "profile": "Historical50Short",
+    "requestedMbps": 50,
+    "seconds": 20,
+    "directions": 2,
+    "cooldownSeconds": 90,
+    "minimumReceivedMbps": 49.5,
+    "maximumLossPercent": 0,
+    "retest": "at most one predeclared repeat after new discriminating evidence; retain failures",
+    "unknownIsNotPass": true,
+    "physicalUnderlayRequired": true
+  },
+  "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true},
+  "userTrial": {"application": "Moonlight or actual user streaming application", "minutes": 10, "status": "PendingUserTrial"},
+  "regression": {
+    "affectedTestsAfterChanges": true,
+    "finalFrozenCoreRun": true,
+    "nativeProtocolAndParser": true,
+    "identityPairingReplayRouting": true,
+    "tcpUdpNominationCancellationOwnership": true,
+    "uiPermissionsBrowserNegativeCases": true,
+    "officialBundleAndIsolatedInstall": true,
+    "disabledResearchFailuresRemainHistorical": true
+  },
+  "formalOnly": ["eight independent Windows stacks / 28 edges", "60 minute application stream", "100 lifecycle rounds", "clean Windows VM and cross-account cold boot"],
+  "externalRequirements": ["authorized second Windows endpoint with physical reachability", "independent management before stopping any existing channel", "user streaming confirmation"],
+  "stopRule": "Deliver runnable fixed package, source, hashes, two review checklists and honest per-item state after available work. PartialCode is not an external blocker."
+}

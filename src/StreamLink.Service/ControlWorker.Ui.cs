@@ -5,23 +5,26 @@ using StreamLink.Core;
 namespace StreamLink.Service;
 public sealed partial class ControlWorker
 {
-    sealed record UiOperation(string CallerSid,UiConfigPatch? Patch);
+    sealed record UiOperation(string CallerSid,UiConfigPatch? Patch,UiNetworkAction? Network=null);
 
     UiStatusDto UiSnapshot()
     {
         var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;var peers=state?.Peers??[];
-        return new(full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",SensitiveText.Redact(state?.State??"网络未启动",p),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
-            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
-            {Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled};
+        return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",SensitiveText.Redact(state?.State??"网络未启动",p),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
+            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
+            {Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
+             Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),
+             QualityText=full.Quality.Length>0?full.Quality:"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=full.Operation,Stages=Volatile.Read(ref stageLedger)};
     }
     internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
-        if(request.Method=="status"&&request.Patch==null)return new(true,"",UiSnapshot());
-        if(request.Method is not ("patch" or "start" or "stop")||request.Method!="patch"&&request.Patch!=null)return new(false,"此接口不允许该操作",UiSnapshot());
+        if(request.Method=="status"&&request.Patch==null&&request.Network==null)return new(true,"",UiSnapshot());
+        if(request.Method is not ("patch" or "start" or "stop" or "network" or "check" or "quality" or "cancel")||request.Method!="patch"&&request.Patch!=null||request.Method!="network"&&request.Network!=null)return new(false,"此接口不允许该操作",UiSnapshot());
         if(request.Method=="patch"&&request.Patch==null)return new(false,"设置补丁为空",UiSnapshot());
-        var command=request.Method=="patch"?"ui-patch":request.Method;
-        var result=await HandleCore(new(command,OperationId:request.OperationId),token,new UiOperation(callerSid,request.Patch));
+        if(request.Method=="network"&&request.Network==null)return new(false,"网络操作为空",UiSnapshot());
+        var command=request.Method switch{"patch"=>"ui-patch","network"=>"ui-network","check"=>"personal-check",_=>request.Method};
+        var result=await HandleCore(new(command,OperationId:request.OperationId,PeerSlot:request.PeerSlot,Mbps:request.Mbps,CancelOperationId:request.CancelOperationId),token,new UiOperation(callerSid,request.Patch,request.Network));
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户的UI控制授权已改变",null);
         return new(result.Ok,result.Error,UiSnapshot(),Operation:result.Operation);
     }

@@ -15,7 +15,7 @@ public static class PersonalFeature
 #endif
         }
     }
-    public const string Contract = "personal-feature-acceptance-v3";
+    public const string Contract = "AQ-1-personal";
     public static string InstanceName => Enabled ? "StreamLink-PersonalFeature" : "StreamLink";
     public static string DataRoot => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), InstanceName);
     public static string AdapterText(AdapterRuntimeStatus? status) => status is null ? "虚拟网卡尚未打开" :

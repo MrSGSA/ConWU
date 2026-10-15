@@ -1,7 +1,7 @@
 using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Service;
-using StreamLink.ResearchAdapters;
+
 
 if(args.Length!=1)throw new ArgumentException("Fresh result JSON path required");
 if(File.Exists(args[0]))throw new IOException("Do not overwrite earlier evidence");
@@ -22,18 +22,6 @@ Check(roundTrip.AdapterBackend==PacketAdapterBackend.StreamLinkTun,"typed backen
 Reject(()=>JsonSerializer.Deserialize<DeviceProfile>("{\"AdapterBackend\":2}"),"numeric provider bypass rejected");
 Reject(()=>JsonSerializer.Deserialize<DeviceProfile>("{\"AdapterBackend\":\"arbitrary-dll\"}"),"arbitrary provider path rejected");
 Reject(()=>PacketAdapterProviders.RequireProduction(new(PacketAdapterProviders.NativeExperimental,2,1280,true,true,true)),"standard production admission remains unchanged");
-var identity=new TunPackageIdentity(1,new string('a',40),"win-x64",2,1,1280,@"ROOT\StreamLinkTun","StreamLinkTun",
-    new[]{"StreamLinkTun.sys","StreamLinkTun.inf","StreamLinkTun.cat","streamlink-tun-research.dll"}.Select(n=>new TunPackageMember(n,new string('b',64))).ToArray());
-PersonalTunAdmission.ValidateIdentity(identity);checks++;
-Reject(()=>PersonalTunAdmission.ValidateIdentity(identity with{SourceCommit=null!}),"null commit fails closed");
-Reject(()=>PersonalTunAdmission.ValidateIdentity(identity with{Files=[null!,null!,null!,null!]}),"null package members fail closed");
-Reject(()=>PersonalTunAdmission.ValidateIdentity(identity with{UserAbi=2}),"descriptor ABI2 does not substitute for user ABI1");
-var now=DateTimeOffset.UtcNow;var approval=new TunTargetApproval(1,"machine",new string('c',64),@"ROOT\STREAMLINKTUN\0000","personal-target-after-kernel-gate",now.AddDays(1),new string('d',64));
-PersonalTunAdmission.ValidateApproval(approval,"machine",approval.PackageHash,now);checks++;
-Reject(()=>PersonalTunAdmission.ValidateApproval(approval,"other",approval.PackageHash,now),"approval cannot move to another host");
-Reject(()=>PersonalTunAdmission.ValidateApproval(approval with{DeviceInstanceId=null!},"machine",approval.PackageHash,now),"missing actual device identity rejected");
-Reject(()=>PersonalTunAdmission.ValidateApproval(approval with{ExpiresUtc=now.AddDays(91)},"machine",approval.PackageHash,now),"unbounded approval expiry rejected");
-Reject(()=>PersonalTunAdmission.Inspect(AppContext.BaseDirectory,Path.GetTempPath(),default).GetAwaiter().GetResult(),"user-writable research DLL directory rejected before loading");
 var state=new UiStatusDto("personal","device","10.1.1.1","Stopped",true,false,0,0,[],"info") {Adapter=new(PacketAdapterProviders.NativeExperimental,null,"Blocked","unsigned"),PersonalFeatureEdition=true};
 string dto=JsonSerializer.Serialize(state);
 Check(!dto.Contains("OwnerKey")&&!dto.Contains("PrivateKey")&&!dto.Contains("MachineGuid"),"runtime UI status exposes no network secrets or target identity secret");
@@ -48,5 +36,13 @@ using(var worker=new ControlWorker()){
     var ready=await worker.Handle(new("personal-check"));Check(!ready.Ok&&ready.Error.Contains("先创建或加入"),"unpaired configuration cannot skip coordinator checks and claim prepared");
     await worker.StopLocal();
 }
+var historical=new DeviceProfile{AdapterBackend=PacketAdapterBackend.StreamLinkTun,Mesh=MeshIdentity.Create("https://example.com/","","faketcp"),Enabled=true};
+new ProfileStore().Save(historical);
+using(var migrated=new ControlWorker()) {
+    var current=(await migrated.Handle(new("status"))).Profile!;
+    Check(current.AdapterBackend==PacketAdapterBackend.OfficialWintun&&!current.Enabled&&current.MigrationNotice.Length>0,"research profile migration is visible, official-only and never auto-starts");
+    Check(current.Mesh!.Pair.Network==historical.Mesh.Pair.Network&&Directory.GetFiles(ProfileStore.Root,"profile-before-aq1-*.dpapi").Length==1,"migration preserves identity and one protected original backup");
+}
+using(var reopened=new ControlWorker())Check(Directory.GetFiles(ProfileStore.Root,"profile-before-aq1-*.dpapi").Length==1,"normal reopen does not repeat migration");
 Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(args[0]))!);
 File.WriteAllText(args[0],JsonSerializer.Serialize(new{status="Pass",checks,evidenceLevel="UserModeRealIO",scope="typed profile/control/persistence/admission refusal on actual Windows; no kernel installation, TUN I/O or new public NAT coverage"},new JsonSerializerOptions{WriteIndented=true}));

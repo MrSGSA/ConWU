@@ -139,8 +139,9 @@ public static class ServiceInstaller
         if(required.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少必需运行文件");
         if(PersonalFeature.Enabled) {
             if(!manifest.TryGetProperty("personalContract",out var contract)||contract.GetString()!=PersonalFeature.Contract)throw new IOException("个人包契约不匹配");
-            string[] personalRequired=["StreamLink.ResearchAdapters.dll","components/self-tun/StreamLinkTun.sys","components/self-tun/StreamLinkTun.inf","components/self-tun/StreamLinkTun.cat","components/self-tun/streamlink-tun-research.dll","components/self-tun/package-identity.json"];
-            if(personalRequired.Any(p=>!paths.Contains(p)))throw new IOException("个人包未包含完整自研 TUN 研发及产品接线文件");
+            string[] personalRequired=["web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
+            if(personalRequired.Any(p=>!paths.Contains(p)))throw new IOException("AQ-1 个人包缺少 WebUI 运行文件");
+            if(paths.Any(p=>p.Contains("self-tun",StringComparison.OrdinalIgnoreCase)||p.EndsWith("StreamLink.ResearchAdapters.dll",StringComparison.OrdinalIgnoreCase)||p.Contains("easytier",StringComparison.OrdinalIgnoreCase)))throw new IOException("AQ-1 产品包不能包含自研驱动或旧组网组件");
         }
         foreach(string path in new[]{"StreamLink.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
             using var input=File.OpenRead(Path.Combine(source,path));var head=new byte[64];input.ReadExactly(head);

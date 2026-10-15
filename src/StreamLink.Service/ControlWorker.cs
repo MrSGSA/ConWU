@@ -19,6 +19,8 @@ public sealed partial class ControlWorker : BackgroundService
     CancellationTokenSource? measureStop;
     ControlReply? snapshot;
     string quality = "";
+    QualityResult? lastQuality;
+    UiStageLedger? stageLedger;
     bool initialized;
     bool resourceShutdownUnproven;
     readonly SemaphoreSlim requests = new(1, 1);
@@ -26,7 +28,17 @@ public sealed partial class ControlWorker : BackgroundService
     public ControlWorker()
     {
         lease = new FileStream(Path.Combine(ProfileStore.Root, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        try { profile = store.Load(); PublishReply(); } catch { lease.Dispose(); throw; }
+        try {
+            profile = store.Load();
+            if (profile.AdapterBackend != PacketAdapterBackend.OfficialWintun) {
+                store.BackupResearchProfile();
+                profile.AdapterBackend = PacketAdapterBackend.OfficialWintun;
+                profile.Enabled = false;
+                profile.MigrationNotice = "原自研网卡配置已在本机备份并迁移到官方 Wintun；网络保持停止，请核对后连接。";
+                store.Save(profile);
+            }
+            PublishReply();
+        } catch { lease.Dispose(); throw; }
     }
     void Log(string text)
     {
@@ -88,7 +100,7 @@ public sealed partial class ControlWorker : BackgroundService
         RequireResourceOwnership(); // completed task is not proof that its owners closed
         running = null; runner = null; meshRunner = null;runningProfile=null;
         measureStop?.Dispose();measureStop=null;measuring=null;
-        lock (sync) { quality = ""; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); PublishReply();}
+        lock (sync) { quality = ""; lastQuality=null; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); PublishReply();}
     }
     static async Task ObserveShutdown(Task task){try{await task;}catch(OperationCanceledException){} }
     void RequireResourceOwnership(){
@@ -99,6 +111,8 @@ public sealed partial class ControlWorker : BackgroundService
     }
     void PublishReply()
     {
+        lock(sync) Volatile.Write(ref stageLedger,new(status?.AdapterStatistics,status?.Egress,
+            status?.LegacyTransports?.Resources.Take(15).Select(x=>new UiLegacyStage(x.ResourceId,x.ProcessId,x.Mode,x.Listener,x.Target,x.BusinessHandoff,x.BusinessEgress,x.Route?.Witnesses.Take(2).ToArray()??[])).ToArray()??[]));
         lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized,1));
     }
     ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=SensitiveText.Redact(error,current.Profile!),Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
@@ -136,6 +150,10 @@ public sealed partial class ControlWorker : BackgroundService
             switch (request.Command)
             {
                 case "status": break;
+                case "ui-network":
+                    if(ui?.Network==null)throw new FormatException("网络操作需要已认证的UI请求");
+                    await ApplyUiNetwork(ui.Network,operation);
+                    break;
                 case "mesh-create":
                 case "mesh-join":
                     var mesh = request.Command == "mesh-create" ? MeshIdentity.Create(request.Service, request.Pin, request.Mode) : MeshIdentity.Import(request.Invite);
@@ -210,10 +228,11 @@ public sealed partial class ControlWorker : BackgroundService
                     if (request.Mbps is < 1 or > 60) throw new FormatException("测试速率需为 1–60 Mbps");
                     if (measuring != null && !measuring.IsCompleted) throw new IOException("已有质量测试在运行");
                     quality = "正在测试，20 秒后显示结果";
+                    Volatile.Write(ref lastQuality,null);
                     measureStop?.Dispose();measureStop=CancellationTokenSource.CreateLinkedTokenSource(runStop!.Token,operation.Stop.Token);
                     var current = runner; var currentMesh = meshRunner; var measurementToken = measureStop.Token;
                     background=true;SetOperation(operation,"测速中",true);
-                    measuring = Task.Run(async () => { string error="";try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, measurementToken) : await current!.Measure(request.Mbps, measurementToken); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { error=ex is OperationCanceledException?"操作已取消":ex.Message;lock (sync) quality = "测试未完成：" + error; } finally {CompleteOperation(operation,error);PublishReply();} }); break;
+                    measuring = Task.Run(async () => { string error="";try { var r = currentMesh != null ? await currentMesh.Measure(request.Mbps, request.PeerSlot, measurementToken) : await current!.Measure(request.Mbps, measurementToken); Volatile.Write(ref lastQuality,r); lock (sync) quality = $"收到 {r.ReceivedMbps:F2} Mbps，丢包 {r.LossPercent:F3}%，{r.ReceivedPackets}/{r.SentPackets} 包"; } catch (Exception ex) { error=ex is OperationCanceledException?"操作已取消":ex.Message;lock (sync) quality = "测试未完成：" + error; } finally {CompleteOperation(operation,error);PublishReply();} }); break;
                 default: throw new FormatException("未知控制命令");
             }
             if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued,Operation=operation.State } : Reply() with {Operation=operation.State};

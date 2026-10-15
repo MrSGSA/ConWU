@@ -12,6 +12,15 @@ public sealed record QualityResult(int RequestedMbps,int Seconds,int SentPackets
 {
     public string Profile {get;init;}=QualityDiagnosticPolicy.Profile;
     public string EvidenceLayer {get;init;}="received inner UDP payload with one-second tail; not one-way deadline";
+    public double OfferedMbps => SentPackets * 1200d * 8 / Seconds / 1e6;
+    public long ReceivedUniqueBytes => ReceivedPackets * 1200L;
+    public int DuplicatePackets {get;init;}
+    public int OutOfOrderPackets {get;init;}
+    public int TailWindowPackets {get;init;}
+    public double ReceiverElapsedMs {get;init;}
+    public string Direction {get;init;}="peer-to-local";
+    public string SenderEvidence => "authenticated successful UDP send API count; physical injection and wire delivery not implied";
+    public bool OfferedLoadQualified => OfferedMbps >= RequestedMbps * 0.99;
 }
 internal sealed record QualityMessage(string Op,ulong Id,int Mbps,int Seconds,int Count,string Mac,int Version=2,long NotAfter=0,string Initiator="",int InitiatorPort=0,string Responder="",string Error="");
 
@@ -102,13 +111,18 @@ public static class Quality
         using var retries=CancellationTokenSource.CreateLinkedTokenSource(token);
         var repeat=Task.Run(async()=>{byte[] body=JsonSerializer.SerializeToUtf8Bytes(request);while(!retries.IsCancellationRequested){if(TraversalResources.Shared.TrySend(body.Length+28,maintenance:true))await socket.SendAsync(body,retries.Token);await Task.Delay(700,retries.Token);}},retries.Token);
         var seen=new HashSet<int>();QualityMessage? done=null;long doneAt=0;
+        var receiverClock=Stopwatch.StartNew();int duplicate=0,outOfOrder=0,tail=0,highest=-1;
         try{
             while(true){
                 using var wait=CancellationTokenSource.CreateLinkedTokenSource(token);wait.CancelAfter(250);
                 try{
                     var response=await socket.ReceiveAsync(wait.Token);var data=response.Buffer;
                     if(data.Length==Size&&data.AsSpan(0,4).SequenceEqual("SLQ2"u8)&&BinaryPrimitives.ReadUInt64BigEndian(data.AsSpan(4))==id){
-                        int sequence=BinaryPrimitives.ReadInt32BigEndian(data.AsSpan(12));if(sequence>=0&&sequence<200000)seen.Add(sequence);
+                        int sequence=BinaryPrimitives.ReadInt32BigEndian(data.AsSpan(12));
+                        if(sequence>=0&&sequence<200000){
+                            if(!seen.Add(sequence))duplicate++;
+                            else {if(sequence<highest)outOfOrder++;highest=Math.Max(highest,sequence);if(doneAt!=0)tail++;}
+                        }
                     }else if(data.Length<=MaximumControl){
                         try{var reply=JsonSerializer.Deserialize<QualityMessage>(data);if(reply?.Id==id&&reply.Mbps==mbps&&reply.Seconds==seconds&&reply.Initiator==request.Initiator&&reply.InitiatorPort==request.InitiatorPort&&reply.Responder==peer&&Valid(reply,key)){
                             if(reply.Op=="denied")throw new IOException("对端测速不可用："+reply.Error);
@@ -125,7 +139,8 @@ public static class Quality
                 try{for(int n=0;n<3;n++){if(TraversalResources.Shared.TrySend(stop.Length+28,maintenance:true))await socket.SendAsync(stop,cancel.Token);await Task.Delay(25,cancel.Token);}}catch(Exception ex)when(ex is OperationCanceledException or SocketException){}
             }
         }
-        if(done==null||done.Count<=0||seen.Count>done.Count)throw new IOException("测速未取得有效发送报告");
-        return new(mbps,seconds,done.Count,seen.Count,seen.Count*Size*8d/seconds/1e6,100d*(done.Count-seen.Count)/done.Count);
+        if(done==null||done.Count<=0||seen.Count>done.Count||highest>=done.Count)throw new IOException("测速未取得一致的有效发送报告");
+        return new(mbps,seconds,done.Count,seen.Count,seen.Count*Size*8d/seconds/1e6,100d*(done.Count-seen.Count)/done.Count)
+            {DuplicatePackets=duplicate,OutOfOrderPackets=outOfOrder,TailWindowPackets=tail,ReceiverElapsedMs=receiverClock.Elapsed.TotalMilliseconds};
     }
 }

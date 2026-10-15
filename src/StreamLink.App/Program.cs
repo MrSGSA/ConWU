@@ -47,6 +47,12 @@ static class Program
             IEnumerable<object> Layout(Control c) { yield return new {Type=c.GetType().Name,Text=c.Text,Width=c.Width,Height=c.Height,X=c.Left,Y=c.Top,Dpi=c.DeviceDpi,Font=c.Font.Size,Auto=c.AutoSize}; foreach(Control child in c.Controls) foreach(var item in Layout(child)) yield return item; }
             File.WriteAllText(Path.GetFullPath(args[1])+".json",System.Text.Json.JsonSerializer.Serialize(new {preview.Width,preview.Height,preview.DeviceDpi,Layout=Layout(preview).ToArray()})); return;
         }
+        if(StreamLink.Core.PersonalFeature.Enabled && args.Length==0) {
+            using var panelSingle=new Mutex(true,"Local\\"+StreamLink.Core.WindowsInstance.Name+"-WebTray",out bool panelFirst);
+            if(!panelFirst){MessageBox.Show("StreamLink 已在托盘运行，请双击托盘图标打开面板。");return;}
+            if(StreamLink.Core.WindowsHost.IsAdmin){MessageBox.Show("浏览器面板请从普通权限启动 StreamLink.exe。管理员桌面入口可使用 --desktop；安装后台时程序会单独请求提升。","StreamLink");return;}
+            Application.Run(new WebTrayContext());return;
+        }
         using var single = new Mutex(true, "Local\\"+StreamLink.Core.WindowsInstance.Name+(StreamLink.Core.WindowsHost.IsAdmin?"-Desktop":"-UserDesktop"), out bool first);
         if(!first) { MessageBox.Show("StreamLink 已在运行。"); return; }
         Application.Run(StreamLink.Core.WindowsHost.IsAdmin?new MainWindow():new UserWindow());
