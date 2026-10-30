@@ -3,6 +3,8 @@ using System.IO.Pipes;
 namespace StreamLink.Core;
 public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connected,bool Degraded,double? RttMs,string Phase)
 {
+    public ConnectionProgress? Connection {get;init;}
+    public PeerLiveness? Liveness {get;init;}
     public string TraversalMethod {get;init;}="None";
     public string ActualTransport {get;init;}="None";
     public long SentBytes {get;init;}
@@ -14,6 +16,7 @@ public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connec
 }
 public sealed record UiStatusDto(string Version,string DeviceName,string VirtualIp,string State,bool ServiceReady,bool NetworkEnabled,int DirectPeers,int TotalPeers,UiPeerDto[] Peers,string LogLevel,int SettingsPatchVersion=1)
 {
+    public ConnectionProgress? Connection {get;init;}
     public AdapterRuntimeStatus? Adapter {get;init;}
     public bool PersonalFeatureEdition {get;init;}
     public string NetworkId {get;init;}="";

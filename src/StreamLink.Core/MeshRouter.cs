@@ -8,6 +8,8 @@ namespace StreamLink.Core;
 
 public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0)
 {
+    public PeerLiveness? Liveness { get; init; }
+    public ConnectionProgress? Connection { get; init; }
     public bool Degraded { get; init; }
     public string TraversalMethod { get; init; } = "None";
     public string ActualTransport { get; init; } = "None";
@@ -33,7 +35,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public readonly MeshMember Member = member;
         public readonly MeshLink Link = link;
         public IPEndPoint? Candidate, Active;
-        public long ActiveReceived;
+        public long ActiveReceived, ActiveRoundTrip;
+        public readonly Dictionary<long, long> ActivePings = [];
         public readonly Dictionary<IPEndPoint, (long Token, long At, long Sent)> Probes = [];
         public readonly Queue<IPEndPoint> Retired = [];
         public string Name = "", Detail = "等待对端上线";
@@ -116,7 +119,20 @@ public sealed partial class MeshRouter : IAsyncDisposable
             }
         }
     }
-    static bool Healthy(Peer peer) => peer.Managed != null ? ManagedHealthy(peer) : peer.Link.Connected && peer.Active != null && peer.ActiveReceived != 0 && Stopwatch.GetElapsedTime(peer.ActiveReceived).TotalSeconds < 12;
+    static bool Healthy(Peer peer) => peer.Managed != null ? ManagedHealthy(peer) : peer.Link.Connected && peer.Active != null &&
+        Fresh(peer.ActiveReceived) && Fresh(peer.ActiveRoundTrip);
+    static bool Fresh(long timestamp) => timestamp != 0 && Stopwatch.GetElapsedTime(timestamp).TotalSeconds < 12;
+    static long? Age(long timestamp) => timestamp == 0 ? null : (long)Stopwatch.GetElapsedTime(timestamp).TotalMilliseconds;
+    static PeerLiveness Liveness(Peer peer)
+    {
+        var path = peer.Managed?.Active;
+        long received = peer.Managed == null ? peer.ActiveReceived : path?.LastReceive ?? 0;
+        long roundTrip = peer.Managed == null ? peer.ActiveRoundTrip : path?.LastRoundTrip ?? 0;
+        string reason = Healthy(peer) ? "Healthy" : peer.Managed == null && peer.Active == null || peer.Managed != null && path == null ? "WaitingForPath" :
+            path?.Transport.Failed == true ? "TransportExited" : !Fresh(received) ? "ReceiveTimedOut" :
+            !Fresh(roundTrip) ? "ReturnPathTimedOut" : "SessionNotReady";
+        return new(reason, Age(received), Age(roundTrip));
+    }
     public bool HasHealthyPath(int slot) { lock (gate) return peers.TryGetValue(slot, out var peer) && Healthy(peer); }
     public bool UsesPath(int slot, IPEndPoint? endpoint)
     {
@@ -149,7 +165,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
-                p.Sent, p.Received, p.Dropped) { Degraded = degraded,
+                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Liveness = Liveness(p),
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
@@ -212,11 +228,17 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
                         if (peer.Active != null) { peer.Retired.Enqueue(peer.Active); while (peer.Retired.Count > 8) peer.Retired.Dequeue(); }
-                        peer.Active = endpoint; peer.ActiveReceived = Stopwatch.GetTimestamp(); peer.Probes.Clear();
+                        peer.Active = endpoint; peer.ActiveReceived = peer.ActiveRoundTrip = Stopwatch.GetTimestamp(); peer.Probes.Clear(); peer.ActivePings.Clear();
                         peer.LegacyPathId = Guid.NewGuid(); peer.Recovery.Select(peer.LegacyPathId, Environment.TickCount64);
                     } else if (endpoint.Equals(peer.Candidate) || !Healthy(peer) || !peer.Retired.Contains(endpoint)) Challenge(peer, endpoint);
                 }
-                if (endpoint.Equals(peer.Active) && result.PongToken is long recoveryNonce) peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
+                if (endpoint.Equals(peer.Active) && result.PongToken is long recoveryNonce) {
+                    if(peer.ActivePings.Remove(recoveryNonce,out long sent) && Fresh(sent))
+                        peer.ActiveRoundTrip = Stopwatch.GetTimestamp();
+                    // Recovery has a separate, bounded nonce set for its
+                    // business observation probes; do not discard those pongs.
+                    peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
+                }
                 if (result.Packet != null) {
                     if (MeshPackets.Accept(result.Packet, local, peer.Member.Slot) && adapter.Write(result.Packet)) {
                         peer.Received += result.Packet.Length;
@@ -243,10 +265,18 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 // Recovery and managed paths still get their own fair turn.
                 if (legacyServiced || now < peer.NextLegacyControl || peer.Active == null && peer.Candidate == null) continue;
                 legacyServiced = true; peer.NextLegacyControl = now + 1500;
-                if (Healthy(peer)) {
+                // Continue probing an unhealthy retained path as well. Only an
+                // outstanding nonce returned through this exact Active refreshes
+                // outbound proof; inbound data/Hello/another candidate cannot.
+                if (peer.Active != null) {
                     byte[]? ping = peer.Link.Ping(out long nonce);
-                    if (SendLegacyControl(peer, ping, peer.Active, maintenance: true))
+                    if (SendLegacyControl(peer, ping, peer.Active, maintenance: true)) {
+                        if (peer.ActivePings.Count >= 8) peer.ActivePings.Remove(peer.ActivePings.MinBy(p => p.Value).Key);
+                        peer.ActivePings[nonce] = Stopwatch.GetTimestamp();
                         peer.Recovery.KeepaliveSent(nonce, now);
+                    }
+                }
+                if (Healthy(peer)) {
                     if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) {
                         SendLegacyControl(peer, peer.Link.Hello(), peer.Candidate); Challenge(peer, peer.Candidate);
                     }
@@ -269,7 +299,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
         adapter.Stop();
         Task[] pathPumps;
         lock (gate) { foreach (var peer in peers.Values) CloseManaged(peer); pathPumps = managedPumps.ToArray(); }
-        try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (OperationCanceledException) { }
+        // Completion reports an operational pump fault to the runner. Once ALL
+        // pumps have joined it is not an owner-close failure. Re-throwing it
+        // here falsely quarantined a fully closed adapter and disabled retries.
+        // Actual path/adapter cleanup exceptions in finally must still escape.
+        try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (Exception) { }
         finally { await Task.WhenAll(pathPumps);await Task.WhenAll(diagnosticTasks.ToArray()); lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
     }
 }

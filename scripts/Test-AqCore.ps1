@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.0-aq1-personal.5',[ValidateSet('Full','InstallerRefresh')][string]$Profile='Full')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.1-rc.1',[ValidateSet('Full','InstallerRefresh')][string]$Profile='Full')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
@@ -34,6 +34,7 @@ try {
  Run 'native-so-state' (Join-Path $repo 'out/native/native-so-state-test.exe') @()
  Managed 'NativeInputTests' @((Join-Path $OutputDirectory 'parser-corpus.txt'))
  foreach($name in @('Tests','PairingTests','WindowsTests','ConnectionTests','MappingTests','MeshTests','TraversalTests','MeshConnectionTests','MeshWatchTests','ControlTests','AdapterContractTests','Rc2PortableTests','QualityTests')){Managed $name}
+ Run 'runner-retry-wake' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--network-wake-only',(Join-Path $OutputDirectory 'retry-wake.json'))
  Managed 'PersonalFeatureTests' @((Join-Path $OutputDirectory 'personal.json'))
  Managed 'RenderingTests' @((Join-Path $OutputDirectory 'tray/result.json'))
  Managed 'WebTests'

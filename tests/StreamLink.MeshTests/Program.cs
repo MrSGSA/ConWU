@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.Http;
 using StreamLink.Core;
 using StreamLink.Discovery;
 
-static class Program
+static partial class Program
 {
     static int checks;
     static void Check(bool ok, string description) { if (!ok) throw new Exception(description); checks++; Console.WriteLine("PASS " + description); }
@@ -36,6 +36,9 @@ static class Program
     }
     public static async Task Main(string[] args)
     {
+        if(args is ["--soak",var binary,var seconds,var output]) {
+            await SustainedRawLoad(Path.GetFullPath(binary),int.Parse(seconds),Path.GetFullPath(output));return;
+        }
         var owner = MeshIdentity.Create("https://example.com/", "", "faketcp"); var b = Guest(owner); var c = Guest(owner);
         owner.Validate(); b.Validate(); c.Validate();
         Check(b.Self.Slot == 2 && c.Self.Slot == 3 && b.OwnerPrivate.Length == 0, "independent credentials and unique slots; administrator key never exported");

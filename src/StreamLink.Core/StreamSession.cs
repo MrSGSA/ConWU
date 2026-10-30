@@ -9,6 +9,7 @@ namespace StreamLink.Core;
 
 public sealed record SessionStatus(string State, string LocalIp, string PeerIp, string Transport, bool Connected, double? RttMs, string Detail, string PeerName = "", MeshPeerStatus[]? Peers = null)
 {
+    public ConnectionProgress? Connection { get; init; }
     public TraversalResourceUsage? ControlAdmission { get; init; }
     public TraversalEnhancementUsage? EnhancementAdmission { get; init; }
     public TcpHelperUsage? TcpHelpers { get; init; }

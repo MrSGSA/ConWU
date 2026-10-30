@@ -24,6 +24,15 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--half-open-only",var halfOpenReport]){
+            await HalfOpenRecovery(Path.GetFullPath(halfOpenReport));return;
+        }
+        if(args is ["--pump-fault-only",var pumpReport]){
+            await PumpFaultRecovery(Path.GetFullPath(pumpReport));return;
+        }
+        if(args is ["--service-retry-only",var serviceReport]){
+            await ServiceFaultRetry(Path.GetFullPath(serviceReport));return;
+        }
         if(args is ["--quality-isolation-only",var qualityReport]){
             await QualityIsolation(Path.GetFullPath(qualityReport));Console.WriteLine($"PASS {checks} optional quality isolation checks");return;
         }
@@ -49,6 +58,9 @@ static partial class Program
         await TcpTests.Run();
         await Migration();
         await AliveProcessRecovery();
+        await HalfOpenRecovery();
+        await PumpFaultRecovery();
+        await ServiceFaultRetry();
         await Scheduler();
         await QualityIsolation();
         await Startup();
@@ -235,8 +247,8 @@ static partial class Program
     }
     sealed class MemoryAdapter : IPacketAdapter
     {
-        public readonly BlockingCollection<byte[]> Outgoing = new(); public bool Disposed;
-        public int Read(byte[] buffer) { if (!Outgoing.TryTake(out var packet, 50)) return 0; packet.CopyTo(buffer, 0); return packet.Length; }
+        public readonly BlockingCollection<byte[]> Outgoing = new(); public bool Disposed; public volatile bool ReadFault;
+        public int Read(byte[] buffer) { if(ReadFault)throw new IOException("injected adapter read fault");if (!Outgoing.TryTake(out var packet, 50)) return 0; packet.CopyTo(buffer, 0); return packet.Length; }
         public bool Write(byte[] packet) => true;
         public void Dispose() { Disposed = true; Outgoing.Dispose(); }
     }
@@ -284,7 +296,7 @@ static partial class Program
         readonly UdpClient socket = new(new IPEndPoint(IPAddress.Loopback, 0));
         readonly CancellationTokenSource stop = new(); readonly Task pump; readonly IPEndPoint remote; IPEndPoint? local;
         public IPEndPoint ClientEndpoint { get; }
-        public bool Exited { get; set; } public bool Disposed; public int Packets; public volatile bool Muted;
+        public bool Exited { get; set; } public bool Disposed; public int Packets; public volatile bool Muted, MuteUplink;
         public ForwardingTransport(IPEndPoint remote) { this.remote = remote; ClientEndpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
         async Task Pump()
         {
@@ -292,7 +304,7 @@ static partial class Program
                 var packet = await socket.ReceiveAsync(stop.Token); Interlocked.Increment(ref Packets);
                 if(Muted)continue;
                 if (packet.RemoteEndPoint.Equals(remote)) { if (local != null) await socket.SendAsync(packet.Buffer, local, stop.Token); }
-                else { local = packet.RemoteEndPoint; await socket.SendAsync(packet.Buffer, remote, stop.Token); }
+                else { local = packet.RemoteEndPoint; if(!MuteUplink)await socket.SendAsync(packet.Buffer, remote, stop.Token); }
             }
         }
         public void Dispose()
@@ -316,7 +328,10 @@ static partial class Program
         async Task Pump()
         {
             while (!stop.IsCancellationRequested) {
-                var packet = await socket.ReceiveAsync(stop.Token); var message = link.Receive(packet.Buffer); Interlocked.Increment(ref Received);
+                UdpReceiveResult packet;
+                try { packet = await socket.ReceiveAsync(stop.Token); }
+                catch(SocketException ex) when(ex.SocketErrorCode==SocketError.ConnectionReset) { continue; }
+                var message = link.Receive(packet.Buffer); Interlocked.Increment(ref Received);
                 if (message.Packet != null) {
                     Interlocked.Increment(ref DataPackets);
                     if (ReplyPacket is {} reply && link.Data(reply) is {} encoded) await socket.SendAsync(encoded, packet.RemoteEndPoint, stop.Token);

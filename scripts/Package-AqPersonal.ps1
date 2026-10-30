@@ -1,13 +1,14 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.0.0-aq1-personal.5')
+      [string]$Version='1.0.1-rc.1',[string]$MsiVersion='1.0.6')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
 try {
- if($Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$'){throw 'AQ-1 personal version required'}
- $fileVersion='1.0.'+($Version.Split('.')[-1])+'.0'
+ if($Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$' -and $Version -notmatch '^1\.0\.1-rc\.[1-9][0-9]*$'){throw 'AQ-1 candidate version required'}
+ if($MsiVersion -notmatch '^1\.0\.([1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 65535){throw 'Explicit monotonic MSI version required'}
+ $fileVersion=$MsiVersion+'.0'
  $commit=(& git rev-parse HEAD).Trim()
  if($LASTEXITCODE -or @(& git status --porcelain).Count){throw 'Commit and freeze the exact candidate first'}
  $candidate=Join-Path ([IO.Path]::GetFullPath($OutputRoot)) "StreamLink-$Version-$($commit.Substring(0,8))"
@@ -55,9 +56,9 @@ try {
  Copy-Item -LiteralPath (Join-Path $candidate "StreamLink-$Version-source.zip"),(Join-Path $DependencyCache 'WinDivert-v2.2.2-source.zip') -Destination $sources
  & ./scripts/Write-RcSbom.ps1 -Directory $runtime -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json','src/StreamLink.Web/obj/project.assets.json') -Native
  $files=@(Get-ChildItem -LiteralPath $runtime -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
- [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel='personal-candidate';releaseGate='NotPassed';
+ [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel='engineering-candidate';releaseGate='NotPassed';
   provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};
-  researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
+  msiVersion=$MsiVersion;researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
  [ordered]@{schemaVersion=1;version=$Version;sourceCommit=$commit;entryPoint='StreamLink.exe';runtimeDirectory='app';runtimeManifest='app/manifest.json';runtimeManifestSha256=(Get-FileHash (Join-Path $runtime 'manifest.json')).Hash;launcherSha256=(Get-FileHash (Join-Path $stage 'StreamLink.exe')).Hash;installer='MSI';profileDirectory='%ProgramData%/StreamLink-PersonalFeature'}|ConvertTo-Json|Set-Content (Join-Path $stage 'layout-manifest.json') -Encoding utf8NoBOM
  $p=Start-Process -FilePath (Join-Path $runtime 'StreamLink.exe') -ArgumentList @('--verify-bundle',"`"$(Join-Path $logs 'bundle-preflight.json')`"") -WindowStyle Hidden -Wait -PassThru
  if($p.ExitCode){throw 'Actual app rejected bundle'}
@@ -66,7 +67,7 @@ try {
  if($LASTEXITCODE){throw 'Coordination publish failed'}
  Copy-Item -LiteralPath LICENSE,scripts/Deploy-PersonalCoordination.sh,docs/aq1/协调服务.txt -Destination $coord
  [ordered]@{sourceCommit=$commit;businessRelay=$false;deployment='PreparedOnlyNotDeployed';oldServiceUnchanged=$true;nativeSynObservation='Included, requires explicit authenticated observer configuration and CAP_NET_RAW'}|ConvertTo-Json|Set-Content (Join-Path $coord 'deployment.json')
- & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "StreamLink-$Version-x64.msi")
+ & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "StreamLink-$Version-x64.msi") -MsiVersion $MsiVersion
  foreach($folder in @($stage,$coord)){Compress-Archive -LiteralPath $folder -DestinationPath ($folder+'.zip') -CompressionLevel Optimal}
  $hashes=@(Get-ChildItem -LiteralPath $candidate -File|Where-Object Extension -in '.zip','.msi'|ForEach-Object{[ordered]@{file=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
  [ordered]@{version=$Version;sourceCommit=$commit;publicReleaseApproved=$false;releaseGate='NotPassed';files=$hashes}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $candidate 'artifact-hashes.json') -Encoding utf8NoBOM

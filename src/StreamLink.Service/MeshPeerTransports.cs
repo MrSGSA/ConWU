@@ -21,8 +21,14 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
     long started, nextAttempt;
     long preparationBegan;
     int failures;
+    int attempts;
     string requested = "";
     public bool HasPending => pending != null || preparing != null;
+    public ConnectionProgress Progress(long now) => nextAttempt > now
+        ? new("Retrying","上次直连验证未通过，后台将重新尝试。",Attempt:attempts,RetryInSeconds:(int)((nextAttempt-now+999)/1000),CanRetry:true)
+        : new(preparing != null ? "Preparing" : pending != null ? "Verifying" : "Connecting",
+            preparing != null ? "正在准备直连传输" : pending != null ? "正在验证直连往返" : "正在寻找可用直连入口",
+            Attempt:attempts,RemainingSeconds:HasPending?(int)Math.Max(0,(preparationBegan+15000-now+999)/1000):null,CanRetry:true);
     public void WakeRetry() { nextAttempt = 0; failures = 0; }
     public void InvalidatePreparation(int slot)
     {
@@ -71,7 +77,7 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
         bool replaceDisconnected = active != null && !router.HasHealthyPath(slot);
         if (preparing == null && pending == null && keepPending && endpoint.Length > 0 && (endpoint != active?.Endpoint || replaceDisconnected) && now >= nextAttempt && (beginAttempt?.Invoke() ?? true)) {
             try {
-                preparationEndpoint = endpoint; preparationBegan = now; preparationStop = new(); preparationStop.CancelAfter(15000);
+                attempts++; preparationEndpoint = endpoint; preparationBegan = now; preparationStop = new(); preparationStop.CancelAfter(15000);
                 preparing = create(endpoint, preparationStop.Token);
                 if (preparing.IsCompletedSuccessfully) {
                     pending = (endpoint, preparing.Result); started = now; preparing = null;

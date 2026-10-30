@@ -18,6 +18,8 @@ public sealed class MeshRunner
     internal MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string> rememberStun, MeshRuntimeServices services)
     { this.profile = profile; mesh = profile.Mesh!; this.log = log; this.report = report; this.remember = remember; this.rememberStun = rememberStun; this.services = services; }
     readonly object gate = new();
+    int retryRequested;
+    public void RequestRetry() => Interlocked.Exchange(ref retryRequested,1);
     MeshRouter? router;
     MeshDirectory? pendingDirectory;
     internal object? ExitDiagnostics { get; private set; }
@@ -76,21 +78,32 @@ public sealed class MeshRunner
         string publishedEndpoint = "\0", publishingEndpoint = "";
         string firewallMembers = "";
         var timeline = new ConnectionTimeline(log);
+        var feedback = new MeshConnectionFeedback(log);
+        long began = Environment.TickCount64;
+        bool coordinatorUnavailable = false;
         AdapterRuntimeStatus adapterStatus = new(profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? PacketAdapterProviders.OfficialWintun : PacketAdapterProviders.NativeExperimental,null,"NotOpened","尚未打开虚拟网卡");
         IPacketAdapter? actualAdapter=null;
         string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
         void Warning(Exception ex)
         {
+            coordinatorUnavailable = true;
             if (lastWarning == 0 || Environment.TickCount64 - lastWarning >= 30000) { log("协调服务暂不可用，已有直连继续运行：" + ex.Message); lastWarning = Environment.TickCount64; }
         }
         try {
             gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
             timeline.Mark("原生网络开始启动");
-            report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus});
+            report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus,Connection=new("StartingAdapter","正在准备虚拟网卡与本机入口。")});
             opening = profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? services.Adapter(mesh) :
                 services.ProfileAdapter is {} create ? create(profile,stop) : throw new IOException("此运行环境未提供自研 TUN 准入工厂");
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
+                if(Interlocked.Exchange(ref retryRequested,0)!=0) {
+                    nextProbe = nextRead = nextServer = now; lastPublish = 0;
+                    traversal?.RequestRetry();
+                    foreach(var client in clients)if(!router!.HasHealthyPath(client.Key))client.Value.WakeRetry();
+                    (mapping as IMappingRefresh)?.RequestRefresh();
+                    log("已请求重新探测：保留健康直连、在途验证和虚拟网卡，唤醒等待中的重试");
+                }
                 if (networkWake.Take(now)) {
                     nextProbe = nextRead = nextServer = now;
                     probeFailures = readFailures = serverFailures = 0;
@@ -177,7 +190,7 @@ public sealed class MeshRunner
                 }
                 if (reading?.IsCompleted == true) {
                     try {
-                        var snapshot = await reading; readFailures = 0;
+                        var snapshot = await reading; readFailures = 0; coordinatorUnavailable = false;
                         if (snapshot != null && snapshot.Directory.Revision >= (mesh.Directory?.Revision ?? 0)) {
                             long previous = mesh.Directory?.Revision ?? 0;
                             MeshIdentity.ValidateDirectory(snapshot.Directory, mesh.Pair.Network, mesh.OwnerKey, previous);
@@ -245,6 +258,10 @@ public sealed class MeshRunner
                     traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
+                    feedback.Retain(members.Select(m=>m.Slot));
+                    statuses = router.Status().Select(peer=>feedback.Observe(peer,
+                        traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now),
+                        announcements.TryGetValue(peer.Slot,out var remote) && remote.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),now)).ToArray();
                     foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);
                     foreach(var peer in statuses)if(peer.Quality is{}assessment){
                         var key=(assessment.SessionId,assessment.Result,assessment.Reason);
@@ -291,8 +308,13 @@ public sealed class MeshRunner
                         nextTrafficReport = now + 30000;
                     }
                     int degraded = statuses.Count(p => p.Degraded);
+                    var waiting = statuses.FirstOrDefault(p=>!p.Connected)?.Connection;
+                    var connection = waiting ?? new ConnectionProgress(statuses.Length==0?"WaitingPeer":"Connected",
+                        statuses.Length==0?"网络已启动，等待另一台设备加入。":"直连已通过双向验证，可复制设备 IP 开始串流。",now-began);
+                    if(coordinatorUnavailable)connection=connection with {Detail="协调服务暂不可用，已有直连继续运行；新增连接可能延迟。 "+connection.Detail};
                     report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP，质量单独评估" : ""), first?.Name ?? "", statuses) {
+                            Connection=connection,
                             Adapter = actualAdapter is {} observed ? adapterStatus with {ReadPackets=observed.Statistics.ReadPackets,WrittenPackets=observed.Statistics.WrittenPackets} : adapterStatus,
                             AdapterStatistics = actualAdapter?.Statistics,
                             Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
@@ -307,6 +329,11 @@ public sealed class MeshRunner
                 // cadence. Idle and established paths retain the normal tick.
                 await Task.Delay(traversal?.FreshPredictionInProgress == true ? 25 : 100, stop);
             }
+        } catch(Exception ex) when(!stop.IsCancellationRequested && ex is not MeshRevokedException) {
+            // Publish loss of connectivity before potentially slow owner cleanup.
+            report(new("连接中断",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message) {
+                Adapter=adapterStatus,Connection=new("Recovering","连接组件发生异常，正在安全退出旧资源后重试。",nowElapsed(),CanRetry:false) });
+            throw;
         } finally {
             long shutdownStarted = Environment.TickCount64;
             var cleanupFailures=new List<string>();
@@ -346,5 +373,6 @@ public sealed class MeshRunner
             ShutdownStage(CleanupComplete?"complete":"incomplete");
             if(!CleanupComplete)throw new MeshShutdownException(cleanupFailures.ToArray());
         }
+        long nowElapsed() => Environment.TickCount64-began;
     }
 }

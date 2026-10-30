@@ -86,6 +86,10 @@ static partial class Program
             await Until(() => mapping.Refreshes == 1, "network wake requests refresh from the held mapping instead of rebinding its port", 3500); refreshMs = clock.Elapsed.TotalMilliseconds;
             Check(!server.Disposed && !client.Disposed && transports.Count == count && probes == 2 && adapters == 1 && status?.Connected == true,
                 "healthy native listener, active peer transport and virtual adapter survive the wake unchanged");
+            runner.RequestRetry();
+            await Until(()=>mapping.Refreshes==2,"explicit retry reaches the running backend and refreshes its held mapping",1500);
+            Check(!server.Disposed&&!client.Disposed&&transports.Count==count&&adapters==1&&status?.Connected==true,
+                "explicit retry preserves a healthy peer, listener and adapter");
             int refreshBefore = mapping.Refreshes; for (int i = 0; i < 1000; i++) wake.Signal(false);
             await Task.Delay(400);
             Check(mapping.Refreshes == refreshBefore && transports.Count == count && probes == 2,

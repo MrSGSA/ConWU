@@ -16,15 +16,15 @@ function check(ok,label){if(!ok)throw Error(label);checks.push(label);}
  browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1050}});page=await context.newPage();page.setDefaultTimeout(12000);
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
- await page.goto(link);await page.getByText('个人后台已就绪',{exact:true}).waitFor();
+ await page.goto(link);await page.getByText('后台已就绪',{exact:true}).waitFor();
  check(!page.url().includes('#'),'ticket removed');
  await page.screenshot({path:path.join(out,'published-overview.png'),fullPage:true});
  if(!readOnly){const deviceName='AQ installed '+Date.now().toString(36);
- await page.locator('[data-page="diagnostics"]').click();await page.locator('#device-name').fill(deviceName);
+ await page.locator('[data-page="settings"]').click();await page.locator('#device-name').fill(deviceName);
  await page.getByRole('button',{name:'保存设备设置',exact:true}).click();await page.getByText('设备设置已保存，当前连接保持运行。',{exact:true}).waitFor();
- await page.reload();await page.getByText('个人后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="diagnostics"]').click();
+ await page.reload();await page.getByText('后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
  check(await page.locator('#device-name').inputValue()===deviceName,'published Web -> SID pipe -> SCM service persisted restricted metadata');}
- await page.close();const reopened=await context.newPage();await reopened.goto(new URL(link).origin);await reopened.getByText('个人后台已就绪',{exact:true}).waitFor();check(true,'browser close/reopen preserves actual service');
+ await page.close();const reopened=await context.newPage();await reopened.goto(new URL(link).origin);await reopened.getByText('后台已就绪',{exact:true}).waitFor();check(true,'browser close/reopen preserves actual service');
  check(errors.length===0,'no JavaScript errors');
  fs.writeFileSync(path.join(out,'browser.json'),JSON.stringify({status:'Pass',checks,readOnly,instance:id,scope:'published self-contained Web and assets + actual SCM service; launch token is documented separately by the caller; no physical streaming or cross-account/UAC interactive acceptance'},null,2));
  }catch(e){if(page)await page.screenshot({path:path.join(out,'published-failure.png'),fullPage:true}).catch(()=>{});fs.writeFileSync(path.join(out,'browser.json'),JSON.stringify({status:'Fail',checks,error:e.message,stderr},null,2));process.exitCode=1;}

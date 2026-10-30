@@ -23,8 +23,12 @@ public sealed partial class ControlWorker : BackgroundService
     UiStageLedger? stageLedger;
     bool initialized;
     bool resourceShutdownUnproven;
+    TaskCompletionSource? retryWake;
+    long lastManualRetry;
     readonly SemaphoreSlim requests = new(1, 1);
     readonly FileStream lease;
+    readonly MeshRuntimeServices? meshRuntime;
+    internal ControlWorker(MeshRuntimeServices services):this() { meshRuntime=services; }
     public ControlWorker()
     {
         lease = new FileStream(Path.Combine(ProfileStore.Root, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -74,16 +78,34 @@ public sealed partial class ControlWorker : BackgroundService
         runningProfile=copy;
         var token = runStop.Token;
         running = Task.Run(async () => {
+            int attempt=0;
             while (!token.IsCancellationRequested)
             {
-                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} });
+                TaskCompletionSource wake;
+                lock(sync){
+                    retryWake=wake=new(TaskCreationOptions.RunContinuationsAsynchronously);
+                    status=new(attempt++==0?"正在启动":"正在恢复网络",copy.Mesh?.LocalIp??"","","faketcp",false,null,"正在启动连接组件") {
+                        Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
+                    PublishReply();
+                }
+                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default);
                 else runner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (MeshRevokedException ex) { lock (sync) { profile.Enabled = false; store.Save(profile); status = new("已移出网络", "", "", "faketcp", false, null, ex.Message); } Log(ex.Message); break; }
                 catch (MeshShutdownException ex) { Volatile.Write(ref resourceShutdownUnproven,true);lock(sync){status=new("资源退出未完成","","","faketcp",false,null,ex.Message);PublishReply();}Log(ex.Message);break; }
-                catch (Exception ex) { Log("后台连接将重试：" + ex.Message); }
-                try { await Task.Delay(10000, token); } catch (OperationCanceledException) { break; }
+                catch (Exception ex) {
+                    lock(sync){status=new("连接中断，等待重试",copy.Mesh?.LocalIp??"","","faketcp",false,null,ex.Message) {
+                        Connection=new("Retrying","连接组件异常："+ex.Message,Attempt:attempt,RetryInSeconds:10,CanRetry:true) };PublishReply();}
+                    Log("后台连接将重试：" + ex.Message);
+                }
+                long retryAt=Environment.TickCount64+10000;
+                try {
+                    while(!wake.Task.IsCompleted && Environment.TickCount64<retryAt) {
+                        lock(sync){if(status?.Connection is {} progress)status=status with {Connection=progress with {RetryInSeconds=(int)Math.Max(0,(retryAt-Environment.TickCount64+999)/1000)}};PublishReply();}
+                        await Task.WhenAny(Task.Delay(1000,token),wake.Task);token.ThrowIfCancellationRequested();
+                    }
+                } catch (OperationCanceledException) { break; }
             }
         });
     }
@@ -223,6 +245,15 @@ public sealed partial class ControlWorker : BackgroundService
                     lock (sync) { if (profile.Pair == null && profile.Mesh == null) throw new IOException("请先创建或加入网络"); profile.Enabled = true; profile.Validate(); store.Save(profile); } Begin(); break;
                 case "stop":
                     SetOperation(operation,"停止网络",false);lock (sync) { profile.Enabled = false; store.Save(profile); } await End(operation.Stop.Token); break;
+                case "retry":
+                    RequireResourceOwnership();
+                    if(!profile.Enabled || running?.IsCompleted != false || runStop?.IsCancellationRequested == true)
+                        throw new IOException("网络未运行，请先连接网络");
+                    long retryNow=Environment.TickCount64;
+                    if(lastManualRetry!=0 && retryNow-lastManualRetry<10000)throw new IOException("已请求重新探测，请稍候 10 秒再试");
+                    lastManualRetry=retryNow;
+                    meshRunner?.RequestRetry();lock(sync)retryWake?.TrySetResult();
+                    Log("用户请求重新探测；健康直连与虚拟网卡保持运行");break;
                 case "quality":
                     if (status?.Connected != true || runner == null && meshRunner == null) throw new IOException("请先连接对端");
                     if (request.Mbps is < 1 or > 60) throw new FormatException("测试速率需为 1–60 Mbps");

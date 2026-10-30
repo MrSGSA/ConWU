@@ -61,6 +61,26 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
     bool disposed;
     public MeshTraversalCapabilities Capabilities { get; }
     public bool Owns(int slot) => owned.Contains(slot);
+    public void RequestRetry()
+    {
+        foreach(var peer in router.Status().Where(p => !p.Connected)) {
+            opportunities.GetValueOrDefault(peer.Slot)?.RequestRetry();
+        }
+    }
+    public ConnectionProgress? Progress(int slot,long now)
+    {
+        var window = opportunities.GetValueOrDefault(slot);
+        if(window is {Open:false,Connected:false} && window.RetryAt > now)
+            return new("Retrying","本轮未找到可用直连；请确认对端已启动，后台将继续重试。",
+                Attempt:window.Failures,RetryInSeconds:(int)((window.RetryAt-now+999)/1000),CanRetry:true);
+        if(entries.TryGetValue(slot,out var e) && e.Actor?.Phase is not (MeshAttemptPhase.Selected or MeshAttemptPhase.Standby)) {
+            string phase = e.Preparing != null || e.Gathering != null ? "Preparing" : e.Actor?.Phase is MeshAttemptPhase.Offering or MeshAttemptPhase.Ready ? "WaitingPeer" : "Verifying";
+            return new(phase,phase switch {"Preparing"=>"正在准备直连资源", "WaitingPeer"=>"等待对端响应并启动直连", _=>"正在验证双方直连路径"},
+                Attempt:(window?.Failures??0)+1,RemainingSeconds:(int)Math.Max(0,(e.Deadline-now+999)/1000),CanRetry:true);
+        }
+        return window is {Open:true} ? new("Connecting","正在尝试可用入口与打洞；本轮有时间上限。",
+            Attempt:window.Failures+1,RemainingSeconds:(int)Math.Max(0,(window.Deadline-now+999)/1000),CanRetry:true) : null;
+    }
     public void ObserveLegacyPending(int slot, bool pending) { if (pending) legacyPending.Add(slot); else legacyPending.Remove(slot); }
     public bool KeepLegacyAttempt(int slot) => !discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) || window.Open;
     public bool BeginLegacyAttempt(int slot) => !discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) ||

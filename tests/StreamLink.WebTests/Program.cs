@@ -20,9 +20,10 @@ if(args is ["--browser-fixture",var assetRoot]) {
 var root=Path.GetFullPath(args.FirstOrDefault()??"src/StreamLink.Web/wwwroot");
 int checks=0,failures=0,calls=0;
 string? backendFailure=null;
+var clock=new PanelClock();
 void Check(bool ok,string name){checks++;if(!ok){failures++;Console.Error.WriteLine("FAIL "+name);}}
 Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);if(backendFailure!=null)throw backendFailure=="Stopped"?new UiBackendException("Stopped","个人后台已停止"):new IOException("private backend details");return Task.FromResult(new UiControlReply(true,"",null));}
-await using(var panel=await WebPanel.Start(Backend,root)) {
+await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  using var client=new HttpClient(new HttpClientHandler{UseCookies=true,AllowAutoRedirect=false}){BaseAddress=new(panel.Origin)};
  async Task<HttpResponseMessage> Send(string method,string path,object? body=null,string? origin=null,string? csrf=null,string? host=null){
   var req=new HttpRequestMessage(new HttpMethod(method),path);if(body!=null)req.Content=JsonContent.Create(body);
@@ -54,6 +55,17 @@ await using(var panel=await WebPanel.Start(Backend,root)) {
  var unknown=await Send("GET","/api/status");string unknownBody=await unknown.Content.ReadAsStringAsync();
  Check(unknown.StatusCode==HttpStatusCode.ServiceUnavailable&&!unknownBody.Contains("private backend details"),"unrecognized backend exception remains sanitized");
  backendFailure=null;Check((await Send("GET","/api/status")).IsSuccessStatusCode,"existing panel session recovers when backend returns");
+ clock.Advance(TimeSpan.FromMinutes(25));Check((await Send("GET","/api/status")).IsSuccessStatusCode,"authenticated activity renews the panel idle timeout");
+ clock.Advance(TimeSpan.FromMinutes(10));Check((await Send("GET","/api/status")).IsSuccessStatusCode,"active panel continues beyond the old fixed 30 minute limit");
+ Check((await Send("POST","/api/command",request,panel.Origin,csrf)).StatusCode==HttpStatusCode.Conflict,"session renewal preserves command replay history");
+ clock.Advance(TimeSpan.FromMinutes(31));Check((await Send("GET","/api/status")).StatusCode==HttpStatusCode.Unauthorized,"idle panel still expires after 30 minutes");
+ var expiredTicket=new Uri(panel.OpenLink()).Fragment[1..];clock.Advance(TimeSpan.FromSeconds(61));
+ Check((await Send("POST","/api/session",new{ticket=expiredTicket},panel.Origin)).StatusCode==HttpStatusCode.Unauthorized,"one-use ticket still expires after 60 seconds");
+ var freshTicket=new Uri(panel.OpenLink()).Fragment[1..];
+ var freshBoot=await Send("POST","/api/session",new{ticket=freshTicket},panel.Origin);
+ csrf=(await freshBoot.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("csrf").GetString()!;
+ for(int i=0;i<16;i++){clock.Advance(TimeSpan.FromMinutes(29));Check((await Send("GET","/api/status")).IsSuccessStatusCode,"active session bounded renewal "+i);}
+ clock.Advance(TimeSpan.FromMinutes(17));Check((await Send("GET","/api/status")).StatusCode==HttpStatusCode.Unauthorized,"active session expires at the absolute eight hour limit");
 }
 
 WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
@@ -70,9 +82,18 @@ using(var worker=new ControlWorker()) {
  Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create",Service:"https://example.com/",ExpectedNetwork:before.NetworkId)))).Ok,"network replacement requires explicit confirmation before I/O");
  Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("approve",Verification:"123456",Candidate:Guid.NewGuid().ToString("N"))))).Ok,"approval without authenticated exchange rejected");
  Check(!(await Ui(new("mesh-invite"))).Ok&&!(await Ui(new("save"))).Ok,"legacy privileged methods stay inaccessible");
+ Check(!(await Ui(new("retry",OperationId:Guid.NewGuid()))).Ok,"retry cannot start a stopped network or open an adapter");
  var full=(await worker.Handle(new("status"))).Profile!;var json=JsonSerializer.Serialize((await Ui(new("status"))).Status);
  foreach(var secret in new[]{full.Mesh!.OwnerPrivate,full.Mesh.SigningPrivate,full.Mesh.ExchangePrivate,full.Mesh.Pair.Secret})Check(!json.Contains(secret),"secret absent from expanded DTO");
  await worker.StopLocal();
 }
 Console.WriteLine(JsonSerializer.Serialize(new{scope="actual loopback HTTP + isolated Windows service, no physical link claim",checks,failures,status=failures==0?"Pass":"Fail"}));
 return failures==0?0:1;
+
+sealed class PanelClock:TimeProvider
+{
+ long timestamp;
+ public override long TimestampFrequency=>1000;
+ public override long GetTimestamp()=>Interlocked.Read(ref timestamp);
+ public void Advance(TimeSpan duration)=>Interlocked.Add(ref timestamp,(long)duration.TotalMilliseconds);
+}

@@ -11,16 +11,18 @@ public sealed partial class ControlWorker
     {
         var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;var peers=state?.Peers??[];
         return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",SensitiveText.Redact(state?.State??"网络未启动",p),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
-            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
-            {Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
+            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
+            {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),
              QualityText=full.Quality.Length>0?full.Quality:"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=full.Operation,Stages=Volatile.Read(ref stageLedger)};
     }
+    static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
+        progress with { Detail = SensitiveText.Redact(progress.Detail,profile)[..Math.Min(400,SensitiveText.Redact(progress.Detail,profile).Length)] };
     internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
         if(request.Method=="status"&&request.Patch==null&&request.Network==null)return new(true,"",UiSnapshot());
-        if(request.Method is not ("patch" or "start" or "stop" or "network" or "check" or "quality" or "cancel")||request.Method!="patch"&&request.Patch!=null||request.Method!="network"&&request.Network!=null)return new(false,"此接口不允许该操作",UiSnapshot());
+        if(request.Method is not ("patch" or "start" or "stop" or "retry" or "network" or "check" or "quality" or "cancel")||request.Method!="patch"&&request.Patch!=null||request.Method!="network"&&request.Network!=null)return new(false,"此接口不允许该操作",UiSnapshot());
         if(request.Method=="patch"&&request.Patch==null)return new(false,"设置补丁为空",UiSnapshot());
         if(request.Method=="network"&&request.Network==null)return new(false,"网络操作为空",UiSnapshot());
         var command=request.Method switch{"patch"=>"ui-patch","network"=>"ui-network","check"=>"personal-check",_=>request.Method};
