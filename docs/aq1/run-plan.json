@@ -31,6 +31,8 @@
   "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true, "pnpConvergenceSeconds": 5, "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"},
   "userTrial": {"application": "Moonlight or actual user streaming application", "minutes": 10, "status": "PendingUserTrial"},
   "regression": {
+    "orchestration": "Serial package, frozen core, native sustained load and isolated installer/driver phases; no simultaneous build of the same test output. Retain aborted ed04a07f matrix and first soak/lifecycle failures.",
+    "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,
     "nativeProtocolAndParser": true,

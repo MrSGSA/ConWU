@@ -1,5 +1,6 @@
 此目录是与 Windows 候选对应的 Linux x64 自包含协调服务，未在本轮部署。
-现有个人 HTTPS 协调在本轮只读检查支持 Mesh4、Traversal1、8 成员，relay=false；TCP SYN 观察未启用。
+2026-10-31 本机只读检查：原 streamlink-personal.space4sgsa.com 域名返回 DNS 名称不存在，当前不能依赖该入口配对或发现设备。此前支持 Mesh4、Traversal1、8 成员的记录仅为历史证据。恢复域名与 HTTPS 并部署匹配服务后，须重新核验这些能力。
+用户保留的 stun.space4sgsa.com:3478 仍解析至 64.90.30.239；DNS 解析不证明 STUN 响应或业务连通，STUN 也不能替代 HTTPS 协调服务。
 运行所需系统依赖是受支持 Linux 的基础运行库。源站可只监听回环 HTTP，由已有 HTTPS 入口保护控制面；业务不经此服务转发。
 Native SYN 观察/预约/来源回执和预算的现有源码仍包含在服务中。启用需要独立配置实际本机观察地址与 CAP_NET_RAW，不因此替换旧服务或改公网规则。
 部署脚本仅供已有授权下操作；本轮用户选择先完成本机开发与运行包，不部署 Akane 或修改公网设施。

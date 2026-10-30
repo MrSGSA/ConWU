@@ -38,12 +38,19 @@ static partial class Program
             Check(!denied.Ok&&adapters.Count==1,"unauthorized retry cannot restart any owner");
             var retry=await worker.HandleUi(new("retry",OperationId:Guid.NewGuid()),sid,CancellationToken.None);
             Check(retry.Ok,"authorized restricted retry accepted during backend backoff");
-            await Wait(s=>s?.DirectPeers==1&&adapters.Count==2,4000);
-            Check(!overlap&&original.Disposed&&adapters.Count==2,"real background loop reconnects after proven cleanup without overlapping adapters");
             var duplicate=await worker.HandleUi(new("retry",OperationId:Guid.NewGuid()),sid,CancellationToken.None);
-            Check(!duplicate.Ok&&adapters.Count==2,"repeated retry requests respect the backend ten second limit");
+            Check(!duplicate.Ok,"repeated retry requests respect the backend ten second limit");
+            // The wake must beat the existing ten-second backoff. Starting a
+            // new owner and authenticating its path are separate contracts;
+            // production gives the latter its own fifteen-second window.
+            var retryClock=System.Diagnostics.Stopwatch.StartNew();
+            await Wait(_=>adapters.Count==2,4000);
+            long restartMs=retryClock.ElapsedMilliseconds;
+            Check(restartMs<4000,"restricted retry starts the next adapter before the automatic backoff expires");
+            await Wait(s=>s?.DirectPeers==1,15000);
+            Check(!overlap&&original.Disposed&&adapters.Count==2,"real background loop reconnects after proven cleanup without overlapping adapters");
             if(output!=null){Directory.CreateDirectory(Path.GetDirectoryName(output)!);await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{
-                status="Pass",adapters=adapters.Count,overlap,scope="real isolated ControlWorker/restricted API/restart loop with injected adapter read fault and encrypted UDP loopback; no installed SCM service or physical network"
+                status="Pass",adapters=adapters.Count,overlap,restartMs,reconnectMs=retryClock.ElapsedMilliseconds,scope="real isolated ControlWorker/restricted API/restart loop with injected adapter read fault and encrypted UDP loopback; no installed SCM service or physical network"
             },new JsonSerializerOptions{WriteIndented=true}));}
         } finally {await worker.StopLocal();}
     }

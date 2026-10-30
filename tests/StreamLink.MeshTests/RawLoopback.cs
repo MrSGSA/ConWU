@@ -17,6 +17,9 @@ sealed class RawLoopback : IAsyncDisposable
     readonly string root = Path.Combine(Path.GetTempPath(), "streamlink-raw-mesh-" + Guid.NewGuid().ToString("N"));
     readonly Dictionary<(int, int), IPEndPoint> clients = [];
     readonly Task pump;
+    long receivedPackets,receivedBytes,forwardedPackets,forwardedBytes,unroutedPackets;
+    public object Counters=>new{receiveBufferBytes=wire.Client.ReceiveBufferSize,receivedPackets=Interlocked.Read(ref receivedPackets),receivedBytes=Interlocked.Read(ref receivedBytes),
+        forwardedPackets=Interlocked.Read(ref forwardedPackets),forwardedBytes=Interlocked.Read(ref forwardedBytes),unroutedPackets=Interlocked.Read(ref unroutedPackets),kernelDrops="NotMeasured"};
     public bool SawHttp { get; private set; }
     int Port() => NativeTestPorts.Take(allocated);
     public RawLoopback(string executable, MeshProfile profile, params IPEndPoint[] applications)
@@ -47,12 +50,15 @@ sealed class RawLoopback : IAsyncDisposable
         while (!stop.IsCancellationRequested) {
             UdpReceiveResult data;
             try { data = await wire.ReceiveAsync(stop.Token); } catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset) { continue; }
+            Interlocked.Increment(ref receivedPackets);Interlocked.Add(ref receivedBytes,data.Buffer.Length);
             byte[] p = data.Buffer; if (p.Length < 40 || p[0] >> 4 != 4 || p[9] != 6) continue;
             int ip = (p[0] & 15) * 4; if (ip < 20 || ip + 20 > p.Length) continue;
             int source = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip)), destination = BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip + 2));
             routes[source] = data.RemoteEndPoint;
             if (p.AsSpan().IndexOf("Host: test.ustc.edu.cn\r\n"u8) >= 0) SawHttp = true;
-            if (routes.TryGetValue(destination, out var target)) await wire.SendAsync(p, target, stop.Token);
+            if (routes.TryGetValue(destination, out var target)) {
+                int sent=await wire.SendAsync(p, target, stop.Token);Interlocked.Increment(ref forwardedPackets);Interlocked.Add(ref forwardedBytes,sent);
+            } else Interlocked.Increment(ref unroutedPackets);
         }
     }
     public async ValueTask DisposeAsync()
