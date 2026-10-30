@@ -3,7 +3,7 @@ StreamLink 1.0.1-rc.1 工程候选：安装、更新和卸载
 推荐安装
 1. 双击 StreamLink-…-x64.msi，按提示安装并完成 UAC。安装完成后可直接启动 StreamLink。
 2. 桌面和开始菜单都有带 S 图标的 StreamLink，唯一主界面为浏览器 WebUI。日常使用普通账号打开；首次安装为运行安装程序的日常账号授权，后续更新保留既有授权。
-3. 两端填同一 HTTPS 协调地址，创建/六位码加入并核对双方校验码。现有个人协调为 https://streamlink-personal.space4sgsa.com/ 。
+3. 两端填同一个可用的 HTTPS 协调地址，创建/六位码加入并核对双方校验码。原 https://streamlink-personal.space4sgsa.com/ 在 2026-10-31 检查时已无 DNS 记录，须恢复该服务或提供新的匹配入口后才能配对、发现设备。stun.space4sgsa.com:3478 是独立 STUN 地址，不能填入 HTTPS 协调栏。
 4. 在“连接”首页复制对端虚拟 IP 启动串流；先低码率，再测试目标码率和实际声音、输入、画面。真实双机效果仍需本人试用。
 
 更新
