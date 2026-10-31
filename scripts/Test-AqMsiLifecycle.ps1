@@ -95,7 +95,8 @@ function Uninstall([string]$Label){
  Check (-not(Test-Path (Join-Path $runtime 'StreamLink.Service.exe'))) ($Label+' removes program')
  Check ((Test-Path (Join-Path $data 'profile.dpapi')) -and (Get-FileHash (Join-Path $data 'profile.dpapi')).Hash -eq $profile) ($Label+' retains protected configuration')
  Check (-not(Test-Path ('HKLM:\Software\StreamLink\Validation\'+$ValidationInstance))) ($Label+' removes MSI registration')
- Check ($null -eq (Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $service -ErrorAction SilentlyContinue)) ($Label+' removes owned login startup entry')
+ # Get-ItemPropertyValue terminates on a missing value; absence is success here.
+ Check ($null -eq ([Microsoft.Win32.Registry]::GetValue('HKEY_LOCAL_MACHINE\Software\Microsoft\Windows\CurrentVersion\Run',$service,$null))) ($Label+' removes owned login startup entry')
 }
 try {
  $preUi=@()
