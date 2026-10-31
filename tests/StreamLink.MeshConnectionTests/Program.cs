@@ -26,6 +26,7 @@ static partial class Program
     {
         if (args is ["--tcp-selection-only"]) { await TcpTests.SelectionOwnership(); return; }
         if (args is ["--entry-probe-only"]) { await EntryProbeReuse(); return; }
+        if (args is ["--scheduler-only"]) { await Scheduler(); return; }
         if(args is ["--half-open-only",var halfOpenReport]){
             await HalfOpenRecovery(Path.GetFullPath(halfOpenReport));return;
         }

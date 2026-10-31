@@ -78,7 +78,7 @@ public sealed class MeshRunner
         MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
         bool mappingReleaseFailed = false;
-        bool entryProbeRequested = false, entryProbeDeferred = false;
+        bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -179,7 +179,7 @@ public sealed class MeshRunner
                 }
                 if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
-                    bool needed = entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
+                    bool needed = restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     if (needed) {
                         entryProbeRequested = entryProbeDeferred = false;
@@ -192,6 +192,7 @@ public sealed class MeshRunner
                 if (probe?.IsCompleted == true) {
                     try {
                         mapping = await probe;
+                        restoreEstablishedEntry = false;
                         if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress)) { server.Dispose(); server = null; }
                         maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
                     }
@@ -202,6 +203,9 @@ public sealed class MeshRunner
                     profile.LastStun = tcp.StunServer; rememberStun(tcp.StunServer);
                 }
                 if (maintain?.IsCompleted == true) {
+                    // Previously valid ingress is a resource to restore, even
+                    // while an independent outbound peer path stays healthy.
+                    restoreEstablishedEntry = true;
                     try { await maintain; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("重新建立映射：" + ex.Message); }
                     // FakeTCP's listening process owns established peer sessions
                     // independently of candidate publication/lease renewal. Keep
