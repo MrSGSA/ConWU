@@ -22,6 +22,10 @@ public sealed class MeshRunner
     int retryRequested, runStarted;
     bool stopping;
     public void RequestRetry() => Interlocked.Exchange(ref retryRequested,1);
+    internal static bool NeedsEntryProbe(MeshMember[] members, IReadOnlyDictionary<int, MeshAnnouncement> announcements,
+        Func<int, bool> healthy, long now)
+        => !members.Any(m => healthy(m.Slot)) || members.Any(m => !healthy(m.Slot) &&
+            announcements.TryGetValue(m.Slot, out var node) && node.Device == m.Device && node.Expires > now);
     MeshRouter? router;
     internal object? ExitDiagnostics { get; private set; }
     internal bool CleanupComplete {get;private set;}
@@ -74,6 +78,7 @@ public sealed class MeshRunner
         MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
         bool mappingReleaseFailed = false;
+        bool entryProbeRequested = false, entryProbeDeferred = false;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -114,6 +119,7 @@ public sealed class MeshRunner
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
                 if(Interlocked.Exchange(ref retryRequested,0)!=0) {
+                    entryProbeRequested = mapping == null && probe == null;
                     nextProbe = nextRead = nextServer = now; lastPublish = 0;
                     traversal?.RequestRetry();
                     foreach(var client in clients)if(!router!.HasHealthyPath(client.Key))client.Value.WakeRetry();
@@ -121,6 +127,7 @@ public sealed class MeshRunner
                     log("已请求重新探测：保留健康直连、在途验证和虚拟网卡，唤醒等待中的重试");
                 }
                 if (networkWake.Take(now)) {
+                    entryProbeRequested = mapping == null && probe == null;
                     nextProbe = nextRead = nextServer = now;
                     probeFailures = readFailures = serverFailures = 0;
                     lastPublish = 0;
@@ -170,7 +177,18 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
-                if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) probe = services.Probe(profile, log, stop);
+                if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) {
+                    var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
+                    bool needed = entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
+                        router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                    if (needed) {
+                        entryProbeRequested = entryProbeDeferred = false;
+                        probe = services.Probe(profile, log, stop);
+                    } else if (!entryProbeDeferred) {
+                        entryProbeDeferred = true;
+                        log("现有在线成员已直连，暂停本机备用入口探测；继续维护已有路径，新成员上线或路径失效时恢复探测");
+                    }
+                }
                 if (probe?.IsCompleted == true) {
                     try {
                         mapping = await probe;

@@ -11,8 +11,10 @@ sealed class Reflector : IAsyncDisposable
     readonly CancellationTokenSource stop = new();
     readonly List<Task> connections = [];
     readonly Task accepting;
+    int disposed;
     public int Accepted, Active, Requests;
     public bool Silent;
+    public int CloseAfterResponses;
     public Func<IPEndPoint, IPEndPoint>? MapForTest { get; init; }
     public IPEndPoint Endpoint => (IPEndPoint)listener.LocalEndpoint;
     public Reflector(IPEndPoint? endpoint = null) { listener = new(endpoint ?? new(IPAddress.Loopback, 0)); listener.Start(); accepting = Accept(); }
@@ -29,6 +31,7 @@ sealed class Reflector : IAsyncDisposable
         try {
             using (socket) using (var stream = new NetworkStream(socket, false)) {
                 var remote = (IPEndPoint)socket.RemoteEndPoint!;
+                int responses = 0;
                 while (!stop.IsCancellationRequested) {
                     byte[] request = new byte[20]; await stream.ReadExactlyAsync(request, stop.Token);
                     Interlocked.Increment(ref Requests); if (Silent) continue;
@@ -39,6 +42,7 @@ sealed class Reflector : IAsyncDisposable
                     BinaryPrimitives.WriteUInt16BigEndian(response.AsSpan(26), (ushort)(mapped.Port ^ 0x2112));
                     for (int i = 0; i < address.Length; i++) response[28 + i] = (byte)(address[i] ^ request[4 + i]);
                     await stream.WriteAsync(response, stop.Token);
+                    if (CloseAfterResponses > 0 && ++responses >= CloseAfterResponses) return;
                 }
             }
         } catch (Exception ex) when (ex is IOException or SocketException or OperationCanceledException) { }
@@ -46,6 +50,7 @@ sealed class Reflector : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
+        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         stop.Cancel(); listener.Stop();
         try { await accepting; } catch (Exception ex) when (ex is SocketException or OperationCanceledException) { }
         await Task.WhenAll(connections); stop.Dispose();

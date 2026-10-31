@@ -396,6 +396,11 @@ void native_check_health() {
     if(native_legacy_egress_failed()){mylog(log_fatal,"legacy egress owner lost\n");myexit(74);}
 }
 
+bool native_udp_readable(int fd) {
+    u_long available = 0;
+    return ioctlsocket(fd, FIONREAD, &available) == 0 && available != 0;
+}
+
 void native_drain_packets(conn_info_t *client) {
     native_check_health();
     if (reader_error.load()) {

@@ -12,6 +12,7 @@ static partial class TcpTests
     static int Port() { using var s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp); s.Bind(new IPEndPoint(IPAddress.Loopback, 0)); return ((IPEndPoint)s.LocalEndPoint!).Port; }
     public static async Task Run()
     {
+        await SelectionOwnership();
         await using (var first = new StunServer())
         await using (var spare = new StunServer()) {
             int port = Port(); var clock = Stopwatch.StartNew();
@@ -72,6 +73,7 @@ static partial class TcpTests
         public ConcurrentBag<int> SourcePorts = [];
         public int Accepted, Active, Requests, Eof, Resets;
         public bool Silent, WrongTransaction;
+        public Task? BeforeReply;
         public int SilentPort;
         public string Address => listener.LocalEndpoint.ToString()!;
         public StunServer() { listener.Start(); accepting = Accept(); }
@@ -91,6 +93,7 @@ static partial class TcpTests
                     while (!stop.IsCancellationRequested) {
                         await stream.ReadExactlyAsync(req, stop.Token); Interlocked.Increment(ref Requests);
                         if (Silent || SilentPort == remote.Port) continue;
+                        if (BeforeReply != null) await BeforeReply.WaitAsync(stop.Token);
                         byte[] result = new byte[32]; req.CopyTo(result, 0); result[0] = 1; result[1] = 1; result[3] = 12;
                         if (WrongTransaction) result[8] ^= 0x10;
                         result[21] = 0x20; result[23] = 8; result[25] = 1;

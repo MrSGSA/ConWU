@@ -15,7 +15,11 @@ public sealed class TcpBinding : IDisposable
     static int fallbackOffset;
     TcpBinding(TcpEndpointLease lease, string server) { this.lease = lease; this.server = server; }
     public TcpBindingSnapshot Snapshot => new(lease.Id, lease.NetworkGeneration, lease.Local.ToString(), lease.Reflector.ToString(), server, lease.QueryUsable, lease.Closed);
-    public static async Task<(TcpBinding Binding, StunResult Result)> Connect(int port, IPAddress? local, Action<string> log, CancellationToken token, IEnumerable<string>? servers = null)
+    public static Task<(TcpBinding Binding, StunResult Result)> Connect(int port, IPAddress? local, Action<string> log, CancellationToken token, IEnumerable<string>? servers = null)
+        => ConnectCore(port, local, log, token, servers,
+            (server, ct) => Stun.Query(true, server, 0, ct, local, TcpHelperPurpose.ServerScreening));
+    internal static async Task<(TcpBinding Binding, StunResult Result)> ConnectCore(int port, IPAddress? local, Action<string> log,
+        CancellationToken token, IEnumerable<string>? servers, Func<string, CancellationToken, Task> screen)
     {
         if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         string[] choices = (servers ?? Stun.TcpServers).Distinct(StringComparer.OrdinalIgnoreCase).Take(256).ToArray();
@@ -39,7 +43,7 @@ public sealed class TcpBinding : IDisposable
                 string candidate = tail[index];
                 try {
                     using var timeout = CancellationTokenSource.CreateLinkedTokenSource(round.Token); timeout.CancelAfter(2000);
-                    await Stun.Query(true, candidate, 0, timeout.Token, local, TcpHelperPurpose.ServerScreening);
+                    await screen(candidate, timeout.Token);
                     await ready.Writer.WriteAsync(candidate, round.Token);
                 } catch (Exception ex) when (!round.IsCancellationRequested && ex is SocketException or IOException or OperationCanceledException or ArgumentException) { }
                 await Task.Delay(150, round.Token);
@@ -75,9 +79,19 @@ public sealed class TcpBinding : IDisposable
         } catch (OperationCanceledException) when (!token.IsCancellationRequested) {
             throw new IOException("TCP STUN 本轮 12 秒预算已用尽，将在后台重试");
         } finally {
-            round.Cancel(); preferredStop.Cancel();
-            try { var first = await preferred; if (!ReferenceEquals(first.Binding, winner)) first.Binding.Dispose(); } catch { }
-            try { await screening; } catch (OperationCanceledException) { }
+            try {
+                round.Cancel(); preferredStop.Cancel();
+                try { var first = await preferred; if (!ReferenceEquals(first.Binding, winner)) first.Binding.Dispose(); } catch { }
+                try { await screening; }
+                // Cancelled DNS/Connect may complete with a Winsock error on
+                // Windows. Losing screens cannot replace the successful result.
+                catch (Exception ex) when (ex is OperationCanceledException or SocketException or IOException or ArgumentException) { }
+                token.ThrowIfCancellationRequested();
+            } catch {
+                // The caller never receives a return value when finally fails.
+                // Retain no unowned winner, even on an unexpected cleanup fault.
+                winner?.Dispose(); throw;
+            }
         }
     }
     static string Failure(Exception ex) => ex is OperationCanceledException ? "超时" : ex is SocketException socket ? socket.SocketErrorCode.ToString() : ex.Message;

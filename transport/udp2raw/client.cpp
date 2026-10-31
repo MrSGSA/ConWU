@@ -560,7 +560,13 @@ int client_on_udp_recv(conn_info_t &conn_info) {
 }
 void udp_accept_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
     conn_info_t &conn_info = *((conn_info_t *)watcher->data);
+#ifdef UDP2RAW_NATIVE
+    for (int count = 0; count < 64; ++count) {
+        if (client_on_udp_recv(conn_info) < 0 || !native_udp_readable(udp_fd)) break;
+    }
+#else
     client_on_udp_recv(conn_info);
+#endif
 }
 void raw_recv_cb(struct ev_loop *loop, struct ev_io *watcher, int revents) {
     if (is_udp2raw_mp) assert(0 == 1);

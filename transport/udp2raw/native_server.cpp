@@ -18,7 +18,12 @@ void udp_ready(struct ev_loop *, ev_io *watcher, int) {
     const auto id = watcher->u64;
     if (!fd_manager.exist(id)) return;
     // One event loop owns fd_manager, connection state and UDP watchers.
-    server_on_udp_recv(*fd_manager.get_info(id).p_conn_info, id);
+    // Match the raw receiver's bounded batch. Reading only one local datagram
+    // per select wake lets sustained reverse traffic starve the bridge socket.
+    for (int count = 0; count < 64; ++count) {
+        if (server_on_udp_recv(*fd_manager.get_info(id).p_conn_info, id) < 0 ||
+            !native_udp_readable(fd_manager.to_fd(id))) break;
+    }
 }
 
 void raw_ready(struct ev_loop *, ev_async *, int) {

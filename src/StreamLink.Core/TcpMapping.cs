@@ -12,6 +12,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
     readonly object lifecycle = new();
     readonly CancellationTokenSource stopping = new();
     readonly SemaphoreSlim refresh = new(0, 1);
+    readonly TcpHelperRecovery helperRecovery = new();
     Task maintenance = Task.CompletedTask;
     bool disposed, maintaining;
     TcpBinding binding;
@@ -20,20 +21,22 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
     public IPAddress LocalAddress { get; }
     public IPEndPoint PublicEndpoint { get; private set; }
     public string RouterAddress => gateway?.Snapshot.Gateway ?? router!.Service.ControlUrl.Host;
-    public bool IsValid => !Volatile.Read(ref disposed) && (gateway?.Valid ?? true);
+    public bool IsValid => !Volatile.Read(ref disposed) && (gateway?.Valid ?? HelperObservation != null);
     public PortControlSnapshot? GatewayLease => gateway?.Snapshot;
     public StunResult? HelperObservation { get; private set; }
     public TcpBindingSnapshot HelperResource => binding.Snapshot;
     public event Action<IPEndPoint>? Changed;
-    TcpMapping(Upnp router, RouterMapping rule, TcpBinding binding, StunResult result, Action<string> log)
+    internal TcpMapping(Upnp router, RouterMapping rule, TcpBinding binding, StunResult result, Action<string> log, string[]? servers = null)
     {
+        this.servers = servers ?? Stun.TcpServers; StunServer = result.Server;
         this.router = router; this.rule = rule; this.binding = binding; this.log = log;
         LocalAddress = result.Local.Address; sourcePort = result.Local.Port; PublicEndpoint = result.Public;
         HelperObservation = result;
         LogHelper();
     }
-    internal TcpMapping(PortControlLease gateway, TcpBinding binding, StunResult result, Action<string> log)
+    internal TcpMapping(PortControlLease gateway, TcpBinding binding, StunResult result, Action<string> log, string[]? servers = null)
     {
+        this.servers = servers ?? Stun.TcpServers; StunServer = result.Server;
         this.gateway = gateway; this.binding = binding; this.log = log; LocalAddress = result.Local.Address; sourcePort = result.Local.Port;
         HelperObservation = result; PublicEndpoint = GatewayCandidate(gateway);
         LogHelper();
@@ -134,58 +137,68 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
     async Task MaintainCore(CancellationToken token)
     {
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(token, stopping.Token); token = linked.Token;
-        if (gateway != null) {
-            using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
-            var leaseTask = gateway.Maintain(stop.Token); var helperTask = MaintainHelper(stop.Token);
-            try { await await Task.WhenAny(leaseTask, helperTask); }
-            finally { stop.Cancel(); try { await Task.WhenAll(leaseTask, helperTask); } catch { } }
-            return;
-        }
-        long nextRouterRenew = Environment.TickCount64 + 60000;
-        while (true)
-        {
-            await refresh.WaitAsync(TimeSpan.FromSeconds(10), token);
-            StunResult result;
-            try { result = await binding.Pulse(token); }
-            catch (Exception) when (!token.IsCancellationRequested)
-            {
-                binding.Dispose();
-                log("STUN 保活连接断开，正在重建并复核映射");
-                (binding, result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, servers.OrderByDescending(s => s == StunServer));
-                StunServer = result.Server;
-                LogHelper();
-            }
-            if (!result.Public.Equals(PublicEndpoint))
-            {
-                PublicEndpoint = result.Public;
-                log("公网映射已变化，发布更新后的端点");
-                Changed?.Invoke(PublicEndpoint);
-            }
-            // An address-notification burst must not turn six quick helper
-            // pulses into an early gateway renewal storm.
-            if (Environment.TickCount64 >= nextRouterRenew) { await router!.Add(rule!, token); nextRouterRenew = Environment.TickCount64 + 60000; }
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(token);
+        // Gateway renewal and helper recovery have separate lifetimes. A failed
+        // STUN selection must not remove a valid mapping or close its listener.
+        var leaseTask = gateway?.Maintain(stop.Token) ?? MaintainRouter(stop.Token);
+        var helperTask = MaintainHelper(stop.Token);
+        try { await await Task.WhenAny(leaseTask, helperTask); }
+        finally { stop.Cancel(); try { await Task.WhenAll(leaseTask, helperTask); } catch { } }
+    }
+    async Task MaintainRouter(CancellationToken token)
+    {
+        while (true) {
+            // Refresh hints affect observation only, not the 180-second grant.
+            await Task.Delay(60000, token);
+            await router!.Add(rule!, token);
         }
     }
     async Task MaintainHelper(CancellationToken token)
     {
-        bool connected = true;
+        bool connected = true; int failures = 0; long retryAt = 0;
         while (true) {
             await refresh.WaitAsync(TimeSpan.FromSeconds(10), token);
+            if (!connected && Environment.TickCount64 < retryAt) continue;
             try {
-                if (connected) HelperObservation = await binding.Pulse(token);
+                StunResult observation;
+                if (connected) observation = await binding.Pulse(token);
                 else {
-                    (binding, var result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, servers.OrderByDescending(s => s == StunServer));
-                    HelperObservation = result; StunServer = result.Server; connected = true;
+                    (binding, var result) = await TcpBinding.Connect(sourcePort, LocalAddress, log, token, helperRecovery.Candidates(servers, StunServer));
+                    observation = result; StunServer = result.Server; connected = true; failures = 0;
                     LogHelper();
                 }
+                if (gateway == null && !observation.Public.Equals(PublicEndpoint)) {
+                    PublicEndpoint = observation.Public;
+                    log("公网映射观察已变化，发布新候选；已有直连仍由双向保活判断");
+                    Changed?.Invoke(PublicEndpoint);
+                }
+                HelperObservation = observation;
             } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or System.Net.Sockets.SocketException or OperationCanceledException) {
+                if (connected) helperRecovery.Failed(StunServer);
                 binding.Dispose(); HelperObservation = null; connected = false;
-                log("STUN 辅助观察暂不可用；保留仍有效的网关显式入口，稍后重试观察");
+                // A disappeared local address needs a new mapping owner/source,
+                // unlike an unavailable reflector. Do not retry a dead NIC forever.
+                if (!LocalSourcePresent(LocalAddress)) throw new IOException("本机入口源地址已失效，需要重新发现网络入口", ex);
+                retryAt = Environment.TickCount64 + Math.Min(45000, 5000L << Math.Min(failures++, 4));
+                log($"STUN 辅助观察暂不可用 reason={HelperFailure(ex)}；保留网关租约和已有业务路径，退避后优先尝试其他已配置服务");
             }
             // A helper's outer mapping is a different observation. It cannot
             // overwrite the actual external port returned for the listening Q.
         }
     }
+    internal static bool LocalSourcePresent(IPAddress address)
+    {
+        try { return System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+            .Any(n => n.GetIPProperties().UnicastAddresses.Any(a => a.Address.Equals(address))); }
+        catch (System.Net.NetworkInformation.NetworkInformationException) { return true; } // unknown is not removal proof
+    }
+    internal static string HelperFailure(Exception error) => error switch {
+        EndOfStreamException => "RemoteClosed",
+        OperationCanceledException => "QueryTimeoutOrCancellation",
+        System.Net.Sockets.SocketException socket => "Socket:" + socket.SocketErrorCode,
+        IOException { InnerException: System.Net.Sockets.SocketException socket } => "Socket:" + socket.SocketErrorCode,
+        _ => error.GetType().Name
+    };
     public async ValueTask DisposeAsync()
     {
         lock (lifecycle) { if (disposed) return; disposed = true; }

@@ -24,6 +24,8 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if (args is ["--tcp-selection-only"]) { await TcpTests.SelectionOwnership(); return; }
+        if (args is ["--entry-probe-only"]) { await EntryProbeReuse(); return; }
         if(args is ["--half-open-only",var halfOpenReport]){
             await HalfOpenRecovery(Path.GetFullPath(halfOpenReport));return;
         }
@@ -56,6 +58,7 @@ static partial class Program
             return;
         }
         await TcpTests.Run();
+        await EntryProbeReuse();
         await Migration();
         await ListenerFailure();
         await AliveProcessRecovery();
