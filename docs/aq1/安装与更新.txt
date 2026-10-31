@@ -1,4 +1,4 @@
-StreamLink 1.0.1-rc.1 工程候选：安装、更新和卸载
+StreamLink 1.0.1-rc.2 工程候选：安装、更新和卸载
 
 推荐安装
 1. 双击 StreamLink-…-x64.msi，按提示安装并完成 UAC。安装完成后可直接启动 StreamLink。

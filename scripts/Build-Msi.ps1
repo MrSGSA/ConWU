@@ -25,7 +25,7 @@ $xml=[xml]@'
   <Property Id="REBOOT" Value="ReallySuppress" />
   <Property Id="REINSTALLMODE" Value="amus" />
   <Property Id="STREAMLINK_TRANSACTION" Secure="yes" />
-  <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOXTEXT" Value="启动 StreamLink" />
+  <Property Id="STREAMLINK_DISPLAY_VERSION" Value="DISPLAYVERSION" />
   <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
   <Icon Id="AppIcon" SourceFile="ICON" />
   <Binary Id="InstallerActions" SourceFile="ACTIONS" />
@@ -64,9 +64,7 @@ $xml=[xml]@'
    <Custom Action="SetCommit" After="CommitAuthorization" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="CommitUpgrade" After="SetCommit" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
   </InstallExecuteSequence>
-  <ui:WixUI Id="WixUI_Minimal" />
-  <WixVariable Id="WixUILicenseRtf" Value="LICENSE" />
-  <UI><Publish Dialog="ExitDialog" Control="Finish" Event="DoAction" Value="LaunchApp" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed" /></UI>
+  <UIRef Id="StreamLinkUI" />
  </Package>
 </Wix>
 '@
@@ -102,9 +100,15 @@ foreach($item in $all){
  $dirs[$parent].AppendChild($component)|Out-Null;$feature.AppendChild((Node 'ComponentRef' @{Id=$componentId}))|Out-Null
 }
 foreach($node in $xml.SelectNodes('//*')){foreach($attr in @($node.Attributes)){
- if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/StreamLink.App/Assets/streamlink.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/streamlink-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'LICENSE'){$attr.Value=Join-Path $work 'License.rtf'}
+ if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/StreamLink.App/Assets/streamlink.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/streamlink-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
 }}
-$notice="StreamLink 个人试用候选`n安装与更新会关闭原 StreamLink 界面，仅重启个人后台；保留配对、设备配置及旧版服务。卸载保留个人配置和共享驱动。`nStreamLink 使用 MIT 许可证。第三方组件分别遵守 app/licenses 和 app/sources 中的许可证及源码说明。`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
+$notice="StreamLink · 开源许可与第三方声明`n`nStreamLink 无需购买授权、激活或输入许可密钥。以下是软件及随包组件的开源使用条款。`n安装与更新会关闭当前版本的窗口并重启后台，保留配对和设备配置。卸载保留个人配置与共享驱动。`n`nStreamLink · MIT License`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
+$thirdParty=Join-Path $BundleRoot 'app/licenses'
+if(Test-Path -LiteralPath $thirdParty){foreach($license in Get-ChildItem -LiteralPath $thirdParty -File|Sort-Object Name){
+ if($license.Name -eq 'StreamLink-MIT.txt'){continue}
+ $notice+="`n`n------------------------------`n"+$license.Name+"`n`n"+(Get-Content -LiteralPath $license.FullName -Raw)
+}}
+$notice+="`n`n第三方许可证原文同时保存在 app/licenses；相应源码及来源说明位于 app/sources。"
 $rtf=[Text.StringBuilder]::new('{\rtf1\ansi\deff0 {\fonttbl {\f0 Microsoft YaHei;}}\f0\fs20 ')
 foreach($character in $notice.ToCharArray()){
  $code=[int]$character
@@ -112,7 +116,10 @@ foreach($character in $notice.ToCharArray()){
 }
 [void]$rtf.Append('}');$rtf.ToString()|Set-Content (Join-Path $work 'License.rtf') -Encoding ascii
 $xml.Save($file)
-& $wix build -arch x64 -culture zh-cn -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -o $OutputPath $file > (Join-Path $work 'wix-build.log') 2>&1
+$artwork=Join-Path $work 'artwork'
+& (Join-Path $repo 'scripts/Build-InstallerArtwork.ps1') -OutputDirectory $artwork | Out-Null
+$ui=Join-Path $repo 'installer/StreamLinkUI.wxs'
+& $wix build -arch x64 -culture zh-cn -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -I (Join-Path $repo 'installer') -d "StreamLinkArtwork=$artwork" -d "StreamLinkLicenseRtf=$(Join-Path $work 'License.rtf')" -o $OutputPath $file $ui > (Join-Path $work 'wix-build.log') 2>&1
 if($LASTEXITCODE){throw ('MSI build failed: '+(Join-Path $work 'wix-build.log'))}
-[ordered]@{version=$manifest.version;msiVersion=$MsiVersion;sourceCommit=$manifest.sourceCommit;service=$service;validationInstance=$ValidationInstance;upgradeCode=$upgrade;publisherSignature='UnsignedCandidate';sha256=(Get-FileHash -LiteralPath $OutputPath).Hash;files=$all.Count}|ConvertTo-Json|Set-Content ($OutputPath+'.json') -Encoding utf8NoBOM
+[ordered]@{version=$manifest.version;msiVersion=$MsiVersion;sourceCommit=$manifest.sourceCommit;service=$service;validationInstance=$ValidationInstance;upgradeCode=$upgrade;publisherSignature='UnsignedCandidate';sha256=(Get-FileHash -LiteralPath $OutputPath).Hash;files=$all.Count;installerUi='StreamLinkUI';installerUiSha256=(Get-FileHash -LiteralPath $ui).Hash;installerSidebarSha256=(Get-FileHash -LiteralPath (Join-Path $repo 'installer/Sidebar.wxi')).Hash;installerArtworkSourceSha256=(Get-FileHash -LiteralPath (Join-Path $repo 'scripts/Build-InstallerArtwork.ps1')).Hash}|ConvertTo-Json|Set-Content ($OutputPath+'.json') -Encoding utf8NoBOM
 Write-Output $OutputPath

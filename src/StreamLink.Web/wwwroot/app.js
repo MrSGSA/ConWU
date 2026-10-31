@@ -4,8 +4,9 @@ const titles = {overview:'连接', network:'添加设备', settings:'设置'};
 let csrf='', state=null, busy=false, online=false, expired=false, refreshing=null;
 let connectionDirty=false, metadataDirty=false, connectionBase=null, metadataBase=null;
 let lastTraffic=null, cooldownUntil=0, lastStatusAt=0;
+let statusGeneration=0;
 const rows=new Map();
-const phaseNames={StartingAdapter:'准备网络',WaitingPeer:'等待设备',WaitingEntry:'寻找入口',Connecting:'正在连接',Preparing:'准备直连',Verifying:'验证直连',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
+const phaseNames={StartingAdapter:'准备网络',WaitingPeer:'等待设备',WaitingEntry:'寻找入口',Connecting:'正在连接',Queued:'等待名额',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
 
 function notice(message,error=false) {
   $('notice').textContent=message; $('notice').hidden=!message;
@@ -28,10 +29,16 @@ function unavailable(message) {
   $('connection-card').dataset.state='stale';
   $('connection-progress').textContent='当前无法确认网络状态；后台中的串流不受面板刷新影响。';
   $('connection-steps').hidden=true; $('rates').textContent='流量未知';
-  for(const row of rows.values()){row.badge.textContent='状态未更新';row.badge.classList.remove('online');row.progress.textContent='请等待后台状态恢复';}
+  for(const [slot,row] of rows){
+    row.badge.textContent='状态未更新';row.badge.classList.remove('online');
+    row.progress.textContent='请等待后台状态恢复';row.progress.hidden=false;
+    row.timing.textContent='';row.timing.hidden=true;
+    row.waiting.textContent='';row.waiting.hidden=true;
+    row.address.textContent=state?.peers.find(p=>p.slot===slot)?.virtualIp||'—';
+  }
   controls();
 }
-async function api(path,body) {
+async function api(path,body,current=()=>true) {
   const controller=new AbortController();
   const timeout=setTimeout(()=>controller.abort(),body?25000:8000);
   try {
@@ -43,13 +50,12 @@ async function api(path,body) {
     if(!response.ok) {
       let detail;try{detail=await response.json();}catch{}
       if(response.status===401) {
-        expired=true;csrf='';
         const message='面板授权已过期，请从托盘重新打开 WebUI。后台网络继续运行。';
-        unavailable(message);throw Error(message);
+        if(current()){expired=true;csrf='';unavailable(message);}throw Error(message);
       }
       if(response.status===503) {
         const message=detail?.error||'本机后台暂未响应，请稍候重试或检查 StreamLink 服务。';
-        unavailable(message);throw Error(message);
+        if(current())unavailable(message);throw Error(message);
       }
       if(response.status===409)throw Error('重复请求已拒绝或面板操作额度已满。请刷新状态，必要时从托盘重新打开。');
       throw Error(detail?.error||'本机面板请求未完成（'+response.status+'）');
@@ -58,7 +64,7 @@ async function api(path,body) {
   } catch(error) {
     if(error.name==='AbortError'||error instanceof TypeError) {
       const message=body?'请求超时或面板连接中断，操作结果尚待确认。请刷新状态后再操作。':'读取后台超时或面板连接中断，将自动重试。';
-      unavailable(message);throw Error(message);
+      if(current())unavailable(message);throw Error(message);
     }
     throw error;
   } finally {clearTimeout(timeout);}
@@ -66,29 +72,45 @@ async function api(path,body) {
 async function command(method,extra={},quiet=false) {
   if(busy)throw Error('上一项操作仍在进行，请稍候。');
   if(!online)throw Error('请先恢复面板与后台的连接。');
-  busy=true;document.body.setAttribute('aria-busy','true');controls();
+  busy=true;statusGeneration++;document.body.setAttribute('aria-busy','true');controls();
+  if(!quiet)notice(({start:'正在请求连接网络…',stop:'正在请求断开并回收资源…',retry:'正在请求重新探测…',patch:'正在保存设备设置…',quality:'正在请求质量检测…',cancel:'正在请求取消任务…'})[method]||'正在提交操作…');
   try {
     const reply=await api('/api/command',{method,operationId:crypto.randomUUID(),...extra});
     if(reply.status)render(reply.status);
+    else if(reply.statusNotice){unavailable(reply.statusNotice);renderOperation(reply.operation);}
     if(!reply.ok)throw Error(reply.error);
-    if(!quiet)notice(method==='retry'?'已请求重新探测，健康连接保持运行。':'操作已提交，请查看连接状态。');
+    if(!quiet)notice((method==='retry'?'已请求重新探测，健康连接保持运行。':'操作已提交，请查看连接状态。')+(reply.statusNotice||''));
     return reply;
   } finally {busy=false;document.body.removeAttribute('aria-busy');controls();}
 }
 const network=(action,fields={},quiet=false)=>command('network',{network:{action,...fields}},quiet);
 function safe(fn){return async e=>{try{await fn(e);}catch(error){notice(error.message,true);}};}
 function refresh() {
+  // A read begun before a command cannot overwrite that command's result.
+  // Keep at most one polling request and do not issue new reads during writes.
+  if(busy)return Promise.resolve();
   if(refreshing)return refreshing;
+  const generation=statusGeneration,current=()=>generation===statusGeneration;
   refreshing=(async()=>{
-    const reply=await api('/api/status');
-    if(!reply.ok)throw Error(reply.error);
-    const wasOffline=!online;render(reply.status);
-    if(wasOffline)notice('');
-  })().finally(()=>refreshing=null);
+    try {
+      const reply=await api('/api/status',undefined,current);
+      if(!current())return;
+      if(!reply.ok)throw Error(reply.error);
+      if(!reply.status) {
+        const message=reply.statusNotice||'本次回复没有连接状态，将继续刷新。';
+        unavailable(message);renderOperation(reply.operation);throw Error(message);
+      }
+      const wasOffline=!online;render(reply.status);
+      if(wasOffline)notice('');
+    } catch(error) {if(current())throw error;}
+  })().finally(()=>{refreshing=null;controls();});
   return refreshing;
 }
 function text(tag,value,cls='') {
   const node=document.createElement(tag);node.textContent=value;if(cls)node.className=cls;return node;
+}
+function renderOperation(operation) {
+  $('operation').textContent=operation?(operation.completed?'上次操作：':'当前操作：')+operation.phase+(operation.error?' · '+operation.error:''):'当前没有控制任务';
 }
 function copy(value) {
   if(!value)throw Error('暂无可复制的地址');
@@ -96,6 +118,7 @@ function copy(value) {
 }
 function controls() {
   document.querySelectorAll('[data-backend]').forEach(e=>e.disabled=!online||busy);
+  $('refresh').disabled=busy||!!refreshing;
   const s=state,p=s?.pairing;
   $('approve').disabled=!online||busy||!(p?.active&&p.owner&&p.verification);
   $('invite').disabled=!online||busy||!s?.isOwner;
@@ -124,7 +147,11 @@ function tick() {
   $('connection-progress').textContent=state?.networkEnabled?progressText(state.connection,age):'';
   for(const p of state?.peers||[]) {
     const row=rows.get(p.slot);
-    if(row)row.timing.textContent=progressText(p.connection,age);
+    if(row){
+      const value=progressText(p.connection,age);
+      row.timing.textContent=p.connected?value:'';row.timing.hidden=!row.timing.textContent;
+      row.waiting.textContent=p.connected?'':value;row.waiting.hidden=!row.waiting.textContent;
+    }
   }
   $('quality').textContent=Date.now()<cooldownUntil?'冷却 '+Math.ceil((cooldownUntil-Date.now())/1000)+' 秒':'50 Mbps / 20 秒';
   controls();
@@ -139,11 +166,14 @@ function makePeer(slot) {
     const p=state?.peers.find(p=>p.slot===slot);
     if(p&&confirm('移除 '+(p.name||p.virtualIp)+' 的网络授权？'))await network('revoke',{expectedNetwork:state.networkId,peerSlot:slot});
   });
-  actions.append(copyButton,remove);main.append(info,actions);
+  actions.append(copyButton);main.append(info,actions);
   const progress=text('p','','peer-progress'),timing=text('p','','peer-progress'),details=text('details',''),summary=text('summary','链路详情');
   const transport=text('p',''),quality=text('p',''),liveness=text('p','');
-  details.append(summary,transport,quality,liveness);root.append(main,progress,timing,details);
-  return {root,name,badge,address,remove,progress,timing,transport,quality,liveness};
+  const management=text('div','','actions');management.append(remove);
+  details.append(summary,timing,transport,quality,liveness,management);root.append(main,progress,details);
+  // Pending devices show their timer without requiring an expanded panel.
+  const waiting=text('p','','peer-progress');root.insertBefore(waiting,details);
+  return {root,name,badge,address,remove,progress,timing,waiting,transport,quality,liveness};
 }
 function renderPeers(peers,s) {
   const list=$('peer-list'),slots=new Set(peers.map(p=>p.slot));
@@ -159,8 +189,11 @@ function renderPeers(peers,s) {
     row.address.textContent=p.virtualIp+(p.connected&&p.rttMs!=null?' · '+p.rttMs.toFixed(1)+' ms':'');
     row.progress.textContent=p.connected?'':p.connection?.detail||p.phase;
     row.progress.hidden=p.connected;
+    row.waiting.hidden=p.connected;
     row.transport.textContent='承载 '+p.actualTransport+' · 建链 '+p.traversalMethod;
     row.quality.textContent='质量 '+(p.quality==='Unknown'?'未测量':p.quality)+' · 本机丢弃 '+p.droppedPackets+' 包';
+    const drops=p.localDrops;
+    row.quality.title=drops?'本机拒绝：无可用路径 '+drops.noHealthyPath+'，发送拒绝 '+drops.sendRejected+'，认证或重放拒绝 '+drops.authenticationRejected+'，来源或路径拒绝 '+drops.receivePolicyRejected+'，网卡写入拒绝 '+drops.adapterWriteRejected+'。这些计数不等于物理链路丢包。':'';
     row.liveness.textContent=p.liveness?'最近有效接收 '+(p.liveness.receiveAgeMs==null?'未知':duration(p.liveness.receiveAgeMs))+'前 · 最近往返 '+(p.liveness.roundTripAgeMs==null?'未知':duration(p.liveness.roundTripAgeMs))+'前':'';
     row.remove.hidden=!s.isOwner;
   }
@@ -179,20 +212,22 @@ function render(s) {
   $('retry').hidden=!s.networkEnabled||!s.connection?.canRetry;
   $('setup').hidden=!!s.networkId;
   $('copy-local').disabled=!s.virtualIp;
-  $('connection-steps').hidden=!s.networkEnabled;
+  const allConnected=s.totalPeers>0&&s.directPeers===s.totalPeers;
+  $('connection-steps').hidden=!s.networkEnabled||allConnected;
   const phase=s.connection?.phase;
-  const step=phase==='StartingAdapter'?0:phase==='WaitingPeer'?1:2;
+  const step=phase==='StartingAdapter'?0:['WaitingPeer','WaitingEntry','Queued','Preparing','Connecting'].includes(phase)?1:2;
   document.querySelectorAll('[data-step]').forEach(e=>{
-    const n=Number(e.dataset.step),done=s.directPeers>0&&s.directPeers===s.totalPeers;
+    const n=Number(e.dataset.step),done=allConnected;
     e.classList.toggle('done',done||n<step);e.classList.toggle('current',!done&&n===step);
     if(!done&&n===step)e.setAttribute('aria-current','step');else e.removeAttribute('aria-current');
   });
   $('adapter').textContent='虚拟网卡：'+(s.adapter?.state==='Opened'?'Wintun 已打开':s.adapter?.reason||'未打开');
   $('migration').textContent=s.migrationNotice;$('migration').hidden=!s.migrationNotice;
   $('quality-text').textContent=s.qualityText||'质量尚未测量';$('logs').textContent=(s.logs||[]).join('\n')||'暂无日志';
+  $('diagnostics-notice').textContent=s.diagnosticsNotice||'';$('diagnostics-notice').hidden=!s.diagnosticsNotice;
   $('version').textContent='StreamLink '+s.version.split('+')[0];
   $('status-time').textContent='状态更新 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
-  $('operation').textContent=s.operation?(s.operation.completed?'上次操作：':'当前操作：')+s.operation.phase+(s.operation.error?' · '+s.operation.error:''):'当前没有控制任务';
+  renderOperation(s.operation);
   const peers=s.peers||[],sent=peers.reduce((a,p)=>a+p.sentBytes,0),received=peers.reduce((a,p)=>a+p.receivedBytes,0),now=performance.now();
   if(lastTraffic&&now-lastTraffic.at>500&&sent>=lastTraffic.sent&&received>=lastTraffic.received)
     $('rates').textContent='↑ '+((sent-lastTraffic.sent)*8/(now-lastTraffic.at)/1000).toFixed(2)+'  ↓ '+((received-lastTraffic.received)*8/(now-lastTraffic.at)/1000).toFixed(2)+' Mbps';
@@ -247,7 +282,7 @@ $('connection-form').onsubmit=safe(async e=>{
   const restart=settings.pathSelection!==connectionBase.pathSelection||settings.manualEndpoint!==connectionBase.manualEndpoint||settings.listenPort!==connectionBase.listenPort||settings.sourcePort!==connectionBase.sourcePort;
   if(restart&&state.networkEnabled&&!confirm('这些连接设置会重建网络，是否继续？'))return;
   await network('settings',{settings,expectedRevision:connectionBase.revision,confirmReplace:restart});
-  connectionDirty=false;$('connection-dirty').textContent='';render(state);notice('设置已保存。');
+  connectionDirty=false;$('connection-dirty').textContent='';if(online){render(state);notice('设置已保存。');}
 });
 $('metadata-form').oninput=()=>{metadataDirty=true;$('metadata-dirty').textContent='有未保存的草稿';};
 $('reset-metadata').onclick=()=>{metadataDirty=false;$('metadata-dirty').textContent='';if(online)render(state);};
@@ -257,7 +292,7 @@ $('metadata-form').onsubmit=safe(async e=>{
   if($('device-name').value!==metadataBase.name){patch.deviceName=$('device-name').value;patch.expectedDeviceName=metadataBase.name;}
   if($('log-level').value!==metadataBase.level){patch.logLevel=$('log-level').value;patch.expectedLogLevel=metadataBase.level;}
   if(!Object.keys(patch).length)return;
-  await command('patch',{patch});metadataDirty=false;$('metadata-dirty').textContent='';render(state);notice('设备设置已保存，当前连接保持运行。');
+  await command('patch',{patch});metadataDirty=false;$('metadata-dirty').textContent='';if(online){render(state);notice('设备设置已保存，当前连接保持运行。');}
 });
 $('quality').onclick=safe(async()=>{
   if(!$('quality-peer').value)throw Error('请先连接对端');

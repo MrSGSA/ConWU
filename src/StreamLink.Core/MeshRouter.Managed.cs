@@ -43,12 +43,15 @@ public sealed partial class MeshRouter
         public TraversalAttemptContext? Context;
         // A pong on another candidate must not refresh this path. Entries are
         // random, path-local and bounded, not inferred from any inbound traffic.
-        public readonly Dictionary<long, (long Sent, bool Activity,int BaselineLeg,int LoadedLeg)> PendingRoundTrips = [];
+        public readonly Dictionary<long, (long Sent, bool Activity, int BaselineLeg, int LoadedLeg, bool Keepalive)> PendingRoundTrips = [];
+        public readonly KeepaliveObservation Keepalive = new();
         public int ControlPackets => Budget.Packets;
         public int ControlBytes => Budget.Bytes;
         public string Failure = "";
     }
     readonly HashSet<Task> managedPumps = [];
+    // Keep the actual owner, not only its exception, if release was not proven.
+    readonly HashSet<ManagedPath> unreleasedManagedPaths = [];
 
     // A negotiated peer is managed exclusively by resource identity. Legacy
     // loopback endpoints must first be represented as owned path references;
@@ -69,6 +72,10 @@ public sealed partial class MeshRouter
                 identity.Profile != context.Profile || identity.PathId == Guid.Empty || identity.LeaseId == Guid.Empty || identity.NetworkGeneration == Guid.Empty ||
                 identity.ActualLocal.Port == 0 || identity.ActualRemote.Port == 0 || !Enum.IsDefined(identity.Qualification) || transport.Failed)
                 throw new IOException("候选能力、成员身份或实际资源无效");
+            if (unreleasedManagedPaths.Any(p => p.Context?.RemoteNodeId == peer.Member.Device ||
+                p.Identity.Profile != TraversalProfile.UdpDirect && identity.Profile != TraversalProfile.UdpDirect &&
+                p.Identity.ActualLocal.Equals(identity.ActualLocal) && p.Identity.ActualRemote.Equals(identity.ActualRemote)))
+                throw new IOException("先前路径的资源退出尚未证实，不能重新占用");
             if (peer.Managed == null && (peer.Active != null || peer.Candidate != null)) throw new IOException("旧路径尚未转交给受管资源所有者");
             var managed = peer.Managed ?? new();
             if (managed.Candidate != null || managed.Paths.Count >= 2) throw new IOException("等待上一候选及退役引用收敛");
@@ -87,14 +94,14 @@ public sealed partial class MeshRouter
                 throw new IOException("诊断目标未协商或实际路径不支持有界诊断");
             if (negotiatedAutoQualityVersion is < 0 or > 1 || negotiatedAutoQualityVersion == 1 &&
                 (negotiatedDiagnosticMbps == 0 || Selection.Policy != PathPolicy.AutoQuality)) throw new IOException("自动质量选路尚未获得独立协商许可");
-            var state = new ManagedPath(transport, identity, nomination, stop.Token);
             if(negotiatedDiagnosticTiming is<0 or>1||negotiatedDiagnosticTiming==1&&negotiatedDiagnosticMbps==0)throw new IOException("诊断空载时序未协商");
+            var state = new ManagedPath(transport, identity, nomination, stop.Token);
             state.DiagnosticTiming=negotiatedDiagnosticTiming;
             state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;state.AutoQuality=negotiatedAutoQualityVersion==1;
             if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
             peer.Detail = "正在验证并协商直连路径";
-            managedPumps.RemoveWhere(t => t.IsCompleted);
+            managedPumps.RemoveWhere(t => t.IsCompletedSuccessfully);
             managedPumps.Add(Task.Run(() => ReceiveManaged(peer, state)));
         }
     }
@@ -105,6 +112,7 @@ public sealed partial class MeshRouter
                 p == managed.Active, p.Retired, p.ControlPackets, p.ControlBytes, p.Failure, RoundTripFresh(p), p.RttMs) {
                     WireControl = (p.Transport as IWireControlPath)?.WireControl,
                     SendQueue = (p.Transport as IMeshSendDiagnostics)?.SendQueue,
+                    Keepalive = KeepaliveStatus(p),
                     Traffic = p.Traffic.Snapshot(Environment.TickCount64), Delivery = p.Delivery?.Snapshot(), StandbyReady = p.Nomination.StandbyConfirmed && p.Nomination.Stage == NominationStage.Standby
                 }).ToArray() : [];
     }
@@ -144,12 +152,14 @@ public sealed partial class MeshRouter
     async Task ReceiveManaged(Peer peer, ManagedPath path)
     {
         try {
+            int batch = 0;
             while (!path.Stop.IsCancellationRequested) {
+                if (++batch > ReceiveBatch) { batch = 1; Interlocked.Increment(ref receiveYields); await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding); }
                 var packet = await path.Transport.Receive(path.Stop.Token);
                 lock (gate) {
                     if (path.Closing || !peers.TryGetValue(peer.Member.Slot, out var current) || !ReferenceEquals(current, peer)) break;
                     var message = peer.Link.Receive(packet.Span);
-                    if (!message.Authenticated) { peer.Dropped++; continue; }
+                    if (!message.Authenticated) { peer.Dropped++; peer.AuthenticationDrops++; continue; }
                     if (packet.Span[4] is >= 4 and <= 7)
                         path.Traffic.Epoch(false, new Guid(packet.Span.Slice(8, 16)), Environment.TickCount64);
                     if (message.Reply != null) {
@@ -157,10 +167,14 @@ public sealed partial class MeshRouter
                         else if (AdmitMaintenance(path, message.Reply.Length)) SendManaged(message.Reply, path);
                     }
                     if (packet.Span[4] != 1) path.LastReceive = Stopwatch.GetTimestamp();
-                    if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out var probe) && Stopwatch.GetElapsedTime(probe.Sent).TotalSeconds < 12) {
-                        path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(probe.Sent, path.LastRoundTrip).TotalMilliseconds;
-                        path.Traffic.RoundTrip(path.RttMs.Value, Environment.TickCount64, probe.Activity);
-                        peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value,probe.BaselineLeg,probe.LoadedLeg);
+                    if (message.PongToken is long nonce && path.PendingRoundTrips.Remove(nonce, out var probe)) {
+                        bool fresh = Fresh(probe.Sent);
+                        if (probe.Keepalive) path.Keepalive.Reply(fresh);
+                        if (fresh) {
+                            path.LastRoundTrip = Stopwatch.GetTimestamp(); path.RttMs = Stopwatch.GetElapsedTime(probe.Sent, path.LastRoundTrip).TotalMilliseconds;
+                            path.Traffic.RoundTrip(path.RttMs.Value, Environment.TickCount64, probe.Activity);
+                            peer.Managed!.Diagnostic?.RoundTrip(path.Identity.PathId,path.RttMs.Value,probe.BaselineLeg,probe.LoadedLeg);
+                        }
                     }
                     if (ReferenceEquals(peer.Managed!.Active, path) && message.PongToken is long recoveryNonce)
                         peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
@@ -171,14 +185,13 @@ public sealed partial class MeshRouter
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) && (!path.AutoQuality || path.ProofAt != 0 && path.Nomination.PeerAdopted) ||
                             path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
-                        if (allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot) && adapter.Write(message.Packet)) {
+                        if (Deliver(peer, message.Packet, allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot))) {
                             peer.Received += message.Packet.Length;
                             path.Traffic.Receive(message.Packet.Length, Environment.TickCount64);
                             if (ReferenceEquals(peer.Managed!.Active, path)) path.Delivery?.Receive(new Guid(packet.Span.Slice(8, 16)),
                                 BinaryPrimitives.ReadUInt64BigEndian(packet.Span[40..]), message.Packet.Length);
                             if (ReferenceEquals(peer.Managed!.Active, path) && path.ProofAt != 0) peer.Recovery.Business(Environment.TickCount64);
                         }
-                        else peer.Dropped++;
                     }
                 }
             }
@@ -187,8 +200,11 @@ public sealed partial class MeshRouter
             lock (gate) { path.Failure = "receive-" + ex.GetType().Name; path.Nomination.Cancel(); ReconcileManaged(peer, path, Environment.TickCount64); }
         } finally {
             try { await path.Transport.DisposeAsync(); }
-            catch (Exception ex) { lock (gate) path.Failure = "release-" + ex.GetType().Name; }
-            lock (gate) { path.PumpFinished = true; if (path.Closing) path.Stop.Dispose(); }
+            catch (Exception ex) {
+                lock (gate) { path.Failure = "release-" + ex.GetType().Name; unreleasedManagedPaths.Add(path); }
+                throw;
+            }
+            finally { lock (gate) { path.PumpFinished = true; if (path.Closing) path.Stop.Dispose(); } }
         }
     }
     void ReconcileManaged(Peer peer, ManagedPath path, long now)
@@ -278,11 +294,19 @@ public sealed partial class MeshRouter
             }
             if ((ReferenceEquals(managed.Active, path) || path.Nomination.StandbyConfirmed && path.Nomination.Stage == NominationStage.Standby) && now - path.LastPing >= 1500) {
                 path.LastPing = now;
+                path.Keepalive.Attempt();
                 long nonce = BitConverter.ToInt64(RandomNumberGenerator.GetBytes(8));
                 byte[]? ping = peer.Link.ProbePath(nonce);
-                if (ping != null && AdmitMaintenance(path, ping.Length) && SendManaged(ping, path)) {
-                    if (path.PendingRoundTrips.Count >= 8) path.PendingRoundTrips.Remove(path.PendingRoundTrips.MinBy(p => p.Value.Sent).Key);
-                    path.PendingRoundTrips[nonce] = (Stopwatch.GetTimestamp(), path.Traffic.RecentlyBusy(now),-1,managed.Diagnostic?.LoadedLeg(path.Identity.PathId)??-1);
+                if (ping == null) path.Keepalive.SessionUnavailable++;
+                else if (!AdmitMaintenance(path, ping.Length)) { path.Keepalive.LocalRejected++; path.Keepalive.RouterBudgetRejected++; }
+                else if (!SendManaged(ping, path)) path.Keepalive.LocalRejected++;
+                else {
+                    if (path.PendingRoundTrips.Count >= 8) {
+                        long oldest = path.PendingRoundTrips.MinBy(p => p.Value.Sent).Key;
+                        if (path.PendingRoundTrips[oldest].Keepalive) path.Keepalive.PendingEvicted++;
+                        path.PendingRoundTrips.Remove(oldest);
+                    }
+                    path.PendingRoundTrips[nonce] = (path.Keepalive.Accept(), path.Traffic.RecentlyBusy(now),-1,managed.Diagnostic?.LoadedLeg(path.Identity.PathId)??-1,true);
                     if (path.ProofAt != 0) peer.Recovery.KeepaliveSent(nonce, now);
                 }
             }

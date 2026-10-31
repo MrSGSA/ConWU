@@ -22,6 +22,7 @@ int checks=0,failures=0,calls=0;
 string? backendFailure=null;
 var clock=new PanelClock();
 void Check(bool ok,string name){checks++;if(!ok){failures++;Console.Error.WriteLine("FAIL "+name);}}
+ReplyBudgetTests.Run(Check);
 Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);if(backendFailure!=null)throw backendFailure=="Stopped"?new UiBackendException("Stopped","个人后台已停止"):new IOException("private backend details");return Task.FromResult(new UiControlReply(true,"",null));}
 await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  using var client=new HttpClient(new HttpClientHandler{UseCookies=true,AllowAutoRedirect=false}){BaseAddress=new(panel.Origin)};

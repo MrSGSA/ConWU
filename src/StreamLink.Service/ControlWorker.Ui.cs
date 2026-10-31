@@ -10,14 +10,14 @@ public sealed partial class ControlWorker
     UiStatusDto UiSnapshot()
     {
         var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;var peers=state?.Peers??[];
-        return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",SensitiveText.Redact(state?.State??"网络未启动",p),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
-            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,SensitiveText.Redact(x.Detail,p)[..Math.Min(256,SensitiveText.Redact(x.Detail,p).Length)]){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
-            {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
+        return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",PublicText(state?.State??"网络未启动",p,256),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
+            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,PublicText(x.Detail,p,256)){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,LocalDrops=x.LocalDrops,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
+            {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),
-             QualityText=full.Quality.Length>0?full.Quality:"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=full.Operation,Stages=Volatile.Read(ref stageLedger)};
+             QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
-        progress with { Detail = SensitiveText.Redact(progress.Detail,profile)[..Math.Min(400,SensitiveText.Redact(progress.Detail,profile).Length)] };
+        progress with { Detail = PublicText(progress.Detail,profile,400) };
     internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
@@ -28,7 +28,8 @@ public sealed partial class ControlWorker
         var command=request.Method switch{"patch"=>"ui-patch","network"=>"ui-network","check"=>"personal-check",_=>request.Method};
         var result=await HandleCore(new(command,OperationId:request.OperationId,PeerSlot:request.PeerSlot,Mbps:request.Mbps,CancelOperationId:request.CancelOperationId),token,new UiOperation(callerSid,request.Patch,request.Network));
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户的UI控制授权已改变",null);
-        return new(result.Ok,result.Error,UiSnapshot(),Operation:result.Operation);
+        var publicProfile=Volatile.Read(ref snapshot)!.Profile!;
+        return new(result.Ok,PublicText(result.Error,publicProfile,1024),UiSnapshot(),Operation:PublicOperation(result.Operation,publicProfile));
     }
 
     async Task ServeUi(NamedPipeServerStream pipe,string allowed,CancellationToken token)
@@ -41,7 +42,9 @@ public sealed partial class ControlWorker
                 authorized=true;stage="read-request";
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
                 stage="handle-request";
-                await ServiceProtocol.Write(pipe,await HandleUi(request,caller,deadline.Token),deadline.Token);
+                var reply=await HandleUi(request,caller,deadline.Token);
+                stage="write-reply";
+                await ServiceProtocol.Write(pipe,FitUiReply(reply),deadline.Token);
             }catch(Exception)when(deadline.IsCancellationRequested){}catch(Exception ex){
                 string missing=ex is FileNotFoundException file?" assembly="+Path.GetFileName(file.FileName??"unknown"):"";
                 Log("受限UI请求失败：stage="+stage+" "+ex.GetType().Name+missing);

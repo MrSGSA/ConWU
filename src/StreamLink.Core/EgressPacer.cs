@@ -63,7 +63,7 @@ public sealed class EgressPacer : IDisposable
         public readonly string Key = key;
         public readonly Outlet Outlet = outlet;
         public readonly LinkedList<Item> Data = [], Control = [];
-        public int Bytes, Deficit, References, InFlight;
+        public int Bytes, Deficit, References, InFlight, ControlStreak;
         public long Sent, Packets, Overflow, Cancelled, Failures;
     }
     internal sealed record Item(Flow Flow, Peer Peer, byte[] Packet, int Bytes, object? Context, long At, bool Priority,
@@ -185,9 +185,12 @@ public sealed class EgressPacer : IDisposable
             }
             int ceiling = priority ? limit : limit - reserve;
             // A saturated peer cannot prevent a newly active peer from entering.
-            // Evict only a data tail from a more heavily queued peer; no retries.
+            // Data evicts only a heavier peer's data tail; control may reclaim
+            // a data position from any peer. Neither case retries business.
             while (bytes + wireBytes > ceiling) {
-                var victim = order.Where(v => v != p && v.Bytes > p.Bytes && v.Data.Count != 0).MaxBy(v => v.Bytes);
+                // Control may evict its own data tail as well. An already busy
+                // peer still needs to enqueue its heartbeat within this limit.
+                var victim = order.Where(v => v.Data.Count != 0 && (priority || v != p && v.Bytes > p.Bytes)).MaxBy(v => v.Bytes);
                 if (victim == null) {
                     overflow++; p.Overflow++;
                     accounting.Reject(wireBytes, true); flow.accounting.Reject(wireBytes, true); return false;
@@ -210,6 +213,8 @@ public sealed class EgressPacer : IDisposable
         tokens = Math.Min(burst, tokens + elapsed * rate);
         priorityTokens = Math.Min(2 * Quantum, priorityTokens + elapsed * priorityRate);
     }
+    static Item? Head(Peer peer) => peer.Control.Count != 0 && (peer.ControlStreak < 2 || peer.Data.Count == 0)
+        ? peer.Control.First!.Value : peer.Data.First?.Value;
     Item? Select(out bool priority,out double blockedWait)
     {
         priority = false;blockedWait=double.PositiveInfinity;
@@ -229,7 +234,9 @@ public sealed class EgressPacer : IDisposable
             var o = outlets[cursor];
             if (newOutletVisit) { o.Deficit = Math.Min(MaximumDatagram + Quantum, o.Deficit + Quantum); newOutletVisit = false; }
             for (int j = 0; j < o.Peers.Count * 5; j++) {
-            var p = o.Peers[o.Cursor]; var item = p.Data.First?.Value ?? p.Control.First?.Value;
+            // After priority credit is spent, allow two controls then one data
+            // in ordinary DRR. Neither class can starve the other's peer share.
+            var p = o.Peers[o.Cursor]; var item = Head(p);
             if(item!=null&&!item.Token.IsCancellationRequested&&item.Readiness is{}ready){
                 double delay=ready(item.Bytes);
                 if(delay>0){
@@ -278,10 +285,11 @@ public sealed class EgressPacer : IDisposable
                             bytes -= item.Bytes; p.Bytes -= item.Bytes; p.Outlet.Bytes -= item.Bytes; if(Mbps!=0)tokens -= item.Bytes;
                             accounting.Begin(item.Bytes); item.Flow.accounting.Begin(item.Bytes);
                             p.InFlight++;
+                            p.ControlStreak = item.Priority ? Math.Min(2, p.ControlStreak+1) : 0;
                             if (priority) { priorityTokens -= item.Bytes; priorityPackets++; }
                             else {
                                 p.Deficit -= item.Bytes; p.Outlet.Deficit -= item.Bytes;
-                                if (p.Deficit < (p.Data.First?.Value ?? p.Control.First?.Value)?.Bytes)
+                                if (p.Deficit < Head(p)?.Bytes)
                                     p.Outlet.Cursor = (p.Outlet.Cursor + 1) % p.Outlet.Peers.Count;
                             }
                             // Even priority traffic rotates across outlets/peers.

@@ -1,0 +1,7 @@
+<Include xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Control Id="Background" Type="Bitmap" X="0" Y="0" Width="460" Height="330" TabSkip="yes" Text="SL_Background" />
+  <Control Id="Brand" Type="Text" X="24" Y="82" Width="120" Height="25" Transparent="yes" NoPrefix="yes" Text="{\SL_Brand}StreamLink" />
+  <Control Id="BrandDescription" Type="Text" X="25" Y="112" Width="108" Height="36" Transparent="yes" NoPrefix="yes" Text="{\SL_OnDark}连接设备，&#13;&#10;专注串流。" />
+  <Control Id="Platform" Type="Text" X="25" Y="301" Width="120" Height="15" Transparent="yes" NoPrefix="yes" Text="{\SL_OnDarkSmall}WINDOWS · 64 位" />
+  <Control Id="FooterLine" Type="Line" X="178" Y="284" Width="256" Height="0" />
+</Include>

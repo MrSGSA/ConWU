@@ -1,0 +1,170 @@
+{
+  "schema": 1,
+  "specification": "AQ-1",
+  "baseHead": "e05263715c894f0bf390f1b9e50f0032403455fe",
+  "executionState": "ImplementedNotValidated",
+  "productReadiness": "NotQualified",
+  "userConstraint": "先不测试；继续推进解决压力失败、Wintun 问题以及多机组网。",
+  "testsExecuted": false,
+  "testProjectsBuilt": false,
+  "applicationStarted": false,
+  "driversStartedOrStopped": false,
+  "installedOrPublished": false,
+  "frozenCandidateModified": false,
+  "builds": [
+    {
+      "name": "Core-Service-Tray",
+      "command": "dotnet build src/StreamLink.App/StreamLink.csproj --no-restore -c Release --nologo -v:minimal",
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "artifacts/development-20261031/build-reviewed-app.log",
+      "logSha256": "a23b91e8f6425a6bd94d8efd5b99c3301442a13d3e13262e90d23fcaaeb0f7df"
+    },
+    {
+      "name": "Web",
+      "command": "dotnet build src/StreamLink.Web/StreamLink.Web.csproj --no-restore -c Release --nologo -v:minimal",
+      "exitCode": 0,
+      "warnings": 0,
+      "log": "artifacts/development-20261031/build-reviewed-web.log",
+      "logSha256": "f633eb0882651fb10cc08fdf6a4735f6c548e1a41e38100f058f8b578a092dfe"
+    },
+    {
+      "name": "Official-Wintun-UserMode-Bridge",
+      "command": "cmake --build out/native --target streamlink-tun --parallel 2",
+      "exitCode": 0,
+      "warnings": 13,
+      "warningScope": "Existing official-header pragmas and Win32 dynamic function-pointer casts",
+      "log": "artifacts/development-20261031/build-final-wintun-bridge.log",
+      "logSha256": "dbe9a86e75085e6ddfb2221da938baa1b363341f7c76dd60d92357a5432a016e"
+    }
+  ],
+  "implementationAreas": [
+    "Router scheduling and bounded control admission",
+    "Local rejection accounting",
+    "Cancellable official Wintun startup and bounded 4319 recovery",
+    "Fair bidirectional peer admission",
+    "Resource-close failure retention and feedback"
+  ],
+  "unresolvedVerification": [
+    "Original sustained-load health failure root cause",
+    "Offered-to-delivered deficit under physical load",
+    "Wintun 4319 and PnP problem 0x38",
+    "Wintun close duration and cancellation/reopen lifecycle",
+    "Independent eight-Windows-stack full mesh and shared-egress quality",
+    "Browser and affected ownership/security regression"
+  ],
+  "priorEvidence": [
+    "artifacts/formal-frozen/soak-600s.json",
+    "artifacts/formal-final/soak-600s.json",
+    "artifacts/formal-frozen/wintun-lifecycle.json"
+  ],
+  "sourceFilesystemDigests": [
+    {
+      "path": "src/StreamLink.Core/ConnectionProgress.cs",
+      "sha256": "37a32a8fa3f6b589c61f72304af4b3d7f661157167df9a45a8327be192c78754"
+    },
+    {
+      "path": "src/StreamLink.Core/EgressPacer.cs",
+      "sha256": "79d60669c02eda9d10f093d52a356f7ec8f22b4f5332f37fece486485afcc705"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshDatagramQueue.cs",
+      "sha256": "88af593f147953f9f704569eeb3dd2db40781675e5b6022ea9036faf891521d1"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.cs",
+      "sha256": "75e6e15a6bfd3d988550831bb98245dee08103bf9a5703138339dc3335466723"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.Managed.cs",
+      "sha256": "d38e62157318cb95466a01ae77267770052a0a047c78ef859f5db00afee7bea6"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.Pressure.cs",
+      "sha256": "4ee254d0fa7e095af92e648a641283e3a012d72b87a9cf7675f7ee813b6a92f0"
+    },
+    {
+      "path": "src/StreamLink.Core/NativeAdapter.cs",
+      "sha256": "f78c8782e902949c9276c521facc10daec51ebabda896400530bdf08cb28d2b2"
+    },
+    {
+      "path": "src/StreamLink.Core/NativeDatagramPath.cs",
+      "sha256": "7fde89ad78881ff241b81759594c15a7bfc37a7bf619b5728718736e4702d39b"
+    },
+    {
+      "path": "src/StreamLink.Core/StreamSession.cs",
+      "sha256": "ddc042e0b7cf280d98f109edb061f2f31005feb7e7094c9ee466b76c3ae49392"
+    },
+    {
+      "path": "src/StreamLink.Core/UiControlProtocol.cs",
+      "sha256": "5be64c0866b323ba98eefd84bf13bbe7eb873f1f2a6d3fad46f116e448a46727"
+    },
+    {
+      "path": "src/StreamLink.Service/ControlWorker.cs",
+      "sha256": "98571f4daec47e4463cee5ffa9bce0ca7c7eb007a88e3d8e6e8ec9d231b8dff3"
+    },
+    {
+      "path": "src/StreamLink.Service/ControlWorker.Ui.cs",
+      "sha256": "dd841afa435b994029af63b3215cf47faa7b08310523946a199dbc18a052f04f"
+    },
+    {
+      "path": "src/StreamLink.Service/MeshConnectionFeedback.cs",
+      "sha256": "00ea29cfcc7ae50f91cfdfc4034dabd2986c03a13bae2763fd3138925e3cada3"
+    },
+    {
+      "path": "src/StreamLink.Service/MeshPairOpportunity.cs",
+      "sha256": "e3f9dfdf59dc1a2507aa3ac298330aa973e0f2af54b856c60dfa2cabb50013e3"
+    },
+    {
+      "path": "src/StreamLink.Service/MeshRunner.cs",
+      "sha256": "f1688128ca06ff15a811d236a906b4c0755604803f9a2022e6b931fcc31a5173"
+    },
+    {
+      "path": "src/StreamLink.Service/MeshRuntimeServices.cs",
+      "sha256": "2064ced7a1efe8c888049162bfe1f1c53826e7f3ca9f56600fa9c751a1fe1701"
+    },
+    {
+      "path": "src/StreamLink.Service/MeshTraversalManager.cs",
+      "sha256": "5fb8f37f419a4257d55d2d7a8013e52f122ceb491fe8f14cdd2b644896133ace"
+    },
+    {
+      "path": "src/StreamLink.Service/PersonalPacketAdapters.cs",
+      "sha256": "b409a8c85e60c5e8cf968f8a74263abad19babd00e81957996d50899d6e4670e"
+    },
+    {
+      "path": "src/StreamLink.Web/wwwroot/app.js",
+      "sha256": "c898bc6fcd655135beaca81dbfd9081ffc41a91a88d1a2294f79dd2f894ae61f"
+    },
+    {
+      "path": "tests/StreamLink.MeshHarness/TraversalNetwork.cs",
+      "sha256": "13dce85008eda1fc09056958f622f0fa62c3f181bd9eb4c3be6dba9eba607570"
+    },
+    {
+      "path": "transport/tun/adapter.cpp",
+      "sha256": "2dd75fbb0c5408c580e844eea2d301cc6b8c53833a95e23fd2872943d7d713ea"
+    }
+  ],
+  "developmentBinaryDigests": [
+    {
+      "path": "src/StreamLink.Core/bin/Release/net10.0/StreamLink.Core.dll",
+      "sha256": "8d2bff6f987c4f522b5b3ae0e4ce9de4fa044b609d8cc2cd1df42082c958610d"
+    },
+    {
+      "path": "src/StreamLink.Service/bin/Release/net10.0-windows/StreamLink.Service.dll",
+      "sha256": "e20b25407cee76266d9bf3e15823e54c16d891caac0ba4559cd6e44a11825628"
+    },
+    {
+      "path": "src/StreamLink.App/bin/Release/net10.0-windows/StreamLink.dll",
+      "sha256": "189e6da30229a84c47776bc4a488e271831f48a4f353e7b321131305b61f0ffb"
+    },
+    {
+      "path": "src/StreamLink.Web/bin/Release/net10.0-windows/StreamLink.Web.dll",
+      "sha256": "9fb278cd52a0efedb8e9524346e3d031034c3752b21919846b17574bf3471623"
+    },
+    {
+      "path": "out/native/streamlink-tun.dll",
+      "sha256": "3dbe3eb36f2a09f5f5886b0d913ff3d9b042812d9885dfa720d5924e260e8473"
+    }
+  ],
+  "notes": "Compilation only. Not an installer, frozen candidate, runtime success, or E1/E2/E3 qualification. Runtime regression is deferred by user instruction."
+}

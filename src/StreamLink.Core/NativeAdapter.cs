@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Win32.SafeHandles;
 
 namespace StreamLink.Core;
 
@@ -32,6 +33,10 @@ public sealed class NativeAdapter : IPacketAdapter
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void NativeCloseTrace(uint phase);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)] delegate void TracedClose(IntPtr adapter,NativeCloseTrace trace);
     [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)] delegate uint TracedOpen(string dll,string name,ref Guid guid,byte[] ip,out IntPtr adapter,NativeCloseTrace trace);
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl, CharSet = CharSet.Unicode)] delegate uint CancellableOpen(string dll,string name,ref Guid guid,byte[] ip,out IntPtr adapter,NativeCloseTrace trace,SafeWaitHandle cancel);
+    // Native create and close cannot overlap in this process. The owner still
+    // joins all I/O before close; a new runner cannot overtake its cleanup.
+    static readonly SemaphoreSlim lifecycle = new(1, 1);
     readonly TracedClose? tracedClose;
     readonly IntPtr library;
     IntPtr adapter;
@@ -42,16 +47,26 @@ public sealed class NativeAdapter : IPacketAdapter
     readonly ReadStats stats;
     readonly ReaderWriterLockSlim io=new();
     internal Action<string>? LifecycleTrace { get; set; }
+    string lastTraced = "";
     int stopping;
     public PacketAdapterDescriptor Descriptor=>new(PacketAdapterProviders.OfficialWintun,2,MeshLink.Mtu,true,true,false);
     public IReadOnlyList<OverlayConflict> RouteWarnings { get; }
     public ulong? InterfaceLuid {get;}
     public PacketAdapterStatistics Statistics{get{io.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed,this);var c=new ulong[7];uint error=stats(adapter,c);if(error!=0)throw new Win32Exception((int)error);return new((long)c[0],(long)c[1],(long)c[2],(long)c[3],(long)c[4],(long)c[5],(long)c[6],Volatile.Read(ref stopping)!=0);}finally{io.ExitReadLock();}}}
     bool disposed;
-    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null)
+    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null, CancellationToken cancellationToken=default)
     {
         LifecycleTrace=lifecycleTrace;
+        cancellationToken.ThrowIfCancellationRequested();
         if (!WindowsHost.IsAdmin) throw new IOException("创建虚拟网卡需要管理员权限");
+        var guid = new Guid(SHA256.HashData(Encoding.ASCII.GetBytes($"streamlink-wintun-v4/{network}/{slot}")).AsSpan(0, 16));
+        string name = $"StreamLink-{network[..8]}-{slot}";
+        // Let an existing owner acquire the close gate while we wait for its
+        // identity to disappear. Do not hold lifecycle across this poll.
+        WaitForVacantIdentity(guid, name, cancellationToken);
+        Trace("lifecycle-wait"); lifecycle.Wait(cancellationToken);
+        try {
+        cancellationToken.ThrowIfCancellationRequested();
         string prefix = MeshIdentity.Prefix(network) + ".";
         var conflicts=OverlayRouteConflicts.Inspect(IPAddress.Parse(prefix+"0"));
         RouteWarnings=Array.AsReadOnly(conflicts.Where(c=>c.Severity=="Warning").ToArray());
@@ -66,21 +81,41 @@ public sealed class NativeAdapter : IPacketAdapter
             if(Load<Abi>("sltun_abi")()!=2)throw new IOException("网卡适配ABI不匹配");
             stop=Load<StopPacket>("sltun_stop");stats=Load<ReadStats>("sltun_stats");
             PacketAdapterProviders.RequireProduction(Descriptor);
-            var guid = new Guid(SHA256.HashData(Encoding.ASCII.GetBytes($"streamlink-wintun-v4/{network}/{slot}")).AsSpan(0, 16));
             string openStage="bridge-open";uint error;
-            if(NativeLibrary.TryGetExport(library,"sltun_open_with_trace",out var diagnosticOpen)){
-                NativeCloseTrace callback=phase=>{if(phase>=100)openStage=OpenStage(phase);Trace(phase>=100?openStage:"open-rollback/"+CloseStage(phase));};
-                error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter,callback);
-                GC.KeepAlive(callback);
-            }else error=Load<Open>("sltun_open")(driver,$"StreamLink-{network[..8]}-{slot}",ref guid,IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes(),out adapter);
-            if (error != 0) throw new Win32Exception((int)error,error==4319&&openStage=="adapter-create-begin"
-                ? "Windows 未完成 Wintun 网卡准备（4319），请稍后重新连接；持续出现时请重启 Windows。阶段="+openStage
-                : "原生虚拟网卡创建失败；阶段="+openStage);
+            NativeCloseTrace callback=phase=>{if(phase>=100)openStage=OpenStage(phase);Trace(phase>=100?openStage:"open-rollback/"+CloseStage(phase));};
+            byte[] ip = IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes();
+            cancellationToken.ThrowIfCancellationRequested();
+            if(NativeLibrary.TryGetExport(library,"sltun_open_cancellable",out var cancellableOpen))
+                error=Marshal.GetDelegateForFunctionPointer<CancellableOpen>(cancellableOpen)(driver,name,ref guid,ip,out adapter,callback,cancellationToken.WaitHandle.SafeWaitHandle);
+            else if(NativeLibrary.TryGetExport(library,"sltun_open_with_trace",out var diagnosticOpen))
+                error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,name,ref guid,ip,out adapter,callback);
+            else error=Load<Open>("sltun_open")(driver,name,ref guid,ip,out adapter);
+            GC.KeepAlive(callback);
+            // An older ABI-2 bridge may finish after cancellation. The catch
+            // below closes that late result before this task may complete.
+            cancellationToken.ThrowIfCancellationRequested();
+            if (error != 0) throw new Win32Exception((int)error,(error switch {
+                4319 => "Windows 未完成 Wintun 网卡准备（4319）；请检查系统网络设备状态。",
+                183 => "相同网卡身份仍存在；未接管或删除，请等待旧实例完成退出。",
+                _ => "原生虚拟网卡创建失败。"
+            }) + "阶段=" + openStage);
             if(NativeLibrary.TryGetExport(library,"sltun_luid",out var identityExport)) {
                 error=Marshal.GetDelegateForFunctionPointer<ReadLuid>(identityExport)(adapter,out var identity);
                 if(error!=0||identity==0)throw new IOException("网卡实际 LUID 身份无效");InterfaceLuid=identity;
             }
         } catch { if(adapter!=IntPtr.Zero){close!(adapter);adapter=IntPtr.Zero;}NativeLibrary.Free(library); throw; }
+        } finally { lifecycle.Release(); }
+    }
+    void WaitForVacantIdentity(Guid guid, string name, CancellationToken token)
+    {
+        long began = Environment.TickCount64;
+        while (NetworkInterface.GetAllNetworkInterfaces().Any(n => string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase) || Guid.TryParse(n.Id, out var existing) && existing == guid)) {
+            if (Environment.TickCount64 - began >= 3000)
+                throw new IOException("相同 Wintun 网卡身份仍存在，未接管或删除；请等待旧实例完成退出后重连");
+            Trace("previous-interface-wait");
+            if (token.WaitHandle.WaitOne(100)) token.ThrowIfCancellationRequested();
+        }
+        token.ThrowIfCancellationRequested();
     }
     public int Read(byte[] buffer)
     {
@@ -106,12 +141,14 @@ public sealed class NativeAdapter : IPacketAdapter
     }
     public int Read(byte[] buffer,CancellationToken token){using var cancel=token.Register(Stop);token.ThrowIfCancellationRequested();int length=Read(buffer);token.ThrowIfCancellationRequested();return length;}
     public void Stop(){io.EnterReadLock();try{if(!disposed&&Interlocked.Exchange(ref stopping,1)==0)stop(adapter);}finally{io.ExitReadLock();}}
-    void Trace(string stage){try{LifecycleTrace?.Invoke(stage);}catch{/* diagnostics cannot break native resource cleanup */}}
+    void Trace(string stage){if(Interlocked.Exchange(ref lastTraced,stage)==stage)return;try{LifecycleTrace?.Invoke(stage);}catch{/* diagnostics cannot break native resource cleanup */}}
     static string OpenStage(uint phase)=>phase switch{
         101=>"wintun-load-begin",102=>"wintun-load-complete",103=>"adapter-create-begin",104=>"adapter-create-complete",
         105=>"ipv4-interface-get-begin",106=>"ipv4-interface-get-complete",107=>"ipv4-interface-set-begin",108=>"ipv4-interface-set-complete",
         109=>"ipv4-address-create-begin",110=>"ipv4-address-create-complete",111=>"session-start-begin",112=>"session-start-complete",
-        113=>"read-event-get-begin",114=>"read-event-get-complete",115=>"adapter-open-complete",_=>"unknown-open-phase"};
+        113=>"read-event-get-begin",114=>"read-event-get-complete",115=>"adapter-open-complete",
+        117=>"adapter-create-retry-1",118=>"adapter-create-retry-2",119=>"identity-vacant-wait",120=>"identity-vacant",
+        122=>"ipv4-interface-wait",123=>"adapter-create-retry-budget-exhausted",_=>"unknown-open-phase"};
     static string CloseStage(uint phase)=>phase switch{
         1=>"native-stop-handle-close-begin",2=>"native-stop-handle-close-complete",
         3=>"native-session-end-begin",4=>"native-session-end-complete",
@@ -125,8 +162,11 @@ public sealed class NativeAdapter : IPacketAdapter
         // or a library unload, even when a caller violates normal pump ordering.
         Trace("stop-begin");Stop();Trace("stop-complete");Trace("exclusive-wait");io.EnterWriteLock();try{
             if(disposed)return;Trace("exclusive-acquired");disposed=true;Trace("native-close-begin");
-            if(LifecycleTrace!=null&&tracedClose!=null){NativeCloseTrace callback=TraceNative;tracedClose(adapter,callback);GC.KeepAlive(callback);}
-            else {if(LifecycleTrace!=null)Trace("native-close-phase-trace-unavailable");close(adapter);}
+            lifecycle.Wait();
+            try {
+                if(LifecycleTrace!=null&&tracedClose!=null){NativeCloseTrace callback=TraceNative;tracedClose(adapter,callback);GC.KeepAlive(callback);}
+                else {if(LifecycleTrace!=null)Trace("native-close-phase-trace-unavailable");close(adapter);}
+            } finally { lifecycle.Release(); }
             Trace("native-close-complete");adapter=IntPtr.Zero;
             // The guarded native handle closes here; OS/PnP disappearance is
             // recorded separately. Do not block all statistics/cancel callers

@@ -19,6 +19,7 @@ public sealed record SessionStatus(string State, string LocalIp, string PeerIp, 
     public LegacyControlStats? CompatibilityNativeControl { get; init; }
     public AdapterRuntimeStatus? Adapter { get; init; }
     public PacketAdapterStatistics? AdapterStatistics {get;init;}
+    public RouterPressureSnapshot? RouterPressure {get;init;}
 }
 
 public interface IStreamSession : IAsyncDisposable

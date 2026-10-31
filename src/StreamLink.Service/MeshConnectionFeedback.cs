@@ -21,14 +21,17 @@ internal sealed class MeshConnectionFeedback(Action<string> log)
         }
         attempt ??= new("WaitingEntry",peer.Detail,CanRetry:true);
         string failure = reason switch {
-            "ReturnPathTimedOut" => "仍能收到对端数据，但同路径往返验证已超时，正在恢复。",
-            "ReceiveTimedOut" when prior.EverConnected => "超过 12 秒未收到有效数据，正在恢复直连。",
-            "TransportExited" => "传输组件已退出，正在重新建立直连。",
+            "ReturnPathTimedOut" => "仍能收到对端数据，但同路径往返验证已超时。",
+            "ReceiveTimedOut" when prior.EverConnected => "超过 12 秒未收到有效数据。",
+            "TransportExited" => "传输组件已退出。",
             _ => ""
         };
-        if(!freshRemote && !prior.EverConnected)attempt=new("WaitingPeer","尚未收到对端的有效上线信息。请确认另一台设备已启动并连接同一网络。",CanRetry:true);
+        // A stale announcement must not hide an owned attempt, its retry
+        // budget, or a failed close by replacing it with an actionable wait.
+        if(!freshRemote && !prior.EverConnected && attempt.Phase is "WaitingEntry" or "WaitingPeer" or "Connecting")
+            attempt=new("WaitingPeer","尚未收到对端的有效上线信息。请确认另一台设备已启动并连接同一网络。",CanRetry:true);
         return peer with { Connection = attempt with {
-            Phase = prior.EverConnected && attempt.Phase != "Retrying" ? "Recovering" : attempt.Phase,
+            Phase = prior.EverConnected && attempt.Phase is not ("Retrying" or "Queued" or "Releasing" or "Blocked") ? "Recovering" : attempt.Phase,
             Detail = failure.Length > 0 ? failure + " " + attempt.Detail : attempt.Detail, ElapsedMs = now-prior.Since } };
     }
     public void Retain(IEnumerable<int> slots)

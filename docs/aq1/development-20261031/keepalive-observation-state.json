@@ -1,0 +1,106 @@
+{
+  "schema": 1,
+  "specification": "AQ-1",
+  "recordedAt": "2026-10-31T14:20:02.4452769+08:00",
+  "baseHead": "e05263715c894f0bf390f1b9e50f0032403455fe",
+  "branch": "feat/formal-stability-20261030",
+  "dirtyWorktree": true,
+  "executionState": "ImplementedNotValidated",
+  "productReadiness": "NotQualified",
+  "userConstraint": "先不测试；继续当前可执行代码优化。",
+  "testsExecuted": false,
+  "testProjectsBuilt": false,
+  "applicationStarted": false,
+  "browserStarted": false,
+  "driversStartedOrStopped": false,
+  "installedOrPublished": false,
+  "newReleasePackageCreated": false,
+  "frozenCandidateModified": false,
+  "priorSnapshot": "docs/aq1/development-20261031/recovery-isolation-state.json",
+  "builds": [
+    {
+      "name": "Core-Service-Tray",
+      "command": "dotnet build src/StreamLink.App/StreamLink.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/build-keepalive-observation-reviewed-app.log",
+      "exitCode": 0,
+      "warnings": 0,
+      "logSha256": "89b3203ea9437b2abb8275662e1f25ad6ff49f27f93c2f9eee386eb5e606f078"
+    },
+    {
+      "name": "Web",
+      "command": "dotnet build src/StreamLink.Web/StreamLink.Web.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/build-keepalive-observation-reviewed-web.log",
+      "exitCode": 0,
+      "warnings": 0,
+      "logSha256": "335fd6e548667350dcc0a29073e7bea45f597546ad259ca12fcf16ab13c553f0"
+    }
+  ],
+  "implementationAreas": [
+    "Ordinary keepalive scheduling, local acceptance/refusal and matched reply counters per path",
+    "Explicit separation of ordinary keepalives from diagnostic probes in shared pending table",
+    "Current path observations in existing liveness export and managed path snapshots"
+  ],
+  "sourceFilesystemDigests": [
+    {
+      "path": "src/StreamLink.Core/ConnectionProgress.cs",
+      "sha256": "21d2435a3a182ac4fbb1975732d9df93dd492cc4e852a5bd4402252cfc51edb1"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshDatagramPath.cs",
+      "sha256": "857d1f72e2a5b62e7aff1d0f2712e5b427031dbab1d221d32f28fa76c587f2f0"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.cs",
+      "sha256": "54ad8895ca0fa2d974a2a987a0c3c25807d9735c46dea6343e0b33be70f02d75"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.Managed.cs",
+      "sha256": "cf9c0096ebdd0042a30579cf087392864077c95823b9e54fc150cd2eb10ef27a"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.Diagnostics.cs",
+      "sha256": "5460ce068943a26b931f7161e08fa82f96029b928cae5fae2db816c12639b0a5"
+    },
+    {
+      "path": "src/StreamLink.Core/MeshRouter.Pressure.cs",
+      "sha256": "89eb93e2f0cff9f652c1a7e0970a979ed7217ceaff51a1cc1b5a44b1c4585d38"
+    }
+  ],
+  "developmentBinaryDigests": [
+    {
+      "path": "src/StreamLink.Core/bin/Release/net10.0/StreamLink.Core.dll",
+      "sha256": "0048bc6dd0ddeae77c949518ef6264583f12c4ac4c5525aebed7be4d1454a470"
+    },
+    {
+      "path": "src/StreamLink.Service/bin/Release/net10.0-windows/StreamLink.Service.dll",
+      "sha256": "abd693d51bb3f797b6c3635fe37edae1b07d2ce14c65a5bd4b0764637e317d82"
+    },
+    {
+      "path": "src/StreamLink.App/bin/Release/net10.0-windows/StreamLink.dll",
+      "sha256": "ea7887951ed0bc3490bb4b5c4d73004764a68851d4e65ba78294afedaa8aef91"
+    },
+    {
+      "path": "src/StreamLink.Web/bin/Release/net10.0-windows/StreamLink.Web.dll",
+      "sha256": "a7d98c6eaba67a9354699b49ef6d9ec58c3dca4a2ce33408f51ad3fe06e87ac4"
+    }
+  ],
+  "priorEvidenceReadOnly": [
+    "artifacts/formal-frozen/soak-600s.json"
+  ],
+  "correctnessReview": "docs/aq1/development-20261031/持续优化-正确性与安全.md",
+  "productReview": "docs/aq1/development-20261031/持续优化-产品与质量.md",
+  "implementationRecord": "docs/aq1/development-20261031/持续优化-保活诊断.md",
+  "affectedVerificationDeferred": [
+    "Session unavailable, local budget and send rejection counters",
+    "Fresh/late/duplicate/wrong nonce and wrong-resource replies",
+    "Diagnostic/recovery probe separation and bounded pending eviction",
+    "Path switch/reset and ordinary-branch counter conservation",
+    "Eight-member UI serialization/export size and original stress reproduction"
+  ],
+  "unchangedOutstanding": [
+    "600-second stress failure and physical delivery deficit",
+    "Wintun 4319/0x38 and close/reopen timing",
+    "Actual streaming and independent eight-Windows-stack qualification"
+  ],
+  "notes": "Compilation and separated static reviews only. No new runtime evidence or root-cause/performance claim. Current path counters are not durable history."
+}

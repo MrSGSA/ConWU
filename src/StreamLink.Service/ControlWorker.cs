@@ -134,7 +134,7 @@ public sealed partial class ControlWorker : BackgroundService
     void PublishReply()
     {
         lock(sync) Volatile.Write(ref stageLedger,new(status?.AdapterStatistics,status?.Egress,
-            status?.LegacyTransports?.Resources.Take(15).Select(x=>new UiLegacyStage(x.ResourceId,x.ProcessId,x.Mode,x.Listener,x.Target,x.BusinessHandoff,x.BusinessEgress,x.Route?.Witnesses.Take(2).ToArray()??[])).ToArray()??[]));
+            status?.LegacyTransports?.Resources.Take(15).Select(x=>new UiLegacyStage(x.ResourceId,x.ProcessId,x.Mode,x.Listener,x.Target,x.BusinessHandoff,x.BusinessEgress,x.Route?.Witnesses.Take(2).ToArray()??[])).ToArray()??[]) { RouterPressure=status?.RouterPressure });
         lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized,1));
     }
     ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=SensitiveText.Redact(error,current.Profile!),Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}

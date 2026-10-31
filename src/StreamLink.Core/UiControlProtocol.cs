@@ -10,6 +10,7 @@ public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connec
     public long SentBytes {get;init;}
     public long ReceivedBytes {get;init;}
     public long DroppedPackets {get;init;}
+    public RouterPeerDrops? LocalDrops {get;init;}
     public string Quality {get;init;}="Unknown";
     public string OuterSource {get;init;}="Unknown";
     public string OuterTarget {get;init;}="Unknown";
@@ -30,11 +31,13 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public string[] Logs {get;init;}=[];
     public ControlOperationStatus? Operation {get;init;}
     public UiStageLedger? Stages {get;init;}
+    public string DiagnosticsNotice {get;init;}="";
 }
 public sealed record UiLegacyStage(Guid ResourceId,int ProcessId,string Mode,string Listener,string Target,
     LegacyBusinessHandoffReport? Handoff,LegacyBusinessEgressStats? Egress,EgressRouteWitness[] Routes);
 public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats? Egress,UiLegacyStage[] ExplicitWorkers)
 {
+    public RouterPressureSnapshot? RouterPressure {get;init;}
     public string Accounting => "Wintun inner packets/bytes; Mesh counters are inner bytes; native injection is local API acceptance. Encapsulation sizes differ and cannot be subtracted. Remote/application delivery requires paired measurement.";
     public string PhysicalDelivery => "UnknownWithoutIndependentWitness";
 }
@@ -66,7 +69,10 @@ public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Guid OperationId=default,UiNetworkAction? Network=null,int PeerSlot=0,int Mbps=50,Guid CancelOperationId=default);
-public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null);
+public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null)
+{
+    public string StatusNotice {get;init;}="";
+}
 public sealed class UiBackendException(string code,string message,Exception? inner=null):IOException(message,inner)
 {
     public string Code {get;}=code;

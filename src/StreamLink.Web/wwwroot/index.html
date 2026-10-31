@@ -95,6 +95,7 @@
       <div class="actions"><button data-command="check" data-backend>检查准备状态</button><button id="quality" data-backend>50 Mbps / 20 秒</button><button id="cancel-operation" data-backend>取消当前任务</button><button id="export">导出脱敏诊断</button></div>
       <p id="operation" class="muted"></p>
       <p class="hint">测速检查对端 → 本机方向；两端均需允许。单次 20 秒，之后冷却 90 秒。准备检查、RTT 和直连成功不代表实际串流质量已达标。</p>
+      <p id="diagnostics-notice" class="hint" hidden></p>
       <h3>最近日志</h3><pre id="logs" tabindex="0">等待后台</pre>
       <h3>传输与组件</h3>
       <p class="muted">业务默认为 FakeTCP＋明文 HTTP 前导，内层 MeshLink 认证加密，保持数据报语义。HTTPS 用于协调控制，业务没有 TLS 握手。直连业务不经协调服务器转发。</p>

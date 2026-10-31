@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
-using System.Threading.Channels;
 
 namespace StreamLink.Core;
 
@@ -14,6 +13,9 @@ public sealed record NativePathDiagnostics(Guid AttemptId, Guid LeaseId, Guid At
     public NativeWireStats? WireControl { get; init; }
     public TcpPeerSourceStats? PeerSource { get; init; }
     public string ShutdownPhase { get; init; } = "live";
+    public MeshDatagramQueueSnapshot? BridgeSendQueue { get; init; }
+    public MeshDatagramQueueSnapshot? BridgeReceiveQueue { get; init; }
+    public long BridgeSocketRejected { get; init; }
 }
 
 public sealed class NativePathVerificationException(string reason, NativePathDiagnostics diagnostic, Exception inner)
@@ -35,8 +37,8 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     readonly object gate = new();
     readonly Socket bridge;
     readonly CancellationTokenSource stop = new();
-    readonly Channel<byte[]> incoming = Channel.CreateBounded<byte[]>(128);
-    readonly Channel<byte[]> outgoing = Channel.CreateBounded<byte[]>(128);
+    readonly MeshDatagramQueue incoming = new(), outgoing = new();
+    long bridgeSocketRejected;
     readonly TaskCompletionSource proof = new(TaskCreationOptions.RunContinuationsAsynchronously);
     readonly byte[] digest, key, challenge = RandomNumberGenerator.GetBytes(16);
     readonly bool client;
@@ -79,6 +81,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
         identity.ActualLocal.ToString(), (native?.ActualPeer ?? identity.ActualRemote).ToString(), native?.Armed == true, Started, native?.Exited != false,
         Volatile.Read(ref bridgeProbeAttempts), Volatile.Read(ref authenticatedProbeReceives), Volatile.Read(ref qualified) != 0,
         RemainingAttemptTime.TotalMilliseconds) { WireControl = WireControl, PeerSource = native?.PeerSource,
+            BridgeSendQueue=outgoing.Snapshot(), BridgeReceiveQueue=incoming.Snapshot(), BridgeSocketRejected=Interlocked.Read(ref bridgeSocketRejected),
             ShutdownPhase = Volatile.Read(ref shutdownPhase) + "/" + (native?.ShutdownPhase ?? "no-attachment") };
     public IPEndPoint BridgeEndpoint => Copy((IPEndPoint)bridge.LocalEndPoint!);
     static IPEndPoint Copy(IPEndPoint ep) => new(IPAddress.Parse(ep.Address.ToString()), ep.Port);
@@ -192,7 +195,9 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     {
         byte[] buffer = new byte[2048];
         try {
+            int batch = 0;
             while (true) {
+                if (++batch > 64) { batch = 1; await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding); }
                 var read = await bridge.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), stop.Token);
                 var source = (IPEndPoint)read.RemoteEndPoint;
                 if (!Started || !source.Address.Equals(IPAddress.Loopback)) continue;
@@ -209,40 +214,44 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
                     if (buffer[4] == 1) await SendProbe(2, frame.Slice(40, 16), source, stop.Token);
                     else if (frame.Span.Slice(40, 16).SequenceEqual(challenge)) proof.TrySetResult();
                 } else if (Volatile.Read(ref qualified) != 0 && expected != null && frame.Length <= ProbeSize && frame.Span.StartsWith("SLM4"u8))
-                    incoming.Writer.TryWrite(frame.ToArray()); // one sole receiver, bounded; MeshLink verifies AEAD
+                    incoming.TryWrite(frame.Span); // one sole receiver, bounded; MeshLink verifies AEAD
             }
         } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
         catch (ObjectDisposedException) when (stop.IsCancellationRequested) { }
         catch { Fault(); }
-        finally { incoming.Writer.TryComplete(); }
+        finally { incoming.Complete(); }
     }
     async Task SendOnce(ReadOnlyMemory<byte> frame, IPEndPoint target, CancellationToken token)
     {
         try { await bridge.SendToAsync(frame, SocketFlags.None, target, token); }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.NoBufferSpaceAvailable or SocketError.WouldBlock or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) {
             // Drop a transiently blocked datagram, never retransmit business.
+            Interlocked.Increment(ref bridgeSocketRejected);
         }
     }
     async Task SendLoop()
     {
         try {
-            await foreach (var packet in outgoing.Reader.ReadAllAsync(stop.Token)) {
+            int batch = 0;
+            while (!stop.IsCancellationRequested) {
+                if (++batch > 64) { batch = 1; await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding); }
+                var packet = await outgoing.Read(stop.Token);
                 IPEndPoint? target; lock (gate) target = application;
                 if (target != null) await SendOnce(packet, target, stop.Token);
             }
-        } catch (OperationCanceledException) when (stop.IsCancellationRequested) { }
+        } catch (Exception) when (stop.IsCancellationRequested) { }
         catch { Fault(); }
     }
     public bool TrySend(ReadOnlySpan<byte> datagram)
     {
         if (datagram.Length is < MeshLink.Overhead or > ProbeSize || Volatile.Read(ref qualified) == 0 || Failed) return false;
         if(datagram.StartsWith("SLM4"u8)&&datagram[4]==8&&wireBudget?.DiagnosticActive!=true)return false;
-        lock (gate) return !disposed && outgoing.Writer.TryWrite(datagram.ToArray());
+        lock (gate) return !disposed && outgoing.TryWrite(datagram);
     }
     public async ValueTask<ReadOnlyMemory<byte>> Receive(CancellationToken token)
     {
         if (Interlocked.Exchange(ref reading, 1) != 0) throw new InvalidOperationException("Native 路径只能有一个业务接收者");
-        try { return await incoming.Reader.ReadAsync(token); }
+        try { return await incoming.Read(token); }
         finally { Volatile.Write(ref reading, 0); }
     }
     void Fault()
@@ -263,7 +272,7 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
     async Task Close()
     {
         Volatile.Write(ref shutdownPhase, "cancel");
-        stop.Cancel(); proof.TrySetCanceled(); outgoing.Writer.TryComplete();
+        stop.Cancel(); proof.TrySetCanceled(); outgoing.Complete();
         try {
             Volatile.Write(ref shutdownPhase, "startup-join");
             if (starting != null) try { await starting; } catch { }
@@ -271,7 +280,9 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             await Task.WhenAll(receiver, sender);
         } finally {
             Volatile.Write(ref shutdownPhase, "bridge-close");
-            bridge.Dispose(); incoming.Writer.TryComplete();
+            bridge.Dispose(); incoming.Complete(); outgoing.Discard();
+            // Router owns the incoming reader until its receive pump unwinds;
+            // let it drain/cancel rather than introducing a second reader here.
             Volatile.Write(ref shutdownPhase, "attachment-join");
             try { if (native != null) { native.ProcessExited -= Fault; await native.DisposeAsync(); } }
             finally { CryptographicOperations.ZeroMemory(key); File.Delete(configuration); stop.Dispose(); Volatile.Write(ref shutdownPhase, "complete"); }

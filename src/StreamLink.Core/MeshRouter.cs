@@ -23,6 +23,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public string OuterSource {get;init;}="Unknown";
     public string OuterTarget {get;init;}="Unknown";
     public NativePathDiagnostics? NativeEvidence {get;init;}
+    public RouterPeerDrops? LocalDrops { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -37,10 +38,12 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public IPEndPoint? Candidate, Active;
         public long ActiveReceived, ActiveRoundTrip;
         public readonly Dictionary<long, long> ActivePings = [];
+        public KeepaliveObservation LegacyKeepalive = new();
         public readonly Dictionary<IPEndPoint, (long Token, long At, long Sent)> Probes = [];
         public readonly Queue<IPEndPoint> Retired = [];
         public string Name = "", Detail = "等待对端上线";
         public long Sent, Received, Dropped;
+        public long NoHealthyPathDrops, SendRejectedDrops, AuthenticationDrops, ReceivePolicyDrops, AdapterWriteDrops;
         public ManagedPeer? Managed;
         public readonly PathRecovery Recovery = new(Environment.TickCount64);
         public Guid LegacyPathId;
@@ -66,18 +69,32 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public PathSelection Selection { get; }
     public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null, PathSelection? selection = null)
     {
-        if (bootId == Guid.Empty) { socket.Dispose(); throw new ArgumentException("Router 启动代次无效", nameof(bootId)); }
         Selection = selection ?? new();
+        this.profile = profile; this.adapter = adapter;
         try {
+            ArgumentNullException.ThrowIfNull(profile);
+            ArgumentNullException.ThrowIfNull(adapter);
+            if (bootId == Guid.Empty) throw new ArgumentException("Router 启动代次无效", nameof(bootId));
             Selection.Validate();
             if (Selection.Policy == PathPolicy.FakeTcpOnly && profile.Pair.Mode != "faketcp") throw new FormatException("仅 FakeTCP 不能接入 UDP 兼容网络");
-        } catch { socket.Dispose(); throw; }
-        BootId = bootId ?? Guid.NewGuid();
-        this.profile = profile; this.adapter = adapter; local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
-        socket.Bind(new IPEndPoint(IPAddress.Loopback, 0)); socket.SendBufferSize = socket.ReceiveBufferSize = 1 << 20; socket.SendTimeout = 100;
-        if (profile.Directory != null) ApplyDirectory(profile.Directory);
+            BootId = bootId ?? Guid.NewGuid();
+            local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
+            socket.Bind(new IPEndPoint(IPAddress.Loopback, 0)); socket.SendBufferSize = socket.ReceiveBufferSize = 1 << 20;
+            // Synchronous sends run under the peer-state guard. A full local UDP
+            // buffer must reject one datagram, never hold every peer's heartbeat.
+            socket.Blocking = false;
+            if (profile.Directory != null) ApplyDirectory(profile.Directory);
+        } catch {
+            // No pump has started. Failed construction never takes the
+            // caller's adapter, but must release its own socket/session keys.
+            try { foreach (var peer in peers.Values) peer.Link.Dispose(); }
+            finally { socket.Dispose(); stop.Dispose(); }
+            throw;
+        }
         transmit = Task.Factory.StartNew(Transmit, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-        receive = Receive(); heartbeat = Heartbeat(); Completion = Watch();
+        receive = Task.Run(Receive);
+        heartbeat = Task.Factory.StartNew(Heartbeat, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
+        Completion = Watch();
     }
     async Task Watch()
     {
@@ -89,6 +106,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         MeshIdentity.ValidateDirectory(directory, profile.Pair.Network, profile.OwnerKey, profile.Directory?.Revision ?? 0);
         if (!directory.Members.Contains(profile.Self)) throw new MeshRevokedException();
         lock (gate) {
+            ObjectDisposedException.ThrowIf(disposed != 0, this);
             foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { CloseManaged(peers[slot]); peers[slot].Link.Dispose(); peers.Remove(slot); }
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
@@ -131,7 +149,10 @@ public sealed partial class MeshRouter : IAsyncDisposable
         string reason = Healthy(peer) ? "Healthy" : peer.Managed == null && peer.Active == null || peer.Managed != null && path == null ? "WaitingForPath" :
             path?.Transport.Failed == true ? "TransportExited" : !Fresh(received) ? "ReceiveTimedOut" :
             !Fresh(roundTrip) ? "ReturnPathTimedOut" : "SessionNotReady";
-        return new(reason, Age(received), Age(roundTrip));
+        return new(reason, Age(received), Age(roundTrip)) {
+            Keepalive = path != null ? KeepaliveStatus(path) : peer.Managed == null && peer.Active != null
+                ? peer.LegacyKeepalive.Snapshot(peer.LegacyPathId, peer.ActivePings.Count, budgetMeasured: false) : null
+        };
     }
     public bool HasHealthyPath(int slot) { lock (gate) return peers.TryGetValue(slot, out var peer) && Healthy(peer); }
     public bool UsesPath(int slot, IPEndPoint? endpoint)
@@ -173,6 +194,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
                     OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
                     NativeEvidence=OperatingSystem.IsWindows()?(p.Managed?.Active?.Transport as NativeDatagramPath)?.Diagnostics:null,
+                    LocalDrops = new(p.NoHealthyPathDrops, p.SendRejectedDrops, p.AuthenticationDrops, p.ReceivePolicyDrops, p.AdapterWriteDrops),
                     Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
@@ -183,7 +205,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     {
         if (packet == null || endpoint == null) return false;
         try { return socket.SendTo(packet, endpoint) == packet.Length; }
-        catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { return false; }
+        catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { Interlocked.Increment(ref legacySendRejected); return false; }
     }
     bool SendLegacyControl(Peer peer, byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
         => packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
@@ -203,23 +225,31 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 if (delivered && encoded != null) peer.Managed?.Active?.Delivery?.Send(new Guid(encoded.AsSpan(8, 16)),
                     BinaryPrimitives.ReadUInt64BigEndian(encoded.AsSpan(40)), count, Environment.TickCount64);
                 if (delivered) peer.Sent += count;
-                else { peer.Dropped++; peer.Recovery.Break("BusinessSendRejected", Environment.TickCount64); }
+                else {
+                    peer.Dropped++;
+                    if (encoded == null) peer.NoHealthyPathDrops++; else peer.SendRejectedDrops++;
+                    peer.Recovery.Break("BusinessSendRejected", Environment.TickCount64);
+                }
             }
         }
     }
     async Task Receive()
     {
         var buffer = new byte[2048];
+        int batch = 0;
         while (!stop.IsCancellationRequested) {
+            // ReceiveFromAsync can complete synchronously for an entire flood.
+            // Bound each turn, including rejected frames, so other peers run.
+            if (++batch > ReceiveBatch) { batch = 1; Interlocked.Increment(ref receiveYields); await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding); }
             SocketReceiveFromResult received;
             try { received = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), stop.Token); }
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (received.ReceivedBytes < MeshLink.Overhead || !IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
             lock (gate) if (peers.TryGetValue(buffer[5], out var peer)) {
                 if (peer.Managed != null) continue; // data arrives through its registered resource only
-                if (peer.CancelledCandidates.Contains((IPEndPoint)received.RemoteEndPoint)) { peer.Dropped++; continue; }
+                if (peer.CancelledCandidates.Contains((IPEndPoint)received.RemoteEndPoint)) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
-                if (!result.Authenticated) { peer.Dropped++; continue; }
+                if (!result.Authenticated) { peer.Dropped++; peer.AuthenticationDrops++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
                 if (!peer.NativeControlSources.ContainsKey(endpoint) && peer.NativeControlSources.Count < 16)
                     peer.NativeControlSources[endpoint] = legacyListenerControlsWire;
@@ -229,31 +259,41 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
                         if (peer.Active != null) { peer.Retired.Enqueue(peer.Active); while (peer.Retired.Count > 8) peer.Retired.Dequeue(); }
                         peer.Active = endpoint; peer.ActiveReceived = peer.ActiveRoundTrip = Stopwatch.GetTimestamp(); peer.Probes.Clear(); peer.ActivePings.Clear();
+                        peer.LegacyKeepalive = new();
                         peer.LegacyPathId = Guid.NewGuid(); peer.Recovery.Select(peer.LegacyPathId, Environment.TickCount64);
                     } else if (endpoint.Equals(peer.Candidate) || !Healthy(peer) || !peer.Retired.Contains(endpoint)) Challenge(peer, endpoint);
                 }
                 if (endpoint.Equals(peer.Active) && result.PongToken is long recoveryNonce) {
-                    if(peer.ActivePings.Remove(recoveryNonce,out long sent) && Fresh(sent))
-                        peer.ActiveRoundTrip = Stopwatch.GetTimestamp();
+                    if (peer.ActivePings.Remove(recoveryNonce, out long sent)) {
+                        bool fresh = Fresh(sent); peer.LegacyKeepalive.Reply(fresh);
+                        if (fresh) peer.ActiveRoundTrip = Stopwatch.GetTimestamp();
+                    }
                     // Recovery has a separate, bounded nonce set for its
                     // business observation probes; do not discard those pongs.
                     peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                 }
                 if (result.Packet != null) {
-                    if (MeshPackets.Accept(result.Packet, local, peer.Member.Slot) && adapter.Write(result.Packet)) {
+                    if (Deliver(peer, result.Packet, MeshPackets.Accept(result.Packet, local, peer.Member.Slot))) {
                         peer.Received += result.Packet.Length;
                         if (endpoint.Equals(peer.Active)) peer.Recovery.Business(Environment.TickCount64);
-                    } else peer.Dropped++;
+                    }
                 }
             }
         }
     }
-    async Task Heartbeat()
+    void Heartbeat()
     {
         int cursor = 0;
+        long due = Environment.TickCount64;
         while (!stop.IsCancellationRequested) {
-            long now = Environment.TickCount64;
+            long requested = Environment.TickCount64;
             lock (gate) {
+            if (stop.IsCancellationRequested) return;
+            long now = Environment.TickCount64;
+            maintenanceTicks++;
+            maximumMaintenanceDelayMs = Math.Max(maximumMaintenanceDelayMs, Math.Max(0, now - due));
+            maximumMaintenanceLockWaitMs = Math.Max(maximumMaintenanceLockWaitMs, now - requested);
+            lastMaintenance = now;
             var order = peers.Values.ToArray();
             bool legacyServiced = false;
             for (int i = 0; i < order.Length; i++) {
@@ -269,12 +309,17 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 // outstanding nonce returned through this exact Active refreshes
                 // outbound proof; inbound data/Hello/another candidate cannot.
                 if (peer.Active != null) {
+                    peer.LegacyKeepalive.Attempt();
                     byte[]? ping = peer.Link.Ping(out long nonce);
-                    if (SendLegacyControl(peer, ping, peer.Active, maintenance: true)) {
-                        if (peer.ActivePings.Count >= 8) peer.ActivePings.Remove(peer.ActivePings.MinBy(p => p.Value).Key);
-                        peer.ActivePings[nonce] = Stopwatch.GetTimestamp();
+                    if (ping == null) peer.LegacyKeepalive.SessionUnavailable++;
+                    else if (SendLegacyControl(peer, ping, peer.Active, maintenance: true)) {
+                        if (peer.ActivePings.Count >= 8) {
+                            peer.ActivePings.Remove(peer.ActivePings.MinBy(p => p.Value).Key);
+                            peer.LegacyKeepalive.PendingEvicted++;
+                        }
+                        peer.ActivePings[nonce] = peer.LegacyKeepalive.Accept();
                         peer.Recovery.KeepaliveSent(nonce, now);
-                    }
+                    } else peer.LegacyKeepalive.LocalRejected++;
                 }
                 if (Healthy(peer)) {
                     if (peer.Candidate != null && !peer.Candidate.Equals(peer.Active)) {
@@ -288,22 +333,12 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 }
             }
             cursor = order.Length == 0 ? 0 : (cursor + 1) % order.Length;
+            maximumMaintenanceWorkMs = Math.Max(maximumMaintenanceWorkMs, Environment.TickCount64-now);
             }
-            await Task.Delay(100, stop.Token);
+            // One dedicated maintenance worker per router, never one per peer.
+            // Preserve the 12-second proof and wire budgets; no catch-up burst.
+            due = Environment.TickCount64 + 100;
+            if (stop.Token.WaitHandle.WaitOne(100)) return;
         }
-    }
-    public async ValueTask DisposeAsync()
-    {
-        if (Interlocked.Exchange(ref disposed, 1) != 0) return;
-        stop.Cancel();
-        adapter.Stop();
-        Task[] pathPumps;
-        lock (gate) { foreach (var peer in peers.Values) CloseManaged(peer); pathPumps = managedPumps.ToArray(); }
-        // Completion reports an operational pump fault to the runner. Once ALL
-        // pumps have joined it is not an owner-close failure. Re-throwing it
-        // here falsely quarantined a fully closed adapter and disabled retries.
-        // Actual path/adapter cleanup exceptions in finally must still escape.
-        try { await Task.WhenAll(transmit, receive, heartbeat, Completion); } catch (Exception) { }
-        finally { await Task.WhenAll(pathPumps);await Task.WhenAll(diagnosticTasks.ToArray()); lock (gate) { foreach (var peer in peers.Values) peer.Link.Dispose(); peers.Clear(); } socket.Dispose(); adapter.Dispose(); stop.Dispose(); }
     }
 }

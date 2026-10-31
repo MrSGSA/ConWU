@@ -12,12 +12,18 @@ internal static class PersonalPacketAdapters
         return Task.CompletedTask;
     }
 
-    public static async Task<IPacketAdapter> Open(DeviceProfile profile,CancellationToken token)
+    public static Task<IPacketAdapter> Open(DeviceProfile profile,CancellationToken token) => Open(profile, _ => { }, token);
+
+    public static async Task<IPacketAdapter> Open(DeviceProfile profile,Action<string> trace,CancellationToken token)
     {
         await Preflight(profile,token);
         var mesh=profile.Mesh??throw new IOException("虚拟网卡需要 Mesh 网络");
-        var official=await Task.Run(()=>new NativeAdapter(Path.Combine(AppContext.BaseDirectory,"components"),mesh.Pair.Network,mesh.Self.Slot),token);
-        PacketAdapterProviders.RequireProduction(official.Descriptor);
-        return official;
+        return await Task.Factory.StartNew<IPacketAdapter>(() => {
+            // Official PnP APIs are synchronous. Keep their waits off the
+            // packet/control thread pool and join their rollback on cancel.
+            var official = new NativeAdapter(Path.Combine(AppContext.BaseDirectory,"components"),mesh.Pair.Network,mesh.Self.Slot,trace,token);
+            try { token.ThrowIfCancellationRequested(); PacketAdapterProviders.RequireProduction(official.Descriptor); return official; }
+            catch { official.Dispose(); throw; }
+        }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);
     }
 }

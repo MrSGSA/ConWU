@@ -1,0 +1,121 @@
+{
+  "schema": 1,
+  "specification": "AQ-1",
+  "recordedAt": "2026-10-31T14:38:36.7719221+08:00",
+  "baseHead": "e05263715c894f0bf390f1b9e50f0032403455fe",
+  "branch": "feat/formal-stability-20261030",
+  "dirtyWorktree": true,
+  "executionState": "ImplementedNotValidated",
+  "productReadiness": "NotQualified",
+  "userConstraint": "先不测试；继续当前可执行代码优化。",
+  "testsExecuted": false,
+  "testProjectsBuilt": false,
+  "applicationStarted": false,
+  "browserStarted": false,
+  "driversStartedOrStopped": false,
+  "installedOrPublished": false,
+  "newReleasePackageCreated": false,
+  "frozenCandidateModified": false,
+  "priorSnapshot": "docs/aq1/development-20261031/keepalive-observation-state.json",
+  "builds": [
+    {
+      "name": "Core-Service-Tray",
+      "command": "dotnet build src/StreamLink.App/StreamLink.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/build-ui-response-budget-final-app.log",
+      "exitCode": 0,
+      "warnings": 0,
+      "logSha256": "f2163aabb8a92ee44cfc47d6d4d80d8779e4c701b89e1da06d6272c0f67e92ea"
+    },
+    {
+      "name": "Web",
+      "command": "dotnet build src/StreamLink.Web/StreamLink.Web.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/build-ui-response-budget-final-web.log",
+      "exitCode": 0,
+      "warnings": 0,
+      "logSha256": "334411b30cbebed5ab9fef35ab3db5a95913558971b41ff84d4ca63d4d6b17fb"
+    }
+  ],
+  "implementationAreas": [
+    "UI response presentation reductions using actual serialized message size under unchanged 64 KiB limit",
+    "Preserved command outcome and current operation when complete status cannot fit",
+    "Public operation/adapter/quality text redaction before Unicode-safe clipping",
+    "Explicit diagnostics omissions and stale-status handling in WebUI and tray",
+    "Separate request execution and reply write failure stages"
+  ],
+  "sourceFilesystemDigests": [
+    {
+      "path": "src/StreamLink.Core/ServiceProtocol.cs",
+      "sha256": "68b1518769d9d8ce8ecc6e97733eab38b6caa57e1a02b3f6becaf94185104bbd"
+    },
+    {
+      "path": "src/StreamLink.Core/UiControlProtocol.cs",
+      "sha256": "471ee9080b2a5ee1e9adaba12fbb70f5292b9a85938531604adc9bafe387ebb2"
+    },
+    {
+      "path": "src/StreamLink.Service/ControlWorker.Ui.cs",
+      "sha256": "c64940d60c74caae513ac8a8a79a04054c593cf26fd3a7d05bc638559be63130"
+    },
+    {
+      "path": "src/StreamLink.Service/ControlWorker.UiReplies.cs",
+      "sha256": "1a081b5da221105f700b242ecf14cea9ea943011fe8c4ef6ef7afd15d3820401"
+    },
+    {
+      "path": "src/StreamLink.App/WebTrayContext.cs",
+      "sha256": "3fec43223d2c1ee9e6f5fbdd863837113892bece7d08f2dfa6ad94fc06c236bd"
+    },
+    {
+      "path": "src/StreamLink.Web/wwwroot/app.js",
+      "sha256": "b9f48ee9aaaf715ac8e451ec382f3d86d1ec4a63a830cd27869646e6f3336887"
+    },
+    {
+      "path": "src/StreamLink.Web/wwwroot/index.html",
+      "sha256": "710b836bd76c1d255b6ce56c0b01a3fe64a07481c552b4de558c3632998557cd"
+    }
+  ],
+  "developmentBinaryDigests": [
+    {
+      "path": "src/StreamLink.Core/bin/Release/net10.0/StreamLink.Core.dll",
+      "sha256": "3ff5b69a226200f643198d0f52679db32d26fcd4156b650e3ac721f2043974bb"
+    },
+    {
+      "path": "src/StreamLink.Service/bin/Release/net10.0-windows/StreamLink.Service.dll",
+      "sha256": "893b92bfd58931d5217ea7ae3161e19b89d97a6656c2ce47a54d35ae87fb7e9a"
+    },
+    {
+      "path": "src/StreamLink.App/bin/Release/net10.0-windows/StreamLink.dll",
+      "sha256": "acd996ec0fa2449bbd93f2e8bed39dc97bfc65bbf21bcc9063a550db94f6a9b3"
+    },
+    {
+      "path": "src/StreamLink.Web/bin/Release/net10.0-windows/StreamLink.Web.dll",
+      "sha256": "ad187b0996272dc5d7b2373be455b785a3640355b8afeaa3940d9eb53d4bbc07"
+    }
+  ],
+  "priorEvidenceReadOnly": [],
+  "correctnessReview": "docs/aq1/development-20261031/持续优化-正确性与安全.md",
+  "productReview": "docs/aq1/development-20261031/持续优化-产品与质量.md",
+  "implementationRecord": "docs/aq1/development-20261031/持续优化-WebUI状态容量.md",
+  "affectedVerificationDeferred": [
+    "Normal/exact-limit/oversized JSON replies including Chinese and single long log lines",
+    "Eight-member full and reduced snapshots with original evidence preserved",
+    "Committed command result and operation ID across omitted status and partial write failure",
+    "Credential/invitation redaction and surrogate-pair clipping",
+    "Browser stale state, draft behavior, omissions export, tray and old property-absent replies",
+    "Allocation and response latency under concurrent polling"
+  ],
+  "unchangedOutstanding": [
+    "600-second stress failure and physical delivery deficit",
+    "Wintun 4319/0x38 and close/reopen timing",
+    "Actual streaming and independent eight-Windows-stack qualification"
+  ],
+  "notes": "Compilation, JavaScript syntax parsing and separated static reviews only. No runtime serialization, UI, stress or driver tests; current behavior is implemented but not validated. Raw administrator ControlReply messages retain existing behavior.",
+  "syntaxChecks": [
+    {
+      "command": "node --check src/StreamLink.Web/wwwroot/app.js",
+      "exitCode": 0,
+      "log": "artifacts/development-20261031/parse-ui-response-budget-final-web.log",
+      "logSha256": "03bab6fbb7243da053de2ab72bf2e70fa87a552918bd1feb04f3bec05ad9da5c",
+      "pageExecuted": false
+    }
+  ],
+  "rawAdminControlRepliesAdapted": false
+}

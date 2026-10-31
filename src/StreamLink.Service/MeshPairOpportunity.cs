@@ -17,6 +17,7 @@ internal sealed class MeshPairOpportunity
     public int Failures { get; private set; }
     public string Outcome { get; private set; } = "";
     public int Count(TraversalProfile kind) => rounds.GetValueOrDefault(kind);
+    public int TotalRounds => rounds.Values.Sum();
     public void RequestRetry() { if(!Open && !Connected)RetryAt = 0; }
     public static int RoundMs(TraversalProfile kind) => kind switch {
         TraversalProfile.LegacyExplicit => 15000, // existing legacy client validation window

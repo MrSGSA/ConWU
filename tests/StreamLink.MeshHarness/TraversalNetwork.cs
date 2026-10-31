@@ -54,7 +54,7 @@ static class TraversalNetwork
         long connected = 0; string failure = "", cleanupFailure=""; Exception? originalRunFailure=null; bool adapterCreated = false, controlReady=false, deadlineReached=false,controlAuthenticationFailed=false,budgetFailureObserved=false; var timer = Stopwatch.StartNew();
         var services = MeshRuntimeServices.Default with {
             SessionRoot = Path.Combine(folder, "sessions"),
-            Adapter = async p => { var adapter = await MeshRuntimeServices.Default.Adapter(p); adapterCreated = true; return adapter; },
+            ProfileAdapter = async (p, trace, ct) => { var adapter = await PersonalPacketAdapters.Open(p, trace, ct); adapterCreated = true; return adapter; },
             Probe = async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); }, // no UPnP/router changes in this independent test
             Record = (_, _) => { },
             Candidates = async (profile, sessions, log, ct) => c.Kind=="legacy"?null:selectedFactory=new SingleProfile((IMeshCandidateFactory?)factory ??

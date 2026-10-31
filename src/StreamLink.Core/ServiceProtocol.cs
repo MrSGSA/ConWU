@@ -8,16 +8,17 @@ public sealed record ControlOperationStatus(Guid Id, string Command, string Phas
 public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile, SessionStatus? Status, string Invite, string[] Logs, string Quality = "", string Version = "0.2.0", int PathSelectionVersion = 0, int TcpObserverVersion = 0, int PortControlVersion = 0, int UdpIpv6Version = 0, int FakeTcpIpv6Version = 0, int EgressPacingVersion = 0, int TcpCalibrationVersion = 0, int TcpPredictionVersion = 0, int TcpPeerReflexiveVersion = 0, int UdpExplorationVersion = 0, int QualityFeedbackVersion = 0, int StandbyPathsVersion = 0,int PathDiagnosticsVersion=0,int AutoQualityVersion=0, ControlOperationStatus? Operation = null, int ControlOperationsVersion = 0, int ManualQualityVersion = 0,int LegacyEgressPacingVersion=0,bool ServiceReady=false,int UdpEmpiricalStabilityVersion=0);
 public static class ServiceProtocol
 {
+    public const int MaximumMessageBytes = 65536;
     public static string PipeName => WindowsInstance.Name + "-Control-v2";
     public static async Task<T> Read<T>(Stream stream, CancellationToken token)
     {
         byte[] head = new byte[4]; await stream.ReadExactlyAsync(head, token); int length = BinaryPrimitives.ReadInt32LittleEndian(head);
-        if (length is < 1 or > 65536) throw new IOException("控制消息大小无效");
+        if (length is < 1 or > MaximumMessageBytes) throw new IOException("控制消息大小无效");
         byte[] bytes = new byte[length]; await stream.ReadExactlyAsync(bytes, token); return JsonSerializer.Deserialize<T>(bytes) ?? throw new IOException("控制消息为空");
     }
     public static async Task Write<T>(Stream stream, T message, CancellationToken token)
     {
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(message); if (bytes.Length > 65536) throw new IOException("控制消息过大");
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(message); if (bytes.Length > MaximumMessageBytes) throw new IOException("控制消息过大");
         byte[] head = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(head, bytes.Length); await stream.WriteAsync(head, token); await stream.WriteAsync(bytes, token);
     }
     public static async Task<ControlReply> Call(ControlRequest request, CancellationToken token = default)

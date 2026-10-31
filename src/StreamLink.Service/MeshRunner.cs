@@ -1,5 +1,6 @@
 using System.Net;
 using System.Security.Cryptography;
+using System.Text.Json;
 using StreamLink.Core;
 
 namespace StreamLink.Service;
@@ -18,17 +19,26 @@ public sealed class MeshRunner
     internal MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string> rememberStun, MeshRuntimeServices services)
     { this.profile = profile; mesh = profile.Mesh!; this.log = log; this.report = report; this.remember = remember; this.rememberStun = rememberStun; this.services = services; }
     readonly object gate = new();
-    int retryRequested;
+    int retryRequested, runStarted;
+    bool stopping;
     public void RequestRetry() => Interlocked.Exchange(ref retryRequested,1);
     MeshRouter? router;
-    MeshDirectory? pendingDirectory;
     internal object? ExitDiagnostics { get; private set; }
     internal bool CleanupComplete {get;private set;}
     readonly List<object> unprovenOwners=[];
     internal int UnprovenOwnerCount {get{lock(gate)return unprovenOwners.Count;}}
     public void UpdateDirectory(MeshDirectory directory)
     {
-        lock (gate) { MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0); pendingDirectory = directory; router?.ApplyDirectory(directory); }
+        lock (gate) ApplyDirectory(directory);
+    }
+    // Both local membership changes and coordinator snapshots use the same
+    // revision/installation boundary. No user callback is invoked under gate.
+    void ApplyDirectory(MeshDirectory directory)
+    {
+        MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0);
+        if (!directory.Members.Contains(mesh.Self)) throw new MeshRevokedException();
+        if (!stopping) router?.ApplyDirectory(directory);
+        mesh.Directory = directory;
     }
     string? QualityKey(IPAddress address)
     {
@@ -47,6 +57,7 @@ public sealed class MeshRunner
     }
     public async Task Run(CancellationToken token)
     {
+        if (Interlocked.CompareExchange(ref runStarted, 1, 0) != 0) throw new InvalidOperationException("同一网络运行器不能重复或并发启动");
         profile.Validate(); mesh.Validate();
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
@@ -61,7 +72,8 @@ public sealed class MeshRunner
         IMeshCandidateFactory? factory = null;
         MeshTraversalManager? traversal = null;
         MeshTraversalMessage[] pendingControl = [];
-        IMapping? mapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
+        IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
+        bool mappingReleaseFailed = false;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -82,7 +94,9 @@ public sealed class MeshRunner
         long began = Environment.TickCount64;
         bool coordinatorUnavailable = false;
         AdapterRuntimeStatus adapterStatus = new(profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? PacketAdapterProviders.OfficialWintun : PacketAdapterProviders.NativeExperimental,null,"NotOpened","尚未打开虚拟网卡");
-        IPacketAdapter? actualAdapter=null;
+        IPacketAdapter? actualAdapter=null, pendingAdapter=null;
+        string adapterPhase = "lifecycle-wait";
+        long nextAdapterReport = 0;
         string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
         void Warning(Exception ex)
         {
@@ -93,8 +107,10 @@ public sealed class MeshRunner
             gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
             timeline.Mark("原生网络开始启动");
             report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, "正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus,Connection=new("StartingAdapter","正在准备虚拟网卡与本机入口。")});
-            opening = profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? services.Adapter(mesh) :
-                services.ProfileAdapter is {} create ? create(profile,stop) : throw new IOException("此运行环境未提供自研 TUN 准入工厂");
+            opening = services.ProfileAdapter is {} create ? create(profile, phase => {
+                Volatile.Write(ref adapterPhase, phase); log($"WintunLifecycle elapsedMs={Environment.TickCount64-began} stage={phase}");
+            }, stop) : profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? services.Adapter(mesh) :
+                throw new IOException("此运行环境未提供官方 Wintun 准入工厂");
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
                 if(Interlocked.Exchange(ref retryRequested,0)!=0) {
@@ -121,13 +137,18 @@ public sealed class MeshRunner
                 }
                 if (opening?.IsCompleted == true) {
                     IPacketAdapter adapter;
-                    try { adapter=await opening; }
+                    try { pendingAdapter=adapter=await opening; }
                     catch(Exception ex) { adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
                     opening = null;actualAdapter=adapter;
                     adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason="已由实际工厂打开官方 Wintun",Abi=adapter.Descriptor.Abi,Loaded=true};
                     if(adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
                         log($"虚拟网段路由警告：{warning.Reason}；{warning.Prefix}；现有路由未改动，可在诊断中检查其他 VPN/父网段");
-                    try { router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection()); } catch { adapter.Dispose(); throw; }
+                    // Keep startup ownership through descriptor/logging/router
+                    // validation. Only a successful Router takes the adapter.
+                    lock (gate) {
+                        router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
+                        pendingAdapter = null;
+                    }
                     services.Record(folder, rule);
                     try{quality=services.QualityWithPolicy is {} controlled?controlled(profile,mesh.LocalIp,QualityKey,stop):services.QualityServer(mesh.LocalIp,QualityKey,stop);}
                     catch(Exception ex){log("测速服务不可用，组网继续运行："+ex.Message);}
@@ -140,10 +161,14 @@ public sealed class MeshRunner
                 }
                 if (router?.Completion.IsCompleted == true) await router.Completion;
                 if (quality?.IsCompleted == true) {try{await quality;}catch(Exception ex)when(!stop.IsCancellationRequested){log("测速服务不可用，组网继续运行："+ex.Message);}quality=null;}
-                lock (gate) if (pendingDirectory != null) { mesh.Directory = pendingDirectory; pendingDirectory = null; }
-                if (releasing?.IsCompleted == true) {
-                    try { await releasing; } catch (Exception ex) { log("旧映射清理：" + ex.Message); }
-                    releasing = null;
+                if (releasing?.IsCompleted == true && !mappingReleaseFailed) {
+                    try { await releasing; releasing = null; retiringMapping = null; }
+                    catch (Exception ex) {
+                        // Failed completion is not release proof. Keep both the
+                        // task and its owner; other healthy paths may continue.
+                        mappingReleaseFailed = true;
+                        log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
+                    }
                 }
                 if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) probe = services.Probe(profile, log, stop);
                 if (probe?.IsCompleted == true) {
@@ -165,7 +190,8 @@ public sealed class MeshRunner
                     // it until process failure, a source-address change or stop.
                     // Legacy raw UDP still has a helper-specific shared bind.
                     if (mesh.Pair.Mode == "udp") { server?.Dispose(); server = null; }
-                    releasing = mapping!.DisposeAsync().AsTask(); mapping = null; maintain = null; nextProbe = now + 1000;
+                    retiringMapping = mapping!;
+                    releasing = ReleaseMapping(retiringMapping); mapping = null; maintain = null; nextProbe = now + 1000;
                 }
                 if (server?.Exited == true) {
                     if (now - serverStarted >= 30000) serverFailures = 0;
@@ -191,19 +217,25 @@ public sealed class MeshRunner
                 if (reading?.IsCompleted == true) {
                     try {
                         var snapshot = await reading; readFailures = 0; coordinatorUnavailable = false;
-                        if (snapshot != null && snapshot.Directory.Revision >= (mesh.Directory?.Revision ?? 0)) {
-                            long previous = mesh.Directory?.Revision ?? 0;
-                            MeshIdentity.ValidateDirectory(snapshot.Directory, mesh.Pair.Network, mesh.OwnerKey, previous);
-                            router?.ApplyDirectory(snapshot.Directory);
-                            lock (gate) mesh.Directory = snapshot.Directory;
+                        bool applied = false; long previous;
+                        lock (gate) {
+                            previous = mesh.Directory?.Revision ?? 0;
+                            if (snapshot != null && snapshot.Directory.Revision >= previous) {
+                                ApplyDirectory(snapshot.Directory); applied = true;
+                            }
+                        }
+                        if (applied && snapshot != null) {
                             if (snapshot.Directory.Revision > previous) remember(snapshot.Directory);
-                            foreach (var envelope in snapshot.Nodes) {
+                            foreach (var envelope in snapshot.Nodes ?? []) {
+                                if (envelope == null) { log("已拒绝空成员公告"); continue; }
                                 var member = snapshot.Directory.Members.FirstOrDefault(m => m.Slot == envelope.Slot && m.Slot != mesh.Self.Slot); if (member == null) continue;
                                 try {
                                     var announcement = MeshMetadata.Open(mesh, member, envelope);
                                     if (revisions.GetValueOrDefault(member.Slot) > announcement.Revision) continue;
                                     revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
-                                } catch (Exception ex) when (ex is CryptographicException or FormatException) { log("已拒绝无效成员公告"); }
+                                } catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException) {
+                                    log($"已拒绝设备 {member.Slot} 的无效成员公告");
+                                }
                             }
                             if (traversal != null) traversal.Receive(snapshot.Traversal); else pendingControl = snapshot.Traversal ?? [];
                         }
@@ -232,7 +264,24 @@ public sealed class MeshRunner
                 }
                 // Negotiated mode shares 40 requests/minute across these HTTP
                 // operations and traversal states. Legacy keeps its old cadence.
-                if (router == null) { await Task.Delay(100, stop); continue; }
+                if (router == null) {
+                    if (now >= nextAdapterReport) {
+                        string phase = Volatile.Read(ref adapterPhase);
+                        string detail = phase switch {
+                            "lifecycle-wait" => "正在申请网卡资源，等待当前设备操作完成。",
+                            "previous-interface-wait" or "identity-vacant-wait" => "正在等待旧网卡退出；完成回收后继续连接。",
+                            "adapter-create-retry-1" or "adapter-create-retry-2" => "Windows 尚未准备好网卡，正在进行有限重试。",
+                            "ipv4-interface-wait" => "网卡已创建，正在等待 Windows 网络接口就绪。",
+                            _ when phase.StartsWith("open-rollback/",StringComparison.Ordinal) => "创建未完成，正在安全回收本轮网卡资源。",
+                            _ => "正在准备 Wintun 网卡；Windows 设备操作完成后继续连接。"
+                        };
+                        adapterStatus = adapterStatus with { State="Opening", Reason=detail };
+                        report(new("正在创建虚拟网卡",mesh.LocalIp,"",mesh.Pair.Mode,false,null,detail) {
+                            Adapter=adapterStatus,Connection=new("StartingAdapter",detail,now-began) });
+                        nextAdapterReport = now + 1000;
+                    }
+                    await Task.Delay(100, stop); continue;
+                }
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                 string remoteAddresses = string.Join(',', members.Select(m => MeshIdentity.Address(mesh.Pair.Network, m.Slot)));
                 if (firewallMembers != remoteAddresses) {
@@ -297,6 +346,13 @@ public sealed class MeshRunner
                     }
                     int count = statuses.Count(p => p.Connected); var first = statuses.FirstOrDefault(p => p.Connected);
                     if (now >= nextTrafficReport) {
+                        var pressure = router.Pressure();
+                        log($"RouterPressure maintenanceAgeMs={pressure.MaintenanceAgeMs} maximumDelayMs={pressure.MaximumMaintenanceDelayMs} maximumLockWaitMs={pressure.MaximumMaintenanceLockWaitMs} maximumWorkMs={pressure.MaximumMaintenanceWorkMs} receiveYields={pressure.ReceiveYields} legacySendRejected={pressure.LegacySendRejected}");
+                        foreach (var peer in statuses) if (peer.LocalDrops is {Total: > 0} drops)
+                            log($"RouterDrops slot={peer.Slot} noHealthyPath={drops.NoHealthyPath} sendRejected={drops.SendRejected} authenticationRejected={drops.AuthenticationRejected} receivePolicyRejected={drops.ReceivePolicyRejected} adapterWriteRejected={drops.AdapterWriteRejected}；仅为本机拒绝阶段，不代表物理链路损失");
+                        foreach (var peer in statuses) if (peer.NativeEvidence is {BridgeSendQueue:{} sendQueue,BridgeReceiveQueue:{} receiveQueue} native &&
+                            sendQueue.DataRejected + sendQueue.ControlRejected + receiveQueue.DataRejected + receiveQueue.ControlRejected + native.BridgeSocketRejected > 0)
+                            log($"NativeBridgeDrops slot={peer.Slot} sendData={sendQueue.DataRejected} sendControl={sendQueue.ControlRejected} receiveData={receiveQueue.DataRejected} receiveControl={receiveQueue.ControlRejected} socketRejected={native.BridgeSocketRejected} queueConserved={sendQueue.Conserved && receiveQueue.Conserved}；本机原生桥计数，不代表对端送达");
                         foreach (var peer in statuses) if (peer.Traffic?.Windows.LastOrDefault(w => w.Complete) is {} window &&
                             (window.AcceptedSendBytes > 0 || window.DeliveredReceiveBytes > 0))
                             log($"设备 {peer.Slot} 路径业务窗口 {window.Seconds:F2} 秒：接受发送 {window.AcceptedSendMbps:F3} Mbps，已交付接收 {window.DeliveredReceiveMbps:F3} Mbps，拒绝 {window.SendRejectedPackets}；" +
@@ -308,15 +364,25 @@ public sealed class MeshRunner
                         nextTrafficReport = now + 30000;
                     }
                     int degraded = statuses.Count(p => p.Degraded);
-                    var waiting = statuses.FirstOrDefault(p=>!p.Connected)?.Connection;
+                    var waitingPeer = statuses.Where(p=>!p.Connected).OrderBy(p=>p.Connection?.Phase switch {
+                        "Blocked"=>0,"Releasing"=>1,"Retrying"=>2,"Queued"=>3,_=>4 }).FirstOrDefault();
+                    var waiting = waitingPeer?.Connection;
+                    if (waiting != null) waiting = waiting with {
+                        CanRetry=statuses.Any(p=>!p.Connected && p.Connection?.CanRetry == true),
+                        Detail=statuses.Length>1?(string.IsNullOrWhiteSpace(waitingPeer!.Name)?"设备 "+waitingPeer.Slot:waitingPeer.Name)+"："+waiting.Detail:waiting.Detail };
                     var connection = waiting ?? new ConnectionProgress(statuses.Length==0?"WaitingPeer":"Connected",
                         statuses.Length==0?"网络已启动，等待另一台设备加入。":"直连已通过双向验证，可复制设备 IP 开始串流。",now-began);
                     if(coordinatorUnavailable)connection=connection with {Detail="协调服务暂不可用，已有直连继续运行；新增连接可能延迟。 "+connection.Detail};
-                    report(new(statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP）" : "已直连" : count > 0 ? "部分设备已直连" : "正在连接", mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
+                    if(mappingReleaseFailed)connection=connection with {Detail="本机入口资源回收失败，已暂停入口重建；已有直连继续运行，请保留诊断后重启后台处理。 "+connection.Detail};
+                    string connectionState = statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP）" : "已直连" : count > 0 ? "部分设备已直连" : connection.Phase switch {
+                        "Blocked"=>"有设备需要处理","Releasing"=>"正在回收连接资源","Retrying"=>"等待重试",
+                        "Queued"=>"等待连接名额","WaitingPeer"=>"等待设备响应",_=>"正在连接" };
+                    var adapterStatistics = actualAdapter?.Statistics;
+                    report(new(connectionState, mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP，质量单独评估" : ""), first?.Name ?? "", statuses) {
-                            Connection=connection,
-                            Adapter = actualAdapter is {} observed ? adapterStatus with {ReadPackets=observed.Statistics.ReadPackets,WrittenPackets=observed.Statistics.WrittenPackets} : adapterStatus,
-                            AdapterStatistics = actualAdapter?.Statistics,
+                            Connection=connection, RouterPressure=router.Pressure(),
+                            Adapter = adapterStatistics is {} observed ? adapterStatus with {ReadPackets=observed.ReadPackets,WrittenPackets=observed.WrittenPackets} : adapterStatus,
+                            AdapterStatistics = adapterStatistics,
                             Egress = egress, ControlAdmission = TraversalResources.Shared.Usage(),
                             TcpHelpers = TcpHelperLedger.Shared.Snapshot(),
                             LegacyTransports = LegacyTransportLedger.Shared.Snapshot(),
@@ -335,6 +401,7 @@ public sealed class MeshRunner
                 Adapter=adapterStatus,Connection=new("Recovering","连接组件发生异常，正在安全退出旧资源后重试。",nowElapsed(),CanRetry:false) });
             throw;
         } finally {
+            lock (gate) stopping = true;
             long shutdownStarted = Environment.TickCount64;
             var cleanupFailures=new List<string>();
             void CleanupFailed(string stage,Exception ex,object? owner=null){if(owner!=null)lock(gate)unprovenOwners.Add(owner);cleanupFailures.Add(stage+":"+ex.GetType().Name+":"+ex.Message);try{log("资源退出未完成："+cleanupFailures[^1]);}catch{}}
@@ -354,9 +421,18 @@ public sealed class MeshRunner
             ShutdownStage("mapping-probe");
             if (probe != null) { try { mapping = await probe; } catch { } }
             ShutdownStage("adapter-startup");
-            if (opening != null) { IPacketAdapter? opened=null;try{opened=await opening;}catch{}if(opened!=null)try{opened.Dispose();}catch(Exception ex){CleanupFailed("adapter-startup",ex,opened);} }
+            if (opening != null) try { pendingAdapter=await opening; } catch { }
+            if (pendingAdapter != null) try { pendingAdapter.Dispose(); } catch (Exception ex) { CleanupFailed("adapter-startup",ex,pendingAdapter); }
             ShutdownStage("maintenance-and-http");
-            foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) { try { await task; } catch (Exception ex) { if(ex is not OperationCanceledException){if(ReferenceEquals(task,releasing))CleanupFailed("mapping-release",ex);else try{log("退出任务已结束："+ex.Message);}catch{}} } }
+            foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) {
+                try { await task; }
+                catch (Exception ex) {
+                    // Even a cancelled release is unproven ownership. An HTTP
+                    // or maintenance cancellation is only an operation ending.
+                    if (ReferenceEquals(task,releasing)) CleanupFailed("mapping-release",ex,retiringMapping);
+                    else if (ex is not OperationCanceledException) try { log("退出任务已结束："+ex.Message); } catch { }
+                }
+            }
             ShutdownStage("legacy-clients");
             foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { CleanupFailed("legacy-client",ex,client); } }
             ShutdownStage("listener");
@@ -374,5 +450,6 @@ public sealed class MeshRunner
             if(!CleanupComplete)throw new MeshShutdownException(cleanupFailures.ToArray());
         }
         long nowElapsed() => Environment.TickCount64-began;
+        static async Task ReleaseMapping(IMapping owner) => await owner.DisposeAsync();
     }
 }

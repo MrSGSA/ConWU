@@ -1,0 +1,169 @@
+{
+  "schema": 1,
+  "specification": "AQ-1",
+  "recordedAt": "2026-10-31T15:02:46.9655828+08:00",
+  "baseHead": "e05263715c894f0bf390f1b9e50f0032403455fe",
+  "branch": "feat/formal-stability-20261030",
+  "dirtyWorktree": true,
+  "executionState": "ImplementedNotValidated",
+  "productReadiness": "NotQualified",
+  "userConstraint": "先不测试；只进行代码、静态审查和编译准备。",
+  "testProjectsBuilt": true,
+  "testsExecuted": false,
+  "applicationStarted": false,
+  "browserStarted": false,
+  "driversStartedOrStopped": false,
+  "installedOrPublished": false,
+  "newReleasePackageCreated": false,
+  "frozenCandidateModified": false,
+  "priorSnapshot": "docs/aq1/development-20261031/ui-response-budget-state.json",
+  "builds": [
+    {
+      "project": "tests/StreamLink.MeshHarness/StreamLink.MeshHarness.csproj",
+      "command": "dotnet build tests/StreamLink.MeshHarness/StreamLink.MeshHarness.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.MeshHarness.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.MeshHarness.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "365225d2a3ff3ea4faf4422b31a1b8a3997851fe4b22f1ae74cff7f2490e36a3",
+      "restoreLogSha256": "38f362242ec557de33b4b31b375a585b1685fcb3d250b46758d8fbe25ca0a34c",
+      "restoreCommand": "dotnet restore tests/StreamLink.MeshHarness/StreamLink.MeshHarness.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.EgressTests/StreamLink.EgressTests.csproj",
+      "command": "dotnet build tests/StreamLink.EgressTests/StreamLink.EgressTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.EgressTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.EgressTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "7b2bef1b16f0d33c08fba140a47a9cb33c03b913a97b0454adcaac48e87af716",
+      "restoreLogSha256": "fe55520716e943006cbada5bfa817fddc9488b775d79d35544224bef47f14ee7",
+      "restoreCommand": "dotnet restore tests/StreamLink.EgressTests/StreamLink.EgressTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.ManagedPathTests/StreamLink.ManagedPathTests.csproj",
+      "command": "dotnet build tests/StreamLink.ManagedPathTests/StreamLink.ManagedPathTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.ManagedPathTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.ManagedPathTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "8cc221cdad698cacaa89757bf1db6eb007f00cc1b57ae28b340a10591529cf75",
+      "restoreLogSha256": "b964d7c6725dab0d56e7e506d11c3192c848a389468264f3aa08c7d4ab6255b1",
+      "restoreCommand": "dotnet restore tests/StreamLink.ManagedPathTests/StreamLink.ManagedPathTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.MeshRunnerTraversalTests/StreamLink.MeshRunnerTraversalTests.csproj",
+      "command": "dotnet build tests/StreamLink.MeshRunnerTraversalTests/StreamLink.MeshRunnerTraversalTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.MeshRunnerTraversalTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.MeshRunnerTraversalTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "10e3c80fe52d94d33c2a86ba8a2b3cb84f6f43768ce019b472b7ee5a4614cbda",
+      "restoreLogSha256": "8016750060736f481e5dc10de47b3a604349a9d69f4a13815281a74b2fb527eb",
+      "restoreCommand": "dotnet restore tests/StreamLink.MeshRunnerTraversalTests/StreamLink.MeshRunnerTraversalTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.MeshConnectionTests/StreamLink.MeshConnectionTests.csproj",
+      "command": "dotnet build tests/StreamLink.MeshConnectionTests/StreamLink.MeshConnectionTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.MeshConnectionTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.MeshConnectionTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "8270b9de1bd8330f9b4d1e160a24a16a52e34cecb665c94d509135e07a7aa448",
+      "restoreLogSha256": "b9bf5f51d2f3e708922027393e6131fd2c972759cec24c86170dd0d4b63977b0",
+      "restoreCommand": "dotnet restore tests/StreamLink.MeshConnectionTests/StreamLink.MeshConnectionTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.WebTests/StreamLink.WebTests.csproj",
+      "command": "dotnet build tests/StreamLink.WebTests/StreamLink.WebTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.WebTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.WebTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "13f21fd39e071f60d3da0bf03033f93ea6bb0adafb5941a5e4ac049949ffe528",
+      "restoreLogSha256": "3d60e6b94d92cec7c166c75b00dcd4d14d0c2973a074cdf5bd6baf831e200bde",
+      "restoreCommand": "dotnet restore tests/StreamLink.WebTests/StreamLink.WebTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    },
+    {
+      "project": "tests/StreamLink.AqLifecycleTests/StreamLink.AqLifecycleTests.csproj",
+      "command": "dotnet build tests/StreamLink.AqLifecycleTests/StreamLink.AqLifecycleTests.csproj --no-restore -c Release --nologo -v:minimal",
+      "log": "artifacts/development-20261031/compile-prepared-StreamLink.AqLifecycleTests.log",
+      "restoreLog": "artifacts/development-20261031/restore-only-StreamLink.AqLifecycleTests.log",
+      "restoreExitCode": 0,
+      "exitCode": 0,
+      "executed": false,
+      "logSha256": "faeb518e0d2a3afc44d9b4b5f0b88748099fe99efa6ad856e63871f02ffcba90",
+      "restoreLogSha256": "325ed17c0b9cbd5d4a5b36fa8b3e7b8e90f9605777001d9c7f953dc43ebb2d5d",
+      "restoreCommand": "dotnet restore tests/StreamLink.AqLifecycleTests/StreamLink.AqLifecycleTests.csproj --ignore-failed-sources -p:NuGetAudit=false --nologo -v:minimal"
+    }
+  ],
+  "verificationAssemblyDigests": [
+    {
+      "path": "tests/StreamLink.MeshHarness/bin/Release/net10.0-windows/StreamLink.MeshHarness.dll",
+      "sha256": "6a88914c04a10ff35807d70079e4384800187c850f47218a656b37d06d550bdd"
+    },
+    {
+      "path": "tests/StreamLink.EgressTests/bin/Release/net10.0-windows/StreamLink.EgressTests.dll",
+      "sha256": "735c292cb662266abe2c2bc2fd1655558fd8982f6d853ca43188f6124ab96e82"
+    },
+    {
+      "path": "tests/StreamLink.ManagedPathTests/bin/Release/net10.0/StreamLink.ManagedPathTests.dll",
+      "sha256": "47aa865b4ddffa0b87b333d465f677b9a0895e8817f55249d8dcb13445578215"
+    },
+    {
+      "path": "tests/StreamLink.MeshRunnerTraversalTests/bin/Release/net10.0-windows/StreamLink.MeshRunnerTraversalTests.dll",
+      "sha256": "8aa74795d86bdb3ac187a239776cdcb1008766dbfb8bb92bf51a72971e78e20d"
+    },
+    {
+      "path": "tests/StreamLink.MeshConnectionTests/bin/Release/net10.0-windows/StreamLink.MeshConnectionTests.dll",
+      "sha256": "5f18c295a2c4144794ed93df6783b8e73252c8445aa71884a21ad8b2b15245e6"
+    },
+    {
+      "path": "tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.dll",
+      "sha256": "d245827f4d7fadf0c4932b6cffaa8deabe5068d1907becfaa91d82a315aa1a1c"
+    },
+    {
+      "path": "tests/StreamLink.AqLifecycleTests/bin/Release/net10.0-windows/StreamLink.AqLifecycleTests.dll",
+      "sha256": "d8f62386425d45fdc0cf218eaf08f15fdb008558ac9809a1c26c67bfd4d9f398"
+    }
+  ],
+  "productBinariesAfterCompilation": [
+    {
+      "path": "src/StreamLink.Core/bin/Release/net10.0/StreamLink.Core.dll",
+      "matchesPriorHash": true
+    },
+    {
+      "path": "src/StreamLink.Service/bin/Release/net10.0-windows/StreamLink.Service.dll",
+      "matchesPriorHash": true
+    },
+    {
+      "path": "src/StreamLink.App/bin/Release/net10.0-windows/StreamLink.dll",
+      "matchesPriorHash": true
+    },
+    {
+      "path": "src/StreamLink.Web/bin/Release/net10.0-windows/StreamLink.Web.dll",
+      "matchesPriorHash": true
+    }
+  ],
+  "initialCompileFailure": {
+    "code": "NETSDK1004",
+    "reason": "Missing tests/StreamLink.MeshHarness/obj/project.assets.json",
+    "sourceCompileError": false,
+    "log": "artifacts/development-20261031/compile-only-StreamLink.MeshHarness.log",
+    "resolvedBy": "Dependency restore, then compilation only"
+  },
+  "buildSafetyReview": "Selected projects and shared Directory.Build.targets contain no custom pre/post-build execution; no dotnet run/test, binary launch, native load or browser invocation used.",
+  "cacheRoots": [
+    "D:\\Codex_workspace\\.cache\\StreamLinkTemp",
+    "D:\\Codex_workspace\\.cache\\NuGetPackages",
+    "D:\\Codex_workspace\\.cache\\StreamLinkNuGetHttp"
+  ],
+  "pendingDecision": "Whether the user permits isolated local runtime regression; no answer received at recording time.",
+  "notes": "Executable test assemblies were compiled but never executed. This verifies build compatibility only, not assertions, packet I/O, serialization sizes, timing or runtime ownership."
+}

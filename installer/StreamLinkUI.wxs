@@ -1,0 +1,177 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Fragment>
+    <UI Id="StreamLinkUI">
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" Red="32" Green="49" Blue="41" />
+      <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12" Bold="yes" />
+      <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" />
+      <TextStyle Id="SL_Title" FaceName="Microsoft YaHei UI" Size="18" Bold="yes" Red="24" Green="45" Blue="34" />
+      <TextStyle Id="SL_Heading" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" Red="32" Green="49" Blue="41" />
+      <TextStyle Id="SL_Muted" FaceName="Microsoft YaHei UI" Size="9" Red="94" Green="108" Blue="100" />
+      <TextStyle Id="SL_Small" FaceName="Microsoft YaHei UI" Size="8" Red="94" Green="108" Blue="100" />
+      <TextStyle Id="SL_Brand" FaceName="Segoe UI" Size="16" Bold="yes" Red="239" Green="247" Blue="234" />
+      <TextStyle Id="SL_OnDark" FaceName="Microsoft YaHei UI" Size="11" Red="195" Green="215" Blue="197" />
+      <TextStyle Id="SL_OnDarkSmall" FaceName="Microsoft YaHei UI" Size="8" Red="170" Green="194" Blue="172" />
+      <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+      <Property Id="ARPNOMODIFY" Value="1" />
+      <DialogRef Id="ErrorDlg" />
+      <DialogRef Id="FilesInUse" />
+      <DialogRef Id="MsiRMFilesInUse" />
+      <DialogRef Id="CancelDlg" />
+      <DialogRef Id="WaitForCostingDlg" />
+      <DialogRef Id="OutOfDiskDlg" />
+
+      <Dialog Id="SLWelcomeDlg" Width="460" Height="330" Title="[ProductName] 安装" TrackDiskSpace="yes">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="32" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}安装 StreamLink" HideCondition="WIX_UPGRADE_DETECTED" />
+        <Control Id="UpgradeTitle" Type="Text" X="178" Y="32" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="WIX_UPGRADE_DETECTED" Text="{\SL_Title}更新 StreamLink" />
+        <Control Id="Version" Type="Text" X="179" Y="73" Width="255" Height="15" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}版本 [STREAMLINK_DISPLAY_VERSION]" />
+        <Control Id="Introduction" Type="Text" X="179" Y="101" Width="255" Height="35" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}将电脑连在一起。&#13;&#10;安装后，在 WebUI 中创建或加入网络。" />
+        <Control Id="LocationLabel" Type="Text" X="179" Y="151" Width="255" Height="16" Transparent="yes" Text="{\SL_Heading}安装位置" />
+        <Control Id="Location" Type="Text" X="179" Y="173" Width="255" Height="29" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}[INSTALLFOLDER]" />
+        <Control Id="UpdateNote" Type="Text" X="179" Y="210" Width="255" Height="32" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}更新时将关闭当前版本的窗口并重启后台。&#13;&#10;配对与设备配置会保留。" />
+        <Control Id="LicenseAccepted" Type="CheckBox" X="178" Y="251" Width="174" Height="20" Property="LicenseAccepted" CheckBoxValue="1" Text="我已阅读并同意开源许可(&amp;A)" />
+        <Control Id="License" Type="PushButton" X="363" Y="249" Width="71" Height="22" Text="查看许可(&amp;L)">
+          <Publish Event="SpawnDialog" Value="SLLicenseDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="265" Y="298" Width="68" Height="23" Cancel="yes" Text="取消(&amp;C)">
+          <Publish Event="SpawnDialog" Value="CancelDlg" />
+        </Control>
+        <Control Id="Install" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" ElevationShield="yes" Text="安装 / 更新(&amp;I)" Disabled="yes" EnableCondition="LicenseAccepted = &quot;1&quot;" DisableCondition="LicenseAccepted &lt;&gt; &quot;1&quot;">
+          <Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg" Order="1" Condition="CostingComplete = 1" />
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Order="2" Condition="OutOfDiskSpace = 1" />
+          <Publish Event="EndDialog" Value="Return" Order="3" Condition="LicenseAccepted = &quot;1&quot; AND OutOfDiskSpace &lt;&gt; 1" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SLLicenseDlg" Width="460" Height="330" Title="开源许可与第三方声明">
+        <Control Id="Title" Type="Text" X="24" Y="19" Width="410" Height="26" NoPrefix="yes" Text="{\WixUI_Font_Bigger}开源许可与第三方声明" />
+        <Control Id="Introduction" Type="Text" X="24" Y="53" Width="410" Height="28" NoPrefix="yes" Text="无需激活或购买授权。以下为本软件及随包组件的开源使用说明。" />
+        <Control Id="LicenseText" Type="ScrollableText" X="24" Y="91" Width="410" Height="188" Sunken="yes" TabSkip="no">
+          <Text SourceFile="$(var.StreamLinkLicenseRtf)" />
+        </Control>
+        <Control Id="Close" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="返回(&amp;B)">
+          <Publish Event="EndDialog" Value="Return" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SLMaintenanceDlg" Width="460" Height="330" Title="维护 [ProductName]" TrackDiskSpace="yes">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="32" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}管理安装" />
+        <Control Id="Introduction" Type="Text" X="179" Y="81" Width="255" Height="31" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}这台电脑已经安装了 StreamLink。&#13;&#10;选择需要进行的操作。" />
+        <Control Id="Repair" Type="PushButton" X="178" Y="137" Width="101" Height="26" Default="yes" Text="修复安装(&amp;R)" DisableCondition="ARPNOREPAIR">
+          <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Order="1" Condition="OutOfDiskSpace = 1" />
+          <Publish Property="WixUI_InstallMode" Value="Repair" Order="2" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="ReinstallMode" Value="ecmus" Order="3" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="Reinstall" Value="All" Order="4" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="EndDialog" Value="Return" Order="5" Condition="OutOfDiskSpace &lt;&gt; 1" />
+        </Control>
+        <Control Id="RepairNote" Type="Text" X="179" Y="174" Width="255" Height="28" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}恢复程序文件与后台服务，保留个人配置。" />
+        <Control Id="Remove" Type="PushButton" X="178" Y="216" Width="101" Height="26" Text="卸载软件(&amp;U)" DisableCondition="ARPNOREMOVE">
+          <Publish Event="NewDialog" Value="SLRemoveDlg" />
+        </Control>
+        <Control Id="RemoveNote" Type="Text" X="179" Y="252" Width="255" Height="19" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}移除程序和后台服务，保留配对与设备配置。" />
+        <Control Id="Cancel" Type="PushButton" X="344" Y="298" Width="90" Height="23" Cancel="yes" Text="关闭(&amp;C)">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SLRemoveDlg" Width="460" Height="330" Title="卸载 [ProductName]">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="32" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}卸载 StreamLink" />
+        <Control Id="Description" Type="Text" X="179" Y="93" Width="255" Height="44" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}将关闭 StreamLink 并移除程序与后台服务。&#13;&#10;本次操作会中断正在进行的连接。" />
+        <Control Id="RetainedTitle" Type="Text" X="179" Y="162" Width="255" Height="17" Transparent="yes" Text="{\SL_Heading}配对和配置仍会保留" />
+        <Control Id="RetainedNote" Type="Text" X="179" Y="190" Width="255" Height="42" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}重新安装后可以继续使用。&#13;&#10;其他应用使用的共享驱动不会被删除。" />
+        <Control Id="Back" Type="PushButton" X="178" Y="298" Width="68" Height="23" Text="返回(&amp;B)" Hidden="yes" ShowCondition="NOT (REMOVE ~= &quot;ALL&quot;)">
+          <Publish Event="NewDialog" Value="SLMaintenanceDlg" />
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="265" Y="298" Width="68" Height="23" Default="yes" Cancel="yes" Text="取消(&amp;C)">
+          <Publish Event="EndDialog" Value="Exit" />
+        </Control>
+        <Control Id="Remove" Type="PushButton" X="344" Y="298" Width="90" Height="23" ElevationShield="yes" Text="确认卸载(&amp;U)">
+          <Publish Property="WixUI_InstallMode" Value="Remove" Order="1" />
+          <Publish Event="Remove" Value="All" Order="2" />
+          <Publish Event="EndDialog" Value="Return" Order="3" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SLPrepareDlg" Width="460" Height="330" Title="[ProductName] 安装" Modeless="yes">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}正在准备" />
+        <Control Id="Description" Type="Text" X="179" Y="101" Width="255" Height="45" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}正在检查当前安装和可用空间。&#13;&#10;准备完成后即可继续。" />
+        <Control Id="ActionText" Type="Text" X="179" Y="173" Width="255" Height="44" Transparent="yes" NoPrefix="yes"><Subscribe Event="ActionText" Attribute="Text" /></Control>
+        <Control Id="Cancel" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="取消(&amp;C)"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+
+      <Dialog Id="SLProgressDlg" Width="460" Height="330" Title="[ProductName] 安装" Modeless="yes">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}正在安装" HideCondition="WixUI_InstallMode OR REINSTALL OR REMOVE ~= &quot;ALL&quot; OR WIX_UPGRADE_DETECTED" />
+        <Control Id="UpdateTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="NOT (REMOVE ~= &quot;ALL&quot;) AND WixUI_InstallMode &lt;&gt; &quot;Remove&quot; AND NOT REINSTALL AND WixUI_InstallMode &lt;&gt; &quot;Repair&quot; AND (WIX_UPGRADE_DETECTED OR WixUI_InstallMode = &quot;Update&quot;)" Text="{\SL_Title}正在更新" />
+        <Control Id="RepairTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="NOT (REMOVE ~= &quot;ALL&quot;) AND WixUI_InstallMode &lt;&gt; &quot;Remove&quot; AND (WixUI_InstallMode = &quot;Repair&quot; OR REINSTALL)" Text="{\SL_Title}正在修复" />
+        <Control Id="RemoveTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="WixUI_InstallMode = &quot;Remove&quot; OR REMOVE ~= &quot;ALL&quot;" Text="{\SL_Title}正在卸载" />
+        <Control Id="Description" Type="Text" X="179" Y="101" Width="255" Height="42" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}正在完成所选操作，请稍候。&#13;&#10;下方显示当前执行步骤。" />
+        <Control Id="ActionText" Type="Text" X="179" Y="165" Width="255" Height="33" Transparent="yes" NoPrefix="yes"><Subscribe Event="ActionText" Attribute="Text" /></Control>
+        <Control Id="Progress" Type="ProgressBar" X="179" Y="211" Width="255" Height="10" ProgressBlocks="no"><Subscribe Event="SetProgress" Attribute="Progress" /></Control>
+        <Control Id="Note" Type="Text" X="179" Y="239" Width="255" Height="26" Transparent="yes" NoPrefix="yes" Text="{\SL_Small}部分系统操作需要一些时间，请保持此窗口打开。" />
+        <Control Id="Cancel" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="取消(&amp;C)"><Publish Event="SpawnDialog" Value="CancelDlg" /></Control>
+      </Dialog>
+
+      <Dialog Id="SLExitDlg" Width="460" Height="330" Title="[ProductName] 安装">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}安装已完成" HideCondition="Installed OR REMOVE ~= &quot;ALL&quot; OR WIX_UPGRADE_DETECTED" />
+        <Control Id="UpdatedTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="WIX_UPGRADE_DETECTED AND NOT Installed AND NOT (REMOVE ~= &quot;ALL&quot;)" Text="{\SL_Title}更新已完成" />
+        <Control Id="MaintainedTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="Installed AND NOT (REMOVE ~= &quot;ALL&quot;)" Text="{\SL_Title}维护已完成" />
+        <Control Id="RemovedTitle" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="REMOVE ~= &quot;ALL&quot;" Text="{\SL_Title}卸载已完成" />
+        <Control Id="Description" Type="Text" X="179" Y="101" Width="255" Height="43" Transparent="yes" NoPrefix="yes" HideCondition="REMOVE ~= &quot;ALL&quot;" Text="{\SL_Muted}打开本机 WebUI，即可管理网络与设备。&#13;&#10;也可以从系统托盘随时打开。" />
+        <Control Id="RemovedNote" Type="Text" X="179" Y="101" Width="255" Height="43" Transparent="yes" NoPrefix="yes" Hidden="yes" ShowCondition="REMOVE ~= &quot;ALL&quot;" Text="{\SL_Muted}程序和后台服务已移除。&#13;&#10;配对与设备配置已保留，重新安装后可继续使用。" />
+        <Control Id="NextStepTitle" Type="Text" X="179" Y="163" Width="255" Height="18" Transparent="yes" HideCondition="REMOVE ~= &quot;ALL&quot;" Text="{\SL_Heading}下一步" />
+        <Control Id="NextStep" Type="Text" X="179" Y="190" Width="255" Height="38" Transparent="yes" NoPrefix="yes" HideCondition="REMOVE ~= &quot;ALL&quot;" Text="{\SL_Muted}在两台电脑上打开 StreamLink，&#13;&#10;创建或加入同一个网络。" />
+        <Control Id="Launch" Type="CheckBox" X="178" Y="246" Width="256" Height="22" Property="WIXUI_EXITDIALOGOPTIONALCHECKBOX" CheckBoxValue="1" Text="启动 StreamLink 并打开 WebUI(&amp;O)" Hidden="yes" ShowCondition="NOT Installed AND NOT (REMOVE ~= &quot;ALL&quot;) AND ACTION &lt;&gt; &quot;ADMIN&quot;" />
+        <Control Id="Finish" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="完成(&amp;F)">
+          <Publish Event="DoAction" Value="LaunchApp" Order="1" Condition="WIXUI_EXITDIALOGOPTIONALCHECKBOX = 1 AND NOT Installed AND NOT (REMOVE ~= &quot;ALL&quot;) AND ACTION &lt;&gt; &quot;ADMIN&quot;" />
+          <Publish Event="EndDialog" Value="Return" Order="2" />
+        </Control>
+      </Dialog>
+
+      <Dialog Id="SLErrorDlg" Width="460" Height="330" Title="[ProductName] 安装">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}操作未能完成" />
+        <Control Id="Description" Type="Text" X="179" Y="101" Width="255" Height="77" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}安装过程中遇到了问题。&#13;&#10;请保留错误提示和安装日志，再重新尝试。&#13;&#10;&#13;&#10;若系统提示需要重启，请先完成重启。" />
+        <Control Id="Finish" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="关闭(&amp;C)"><Publish Event="EndDialog" Value="Exit" /></Control>
+      </Dialog>
+
+      <Dialog Id="SLCancelledDlg" Width="460" Height="330" Title="[ProductName] 安装">
+        <?include Sidebar.wxi ?>
+        <Control Id="Title" Type="Text" X="178" Y="42" Width="260" Height="34" Transparent="yes" NoPrefix="yes" Text="{\SL_Title}操作已取消" />
+        <Control Id="Description" Type="Text" X="179" Y="101" Width="255" Height="67" Transparent="yes" NoPrefix="yes" Text="{\SL_Muted}本次操作没有完成。&#13;&#10;需要继续时，重新打开安装包即可。" />
+        <Control Id="Finish" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="关闭(&amp;C)"><Publish Event="EndDialog" Value="Exit" /></Control>
+      </Dialog>
+
+      <ProgressText Action="PrepareUpgrade" Message="正在关闭上一版本并准备更新" />
+      <ProgressText Action="CloseClients" Message="正在关闭 StreamLink 窗口与托盘" />
+      <ProgressText Action="StopServices" Message="正在停止后台网络服务" />
+      <ProgressText Action="InstallFiles" Message="正在复制程序文件" />
+      <ProgressText Action="InstallServices" Message="正在配置后台网络服务" />
+      <ProgressText Action="ConfigureAuthorization" Message="正在配置本机访问权限" />
+      <ProgressText Action="StartServices" Message="正在启动后台服务" />
+      <ProgressText Action="VerifyReady" Message="正在等待后台准备就绪" />
+      <ProgressText Action="RemoveFiles" Message="正在移除程序文件" />
+      <ProgressText Action="DeleteServices" Message="正在移除后台服务" />
+      <ProgressText Action="RollbackUpgrade" Message="正在恢复此前的安装状态" />
+
+      <InstallUISequence>
+        <Show Dialog="SLPrepareDlg" Before="AppSearch" />
+        <Show Dialog="SLWelcomeDlg" Before="SLProgressDlg" Condition="NOT Installed AND NOT RESUME AND NOT Preselected" />
+        <Show Dialog="SLMaintenanceDlg" Before="SLWelcomeDlg" Condition="Installed AND NOT RESUME AND NOT Preselected AND NOT (REMOVE ~= &quot;ALL&quot;)" />
+        <Show Dialog="SLRemoveDlg" Before="SLMaintenanceDlg" Condition="Installed AND REMOVE ~= &quot;ALL&quot; AND NOT RESUME AND NOT Preselected" />
+        <Show Dialog="SLProgressDlg" Before="ExecuteAction" />
+        <Show Dialog="SLExitDlg" OnExit="success" />
+        <Show Dialog="SLErrorDlg" OnExit="error" />
+        <Show Dialog="SLCancelledDlg" OnExit="cancel" />
+      </InstallUISequence>
+    </UI>
+    <UIRef Id="WixUI_Common" />
+    <Binary Id="SL_Background" SourceFile="$(var.StreamLinkArtwork)/background.bmp" />
+    <WixVariable Id="WixUIDialogBmp" Value="$(var.StreamLinkArtwork)/dialog.bmp" />
+    <WixVariable Id="WixUIBannerBmp" Value="$(var.StreamLinkArtwork)/banner.bmp" />
+  </Fragment>
+</Wix>

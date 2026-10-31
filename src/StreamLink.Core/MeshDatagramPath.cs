@@ -24,5 +24,6 @@ public sealed record MeshPathStatus(Guid PathId, Guid ResourceId, Guid AttemptId
     public DatagramQueueStats? SendQueue { get; init; }
     public PathTrafficSnapshot? Traffic { get; init; }
     public PathDeliverySnapshot? Delivery { get; init; }
+    public PathKeepaliveSnapshot? Keepalive { get; init; }
     public bool StandbyReady { get; init; }
 }

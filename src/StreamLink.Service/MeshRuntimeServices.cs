@@ -30,7 +30,7 @@ internal sealed record MeshRuntimeServices(
     public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
     // Keep the original injected fixture contract; the product uses the same
     // profile-aware factory in service and elevated foreground modes.
-    public Func<DeviceProfile,CancellationToken,Task<IPacketAdapter>>? ProfileAdapter {get;init;}
+    public Func<DeviceProfile,Action<string>,CancellationToken,Task<IPacketAdapter>>? ProfileAdapter {get;init;}
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
     public static MeshRuntimeServices Default => new(

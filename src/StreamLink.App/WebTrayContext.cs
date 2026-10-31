@@ -33,7 +33,7 @@ sealed class WebTrayContext : ApplicationContext
         statusBusy=true;
         try{
             var reply=await UiControlProtocol.Call(new("status"),lifetime.Token);
-            if(!closing)tray.Text=TrayInformation.Format(reply.Ok?reply.Status:null,reply.Ok?"等待后台":"账号未授权");
+            if(!closing)tray.Text=TrayInformation.Format(reply.Ok?reply.Status:null,reply.Ok?reply.StatusNotice.Length>0?"状态信息过大":"等待后台":"账号未授权");
         }catch(OperationCanceledException){if(!closing)tray.Text=TrayInformation.Format(null,"后台响应超时");}
         catch(UiBackendException ex){if(!closing)tray.Text=TrayInformation.Format(null,ex.Code switch{"NotInstalled"=>"后台未安装","Stopped"=>"后台已停止","AccessDenied"=>"账号未授权",_=>"后台连接异常"});}
         catch(Exception){if(!closing)tray.Text=TrayInformation.Format(null,"后台连接异常");}

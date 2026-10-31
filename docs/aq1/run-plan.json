@@ -2,12 +2,12 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "Resume development after 1.0.0 streaming stalls; simplify WebUI and explain connection/recovery. Thinkbook and Akane remain the known devices; no new remote management access supplied.",
+  "userConfirmedScope": "2026-10-31 user is ready for real-machine testing after development-only work. Prepare current MSI/ZIP and affected local regression for Thinkbook and Akane. User reports the old coordinator is probably gone; prepare a matching coordinator bundle without deployment. No automatic daily installation or remote deployment; a usable HTTPS coordination address is still required.",
   "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.1",
-  "msiVersion": "1.0.6",
-  "startCommit": "69c7202abb2651df6c6d434187bd96fb0835d894",
-  "startDirty": false,
+  "candidateVersion": "1.0.1-rc.2",
+  "msiVersion": "1.0.8",
+  "startCommit": "e05263715c894f0bf390f1b9e50f0032403455fe",
+  "startDirty": true,
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
   "control": "HTTPS",
@@ -43,6 +43,6 @@
     "disabledResearchFailuresRemainHistorical": true
   },
   "formalOnly": ["eight independent Windows stacks / 28 edges", "60 minute application stream", "100 lifecycle rounds", "clean Windows VM and cross-account cold boot"],
-  "externalRequirements": ["authorized second Windows endpoint with physical reachability", "independent management before stopping any existing channel", "user streaming confirmation"],
+  "externalRequirements": ["restored HTTPS coordinator for pairing and discovery; STUN alone is insufficient", "authorized second Windows endpoint with physical reachability", "independent management before stopping any existing channel", "user streaming confirmation"],
   "stopRule": "Deliver runnable fixed package, source, hashes, two review checklists and honest per-item state after available work. PartialCode is not an external blocker."
 }

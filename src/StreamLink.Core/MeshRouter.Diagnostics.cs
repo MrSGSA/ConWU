@@ -21,7 +21,7 @@ public sealed partial class MeshRouter
         long nonce=BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
         byte[]? ping=peer.Link.ProbePath(nonce);
         if(ping==null||!AdmitMaintenance(path,ping.Length)||!SendManaged(ping,path))return false;
-        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,leg,-1);return true;
+        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,leg,-1,false);return true;
     }
     bool LoadedProbe(Peer peer,ManagedPath path,int leg)
     {
@@ -29,7 +29,7 @@ public sealed partial class MeshRouter
         long nonce=BitConverter.ToInt64(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8));
         byte[]? ping=peer.Link.ProbePath(nonce);
         if(ping==null||!AdmitMaintenance(path,ping.Length)||!SendManaged(ping,path))return false;
-        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,-1,leg);return true;
+        path.PendingRoundTrips[nonce]=(System.Diagnostics.Stopwatch.GetTimestamp(),false,-1,leg,false);return true;
     }
     bool DiagnosticPair(Peer peer,ManagedPath active,ManagedPath standby)=>peer.Managed is{}managed&&ReferenceEquals(managed.Active,active)&&
         ReferenceEquals(managed.Candidate,standby)&&!active.Closing&&!standby.Closing&&!active.Transport.Failed&&!standby.Transport.Failed&&
