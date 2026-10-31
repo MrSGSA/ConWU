@@ -10,7 +10,7 @@ static class UdpExplorationRunnerTests
     {
         var a=MeshIdentity.Create(url,pin,"faketcp"); var b=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));b.Directory=a.Directory;
         var members=new[]{a,b}; var wire=new UdpExplorationNatWire(stable); var machine=new[]{new TraversalResources(),new TraversalResources()};
-        var configs=members.Select(m=>new DeviceProfile{Mesh=m,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true,UdpStun=["fixture.invalid:3478"]}).ToArray();
+        var configs=members.Select(m=>new DeviceProfile{Mesh=m,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true,UdpStun=["fixture.invalid:3478"]}).ToArray();
         int[] ports=Enumerable.Range(0,32).Select(i=>45000+7*i).ToArray();
         var adapters=new[]{new NativeIpv6RunnerTests.Adapter(),new NativeIpv6RunnerTests.Adapter()}; var states=new SessionStatus?[2]; var logs=new ConcurrentQueue<string>();
         var factories=configs.Select((c,i)=>new NativeIpv6RunnerTests.Inspect(new MeshCandidateFactory(c,"unused","unused",[TraversalProfile.UdpDirect]){

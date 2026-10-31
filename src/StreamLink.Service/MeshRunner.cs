@@ -63,6 +63,7 @@ public sealed class MeshRunner
     {
         if (Interlocked.CompareExchange(ref runStarted, 1, 0) != 0) throw new InvalidOperationException("同一网络运行器不能重复或并发启动");
         profile.Validate(); mesh.Validate();
+        bool legacyAllowed=profile.Selection().Allows(mesh.Pair.Mode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
@@ -138,7 +139,7 @@ public sealed class MeshRunner
                 if (gatheringFactory?.IsCompleted == true) {
                     try { factory = await gatheringFactory; } catch (Exception ex) when (!stop.IsCancellationRequested) { log("新增打洞能力暂不可用：" + ex.Message); }
                     gatheringFactory = null;
-                    log("CandidateFactoryReady profiles="+string.Join(',',factory?.Profiles??[])+" policy="+profile.PathSelection+" udpAllowed="+profile.AllowUdpFallback);
+                    log("CandidateFactoryReady profiles="+string.Join(',',factory?.Profiles??[])+" policy="+profile.PathSelection+" udpAllowed="+profile.Selection().Allows(TraversalProfile.UdpDirect));
                     if (factory is MeshCandidateFactory ownedFactory && discovery is ITcpObservationControl observationControl)
                         ownedFactory.ConfigureObservation(observationControl, requestBudget, log);
                 }
@@ -177,7 +178,7 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
-                if (probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) {
+                if (legacyAllowed && probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                     bool needed = restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
@@ -221,7 +222,7 @@ public sealed class MeshRunner
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
-                if (router != null && server == null && (mapping != null || profile.ManualEndpoint.Length > 0) && now >= nextServer) {
+                if (legacyAllowed && router != null && server == null && (mapping != null || profile.ManualEndpoint.Length > 0) && now >= nextServer) {
                     try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
@@ -314,6 +315,10 @@ public sealed class MeshRunner
                 foreach (int slot in clients.Keys.Where(s => !members.Any(m => m.Slot == s)).ToArray()) { await clients[slot].DisposeAsync(); clients.Remove(slot); announcements.Remove(slot); }
                 traversal?.Tick(announcements, candidate);
                 foreach (var member in members) {
+                    if(!legacyAllowed) {
+                        router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待所选传输模式建立直连");
+                        continue;
+                    }
                     if (traversal?.Owns(member.Slot) == true) {
                         if (clients.Remove(member.Slot, out var obsolete)) await obsolete.DisposeAsync();
                         traversal.ObserveLegacyPending(member.Slot, false);
@@ -332,8 +337,10 @@ public sealed class MeshRunner
                 }
                 if (now >= nextReport) {
                     feedback.Retain(members.Select(m=>m.Slot));
+                    ConnectionProgress? unavailable=!legacyAllowed && gatheringFactory==null && factory==null
+                        ? new("Blocked","当前传输模式的连接组件不可用，请检查安装或在设置中选择可用模式；不会自动切换协议。") {ReasonCode="SelectedTransportUnavailable"} : null;
                     statuses = router.Status().Select(peer=>feedback.Observe(peer,
-                        traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now),
+                        traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable,
                         announcements.TryGetValue(peer.Slot,out var remote) && remote.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),now)).ToArray();
                     foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);
                     foreach(var peer in statuses)if(peer.Quality is{}assessment){

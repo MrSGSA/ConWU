@@ -134,17 +134,18 @@ try {
         var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
         var factories = new[] { new Factory(a, kind, binary, root, reflector, proxy), new Factory(b, kind, binary, root, reflector, proxy) };
         using var runningStop = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var logs = new ConcurrentQueue<string>(); int legacyCalls = 0;
+        var logs = new ConcurrentQueue<string>(); int legacyCalls = 0, legacyProbes = 0;
         MeshRuntimeServices Services(int i) => new(
             mesh => new MeshDiscoveryClient(mesh), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
-            async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); },
+            async (_, _, ct) => { Interlocked.Increment(ref legacyProbes); await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); },
             _ => { Interlocked.Increment(ref legacyCalls); throw new IOException("no explicit entry in this fixture"); },
             (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "sessions")) {
                 Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
             };
-        string policy = kind == TraversalProfile.FakeTcpHttpSo ? "faketcp-only" : "prefer-faketcp";
-        var runners = new[] { new MeshRunner(new() { Mesh = a, TraversalMode = "tcp-udp", PathSelection = policy, AllowUdpFallback = true }, s => logs.Enqueue("A " + s), s => states[0] = s, _ => { }, _ => { }, Services(0)),
-            new MeshRunner(new() { Mesh = b, TraversalMode = "tcp-udp", PathSelection = policy, AllowUdpFallback = true }, s => logs.Enqueue("B " + s), s => states[1] = s, _ => { }, _ => { }, Services(1)) };
+        string policy = kind == TraversalProfile.FakeTcpHttpSo ? "faketcp-only" : "udp-only";
+        DeviceProfile Fixed(MeshProfile mesh) { var value=new DeviceProfile {Mesh=mesh}; value.SelectTransport(policy);value.RequireFixedTransport();return value; }
+        var runners = new[] { new MeshRunner(Fixed(a), s => logs.Enqueue("A " + s), s => states[0] = s, _ => { }, _ => { }, Services(0)),
+            new MeshRunner(Fixed(b), s => logs.Enqueue("B " + s), s => states[1] = s, _ => { }, _ => { }, Services(1)) };
         var clock = Stopwatch.StartNew(); var tasks = runners.Select(r => r.Run(runningStop.Token)).ToArray();
         try {
             while (!states.All(s => s?.Connected == true)) {
@@ -153,7 +154,8 @@ try {
                 await Task.Delay(25, token);
             }
             long selectedMs = clock.ElapsedMilliseconds;
-            Check(states.All(s => s!.Degraded == (kind == TraversalProfile.UdpDirect) && s.Peers!.Single().Degraded == s.Degraded), "Runner distinguishes authenticated UDP fallback from target quality, without mislabeling FakeTCP");
+            Check(states.All(s => !s!.Degraded && !s.Peers!.Single().Degraded && s.Peers!.Single().ActualTransport==(kind==TraversalProfile.UdpDirect?"UDP_DIRECT":"FakeTCP+HTTP")), "Runner reports the user-selected protocol without labeling explicit UDP as fallback");
+            Check(kind!=TraversalProfile.UdpDirect || legacyProbes==0,"UDP-only mode never probes a legacy FakeTCP entry");
             Check(legacyCalls == 0 && factories.All(f => f.Gathers == 1 && f.Prepared == 1), $"{kind} round {round}: production MeshRunner automatically negotiates and owns one actual endpoint per peer");
             if (round == 1) { controlOffline = true; await Task.Delay(9000, token); }
             adapters[0].Outgoing.Add(Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(Packet(b.LocalIp, a.LocalIp));

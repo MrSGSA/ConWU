@@ -26,13 +26,10 @@ public static class PersonalFeature
     {
         if (!Enabled) throw new IOException("个人增强预设仅在个人功能先行包开放");
         var next = ProfileChanges.Copy(current);
-        if (next.Pair?.Mode == "udp" || next.Mesh?.Pair.Mode == "udp") throw new IOException("个人增强预设需要 FakeTCP 网络");
-        next.TransportMode = "faketcp";
-        next.TraversalMode = "tcp-udp";
-        next.PathSelection = "prefer-faketcp";
+        next.MigrateAutomaticTransport();
+        next.SelectTransport(next.PathSelection);
         bool Intent(string name) => !next.CapabilityIntents.TryGetValue(name, out var value) || value != false;
-        next.AllowUdpFallback = Intent(nameof(DeviceProfile.AllowUdpFallback));
-        next.TcpPeerReflexive = Intent(nameof(DeviceProfile.TcpPeerReflexive));
+        next.TcpPeerReflexive = next.PathSelection=="faketcp-only" && Intent(nameof(DeviceProfile.TcpPeerReflexive));
         // High-cost exploration, prediction, active load and gateway changes
         // retain their existing independent permission and eligibility gates.
         next.Validate();

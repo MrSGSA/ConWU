@@ -91,6 +91,8 @@ foreach($item in $all){
   $component.AppendChild((Node 'ServiceControl' @{Id='ControlNetworkService';Name=$service;Start='install';Stop='both';Remove='uninstall';Wait='yes'}))|Out-Null
  }
  if($fileId -eq 'LauncherExe'){
+  $startupName=if($ValidationInstance){$service}else{'StreamLink'}
+  $component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key='Software\Microsoft\Windows\CurrentVersion\Run';Name=$startupName;Type='string';Value=('"[#LauncherExe]" '+$validationArgs+'--startup')}))|Out-Null
   foreach($value in @(@('ProductCode','[ProductCode]'),@('InstallLocation','[INSTALLFOLDER]'))){$component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key=$registryKey;Name=$value[0];Type='string';Value=$value[1]}))|Out-Null}
   $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null

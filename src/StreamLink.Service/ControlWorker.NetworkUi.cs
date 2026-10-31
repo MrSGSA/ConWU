@@ -68,8 +68,8 @@ public sealed partial class ControlWorker
                     var mesh = MeshIdentity.Create(action.Service, action.CertificatePin, action.Mode);
                     var next = ProfileChanges.Copy(profile);
                     next.Mesh = mesh; next.Pair = null; next.Enabled = false; next.Slot = 1; next.LastEntry = 0;
-                    if (action.Mode == "faketcp") next = PersonalFeature.EnhancedPreset(next);
-                    else { next.TransportMode = "udp"; next.TcpPeerReflexive = false; next.PathSelection = "prefer-faketcp"; }
+                    next.SelectTransport(action.Mode == "udp" ? "udp-only" : "faketcp-only");
+                    next = PersonalFeature.EnhancedPreset(next);
                     next.Validate(); await PersonalPacketAdapters.Preflight(next, token);
                     SetOperation(operation, "保存新网络", false); await End(token);
                     lock (sync) { store.BackupLegacy(profile); store.Save(next); profile = next; }
@@ -115,7 +115,7 @@ public sealed partial class ControlWorker
                 var updated = ProfileChanges.Copy(profile);
                 if (action.ExpectedRevision != SettingsRevision(updated)) throw new IOException("连接设置已改变；草稿已保留，请刷新后核对");
                 if (settings.Service != PublicSettings(updated).Service || settings.CertificatePin != PublicSettings(updated).CertificatePin) throw new IOException("当前网络的协调身份不能通过设置替换；请创建或加入新网络");
-                updated.ManualEndpoint = settings.ManualEndpoint; updated.PathSelection = settings.PathSelection;
+                updated.ManualEndpoint = settings.ManualEndpoint; updated.SelectTransport(settings.PathSelection);
                 updated.AllowManualQualityRequests = settings.AllowManualQualityRequests;
                 updated.ListenPort = settings.ListenPort; updated.SourcePort = settings.SourcePort;
                 updated.Validate();
@@ -156,8 +156,8 @@ public sealed partial class ControlWorker
         var mesh = MeshIdentity.Import(invitation);
         if (new Uri(mesh.Pair.Service) != new Uri(uiPairService) || !mesh.Pair.CertificatePin.Equals(uiPairPin, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("邀请的协调身份不符");
         var next = ProfileChanges.Copy(profile); next.Mesh = mesh; next.Pair = null; next.Enabled = false; next.Slot = 1; next.LastEntry = 0;
-        if (mesh.Pair.Mode == "faketcp") next = PersonalFeature.EnhancedPreset(next);
-        else { next.TransportMode = "udp"; next.TcpPeerReflexive = false; next.PathSelection = "prefer-faketcp"; }
+        next.SelectTransport(mesh.Pair.Mode == "udp" ? "udp-only" : "faketcp-only");
+        next = PersonalFeature.EnhancedPreset(next);
         next.Validate(); await PersonalPacketAdapters.Preflight(next, token);
         SetOperation(operation, "保存配对并启动网络", false); await End(token);
         lock (sync) { store.BackupLegacy(profile); store.Save(next); profile = next; profile.Enabled = true; store.Save(profile); }

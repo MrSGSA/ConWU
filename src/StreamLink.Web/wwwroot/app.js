@@ -128,13 +128,13 @@ function controls() {
   for(const row of rows.values())row.remove.disabled=!online||busy;
 }
 function duration(ms) {
-  const seconds=Math.max(0,Math.floor(ms/1000));
+  const seconds=Math.max(0,Math.floor((Number.isFinite(ms)?ms:0)/1000));
   return seconds<60?seconds+' 秒':Math.floor(seconds/60)+' 分 '+seconds%60+' 秒';
 }
 function progressText(progress,extraMs=0) {
-  if(!progress||['Idle','Offline'].includes(progress.phase))return '';
+  if(!progress||['Idle','Offline','Blocked'].includes(progress.phase))return '';
   const parts=[phaseNames[progress.phase]||'正在处理'];
-  parts.push((progress.phase==='Connected'?'持续 ':'已等待 ')+duration(progress.elapsedMs+extraMs));
+  parts.push((progress.phase==='Connected'?'持续 ':'已等待 ')+duration((progress.elapsedMs||0)+extraMs));
   if(progress.attempt>0&&progress.phase!=='Connected')parts.push('第 '+progress.attempt+' 次尝试');
   if(progress.retryInSeconds!=null)parts.push(Math.max(0,progress.retryInSeconds-Math.floor(extraMs/1000))+' 秒后重试');
   else if(progress.remainingSeconds!=null&&progress.phase!=='Connected')parts.push('本轮剩余 '+Math.max(0,progress.remainingSeconds-Math.floor(extraMs/1000))+' 秒');
@@ -214,7 +214,7 @@ function render(s) {
   $('copy-local').disabled=!s.virtualIp;
   const allConnected=s.totalPeers>0&&s.directPeers===s.totalPeers;
   const phase=s.connection?.phase;
-  $('connection-steps').hidden=!s.networkEnabled||allConnected||['Idle','Connected'].includes(phase);
+  $('connection-steps').hidden=!s.networkEnabled||allConnected||['Idle','Connected','Blocked'].includes(phase);
   const step=phase==='StartingAdapter'?0:['WaitingPeer','WaitingEntry','Queued','Preparing','Connecting'].includes(phase)?1:2;
   document.querySelectorAll('[data-step]').forEach(e=>{
     const n=Number(e.dataset.step),done=allConnected;

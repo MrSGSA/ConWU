@@ -24,8 +24,8 @@ static class TraversalNetwork
             using var coordination = JsonDocument.Parse(File.ReadAllText(args[2]));
             var a = MeshIdentity.Create(coordination.RootElement.GetProperty("url").GetString()!, coordination.RootElement.GetProperty("pin").GetString()!, "faketcp");
             var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-A", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
-            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-B", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", AllowUdpFallback = args[5] == "udp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
+            var local = new TraversalNode(new() { Mesh = a, DeviceName = "Isolated-A", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", PathSelection = args[5]=="udp"?"udp-only":"faketcp-only", TransportMode = args[5]=="udp"?"udp":"faketcp", Enabled = true }, args[3], args[4], args[5], args[6], 44411, 44401, 44402, 2);
+            var remote = new TraversalNode(new() { Mesh = b, DeviceName = "Isolated-B", TraversalMode = args[5]=="legacy"?"legacy":"tcp-udp", PathSelection = args[5]=="udp"?"udp-only":"faketcp-only", TransportMode = args[5]=="udp"?"udp":"faketcp", Enabled = true }, args[4], args[3], args[5], args[6], 44412, 44402, 44401, 28);
             if(args[5]=="legacy"){local.Profile.ManualEndpoint=args[3]+":44411";local.Profile.ListenPort=44411;remote.Profile.ManualEndpoint=args[4]+":44412";remote.Profile.ListenPort=44412;}
             File.WriteAllText(Path.Combine(root, "local.private.json"), JsonSerializer.Serialize(local));
             File.WriteAllText(Path.Combine(root, "remote.private.json"), JsonSerializer.Serialize(remote));

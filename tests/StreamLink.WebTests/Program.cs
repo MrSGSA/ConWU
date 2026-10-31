@@ -69,6 +69,19 @@ await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  clock.Advance(TimeSpan.FromMinutes(17));Check((await Send("GET","/api/status")).StatusCode==HttpStatusCode.Unauthorized,"active session expires at the absolute eight hour limit");
 }
 
+// Explicit port remains stable over reopen; an occupied port fails, never
+// silently changes the bookmarked address. Use an isolated port on the host.
+int fixedPort;
+await using(var chosen=await WebPanel.Start(Backend,root)) fixedPort=new Uri(chosen.Origin).Port;
+for(int round=0;round<2;round++) {
+ await using var fixedPanel=await WebPanel.Start(Backend,root,port:fixedPort);
+ Check(new Uri(fixedPanel.Origin).Port==fixedPort,"explicit WebUI port survives reopen "+round);
+ bool occupied=false;
+ try { await using var collision=await WebPanel.Start(Backend,root,port:fixedPort); }
+ catch(IOException) { occupied=true; }
+ Check(occupied,"occupied WebUI port fails without random fallback "+round);
+}
+
 WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
 using(var worker=new ControlWorker()) {
  worker.StartLocal();var store=new ProfileStore();string sid=WindowsIdentity.GetCurrent().User!.Value;store.AuthorizeUiUser(sid);
@@ -84,6 +97,15 @@ using(var worker=new ControlWorker()) {
  Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("approve",Verification:"123456",Candidate:Guid.NewGuid().ToString("N"))))).Ok,"approval without authenticated exchange rejected");
  Check(!(await Ui(new("mesh-invite"))).Ok&&!(await Ui(new("save"))).Ok,"legacy privileged methods stay inaccessible");
  Check(!(await Ui(new("retry",OperationId:Guid.NewGuid()))).Ok,"retry cannot start a stopped network or open an adapter");
+ foreach(string selected in new[]{"udp-only","faketcp-only"}) {
+  var current=(await Ui(new("status"))).Status!;
+  var changed=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:current.Settings! with{PathSelection=selected},ExpectedRevision:current.SettingsRevision)));
+  Check(changed.Ok && changed.Status!.Settings!.PathSelection==selected && changed.Status.NetworkId==before.NetworkId,"restricted UI switches fixed protocol without changing pairing: "+selected);
+  var loaded=new ProfileStore().Load();loaded.RequireFixedTransport();
+  Check(loaded.PathSelection==selected && !loaded.Enabled,"UI protocol choice persists while idle without starting an adapter");
+ }
+ var fixedStatus=(await Ui(new("status"))).Status!;
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:fixedStatus.Settings! with{PathSelection="prefer-faketcp"},ExpectedRevision:fixedStatus.SettingsRevision)))).Ok,"UI API rejects removed automatic fallback even when requested directly");
  var full=(await worker.Handle(new("status"))).Profile!;var json=JsonSerializer.Serialize((await Ui(new("status"))).Status);
  foreach(var secret in new[]{full.Mesh!.OwnerPrivate,full.Mesh.SigningPrivate,full.Mesh.ExchangePrivate,full.Mesh.Pair.Secret})Check(!json.Contains(secret),"secret absent from expanded DTO");
  await worker.StopLocal();

@@ -11,7 +11,7 @@ static class UdpExplorationAdmissionTests
     {
         await EmpiricalCollector(check, token);
         var mesh=MeshIdentity.Create("https://example.com/","","faketcp");var peer=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self;
-        var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true};
+        var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true};
         int resolutions=0,opened=0;await using var factory=new MeshCandidateFactory(config,"unused","unused",[TraversalProfile.UdpDirect]){
             ResolveTarget=(_,_,_)=>{resolutions++;return Task.FromResult(IPEndPoint.Parse("192.0.2.9:3478"));},
             OpenExplorationSocketForTest=_=>{opened++;throw new IOException();}
@@ -34,12 +34,12 @@ static class UdpExplorationAdmissionTests
             await Reject(()=>Gather(true,()=>true,stable with{Endpoint=endpoint}),
                 "production source expansion rejects loopback/private/CGN/documentation targets before DNS or allocation: "+endpoint);
         int routeAllocations=0;
-        await using var badRoute=new MeshCandidateFactory(new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true},"unused","unused",[TraversalProfile.UdpDirect]){
+        await using var badRoute=new MeshCandidateFactory(new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true},"unused","unused",[TraversalProfile.UdpDirect]){
             ResolveTarget=(_,_,_)=>Task.FromResult(UdpExplorationNatWire.Reflector),RouteCheckForTest=(_,_,_)=>throw new IOException("physical route unavailable"),
             OpenExplorationSocketForTest=_=>{routeAllocations++;throw new IOException();}};
         bool routeRejected=false;try{await using var unused=await badRoute.GatherEnhanced(peer,TraversalProfile.UdpDirect,Guid.NewGuid(),false,stable,2,false,false,true,()=>true,token);}catch(IOException){routeRejected=true;}
         check(routeRejected&&routeAllocations==0,"all rejected physical routes leave no remembered target and never allocate a source");
-        var unknownConfig=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true};
+        var unknownConfig=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true};
         var unknownWire=new UdpExplorationNatWire(0);var unknownBudget=new TraversalResources();
         await using var unknown=new MeshCandidateFactory(unknownConfig,"unused","unused",[TraversalProfile.UdpDirect]){
             ExplorationBudgetForTest=unknownBudget,ResolveTarget=(_,_,_)=>Task.FromResult(UdpExplorationNatWire.Reflector),
@@ -92,7 +92,7 @@ static class UdpExplorationAdmissionTests
     static async Task EmpiricalCollector(Action<bool,string> check,CancellationToken token)
     {
         var mesh=MeshIdentity.Create("https://example.com/","","faketcp");var peer=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh))).Self;
-        var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478","two.invalid:3478"]};
+        var config=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478","two.invalid:3478"]};
         await using var a=new UdpReflector();await using var b=new UdpReflector(IPAddress.Parse("127.0.0.2"));
         var budget=new TraversalResources();int resolutions=0;Guid held=Guid.Empty;
         await using var factory=new MeshCandidateFactory(config,"unused","unused",[TraversalProfile.UdpDirect]){
@@ -122,7 +122,7 @@ static class UdpExplorationAdmissionTests
             "explicit local off stops after the ordinary single STUN observation, never silently samples or claims private stability");
         var other=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(mesh)));other.Directory=mesh.Directory;
         var observed=new System.Collections.Concurrent.ConcurrentQueue<string>();
-        DeviceProfile Profile(MeshProfile p)=>new(){Mesh=p,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478"]};
+        DeviceProfile Profile(MeshProfile p)=>new(){Mesh=p,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true,UdpEmpiricalStability=true,UdpStun=["one.invalid:3478"]};
         await using var fa=new MeshCandidateFactory(Profile(mesh),"unused","unused",[TraversalProfile.UdpDirect],diagnostic:observed.Enqueue){ResolveTarget=(_,_,_)=>Task.FromResult(a.Endpoint),RouteCheckForTest=(_,_,_)=>{}};
         await using var fb=new MeshCandidateFactory(Profile(other),"unused","unused",[TraversalProfile.UdpDirect],diagnostic:observed.Enqueue){ResolveTarget=(_,_,_)=>Task.FromResult(a.Endpoint),RouteCheckForTest=(_,_,_)=>{}};
         var attempt=Guid.NewGuid();

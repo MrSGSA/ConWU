@@ -5,7 +5,7 @@ using System.Net;
 static class ShutdownFailureTests
 {
     public static async Task<object> Run(string root,string url,string pin,Action<bool,string> check,CancellationToken token){
-        var mesh=MeshIdentity.Create(url,pin,"faketcp");var profile=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true};
+        var mesh=MeshIdentity.Create(url,pin,"faketcp");var profile=new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true};
         var adapter=new NativeIpv6RunnerTests.Adapter();var factory=new FaultFactory();var logs=new List<string>();
         var services=new MeshRuntimeServices(m=>new MeshDiscoveryClient(m),_=>Task.FromResult<IPacketAdapter>(adapter),
             async(_,_,t)=>{await Task.Delay(Timeout.Infinite,t);throw new IOException();},_=>throw new IOException("No entry in isolated cleanup fixture"),

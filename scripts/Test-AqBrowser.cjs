@@ -27,9 +27,16 @@ let checks=0;const findings=[];function check(ok,label){checks++;if(!ok)throw Er
   await page.reload();await page.getByText('后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
   check(await page.locator('#device-name').inputValue()==='AQ browser draft','real backend persisted metadata across page reload');
   await page.locator('#connection-settings > summary').click();await page.locator('#allow-quality').check();
+  check(JSON.stringify(await page.locator('#policy option').evaluateAll(xs=>xs.map(x=>x.value)))===JSON.stringify(['faketcp-only','udp-only']),'settings expose exactly two fixed protocols and no automatic fallback');
+  await page.locator('#policy').selectOption('udp-only');
   await page.waitForTimeout(3000);check(await page.locator('#allow-quality').isChecked(),'polling preserves connection settings draft');
   await page.getByRole('button',{name:'保存连接设置',exact:true}).click();await page.getByText('设置已保存。',{exact:true}).waitFor();
   check(await page.locator('#allow-quality').isChecked(),'permitted connection setting saved through restricted service handler');
+  await page.reload();await page.getByText('后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
+  check(await page.locator('#policy').inputValue()==='udp-only','explicit UDP choice persists after a real browser reload');
+  await page.locator('#connection-settings > summary').click();await page.locator('#policy').selectOption('faketcp-only');
+  await page.getByRole('button',{name:'保存连接设置',exact:true}).click();await page.getByText('设置已保存。',{exact:true}).waitFor();
+  check(await page.locator('#policy').inputValue()==='faketcp-only','user can return to fixed FakeTCP without re-pairing');
   await page.locator('[data-page="network"]').click();await page.locator('#server').fill('http://127.0.0.1/');await page.getByRole('button',{name:'创建网络',exact:true}).click();
   await page.getByText('请填写 HTTPS 协调地址',{exact:true}).waitFor();check(true,'invalid coordination scheme produces actionable error without I/O');
   // Feed statuses through HTTP, exercising the shipped rendering/timers rather
@@ -47,6 +54,12 @@ let checks=0;const findings=[];function check(ok,label){checks++;if(!ok)throw Er
   check(await page.locator('.peer details').evaluate(e=>e.open),'polling preserves expanded peer details');
   await page.screenshot({path:path.join(out,'connection-desktop.png'),fullPage:true});
   const healthy={...mock};
+  const incompatible={phase:'Blocked',detail:'双方没有共同的可用打洞协议；请在两端设置中选择相同的传输模式，并检查组件是否可用。不会自动切换协议。',reasonCode:'NoCommonTransport',canRetry:false};
+  mock={...healthy,state:'有设备需要处理',directPeers:0,peers:[{...peer,connected:false,actualTransport:'None',traversalMethod:'None',connection:incompatible,liveness:null}],connection:incompatible};
+  await page.locator('#refresh').click();await page.getByRole('heading',{name:'有设备需要处理',exact:true}).waitFor();
+  check((await page.locator('#connection-card').innerText()).includes('不会自动切换协议')&&await page.locator('#retry').isHidden(),'incompatible modes explain the required settings change without inviting a futile retry');
+  check(await page.locator('#connection-steps').isHidden()&&!(await page.locator('#connection-card').innerText()).includes('已等待')&&!(await page.locator('body').innerText()).includes('NaN'),'blocked protocol choice has no running connection timer or invalid duration');
+  await page.screenshot({path:path.join(out,'incompatible-mode.png'),fullPage:true});
   const offline={...peer,slot:3,name:'未开机的电脑',virtualIp:'10.81.7.3',connected:false,rttMs:null,connection:{phase:'Offline',detail:'尚未收到此设备的有效上线信息；上线后会自动连接。',elapsedMs:0,canRetry:false}};
   mock={...healthy,totalPeers:2,peers:[peer,offline],connection:{...healthy.connection,detail:'已直连 1 台设备；另有 1 台设备未在线，上线后会自动连接。'}};
   await page.locator('#refresh').click();await page.getByRole('heading',{name:'未开机的电脑',exact:true}).waitFor();

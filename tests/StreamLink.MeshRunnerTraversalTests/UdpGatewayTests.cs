@@ -91,7 +91,7 @@ static class UdpGatewayTests
         await pa.DisposeAsync(); await pb.DisposeAsync();
         check(a.Closed && b.Closed && gateway.Deletes == deleted + 2, "final path release joins gateway maintenance and deletes only its mappings before releasing data ports");
     }
-    static DeviceProfile Profile(MeshProfile mesh, string stun) => new() { Mesh = mesh, TraversalMode = "tcp-udp", AllowUdpFallback = true, PortControlMapping = true, UdpStun = [stun] };
+    static DeviceProfile Profile(MeshProfile mesh, string stun) => new() { Mesh = mesh, TraversalMode = "tcp-udp", PathSelection = "prefer-faketcp", AllowUdpFallback = true, PortControlMapping = true, UdpStun = [stun] };
     static MeshCandidateFactory Factory(DeviceProfile profile, string root, Gateway gateway, Action<string>? log = null, bool failDns = false)
         => new(profile, "unused-native", root, [TraversalProfile.UdpDirect], diagnostic: log) {
             GatewaySources = () => [IPAddress.Loopback],

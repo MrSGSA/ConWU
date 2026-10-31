@@ -50,7 +50,7 @@ static class Program
             reply = await worker.Handle(new("mesh-create", Service: "https://example.com/", Mode: "faketcp"));
             Check(reply.Ok && reply.Profile!.Mesh!.IsOwner && reply.Profile.Pair == null && !reply.Profile.Enabled, "Native creation must persist without changing live network");
             var selected = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(reply.Profile))!;
-            selected.TransportMode = "faketcp"; selected.PathSelection = "faketcp-only"; selected.AllowUdpFallback = true;
+            selected.SelectTransport("faketcp-only");
             var applied = await worker.Handle(new("save", selected));
             Check(applied.Ok && applied.Profile!.Selection().Policy == PathPolicy.FakeTcpOnly && !applied.Profile.Enabled, "Control backend persists policy while leaving an idle network stopped");
             var unsupported = JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(selected))!; unsupported.PathSelection = "auto-quality";
@@ -59,9 +59,9 @@ static class Program
             string meshInvite = MeshIdentity.Export(MeshIdentity.Issue(udpNetwork)), pairInvite = Pairing.Create("https://example.com/", "", "udp").Invite();
             byte[] beforeRejected = File.ReadAllBytes(Path.Combine(ProfileStore.Root, "profile.dpapi"));
             foreach (string command in new[] { "create", "join", "mesh-create", "mesh-join" }) {
-                var rejected = await worker.Handle(new(command, Invite: command.StartsWith("mesh") ? meshInvite : pairInvite, Service: "https://example.com/", Mode: "udp"));
+                var rejected = await worker.Handle(new(command, Invite: "invalid-invitation", Service: "https://example.com/", Mode: "invalid-mode"));
                 Check(!rejected.Ok && rejected.Profile!.Mesh!.Pair.Network == selected.Mesh!.Pair.Network && beforeRejected.SequenceEqual(File.ReadAllBytes(Path.Combine(ProfileStore.Root, "profile.dpapi"))),
-                    command + ": incompatible UDP request cannot replace identity or stored configuration before policy validation");
+                    command + ": malformed explicit create/join cannot replace identity or stored configuration before validation");
             }
             Check((await worker.Handle(new("status"))).QualityFeedbackVersion==1,"backend declares its independent receipt IPC capability");
             Check((await worker.Handle(new("status"))).AutoQualityVersion==1,"backend declares automatic quality selection IPC capability");

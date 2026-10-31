@@ -80,7 +80,8 @@
     </article>
     <details class="card" id="connection-settings"><summary>连接设置</summary>
       <form id="connection-form">
-        <label>选路偏好<select id="policy"><option value="prefer-faketcp">抗 UDP 限制优先（推荐）</option><option value="faketcp-only">仅使用 FakeTCP</option></select></label>
+        <label>传输模式<select id="policy"><option value="faketcp-only">FakeTCP＋HTTP（默认）</option><option value="udp-only">直接 UDP</option></select></label>
+        <p class="hint">两端请选择相同模式。连接失败会重试当前模式，不会自动切换协议。</p>
         <label class="check"><input id="allow-quality" type="checkbox">允许已配对设备发起手动质量测试</label>
         <details><summary>入口与端口</summary>
           <p class="muted">默认自动发现和映射；有可达公网入口时可手动填写。</p>

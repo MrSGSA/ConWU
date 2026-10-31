@@ -31,8 +31,8 @@ public sealed class DeviceProfile
     // Staged rollout: existing installations retain the verified explicit path.
     // New traversal is opt-in until the independent Windows/WAN gates pass.
     public string TraversalMode { get; set; } = PersonalFeature.Enabled ? "tcp-udp" : "legacy";
-    public string PathSelection { get; set; } = "prefer-faketcp";
-    public bool AllowUdpFallback { get; set; } = PersonalFeature.Enabled;
+    public string PathSelection { get; set; } = "faketcp-only";
+    public bool AllowUdpFallback { get; set; }
     // Diagnostics only, off by default. Requires a separately configured raw
     // SYN observer on the authenticated coordinator; never promotes a path.
     public bool TcpSynObservation { get; set; }
@@ -67,8 +67,36 @@ public sealed class DeviceProfile
     public bool LegacyEgressPacing { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
-        "auto-quality" => PathPolicy.AutoQuality, _ => throw new FormatException("选路策略无效")
+        "auto-quality" => PathPolicy.AutoQuality, "udp-only" => PathPolicy.UdpOnly, _ => throw new FormatException("选路策略无效")
     }, AllowUdpFallback);
+    public void SelectTransport(string policy)
+    {
+        if(policy is not ("faketcp-only" or "udp-only")) throw new FormatException("请选择 FakeTCP 或直接 UDP；不支持自动回退");
+        PathSelection=policy; AllowUdpFallback=false; TraversalMode="tcp-udp";
+        TransportMode=policy=="udp-only"?"udp":"faketcp";
+        if(policy=="udp-only") { TcpPeerReflexive=false; TcpPortPrediction=false; TcpPortCalibration=false; TcpSynObservation=false; FakeTcpIpv6=false; LegacyEgressPacing=false; }
+        else { UdpExploration=false; UdpEmpiricalStability=false; UdpIpv6=false; }
+    }
+    public bool MigrateAutomaticTransport()
+    {
+        bool automatic=PathSelection is "prefer-faketcp" or "auto-quality";
+        if(!automatic && !AllowUdpFallback) return false;
+        SelectTransport(automatic ? ((Mesh?.Pair.Mode ?? Pair?.Mode ?? TransportMode)=="udp"?"udp-only":"faketcp-only") : PathSelection);
+        MigrationNotice="已取消自动协议回退；当前固定使用 "+(PathSelection=="udp-only"?"直接 UDP":"FakeTCP＋HTTP")+"，可在设置中更改。";
+        return true;
+    }
+    // Production persistence/control rejects historical research policies.
+    // Low-level isolated comparison fixtures may still exercise those policies.
+    public void RequireFixedTransport()
+    {
+        if(PathSelection is not ("faketcp-only" or "udp-only") || AllowUdpFallback)
+            throw new FormatException("请选择固定的 FakeTCP 或直接 UDP 模式；不支持自动协议回退");
+        if(TransportMode != (PathSelection=="udp-only"?"udp":"faketcp"))
+            throw new FormatException("传输模式与连接策略不一致，请在设置中重新选择传输模式");
+        if(Mesh != null && Mesh.Pair.Mode != TransportMode &&
+            (TraversalMode=="legacy" || TransportMode=="udp" && TraversalMode!="tcp-udp"))
+            throw new FormatException("切换传输模式需要启用对应的受管打洞");
+    }
     public string LogLevel { get; set; } = "info";
     public string LogDirectory { get; set; } = "";
     public void Validate()
@@ -97,10 +125,12 @@ public sealed class DeviceProfile
         if (UdpExploration && (TraversalMode != "tcp-udp" || !Selection().Allows(TraversalProfile.UdpDirect)))
             throw new FormatException("UDP 多源探索需要 UDP 备用许可与实验 TCP/UDP 打洞");
         if (UdpEmpiricalStability && !UdpExploration) throw new FormatException("经验 UDP 稳定性实验需先启用 UDP 多源探索");
-        if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))
+        if (TcpPeerReflexive && (TraversalMode == "legacy" || TransportMode != "faketcp" || Pair?.Mode == "udp"))
             throw new FormatException("TCP 来源学习需要实验 TCP 打洞与 FakeTCP 网络");
-        if (PathSelection == "faketcp-only" && (TransportMode == "udp" || Pair?.Mode == "udp" || Mesh?.Pair.Mode == "udp"))
+        if (PathSelection == "faketcp-only" && (TransportMode == "udp" || Pair?.Mode == "udp"))
             throw new FormatException("仅 FakeTCP 与 UDP 网络不兼容，请使用 FakeTCP 网络或更改选路策略");
+        if (PathSelection == "udp-only" && (TransportMode != "udp" || Pair?.Mode == "faketcp"))
+            throw new FormatException("仅 UDP 与当前传输配置不兼容，请在设置中选择一致的模式");
         if (LogDirectory is null || LogDirectory.Length > 240 || (LogDirectory.Length > 0 && (!Path.IsPathFullyQualified(LogDirectory) || LogDirectory.StartsWith(@"\\")))) throw new FormatException("日志目录需为本机绝对路径");
         if (ManualEndpoint.Length > 0) Invitation.Create(ManualEndpoint, "faketcp", "").Validate();
         Mesh?.Validate();

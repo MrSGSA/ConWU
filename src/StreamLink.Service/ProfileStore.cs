@@ -50,11 +50,20 @@ public sealed class ProfileStore
     public DeviceProfile Load()
     {
         if (!File.Exists(file)) return new();
-        var profile = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)) ?? throw new IOException("配置为空"); profile.Validate(); return profile;
+        var profile = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)) ?? throw new IOException("配置为空");
+        bool migrated=PersonalFeature.Enabled && profile.MigrateAutomaticTransport();
+        profile.Validate();
+        if(PersonalFeature.Enabled) profile.RequireFixedTransport();
+        if(migrated) {
+            File.Copy(file, Path.Combine(Root, "profile-before-fixed-transport-" + Guid.NewGuid().ToString("N") + ".dpapi"), false);
+            Write(profile);
+        }
+        return profile;
     }
     public void Save(DeviceProfile profile)
     {
         profile.Validate();
+        if(PersonalFeature.Enabled) profile.RequireFixedTransport();
         if(File.Exists(file)){
             var previous=Load();
             if(previous.Mesh?.Directory is{} known&&profile.Mesh is{} next&&previous.Mesh.Pair.Network==next.Pair.Network&&previous.Mesh.OwnerKey==next.OwnerKey){
@@ -63,6 +72,10 @@ public sealed class ProfileStore
                 if(next.Directory.Revision==known.Revision&&next.Directory.Signature!=known.Signature)throw new IOException("同一授权revision内容冲突，不能回退撤销记录");
             }
         }
+        Write(profile);
+    }
+    void Write(DeviceProfile profile)
+    {
         File.WriteAllBytes(file + ".tmp", ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)); File.Move(file + ".tmp", file, true);
     }
     public void BackupLegacy(DeviceProfile profile)

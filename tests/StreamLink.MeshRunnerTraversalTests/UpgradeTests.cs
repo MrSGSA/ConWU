@@ -24,7 +24,7 @@ static class UpgradeTests
                 (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "upgrade")) {
                     Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
                 };
-            return new MeshRunner(new() { Mesh = meshes[i], TraversalMode = "tcp-udp", AllowUdpFallback = true },
+            return new MeshRunner(new() { Mesh = meshes[i], TraversalMode = "tcp-udp", PathSelection = "prefer-faketcp", AllowUdpFallback = true },
                 s => logs.Enqueue(i + " " + s), s => states[i] = s, _ => { }, _ => { }, services).Run(stop.Token);
         }).ToArray();
         var watch = Stopwatch.StartNew(); long udpAt = 0, failedAt = 0, upgradedAt = 0;

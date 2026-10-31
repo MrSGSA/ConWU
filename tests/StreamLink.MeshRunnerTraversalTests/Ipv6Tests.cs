@@ -124,7 +124,7 @@ static class Ipv6Tests
     {
         await using var v4 = new Reflector(AddressFamily.InterNetwork); await using var v6 = new Reflector(AddressFamily.InterNetworkV6) { BlackholeMappings = mode == "ipv6-unreachable" };
         var a = MeshIdentity.Create(url, pin, "faketcp"); var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0,
+        var profiles = new[] { a, b }.Select((m, i) => new DeviceProfile { Mesh = m, TraversalMode = "tcp-udp", PathSelection = "prefer-faketcp", AllowUdpFallback = true, UdpIpv6 = i == 0 || mode != "old-peer", UdpStun = ["fixture.invalid:3478"], ManagedEgressMbps = paced ? 50 : 0,
             QualityFeedback = feedback && (i == 0 || mode != "old-peer"), StandbyPaths=standby }).ToArray();
         if(diagnostics)foreach(var profile in profiles){profile.PathDiagnostics=true;profile.DiagnosticMbps=1;profile.ManagedEgressMbps=10;}
         if(autoQuality)foreach(var profile in profiles)profile.PathSelection="auto-quality";

@@ -12,7 +12,7 @@ static class UdpExplorationSocketTests
         var a=MeshIdentity.Create(url,pin,"faketcp");var b=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a)));b.Directory=a.Directory;var mesh=new[]{a,b};
         var machines=new[]{new TraversalResources(),new TraversalResources()};var opened=new ConcurrentBag<Tracked>();
         var adapters=new[]{new NativeIpv6RunnerTests.Adapter(),new NativeIpv6RunnerTests.Adapter()};var states=new SessionStatus?[2];var logs=new ConcurrentQueue<string>();
-        var factories=mesh.Select((m,i)=>new NativeIpv6RunnerTests.Inspect(new MeshCandidateFactory(new DeviceProfile{Mesh=m,TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true},"unused","unused",[TraversalProfile.UdpDirect]){
+        var factories=mesh.Select((m,i)=>new NativeIpv6RunnerTests.Inspect(new MeshCandidateFactory(new DeviceProfile{Mesh=m,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true},"unused","unused",[TraversalProfile.UdpDirect]){
             ExplorationBudgetForTest=machines[i],ResolveTarget=(_,_,_)=>Task.FromResult(reflector.Endpoint),RouteCheckForTest=(_,_,_)=>{},
             OpenExplorationSocketForTest=local=>{var source=new Tracked(new TraversalSocket(local),i);opened.Add(source);return source;},
             ExplorationTargetsForTest=hint=>[hint.Port],
@@ -23,7 +23,7 @@ static class UdpExplorationSocketTests
         MeshRuntimeServices Services(int i)=>new(m=>new MeshDiscoveryClient(m),_=>Task.FromResult<IPacketAdapter>(adapters[i]),async(_,_,t)=>{await Task.Delay(Timeout.Infinite,t);throw new IOException();},
             _=>throw new IOException("no explicit fixture"),(_,_,t)=>Task.Delay(Timeout.Infinite,t),(_,_,_)=>{},(_,_)=>{},Path.Combine(root,"real-exploration")){
             Candidates=(_,_,_,_)=>Task.FromResult<IMeshCandidateFactory?>(wrappers[i])};
-        var runs=Enumerable.Range(0,2).Select(i=>new MeshRunner(new DeviceProfile{Mesh=mesh[i],TraversalMode="tcp-udp",AllowUdpFallback=true,UdpExploration=true},s=>logs.Enqueue(i+" "+s),s=>states[i]=s,_=>{},_=>{},Services(i)).Run(stop.Token)).ToArray();
+        var runs=Enumerable.Range(0,2).Select(i=>new MeshRunner(new DeviceProfile{Mesh=mesh[i],TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,UdpExploration=true},s=>logs.Enqueue(i+" "+s),s=>states[i]=s,_=>{},_=>{},Services(i)).Run(stop.Token)).ToArray();
         try{
             while(!states.All(s=>s?.Connected==true)){foreach(var run in runs)if(run.IsCompleted)await run;if(watch.ElapsedMilliseconds>45000)throw new TimeoutException(string.Join('\n',logs));await Task.Delay(20,token);}
             long connected=watch.ElapsedMilliseconds;

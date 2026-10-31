@@ -64,12 +64,13 @@ static class Program
             bitmap.Save(Path.GetFullPath(previewPath),System.Drawing.Imaging.ImageFormat.Png);menu.Close();return;
         }
         // Preserve old shortcuts as aliases, with WebUI as the only business UI.
-        if(args.Length!=0 && args is not ["--desktop"]) {
+        bool startup=args is ["--startup"];
+        if(args.Length!=0 && args is not ["--desktop"] && !startup) {
             Environment.ExitCode=2;MessageBox.Show("无法识别启动参数。请从桌面快捷方式或 StreamLink.exe 打开 WebUI。","StreamLink");return;
         }
-        if(StreamLink.Core.WindowsHost.IsAdmin){MessageBox.Show("请使用日常账号、普通权限打开 StreamLink。安装与修复请运行 MSI 安装包。","StreamLink");return;}
+        if(StreamLink.Core.WindowsHost.IsAdmin){if(!startup)MessageBox.Show("请使用日常账号、普通权限打开 StreamLink。安装与修复请运行 MSI 安装包。","StreamLink");return;}
         using var panelSingle=new Mutex(true,"Local\\"+StreamLink.Core.WindowsInstance.Name+"-WebTray",out bool panelFirst);
-        if(!panelFirst){AppExitWindow.OpenExisting();return;}
-        Application.Run(new WebTrayContext());
+        if(!panelFirst){if(!startup)AppExitWindow.OpenExisting();return;}
+        Application.Run(new WebTrayContext(openBrowser:!startup));
     }
 }

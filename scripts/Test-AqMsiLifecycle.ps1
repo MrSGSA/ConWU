@@ -58,7 +58,7 @@ function Same([object]$Before,[object]$After,[string]$Label){
  Check ($Before.ProfileSha256 -eq $After.ProfileSha256 -and $Before.Network -eq $After.Network -and $Before.UiSid -eq $After.UiSid -and -not $After.NetworkEnabled) ($Label+' preserves profile, network identity and SID; remains disabled')
 }
 function StartTray([string]$Label){
- & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'StreamLink.exe') -Arguments @('--validation-instance',$ValidationInstance,'--validation-tray') -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
+ & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'StreamLink.exe') -Arguments @('--validation-instance',$ValidationInstance,'--startup') -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
  $launch=Get-Content (Join-Path $OutputDirectory ($Label+'/launch-result.json')) -Raw|ConvertFrom-Json
  Check ($launch.exit -eq 0 -and $launch.admin -eq $false -and -not $launch.error) ($Label+' ordinary launcher')
  $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -95,11 +95,14 @@ function Uninstall([string]$Label){
  Check (-not(Test-Path (Join-Path $runtime 'StreamLink.Service.exe'))) ($Label+' removes program')
  Check ((Test-Path (Join-Path $data 'profile.dpapi')) -and (Get-FileHash (Join-Path $data 'profile.dpapi')).Hash -eq $profile) ($Label+' retains protected configuration')
  Check (-not(Test-Path ('HKLM:\Software\StreamLink\Validation\'+$ValidationInstance))) ($Label+' removes MSI registration')
+ Check ($null -eq (Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $service -ErrorAction SilentlyContinue)) ($Label+' removes owned login startup entry')
 }
 try {
  $preUi=@()
  if(Test-Path (Join-Path $install 'StreamLink.exe')){$preUi=StartTray 'before-update'}
  MsiRun '/i' $Msi 'install-or-upgrade'
+ $startup=Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $service
+ Check ($startup -eq ('"'+(Join-Path $install 'StreamLink.exe')+'" --validation-instance '+$ValidationInstance+' --startup')) 'MSI owns the exact quoted login startup command'
  $shell=New-Object -ComObject WScript.Shell
  foreach($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'StreamLink'))){
   $link=Join-Path $folder ('StreamLink Validation '+$ValidationInstance.Substring(0,8)+'.lnk')

@@ -11,7 +11,7 @@ static class PolicyTests
             check(rejected, why);
         }
         var saved = JsonSerializer.Deserialize<DeviceProfile>("{\"Version\":2}")!;
-        saved.Validate(); check(saved.PathSelection == "prefer-faketcp" && saved.AllowUdpFallback == PersonalFeature.Enabled, "missing policy fields use the declared edition defaults; formal defaults do not silently consent to UDP fallback");
+        saved.Validate(); check(saved.PathSelection == "faketcp-only" && !saved.AllowUdpFallback, "missing policy fields default to fixed FakeTCP without automatic UDP fallback");
         var explicitOff = JsonSerializer.Deserialize<DeviceProfile>("{\"Version\":2,\"AllowUdpFallback\":false}")!;
         explicitOff.Validate(); check(!explicitOff.AllowUdpFallback,"explicit saved UDP refusal survives either edition's default");
         saved.AllowUdpFallback = true; saved.PathSelection = "faketcp-only";
@@ -27,9 +27,9 @@ static class PolicyTests
 
         var a = MeshIdentity.Create("https://example.com/", "", "faketcp");
         var b = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(a))); b.Directory = a.Directory;
-        foreach (var options in new[] { new PathSelection(), new PathSelection(PathPolicy.FakeTcpOnly, true) }) {
+        foreach (var options in new[] { new PathSelection(), new PathSelection(PathPolicy.FakeTcpOnly, true), new PathSelection(PathPolicy.UdpOnly) }) {
             await using var router = new MeshRouter(a, new Adapter(), selection: options);
-            var context = Context(a, b, router.BootId, Guid.NewGuid(), TraversalProfile.UdpDirect);
+            var context = Context(a, b, router.BootId, Guid.NewGuid(), options.Policy==PathPolicy.UdpOnly?TraversalProfile.FakeTcpHttpSo:TraversalProfile.UdpDirect);
             using var resource = new Resource(); resource.Peer = resource.Local; var path = resource.Retain(context);
             bool denied = false;
             try { router.RegisterPath(2, path, context, 1, TimeSpan.FromSeconds(5), 1); }

@@ -63,6 +63,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
     readonly Dictionary<int, long> lastAdmission = [];
     readonly Dictionary<int, string> admissionWaiting = [];
     readonly Dictionary<int, string> lastFailure = [];
+    readonly HashSet<int> noCommonTransport = [];
     long admissionSequence;
     Task? sending;
     MeshTraversalMessage[] batch = [];
@@ -84,6 +85,8 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             return new("Blocked","上一轮连接资源退出失败，已保留占用并停止重复尝试；请保留日志后停止并重启后台。",CanRetry:false) { ReasonCode="ResourceCloseUnproven" };
         if (entries.TryGetValue(slot, out var closing) && closing.Closing != null)
             return new("Releasing", "正在回收上一轮资源；退出完成后继续连接。", CanRetry:false) { ReasonCode="PreviousAttemptClosing" };
+        if(noCommonTransport.Contains(slot))
+            return new("Blocked","双方没有共同的可用打洞协议；请在两端设置中选择相同的传输模式，并检查组件是否可用。不会自动切换协议。",CanRetry:false) { ReasonCode="NoCommonTransport" };
         if(window is {Open:false,Connected:false} && window.RetryAt > now)
             return new("Retrying",window.TotalRounds == 0 ? "本轮等待本机或对端连接准备超时，尚未开始验证；后台将继续重试。" :
                 "本轮直连未成功，后台将继续重试。" + (lastFailure.TryGetValue(slot,out var failure) ? " 最近原因：" + failure : ""),
@@ -107,10 +110,10 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             Attempt:window.Failures+1,RemainingSeconds:(int)Math.Max(0,(window.Deadline-now+999)/1000),CanRetry:true) : null;
     }
     public void ObserveLegacyPending(int slot, bool pending) { if (pending) legacyPending.Add(slot); else legacyPending.Remove(slot); }
-    public bool KeepLegacyAttempt(int slot) => !discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) || window.Open;
+    public bool KeepLegacyAttempt(int slot) => router.LegacyAllowed && (!discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) || window.Open);
     public bool BeginLegacyAttempt(int slot)
     {
-        bool admitted = !discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) || window.Begin(TraversalProfile.LegacyExplicit, Environment.TickCount64);
+        bool admitted = router.LegacyAllowed && (!discovery.SupportsTraversal || !opportunities.TryGetValue(slot, out var window) || window.Begin(TraversalProfile.LegacyExplicit, Environment.TickCount64));
         if (admitted) lastAdmission[slot] = ++admissionSequence;
         return admitted;
     }
@@ -153,6 +156,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
     {
         if (disposed) return;
         admissionWaiting.Clear();
+        noCommonTransport.Clear();
         if (factory.PollNetworkChange()) {
             router.InvalidateNetworkEvidence();
             foreach (var e in entries.Values.ToArray())
@@ -170,6 +174,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
         bool Healthy(int slot) => statuses.GetValueOrDefault(slot)?.Connected == true;
         MeshTraversalCapabilities? Remote(int slot) => announcements.TryGetValue(slot, out var a) && a.Expires > utc ? a.Traversal : null;
         bool HasExplicit(int slot) {
+            if(!router.LegacyAllowed) return false;
             string remote = announcements.TryGetValue(slot, out var a) && a.Expires > utc ? a.Endpoint : "";
             string key = localExplicit + "|" + remote;
             if (key == "|") { explicitPriority.Remove(slot); return false; }
@@ -184,6 +189,9 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
         foreach (var peer in members) {
             var remote = Remote(peer.Slot);
             var common = remote == null ? [] : Capabilities.Profiles.Intersect(remote.Profiles).ToArray();
+            if(remote != null && common.Length==0 && !Healthy(peer.Slot) &&
+                (!router.LegacyAllowed || string.IsNullOrEmpty(announcements.GetValueOrDefault(peer.Slot)?.Endpoint)))
+                noCommonTransport.Add(peer.Slot);
             // Old peers retain the compatible path. A new peer's shared window
             // starts before admission, so waiting for another peer counts too.
             if (discovery.SupportsTraversal && common.Length > 0) {
@@ -193,7 +201,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
                     lastFailure.Remove(peer.Slot);
                     log($"设备 {peer.Slot} 开始直连机会窗 {window.Id:N}（60 秒，含排队与准备）");
                 }
-                methods[peer.Slot] = announcements.GetValueOrDefault(peer.Slot)?.Endpoint.Length > 0
+                methods[peer.Slot] = router.LegacyAllowed && announcements.GetValueOrDefault(peer.Slot)?.Endpoint.Length > 0
                     ? [TraversalProfile.LegacyExplicit, .. common] : common;
             } else if (opportunities.TryGetValue(peer.Slot, out var existing) && Healthy(peer.Slot)) existing.Observe(existing.Boot, true, now);
             if (opportunities.TryGetValue(peer.Slot, out var current) && current.Open && now >= current.Deadline) EndOpportunity(peer.Slot, now);

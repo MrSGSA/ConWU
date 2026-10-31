@@ -6,6 +6,7 @@ static class AdmissionTests
 {
     public static async Task Run(string executable, string root, Action<bool, string> check, CancellationToken token)
     {
+        await FixedTransportTests.Run(check,token);
         var budget = new MeshRequestBudget();
         for (int i = 0; i < 4; i++) check(budget.Take(), "ordinary discovery uses its shared request allowance");
         check(!budget.Take() && budget.Take(true) && budget.Take(true) && !budget.Take(true), "ordinary HTTP preserves two completion tokens and cannot bypass the common burst");
@@ -40,22 +41,24 @@ static class AdmissionTests
         check(factory.Cancelled == 3 && factory.Live == 0, "scheduler shutdown joins every admitted endpoint preparation");
 
         // A signed peer request cannot re-enable a locally forbidden protocol.
-        foreach (var selection in new[] { new PathSelection(), new PathSelection(PathPolicy.FakeTcpOnly, true) }) {
+        foreach (var selection in new[] { new PathSelection(), new PathSelection(PathPolicy.FakeTcpOnly, true), new PathSelection(PathPolicy.UdpOnly) }) {
             var owner = MeshIdentity.Create("https://example.com/", "", "faketcp");
             var guest = MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner))); guest.Directory = owner.Directory;
             var control = new Discovery(); var mixed = new PendingFactory(TraversalProfile.FakeTcpHttpSo, TraversalProfile.UdpDirect);
             await using var limitedRouter = new MeshRouter(guest, new EmptyAdapter(), control.BootId, selection);
             await using var limited = new MeshTraversalManager(guest, limitedRouter, control, mixed, new(), _ => { }, token);
-            check(limited.Capabilities.Profiles.SequenceEqual(new[] { TraversalProfile.FakeTcpHttpSo }), "advertisement filters UDP before endpoint preparation under " + selection.Policy);
+            var permitted=selection.Policy==PathPolicy.UdpOnly?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo;
+            var forbidden=selection.Policy==PathPolicy.UdpOnly?TraversalProfile.FakeTcpHttpSo:TraversalProfile.UdpDirect;
+            check(limited.Capabilities.Profiles.SequenceEqual(new[] { permitted }), "advertisement filters the unselected protocol before endpoint preparation under " + selection.Policy);
             var remoteCaps = new MeshTraversalCapabilities(1, 1, Guid.NewGuid(), mixed.Profiles);
-            var claimed = limited.Capabilities with { Profiles = mixed.Profiles };
+            var claimed = limited.Capabilities with { Profiles = mixed.Profiles, NativeAbi=1 };
             long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), sequence = 0;
-            await using var offer = MeshTraversalAttempt.Offer(owner, guest.Self, remoteCaps, claimed, TraversalProfile.UdpDirect,
-                new(Guid.NewGuid(), 1, "192.0.2.1:40001", null, now, now + 120, CandidatePurpose.UdpDirect), 1, () => ++sequence);
+            await using var offer = MeshTraversalAttempt.Offer(owner, guest.Self, remoteCaps, claimed, forbidden,
+                new(Guid.NewGuid(), 1, "192.0.2.1:40001", null, now, now + 120, forbidden==TraversalProfile.UdpDirect?CandidatePurpose.UdpDirect:CandidatePurpose.SimultaneousOpen), 1, () => ++sequence);
             limited.Receive([offer.Outbound!]); limited.Tick(new Dictionary<int, MeshAnnouncement> {
                 [1] = new(1, owner.Self.Device, 1, now + 120, "", "owner", remoteCaps)
             }, "");
-            check(mixed.Visited.Count == 0 && !limited.Owns(1), "authenticated unsupported UDP Offer cannot gather or reserve a path under " + selection.Policy);
+            check(mixed.Visited.Count == 0 && !limited.Owns(1), "authenticated unsupported Offer cannot gather or reserve a path under " + selection.Policy);
         }
 
         using (var heavyStop = CancellationTokenSource.CreateLinkedTokenSource(token)) {
@@ -83,10 +86,15 @@ static class AdmissionTests
         config.TraversalMode = "tcp-udp";
         check(await MeshCandidateFactory.Create(config, executable, root, _ => { }, token) == null, "production collector does not enable UDP solely because traversal mode includes UDP");
         config.AllowUdpFallback = true;
+        config.PathSelection = "prefer-faketcp"; // isolated historical policy comparison
         check((await MeshCandidateFactory.Create(config, executable, root, _ => { }, token))?.Profiles.SequenceEqual(new[] { TraversalProfile.UdpDirect }) == true,
             "explicit fallback permission enables the production UDP collector even when native preflight is unavailable");
         config.PathSelection = "faketcp-only";
         check(await MeshCandidateFactory.Create(config, executable, root, _ => { }, token) == null, "FakeTcpOnly also filters production collection with fallback permission retained");
+        config.SelectTransport("udp-only");
+        var selectedUdp=await MeshCandidateFactory.Create(config,"must-not-start.exe",root,_=>throw new Exception("UDP-only attempted native preflight"),token);
+        check(selectedUdp?.Profiles.SequenceEqual(new[]{TraversalProfile.UdpDirect})==true,"UDP-only production collector works without launching a FakeTCP native executable");
+        if(selectedUdp is IAsyncDisposable disposable)await disposable.DisposeAsync();
         config.TraversalMode = "legacy";
         check(await MeshCandidateFactory.Create(config, "nonexistent.exe", root, _ => { }, token) == null, "legacy configuration starts no new native process or candidate collection");
     }

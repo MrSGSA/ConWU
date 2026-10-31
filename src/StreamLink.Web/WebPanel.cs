@@ -10,6 +10,7 @@ namespace StreamLink.Web;
 
 public sealed class WebPanel : IAsyncDisposable
 {
+    public const int DefaultPort=47821;
     const long IdleMs=30*60*1000, MaximumSessionMs=8*60*60*1000;
     sealed class Session(string csrf, long now) {
         public string Csrf {get;} = csrf;
@@ -37,12 +38,13 @@ public sealed class WebPanel : IAsyncDisposable
     public string Origin => origin;
 
     WebPanel(WebApplication application, Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string root, TimeProvider time) { app = application; call = backend; assets = root; clock=time;clockStart=clock.GetTimestamp(); }
-    public static async Task<WebPanel> Start(Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string assets, TimeProvider? timeProvider=null)
+    public static async Task<WebPanel> Start(Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string assets, TimeProvider? timeProvider=null, int port=0)
     {
+        if(port!=0 && (port is <1024 or >65535)) throw new ArgumentOutOfRangeException(nameof(port));
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(o => {
-            o.Listen(IPAddress.Loopback, 0);
+            o.Listen(IPAddress.Loopback, port);
             o.Limits.MaxRequestBodySize = 65536;
             o.Limits.MaxConcurrentConnections = 32;
             o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(5);
@@ -50,7 +52,8 @@ public sealed class WebPanel : IAsyncDisposable
         });
         var app = builder.Build(); var panel = new WebPanel(app,backend,assets,timeProvider??TimeProvider.System);
         app.Run(panel.Handle);
-        await app.StartAsync();
+        try { await app.StartAsync(); }
+        catch { await app.DisposeAsync(); throw; }
         panel.origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
         panel.cookieName="StreamLinkSession-"+new Uri(panel.origin).Port;
         return panel;

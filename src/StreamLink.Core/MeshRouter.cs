@@ -69,16 +69,17 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public Task Completion { get; }
     public Guid BootId { get; }
     public PathSelection Selection { get; }
+    public bool LegacyAllowed => Selection.Allows(profile.Pair.Mode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
     public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null, PathSelection? selection = null)
     {
         Selection = selection ?? new();
         this.profile = profile; this.adapter = adapter;
         try {
             ArgumentNullException.ThrowIfNull(profile);
+            if(selection==null) Selection=new(profile.Pair.Mode=="udp"?PathPolicy.UdpOnly:PathPolicy.FakeTcpOnly);
             ArgumentNullException.ThrowIfNull(adapter);
             if (bootId == Guid.Empty) throw new ArgumentException("Router 启动代次无效", nameof(bootId));
             Selection.Validate();
-            if (Selection.Policy == PathPolicy.FakeTcpOnly && profile.Pair.Mode != "faketcp") throw new FormatException("仅 FakeTCP 不能接入 UDP 兼容网络");
             BootId = bootId ?? Guid.NewGuid();
             local = IPAddress.Parse(profile.LocalIp).GetAddressBytes();
             socket.Bind(new IPEndPoint(IPAddress.Loopback, 0)); socket.SendBufferSize = socket.ReceiveBufferSize = 1 << 20;
@@ -122,6 +123,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         => SetCandidate(slot, candidate, name, detail, false);
     public void SetCandidate(int slot, IPEndPoint? candidate, string name, string detail, bool nativeControlsWire)
     {
+        if(!LegacyAllowed && candidate != null) throw new InvalidOperationException("兼容入口协议不符合所选传输模式");
         if (candidate != null && !IPAddress.IsLoopback(candidate.Address)) throw new ArgumentException("数据接口仅允许本机 udp2raw");
         lock (gate) if (peers.TryGetValue(slot, out var peer)) {
             if (peer.Managed != null) return; // negotiated paths cannot fall back to legacy auto-promotion
@@ -206,14 +208,15 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public MeshPeerStatus[] Status()
     {
         lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => {
-            bool healthy = Healthy(p), degraded = healthy && (p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp");
+            bool healthy = Healthy(p), udp = p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp";
+            bool degraded = healthy && udp && Selection.Policy != PathPolicy.UdpOnly;
             return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
-                p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? degraded ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
+                p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? udp ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded, Liveness = Liveness(p),
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
-                    ActualTransport = !healthy ? "None" : degraded ? "UDP_DIRECT" : "FakeTCP+HTTP",
+                    ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : "FakeTCP+HTTP",
                     OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
                     OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
                     NativeEvidence=OperatingSystem.IsWindows()?(p.Managed?.Active?.Transport as NativeDatagramPath)?.Diagnostics:null,
@@ -231,7 +234,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { Interlocked.Increment(ref legacySendRejected); return false; }
     }
     bool SendLegacyControl(Peer peer, byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
-        => packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
+        => LegacyAllowed && packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
             !peer.NativeControlSources.ContainsKey(endpoint) && legacyListenerControlsWire ||
             TraversalResources.Shared.TrySend(packet.Length, maintenance)) && Send(packet, endpoint);
     void Transmit()
@@ -243,7 +246,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             lock (gate) if (peers.TryGetValue(slot, out var peer)) {
                 byte[]? encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
                 if (encoded != null) peer.Managed?.Active?.Traffic.Epoch(true, new Guid(encoded.AsSpan(8, 16)), Environment.TickCount64);
-                bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : Send(encoded, peer.Active));
+                bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && Send(encoded, peer.Active));
                 peer.Managed?.Active?.Traffic.Send(count, delivered, Environment.TickCount64);
                 if (delivered && encoded != null) peer.Managed?.Active?.Delivery?.Send(new Guid(encoded.AsSpan(8, 16)),
                     BinaryPrimitives.ReadUInt64BigEndian(encoded.AsSpan(40)), count, Environment.TickCount64);
@@ -269,7 +272,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (received.ReceivedBytes < MeshLink.Overhead || !IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
             lock (gate) if (peers.TryGetValue(buffer[5], out var peer)) {
-                if (peer.Managed != null) continue; // data arrives through its registered resource only
+                if (!LegacyAllowed) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
+                if (peer.Managed != null) continue; // managed data arrives through its registered resource only
                 if (peer.CancelledCandidates.Contains((IPEndPoint)received.RemoteEndPoint)) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; peer.AuthenticationDrops++; continue; }
@@ -324,6 +328,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             for (int i = 0; i < order.Length; i++) {
                 var peer = order[(i + cursor) % order.Length];
                 if (peer.Managed != null) { TickManaged(peer, now); TickRecovery(peer, now); continue; }
+                if (!LegacyAllowed) continue;
                 TickRecovery(peer, now);
                 // Spread legacy search/ordinary keepalive over ticks instead
                 // of draining the entire burst before any replies can arrive.

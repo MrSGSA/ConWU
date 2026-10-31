@@ -39,7 +39,7 @@ static class NetworkScopeTests
         IPEndPoint reflector=kind==TraversalProfile.UdpDirect?udp.Endpoint:tcp.Endpoint;
         var wire=new NativeIpv6RunnerTests.Wire(false);
         string currentRoute="owned-route";long now=1000;
-        MeshCandidateFactory Factory(MeshProfile mesh)=>new(new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",AllowUdpFallback=true,TcpStun=["fixture.invalid:3478"],UdpStun=["fixture.invalid:3478"]},binary,root,[kind],captureBroker:true,wireControl:true){
+        MeshCandidateFactory Factory(MeshProfile mesh)=>new(new DeviceProfile{Mesh=mesh,TraversalMode="tcp-udp",PathSelection="prefer-faketcp",AllowUdpFallback=true,TcpStun=["fixture.invalid:3478"],UdpStun=["fixture.invalid:3478"]},binary,root,[kind],captureBroker:true,wireControl:true){
             ResolveTarget=(_,_,_)=>Task.FromResult(reflector),OpenCaptureForTest=(local,_)=>wire.Open(local),RouteCheckForTest=(_,_,_)=>{},NetworkRouteForTest=_=>currentRoute,NetworkClock=()=>now
         };
         await using var fa=Factory(a);await using var fb=Factory(b);

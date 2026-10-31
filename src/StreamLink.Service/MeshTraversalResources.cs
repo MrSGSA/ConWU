@@ -128,7 +128,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
         if (profile.TraversalMode == "legacy") return null;
         var supported = new List<TraversalProfile>();
         bool broker = false, ipv6 = false, wireControl = false, peerSource = false,diagnosticNative=false;
-        try {
+        if(profile.Selection().Allows(TraversalProfile.FakeTcpHttpSo)) try {
             var info = new ProcessStartInfo(executable) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             info.ArgumentList.Add("--native-info");
             using var process = Process.Start(info) ?? throw new IOException("无法查询原生能力");
@@ -147,11 +147,11 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == "windivert" &&
                     r.TryGetProperty("preparedStart", out var prepared) && prepared.GetBoolean() &&
                     r.TryGetProperty("simultaneousOpen", out var so) && so.GetBoolean() && r.GetProperty("wireProtocol").GetString() == "udp2raw-http-c4995ea")
-                    supported.Add(TraversalProfile.FakeTcpHttpSo);
+                    if(profile.Selection().Allows(TraversalProfile.FakeTcpHttpSo)) supported.Add(TraversalProfile.FakeTcpHttpSo);
             } finally { if (!process.HasExited) { process.Kill(); await process.WaitForExitAsync(); } }
         } catch (Exception ex) when (!token.IsCancellationRequested) { log("原生双主动暂未启用：" + ex.GetType().Name); }
         if (profile.TraversalMode == "tcp-udp" && profile.Selection().Allows(TraversalProfile.UdpDirect)) supported.Add(TraversalProfile.UdpDirect);
-        if (profile.FakeTcpIpv6 && !ipv6) log("FakeTCP IPv6 暂未启用：原生组件需提供 ABI 2 与统一捕获能力，继续 IPv4");
+        if (profile.Selection().Allows(TraversalProfile.FakeTcpHttpSo) && profile.FakeTcpIpv6 && !ipv6) log("FakeTCP IPv6 暂未启用：原生组件需提供 ABI 2 与统一捕获能力，继续 IPv4");
         if (profile.ManagedEgressMbps > 0 && supported.Contains(TraversalProfile.FakeTcpHttpSo) && !broker)
             throw new IOException("实验出口调度要求受管捕获后端，请升级原生组件或关闭出口上限");
         if (profile.ManagedEgressMbps > 0) log($"实验链路共享 {profile.ManagedEgressMbps} Mbps 外层 IP 出口预算；兼容入口、内核反射与 HTTPS 控制流不在此范围");

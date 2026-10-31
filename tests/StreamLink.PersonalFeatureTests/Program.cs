@@ -13,7 +13,7 @@ Check(WindowsInstance.Name=="StreamLink-PersonalFeature"&&ServiceProtocol.PipeNa
 Check(ProfileStore.Root==PersonalFeature.DataRoot&&new DeviceProfile().SourcePort!=42691,"default profile and raw source endpoint isolate 0.3.2");
 var p=new DeviceProfile {AllowUdpFallback=false};p.CapabilityIntents[nameof(DeviceProfile.TcpPeerReflexive)]=false;
 var enhanced=PersonalFeature.EnhancedPreset(p);
-Check(enhanced.TraversalMode=="tcp-udp"&&enhanced.AllowUdpFallback&&!enhanced.TcpPeerReflexive&&!p.AllowUdpFallback,"enhancement preserves explicit disable without mutating input");
+Check(enhanced.TraversalMode=="tcp-udp"&&enhanced.PathSelection=="faketcp-only"&&!enhanced.AllowUdpFallback&&!enhanced.TcpPeerReflexive&&!p.AllowUdpFallback,"enhancement fixes FakeTCP without UDP fallback and preserves explicit disable without mutating input");
 Check(!enhanced.UdpExploration&&!enhanced.TcpPortPrediction&&!enhanced.PathDiagnostics,"preset never grants high-cost or load permissions");
 var selected=ProfileChanges.Copy(p);selected.AdapterBackend=PacketAdapterBackend.StreamLinkTun;selected.Validate();
 Check(ProfileChanges.Impact(p,selected)==ProfileChangeImpact.RestartNetwork,"typed backend changes participate in resource lifecycle");
@@ -26,6 +26,7 @@ var state=new UiStatusDto("personal","device","10.1.1.1","Stopped",true,false,0,
 string dto=JsonSerializer.Serialize(state);
 Check(!dto.Contains("OwnerKey")&&!dto.Contains("PrivateKey")&&!dto.Contains("MachineGuid"),"runtime UI status exposes no network secrets or target identity secret");
 WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
+FixedTransportProfileTests.Run(Check,Reject);
 using(var worker=new ControlWorker()){
     worker.StartLocal();var before=await worker.Handle(new("status"));
     var changed=ProfileChanges.Copy(before.Profile!);changed.AdapterBackend=PacketAdapterBackend.StreamLinkTun;
