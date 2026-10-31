@@ -24,6 +24,7 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if (args is ["--connection-feedback-only"]) { ConnectionFeedback(); return; }
         if (args is ["--tcp-selection-only"]) { await TcpTests.SelectionOwnership(); return; }
         if (args is ["--entry-probe-only"]) { await EntryProbeReuse(); return; }
         if (args is ["--scheduler-only"]) { await Scheduler(); return; }
@@ -58,6 +59,7 @@ static partial class Program
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AccessDenied or SocketError.AddressAlreadyInUse) { Console.WriteLine(ex.SocketErrorCode); }
             return;
         }
+        ConnectionFeedback();
         await TcpTests.Run();
         await EntryProbeReuse();
         await Migration();

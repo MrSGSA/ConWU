@@ -388,19 +388,9 @@ public sealed class MeshRunner
                         nextTrafficReport = now + 30000;
                     }
                     int degraded = statuses.Count(p => p.Degraded);
-                    var waitingPeer = statuses.Where(p=>!p.Connected).OrderBy(p=>p.Connection?.Phase switch {
-                        "Blocked"=>0,"Releasing"=>1,"Retrying"=>2,"Queued"=>3,_=>4 }).FirstOrDefault();
-                    var waiting = waitingPeer?.Connection;
-                    if (waiting != null) waiting = waiting with {
-                        CanRetry=statuses.Any(p=>!p.Connected && p.Connection?.CanRetry == true),
-                        Detail=statuses.Length>1?(string.IsNullOrWhiteSpace(waitingPeer!.Name)?"设备 "+waitingPeer.Slot:waitingPeer.Name)+"："+waiting.Detail:waiting.Detail };
-                    var connection = waiting ?? new ConnectionProgress(statuses.Length==0?"WaitingPeer":"Connected",
-                        statuses.Length==0?"网络已启动，等待另一台设备加入。":"直连已通过双向验证，可复制设备 IP 开始串流。",now-began);
+                    var (connectionState, connection) = MeshConnectionFeedback.Summarize(statuses,now-began);
                     if(coordinatorUnavailable)connection=connection with {Detail="协调服务暂不可用，已有直连继续运行；新增连接可能延迟。 "+connection.Detail};
                     if(mappingReleaseFailed)connection=connection with {Detail="本机入口资源回收失败，已暂停入口重建；已有直连继续运行，请保留诊断后重启后台处理。 "+connection.Detail};
-                    string connectionState = statuses.Length == 0 ? "等待成员加入" : count == statuses.Length ? degraded > 0 ? "已直连（含 UDP）" : "已直连" : count > 0 ? "部分设备已直连" : connection.Phase switch {
-                        "Blocked"=>"有设备需要处理","Releasing"=>"正在回收连接资源","Retrying"=>"等待重试",
-                        "Queued"=>"等待连接名额","WaitingPeer"=>"等待设备响应",_=>"正在连接" };
                     var adapterStatistics = actualAdapter?.Statistics;
                     report(new(connectionState, mesh.LocalIp, first?.Ip ?? "", mesh.Pair.Mode, count > 0, first?.RttMs,
                         $"{count}/{statuses.Length} 台设备直连 · 业务不经中继" + (degraded > 0 ? $" · {degraded} 台 UDP，质量单独评估" : ""), first?.Name ?? "", statuses) {

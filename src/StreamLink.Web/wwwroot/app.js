@@ -6,7 +6,7 @@ let connectionDirty=false, metadataDirty=false, connectionBase=null, metadataBas
 let lastTraffic=null, cooldownUntil=0, lastStatusAt=0;
 let statusGeneration=0;
 const rows=new Map();
-const phaseNames={StartingAdapter:'准备网络',WaitingPeer:'等待设备',WaitingEntry:'寻找入口',Connecting:'正在连接',Queued:'等待名额',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
+const phaseNames={Idle:'网络已就绪',Offline:'未在线',StartingAdapter:'准备网络',WaitingPeer:'等待设备',WaitingEntry:'寻找入口',Connecting:'正在连接',Queued:'等待名额',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
 
 function notice(message,error=false) {
   $('notice').textContent=message; $('notice').hidden=!message;
@@ -132,7 +132,7 @@ function duration(ms) {
   return seconds<60?seconds+' 秒':Math.floor(seconds/60)+' 分 '+seconds%60+' 秒';
 }
 function progressText(progress,extraMs=0) {
-  if(!progress)return '';
+  if(!progress||['Idle','Offline'].includes(progress.phase))return '';
   const parts=[phaseNames[progress.phase]||'正在处理'];
   parts.push((progress.phase==='Connected'?'持续 ':'已等待 ')+duration(progress.elapsedMs+extraMs));
   if(progress.attempt>0&&progress.phase!=='Connected')parts.push('第 '+progress.attempt+' 次尝试');
@@ -179,7 +179,7 @@ function renderPeers(peers,s) {
   const list=$('peer-list'),slots=new Set(peers.map(p=>p.slot));
   for(const [slot,row] of rows)if(!slots.has(slot)){row.root.remove();rows.delete(slot);}
   list.querySelector('.empty')?.remove();
-  if(!peers.length)list.append(text('p',s.networkId?'等待其他成员上线。可在“添加设备”中邀请电脑。':'添加另一台电脑后，在这里查看连接与复制 IP。','empty'));
+  if(!peers.length)list.append(text('p',s.networkId?'当前没有其他设备。需要时可在“添加设备”中邀请电脑。':'添加另一台电脑后，在这里查看连接与复制 IP。','empty'));
   for(const p of peers) {
     let row=rows.get(p.slot);
     if(!row){row=makePeer(p.slot);rows.set(p.slot,row);list.append(row.root);}
@@ -203,7 +203,7 @@ function render(s) {
   state=s;online=true;expired=false;lastStatusAt=performance.now();
   $('backend-state').textContent=s.serviceReady?'后台已就绪':'后台正在准备';
   $('network-state').textContent=s.state||'尚未连接';
-  $('connection-card').dataset.state=s.directPeers>0?'connected':s.networkEnabled?'waiting':'stopped';
+  $('connection-card').dataset.state=s.directPeers>0?'connected':s.networkEnabled?(s.connection?.phase==='Idle'?'idle':'waiting'):'stopped';
   $('local-ip').textContent=s.virtualIp||'—';$('device-label').textContent=s.deviceName||'本机';
   $('peer-count').textContent=s.directPeers+' / '+s.totalPeers;
   $('state-detail').textContent=!s.networkId?'先添加另一台电脑，创建或加入同一网络。':!s.networkEnabled?'网络已停止，配对与设置已保留。':s.connection?.detail||'正在读取连接进度。';
@@ -213,8 +213,8 @@ function render(s) {
   $('setup').hidden=!!s.networkId;
   $('copy-local').disabled=!s.virtualIp;
   const allConnected=s.totalPeers>0&&s.directPeers===s.totalPeers;
-  $('connection-steps').hidden=!s.networkEnabled||allConnected;
   const phase=s.connection?.phase;
+  $('connection-steps').hidden=!s.networkEnabled||allConnected||['Idle','Connected'].includes(phase);
   const step=phase==='StartingAdapter'?0:['WaitingPeer','WaitingEntry','Queued','Preparing','Connecting'].includes(phase)?1:2;
   document.querySelectorAll('[data-step]').forEach(e=>{
     const n=Number(e.dataset.step),done=allConnected;
@@ -248,7 +248,7 @@ function render(s) {
   if(!metadataDirty){metadataBase={name:s.deviceName,level:s.logLevel};$('device-name').value=s.deviceName;$('log-level').value=s.logLevel;}
   if(!$('server').value&&s.settings?.service)$('server').value=s.settings.service;
   const pair=s.pairing;
-  $('room-code').textContent=pair?.code||'— — — — — —';$('verification').textContent=pair?.verification||'等待申请';
+  $('room-code').textContent=pair?.code||'— — — — — —';$('verification').textContent=pair?.verification||(pair?.active?'等待申请':'—');
   $('pair-state').textContent=pair?.state||'尚未发起配对';
   $('pair-peer').textContent=pair?.peerName?'对方设备：'+pair.peerName:'';
   tick();

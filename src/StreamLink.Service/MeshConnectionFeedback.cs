@@ -26,13 +26,38 @@ internal sealed class MeshConnectionFeedback(Action<string> log)
             "TransportExited" => "传输组件已退出。",
             _ => ""
         };
-        // A stale announcement must not hide an owned attempt, its retry
-        // budget, or a failed close by replacing it with an actionable wait.
-        if(!freshRemote && !prior.EverConnected && attempt.Phase is "WaitingEntry" or "WaitingPeer" or "Connecting")
-            attempt=new("WaitingPeer","尚未收到对端的有效上线信息。请确认另一台设备已启动并连接同一网络。",CanRetry:true);
+        // No fresh announcement and no timed attempt is an idle member, not
+        // an unbounded connection attempt. Preserve owned work, retry budgets
+        // and failed cleanup even if the remote announcement has expired.
+        if(!freshRemote && attempt.RemainingSeconds == null && attempt.Phase is "WaitingEntry" or "WaitingPeer" or "Connecting")
+            return peer with { Connection = new("Offline","尚未收到此设备的有效上线信息；上线后会自动连接。") { ReasonCode="NoFreshAnnouncement" } };
         return peer with { Connection = attempt with {
             Phase = prior.EverConnected && attempt.Phase is not ("Retrying" or "Queued" or "Releasing" or "Blocked") ? "Recovering" : attempt.Phase,
             Detail = failure.Length > 0 ? failure + " " + attempt.Detail : attempt.Detail, ElapsedMs = now-prior.Since } };
+    }
+    public static (string State, ConnectionProgress Connection) Summarize(MeshPeerStatus[] statuses, long elapsedMs)
+    {
+        int count = statuses.Count(p => p.Connected), offline = statuses.Count(p => !p.Connected && p.Connection?.Phase == "Offline");
+        var pending = statuses.Where(p => !p.Connected && p.Connection?.Phase != "Offline").ToArray();
+        if(pending.Length == 0) {
+            if(count == 0) return ("网络已就绪", new("Idle",statuses.Length == 0
+                ? "当前没有其他设备；需要时可在“添加设备”中邀请电脑。"
+                : "已配对设备暂未在线，上线后会自动连接。") { ReasonCode=statuses.Length == 0 ? "NoPairedPeers" : "NoOnlinePeers" });
+            string detail = offline == 0 ? "直连已通过双向验证，可复制设备 IP 开始串流。"
+                : $"已直连 {count} 台设备，可开始使用；另有 {offline} 台设备未在线，上线后会自动连接。";
+            long connectedMs = statuses.Where(p => p.Connected).Min(p => p.Connection?.ElapsedMs ?? elapsedMs);
+            return (statuses.Any(p => p.Connected && p.Degraded) ? "已直连（含 UDP）" : "已直连", new("Connected",detail,connectedMs));
+        }
+        var waitingPeer = pending.OrderBy(p => p.Connection?.Phase switch {
+            "Blocked"=>0,"Releasing"=>1,"Retrying"=>2,"Queued"=>3,_=>4 }).First();
+        var waiting = waitingPeer.Connection ?? new("Connecting",waitingPeer.Detail,elapsedMs);
+        var connection = waiting with {
+            CanRetry=pending.Any(p => p.Connection?.CanRetry == true),
+            Detail=statuses.Length > 1 ? (string.IsNullOrWhiteSpace(waitingPeer.Name) ? "设备 "+waitingPeer.Slot : waitingPeer.Name)+"："+waiting.Detail : waiting.Detail };
+        string state = count > 0 ? "部分设备已直连" : connection.Phase switch {
+            "Blocked"=>"有设备需要处理","Releasing"=>"正在回收连接资源","Retrying"=>"等待重试",
+            "Queued"=>"等待连接名额","WaitingPeer"=>"等待设备响应",_=>"正在连接" };
+        return (state,connection);
     }
     public void Retain(IEnumerable<int> slots)
     {
