@@ -10,6 +10,7 @@ public sealed record LegacyTransportResource(Guid ResourceId, string Mode, bool 
     public LegacyBusinessEgressStats? BusinessEgress { get; init; }
     public LegacyBusinessHandoffReport? BusinessHandoff {get;init;}
     public LegacyRouteReport? Route {get;init;}
+    public LegacyControlChannelReport? ControlChannel {get;init;}
 }
 public sealed record LegacyTransportUsage(int OpenResources, int Limit, int PeakResources, long Created,
     LegacyTransportResource[] Resources)
@@ -48,7 +49,7 @@ public sealed class LegacyTransportLedger
     }
     public LegacyTransportUsage Snapshot(){lock(gate){Reap();
         var reports=resources.Values.Select(h=>h.Value.Wire).Where(w=>w!=null).ToArray();
-        var snapshot=resources.Values.Select(h=>h.Value with{BusinessEgress=h.Egress?.Invoke(),Route=h.Route?.Invoke()}).ToArray();
+        var snapshot=resources.Values.Select(h=>h.Value with{BusinessEgress=h.Egress?.Invoke(),Route=h.Route?.Invoke(),ControlChannel=h.Control?.Invoke()}).ToArray();
         return new(resources.Count,CompatibilityLimit,peak,created,snapshot.Concat(history.TakeLast(4)).ToArray()){
             ActiveReportedResources=reports.Length,ActiveUnreportedResources=resources.Count-reports.Length,
             ActiveKnownInjectionPackets=reports.Sum(w=>w!.HandshakePackets+w.MaintenancePackets+w.BusinessPackets+w.CompletionPackets+w.DiagnosticPackets)+snapshot.Sum(s=>s.BusinessEgress?.InjectedPackets??0),
@@ -60,6 +61,7 @@ public sealed class LegacyTransportLedger
         internal LegacyTransportResource Value=value;
         internal Func<LegacyBusinessEgressStats>? Egress;
         internal Func<LegacyRouteReport>? Route;
+        internal Func<LegacyControlChannelReport>? Control;
         long processStart;
         bool completed;
         internal Guid ResourceId=>Value.ResourceId;
@@ -99,7 +101,7 @@ public sealed class LegacyTransportLedger
         }
         internal void Complete()
         {
-            if(completed)return;completed=true;Value=Value with{State="Closed",RetirementRequested=true,BusinessEgress=Egress?.Invoke(),Route=Route?.Invoke()};
+            if(completed)return;completed=true;Value=Value with{State="Closed",RetirementRequested=true,BusinessEgress=Egress?.Invoke(),Route=Route?.Invoke(),ControlChannel=Control?.Invoke()};
             owner.resources.Remove(Value.ResourceId);owner.history.Enqueue(Value);while(owner.history.Count>64)owner.history.Dequeue();
         }
         public void Dispose(){lock(owner.gate){if(completed)return;Value=Value with{State="Retiring",RetirementRequested=true};if(Gone())Complete();}}

@@ -26,6 +26,7 @@ void raw_ready(struct ev_loop *, ev_async *, int) {
 }
 
 void tick(struct ev_loop *, ev_timer *, int) {
+    native_check_health();
     native_so_server_tick();
     conn_manager.clear_inactive();
     for (auto &entry : conn_manager.mp) {

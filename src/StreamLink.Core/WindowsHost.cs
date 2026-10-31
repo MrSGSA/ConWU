@@ -39,13 +39,17 @@ public sealed class ChildJob : IDisposable
         var writer = logPath == null ? null : new StreamWriter(logPath, false) { AutoFlush = true };
         string[] redactions = (secrets ?? []).Where(x => x.Length > 0).Distinct().OrderByDescending(x => x.Length).ToArray();
         var sync = new object();
-        void Record(object sender, DataReceivedEventArgs e) { if(e.Data != null) lock(sync) {
+        int outputEnds=0;
+        void Record(object sender, DataReceivedEventArgs e) { lock(sync) {
+            // Process.Exited can arrive before buffered stdout/stderr. Keep the
+            // writer until both EOF events so a fatal cause is not discarded.
+            if(e.Data==null){if(++outputEnds==2)writer?.Dispose();return;}
             observe?.Invoke(e.Data);
             try { string line = e.Data; foreach (string secret in redactions) line = line.Replace(secret, "[redacted]", StringComparison.Ordinal); writer?.WriteLine(line); }
             catch(Exception ex) when (ex is ObjectDisposedException or IOException) { }
         } }
         process.OutputDataReceived += Record; process.ErrorDataReceived += Record;
-        process.EnableRaisingEvents = true; process.Exited += (_, _) => { lock(sync) writer?.Dispose(); };
+        process.EnableRaisingEvents = true; // attachment owners also subscribe to Exited
         process.BeginOutputReadLine(); process.BeginErrorReadLine(); return process;
     }
     public bool AnyExited => children.Any(p => p.HasExited);

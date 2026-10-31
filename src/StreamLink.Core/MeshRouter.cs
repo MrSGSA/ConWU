@@ -48,7 +48,9 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public readonly PathRecovery Recovery = new(Environment.TickCount64);
         public Guid LegacyPathId;
         public long NextLegacyControl;
+        public bool LegacyTransportFailed;
         public readonly Dictionary<IPEndPoint, bool> NativeControlSources = [];
+        public readonly HashSet<IPEndPoint> LegacyListenerSources = [];
         public readonly HashSet<IPEndPoint> CancelledCandidates = [];
         public readonly Queue<IPEndPoint> CancelledOrder = [];
     }
@@ -129,9 +131,9 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 peer.CancelledOrder.Clear(); foreach (var endpoint in kept) peer.CancelledOrder.Enqueue(endpoint);
             }
             peer.Candidate = candidate; peer.Name = name; peer.Detail = detail;
-            if (candidate != null) peer.NativeControlSources[candidate] = nativeControlsWire;
+            if (candidate != null) { peer.NativeControlSources[candidate] = nativeControlsWire;peer.LegacyListenerSources.Remove(candidate); }
             foreach (var source in peer.NativeControlSources.Keys.Where(source => !Equals(source, peer.Active) && !Equals(source, peer.Candidate) && !peer.Retired.Contains(source)).ToArray())
-                peer.NativeControlSources.Remove(source);
+                {peer.NativeControlSources.Remove(source);peer.LegacyListenerSources.Remove(source);}
             if (changed && candidate != null && !candidate.Equals(peer.Active)) {
                 peer.Probes.Remove(candidate); peer.NextLegacyControl = 0;
             }
@@ -146,7 +148,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         var path = peer.Managed?.Active;
         long received = peer.Managed == null ? peer.ActiveReceived : path?.LastReceive ?? 0;
         long roundTrip = peer.Managed == null ? peer.ActiveRoundTrip : path?.LastRoundTrip ?? 0;
-        string reason = Healthy(peer) ? "Healthy" : peer.Managed == null && peer.Active == null || peer.Managed != null && path == null ? "WaitingForPath" :
+        string reason = Healthy(peer) ? "Healthy" : peer.Managed == null && peer.LegacyTransportFailed ? "TransportExited" : peer.Managed == null && peer.Active == null || peer.Managed != null && path == null ? "WaitingForPath" :
             path?.Transport.Failed == true ? "TransportExited" : !Fresh(received) ? "ReceiveTimedOut" :
             !Fresh(roundTrip) ? "ReturnPathTimedOut" : "SessionNotReady";
         return new(reason, Age(received), Age(roundTrip)) {
@@ -162,10 +164,31 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public void CancelLegacyCandidate(int slot, IPEndPoint? endpoint)
     {
         lock (gate) if (endpoint != null && peers.TryGetValue(slot, out var peer) && peer.Managed == null && !endpoint.Equals(peer.Active)) {
-            peer.Probes.Remove(endpoint); peer.NativeControlSources.Remove(endpoint);
+            peer.Probes.Remove(endpoint); peer.NativeControlSources.Remove(endpoint);peer.LegacyListenerSources.Remove(endpoint);
             if (peer.CancelledCandidates.Add(endpoint)) peer.CancelledOrder.Enqueue(endpoint);
             while (peer.CancelledOrder.Count > 32) peer.CancelledCandidates.Remove(peer.CancelledOrder.Dequeue());
             if (endpoint.Equals(peer.Candidate)) peer.Candidate = peer.Active;
+        }
+    }
+    // Only a confirmed owner failure may revoke a still-fresh proof. Match the
+    // exact local endpoint so retiring another candidate cannot break Active.
+    public void FailLegacyTransport(int slot,IPEndPoint? endpoint)
+    {
+        lock(gate)if(endpoint!=null&&peers.TryGetValue(slot,out var peer)&&peer.Managed==null){
+            if(endpoint.Equals(peer.Active)){
+                peer.Active=null;peer.ActiveReceived=peer.ActiveRoundTrip=0;peer.ActivePings.Clear();
+                peer.LegacyTransportFailed=true;peer.NextLegacyControl=0;
+                peer.Recovery.Break("TransportExited",Environment.TickCount64);
+            }
+            CancelLegacyCandidate(slot,endpoint);
+        }
+    }
+    public void FailLegacyListener()
+    {
+        lock(gate){
+            legacyListenerControlsWire=false;
+            foreach(var peer in peers.Values.Where(p=>p.Managed==null))
+                foreach(var endpoint in peer.LegacyListenerSources.ToArray())FailLegacyTransport(peer.Member.Slot,endpoint);
         }
     }
     void Challenge(Peer peer, IPEndPoint endpoint)
@@ -251,14 +274,16 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
                 if (!result.Authenticated) { peer.Dropped++; peer.AuthenticationDrops++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
-                if (!peer.NativeControlSources.ContainsKey(endpoint) && peer.NativeControlSources.Count < 16)
-                    peer.NativeControlSources[endpoint] = legacyListenerControlsWire;
+                if (!peer.NativeControlSources.ContainsKey(endpoint) && peer.NativeControlSources.Count < 16){
+                    peer.NativeControlSources[endpoint] = legacyListenerControlsWire;peer.LegacyListenerSources.Add(endpoint);
+                }
                 if (result.Reply != null) SendLegacyControl(peer, result.Reply, endpoint, maintenance: buffer[4] == 5 && endpoint.Equals(peer.Active));
                 if (buffer[4] != 1) {
                     if (endpoint.Equals(peer.Active)) peer.ActiveReceived = Stopwatch.GetTimestamp();
                     else if (result.PongToken is long nonce && peer.Probes.TryGetValue(endpoint, out var probe) && probe.Token == nonce && Stopwatch.GetElapsedTime(probe.At).TotalSeconds < 5) {
                         if (peer.Active != null) { peer.Retired.Enqueue(peer.Active); while (peer.Retired.Count > 8) peer.Retired.Dequeue(); }
                         peer.Active = endpoint; peer.ActiveReceived = peer.ActiveRoundTrip = Stopwatch.GetTimestamp(); peer.Probes.Clear(); peer.ActivePings.Clear();
+                        peer.LegacyTransportFailed=false;
                         peer.LegacyKeepalive = new();
                         peer.LegacyPathId = Guid.NewGuid(); peer.Recovery.Select(peer.LegacyPathId, Environment.TickCount64);
                     } else if (endpoint.Equals(peer.Candidate) || !Healthy(peer) || !peer.Retired.Contains(endpoint)) Challenge(peer, endpoint);

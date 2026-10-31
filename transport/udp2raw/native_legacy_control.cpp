@@ -20,24 +20,37 @@ struct controller {
     bool armed=false;
     unsigned long long epoch=0, sequence=0;
     std::atomic<unsigned long long> stats[6]{}; // queued, full/closed, parent denied, expired, stale capture, IPC fault
+    unsigned long long denied[4]{}; // worker-only reply categories, no protocol change
     legacy_inject inject;
     std::string name; unsigned parent; unsigned char authorization[64]{};
     std::map<std::string,std::chrono::steady_clock::time_point> http_until; // worker-only, bounded; preserves legacy GET -> bare gap
 };
 controller *control=nullptr; // bounded process lifetime, parent JobObject owns exit
-bool exact(controller &c,void *bytes,unsigned count,bool write,DWORD timeout=1000) {
+void fault(controller &c,const char *stage,DWORD error=0,const char *reason="Rejected") {
+    // Log before publishing failure: the capture loop may exit immediately.
+    mylog(log_error,"[legacy-control-fault] stage=%s reason=%s win32=%lu sequence=%llu\n",stage,reason,error,c.sequence);
+    c.stats[5]++;c.failed=true;SetEvent(c.halt);SetEvent(c.ready);
+}
+bool exact(controller &c,void *bytes,unsigned count,bool write,const char *stage,DWORD timeout=1000) {
     unsigned done=0;
     while(done<count) {
-        OVERLAPPED op{}; op.hEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr); if(!op.hEvent)return false;
+        OVERLAPPED op{}; op.hEvent=CreateEventW(nullptr,TRUE,FALSE,nullptr);
+        if(!op.hEvent){fault(c,stage,GetLastError(),"CreateEvent");return false;}
         DWORD transferred=0;
         BOOL ok=write?WriteFile(c.pipe,static_cast<char*>(bytes)+done,count-done,&transferred,&op)
                      :ReadFile(c.pipe,static_cast<char*>(bytes)+done,count-done,&transferred,&op);
-        if(!ok&&GetLastError()==ERROR_IO_PENDING) {
+        DWORD error=ok?ERROR_SUCCESS:GetLastError();const char *reason="IoError";
+        if(!ok&&error==ERROR_IO_PENDING) {
             HANDLE events[]={op.hEvent,c.halt}; auto result=WaitForMultipleObjects(2,events,FALSE,timeout);
-            if(result==WAIT_OBJECT_0)ok=GetOverlappedResult(c.pipe,&op,&transferred,FALSE);
-            else {CancelIoEx(c.pipe,&op);GetOverlappedResult(c.pipe,&op,&transferred,TRUE);ok=FALSE;}
+            if(result==WAIT_OBJECT_0){ok=GetOverlappedResult(c.pipe,&op,&transferred,FALSE);error=ok?ERROR_SUCCESS:GetLastError();}
+            else {
+                reason=result==WAIT_TIMEOUT?"Timeout":result==WAIT_OBJECT_0+1?"Cancelled":"WaitFailed";
+                error=result==WAIT_TIMEOUT?ERROR_TIMEOUT:result==WAIT_OBJECT_0+1?ERROR_OPERATION_ABORTED:GetLastError();
+                CancelIoEx(c.pipe,&op);GetOverlappedResult(c.pipe,&op,&transferred,TRUE);ok=FALSE;
+            }
         }
-        CloseHandle(op.hEvent); if(!ok||!transferred)return false;done+=transferred;
+        CloseHandle(op.hEvent);
+        if(!ok||!transferred){fault(c,stage,ok?ERROR_BROKEN_PIPE:error,ok?"ZeroTransfer":reason);return false;}done+=transferred;
     }
     return true;
 }
@@ -55,13 +68,15 @@ bool metadata(const item &i,unsigned long long sequence,unsigned char frame[56])
     if(p[9]==6)memcpy(frame+36,p+ip+4,8);
     word(frame+44,headers,2);word(frame+48,i.at,8);return true;
 }
-void fault(controller &c) { c.failed=true;c.stats[5]++;SetEvent(c.halt);SetEvent(c.ready); }
 void run(controller &c) {
     std::string path="\\\\.\\pipe\\"+c.name;
     c.pipe=CreateFileA(path.c_str(),GENERIC_READ|GENERIC_WRITE,0,nullptr,OPEN_EXISTING,FILE_FLAG_OVERLAPPED|SECURITY_SQOS_PRESENT|SECURITY_IDENTIFICATION,nullptr);
     ULONG parent=0;unsigned char hello[64];memcpy(hello,c.authorization,64);
-    if(c.pipe==INVALID_HANDLE_VALUE||!GetNamedPipeServerProcessId(c.pipe,&parent)||parent!=c.parent||
-        !exact(c,hello,64,true,5000)||!exact(c,hello,64,false,5000)||memcmp(hello,c.authorization,64)) {fault(c);return;}
+    if(c.pipe==INVALID_HANDLE_VALUE){fault(c,"OpenPipe",GetLastError());return;}
+    if(!GetNamedPipeServerProcessId(c.pipe,&parent)){fault(c,"QueryParent",GetLastError());return;}
+    if(parent!=c.parent){fault(c,"ParentIdentity");return;}
+    if(!exact(c,hello,64,true,"HelloWrite",5000)||!exact(c,hello,64,false,"HelloRead",5000))return;
+    if(memcmp(hello,c.authorization,64)){fault(c,"Authorization");return;}
     SetEvent(c.ready);
     while(WaitForSingleObject(c.wake,INFINITE)==WAIT_OBJECT_0&&!c.failed) {
         while(true) {
@@ -69,7 +84,7 @@ void run(controller &c) {
             {std::lock_guard<std::mutex> lock(c.gate);if(c.queue.empty())break;next=std::move(c.queue.front());c.queue.pop_front();}
             if(GetTickCount64()-next.at>250){c.stats[3]++;continue;}
             unsigned char frame[56],reply[16];auto sequence=++c.sequence;
-            if(!metadata(next,sequence,frame)){fault(c);return;}
+            if(!metadata(next,sequence,frame)){fault(c,"RequestMetadata");return;}
             std::string tuple(reinterpret_cast<char*>(frame+24),12);tuple.append(reinterpret_cast<char*>(frame+8),8);
             auto http=c.http_until.find(tuple);
             // GetTickCount64 is quantized on Windows: subtracting two ticks
@@ -78,10 +93,15 @@ void run(controller &c) {
             if(http!=c.http_until.end())
                 while(std::chrono::steady_clock::now()<http->second)std::this_thread::sleep_until(http->second);
             if(GetTickCount64()-next.at>250){c.stats[3]++;continue;}
-            if(!exact(c,frame,56,true)||!exact(c,reply,16,false)){fault(c);return;}
+            if(!exact(c,frame,56,true,"RequestWrite")||!exact(c,reply,16,false,"ReplyRead"))return;
             unsigned char expected[16]{};word(expected,sequence,8);expected[8]=reply[8];
-            if(reply[8]>3||memcmp(reply,expected,16)){fault(c);return;}
-            if(reply[8]!=0){c.stats[2]++;continue;}
+            if(reply[8]>3||memcmp(reply,expected,16)){fault(c,"ReplyValidation");return;}
+            if(reply[8]!=0){
+                c.stats[2]++;auto count=++c.denied[reply[8]];
+                if(count<=4||count%64==0)mylog(log_warn,"[legacy-control-denied] code=%u count=%llu age_ms=%llu sequence=%llu\n",
+                    unsigned(reply[8]),count,static_cast<unsigned long long>(GetTickCount64()-next.at),sequence);
+                continue;
+            }
             std::lock_guard<std::mutex> lock(c.gate);
             if(!c.armed||c.epoch!=next.epoch){c.stats[4]++;continue;}
             if(GetTickCount64()-next.at>250){c.stats[3]++;continue;}

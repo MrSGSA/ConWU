@@ -59,13 +59,20 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
                 finally { preparing = null; preparationStop!.Dispose(); preparationStop = null; }
             }
         }
-        if (active?.Transport.Exited == true) { Close(active); active = null; }
+        if (active?.Transport.Exited == true) {
+            log($"设备 {slot} 传输进程失效：{active.Value.Transport.FailureReason}；立即撤销该路径，重新验证连接");
+            router.FailLegacyTransport(slot,active.Value.Transport.ClientEndpoint);Close(active);active=null;
+        }
         if (pending != null && router.UsesPath(slot, pending.Value.Transport.ClientEndpoint) && !pending.Value.Transport.Exited) {
             Close(active); active = pending; pending = null; failures = 0; nextAttempt = 0;
             log($"设备 {slot} 已通过双向验证，使用新的直连路径");
         }
         if ((!keepPending || endpoint.Length == 0) && pending != null) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; }
         if (pending != null && (pending.Value.Transport.Exited || now - started >= 15000)) {
+            if(pending.Value.Transport.Exited){
+                log($"设备 {slot} 候选传输失效：{pending.Value.Transport.FailureReason}");
+                router.FailLegacyTransport(slot,pending.Value.Transport.ClientEndpoint);
+            }
             router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; Retry(now);
             log($"设备 {slot} 新路径暂不可用，保留已有路径");
         }

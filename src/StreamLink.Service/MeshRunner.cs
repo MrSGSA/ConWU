@@ -194,6 +194,8 @@ public sealed class MeshRunner
                     releasing = ReleaseMapping(retiringMapping); mapping = null; maintain = null; nextProbe = now + 1000;
                 }
                 if (server?.Exited == true) {
+                    log($"本机传输入口失效：{server.FailureReason}；重新建立入口");
+                    router?.FailLegacyListener();
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }

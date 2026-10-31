@@ -28,12 +28,16 @@ string components=Path.Combine(Path.GetDirectoryName(output)!,"legacy-control-co
 File.Copy(binary,Path.Combine(components,"udp2raw-native.exe"),true);
 int checks=0;var rows=new List<object>();
 void Check(bool pass,string why){if(!pass)throw new IOException(why);checks++;Console.WriteLine("PASS "+why);}
-using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(180,30+rounds*30)));var token=deadline.Token;
+using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(240,120+rounds*30)));var token=deadline.Token;
 try {
     rows.Add(await Budget());
     rows.Add(await RouteEvidence());
+    rows.Add(await RouteLatencyTests.Run(Check,token));
+    rows.Add(await RouteLatencyTests.Bounds(Check,token));
     rows.Add(await Authorization());
     rows.Add(await NativeWrongAuthorization());
+    rows.Add(await NativeControlFailureTests.Run(binary,Path.GetDirectoryName(output)!,Check,token));
+    rows.Add(await Pair("faketcp",slowRoute:true));
     for(int i=0;i<rounds;i++){rows.Add(await Pair("faketcp"));rows.Add(await Pair("udp"));}
     for(int i=0;i<rounds;i++){rows.Add(await Pair("faketcp",10));rows.Add(await Pair("faketcp",0));}
     await File.WriteAllTextAsync(output,JsonSerializer.Serialize(new{status="Pass",checks,rounds,rows,
@@ -123,7 +127,7 @@ async Task<object> NativeWrongAuthorization()
     return new{nativeExitCode=child.ExitCode,rawPackets=0,permitRequests=governor.Snapshot().Requests,scope="actual authorized-worker PID with wrong secret, C++ loopback backend; not a simulated authentication assertion"};
 }
 
-async Task<object> Pair(string mode,int? rate=null)
+async Task<object> Pair(string mode,int? rate=null,bool slowRoute=false)
 {
     string folder=Path.Combine(Path.GetTempPath(),"streamlink-legacy-control-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);
     var owner=MeshIdentity.Create("https://example.com/","",mode);var guest=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));guest.Directory=owner.Directory;
@@ -137,11 +141,13 @@ async Task<object> Pair(string mode,int? rate=null)
     Dictionary<string,string> EnvironmentFor(int port)=>new(){["STREAMLINK_TEST_BIND"]=port.ToString(),["STREAMLINK_TEST_PEER"]=proxy.Port.ToString()};
     var before=LegacyControlGovernor.Shared.Snapshot();var clock=Stopwatch.StartNew();
     MeshTransport? server=null,client=null;
+    object? pressureReport=null;
+    EgressRouteWitness SlowRoute(IPEndPoint s,IPEndPoint t,Guid g,ulong e){Thread.Sleep(1300);return new(g,e,s.ToString(),t.ToString(),0,0,"LoopbackFixture","LoopbackFixture","LoopbackFixture","");}
     try {
-        server=new(components,folder,owner,a.LocalEndpoint,true,rawPort,null,"debug",EnvironmentFor(serverIo),pacer:serverPacer,testInject:proxy.Inject);
+        server=new(components,folder,owner,a.LocalEndpoint,true,rawPort,null,"debug",EnvironmentFor(serverIo),pacer:serverPacer,testInject:proxy.Inject,routeObserver:slowRoute?SlowRoute:null);
         bool reserved = false;
         client=new(components,folder,guest,new(IPAddress.Loopback,rawPort),false,rawPort,null,"debug",EnvironmentFor(clientIo),
-            endpoint => { b.CancelLegacyCandidate(1, endpoint); reserved = true; },clientPacer,proxy.Inject);
+            endpoint => { b.CancelLegacyCandidate(1, endpoint); reserved = true; },clientPacer,proxy.Inject,slowRoute?SlowRoute:null);
         Check(reserved && !b.Status().Single().Connected, mode+": actual native constructor reserves its loopback source before candidate activation");
         a.SetLegacyListenerControl(server.ControlsWirePackets);
         b.SetCandidate(1,client.ClientEndpoint,"fixture","controlled native",client.ControlsWirePackets);
@@ -158,6 +164,7 @@ async Task<object> Pair(string mode,int? rate=null)
         IPAddress.Parse(guest.LocalIp).GetAddressBytes().CopyTo(packet,12);IPAddress.Parse(owner.LocalIp).GetAddressBytes().CopyTo(packet,16);
         Checksum(packet);adapters[1].Outgoing.Add(packet);received=await adapters[0].Incoming.Reader.ReadAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(3),token);
         Check(received.SequenceEqual(packet),mode+": reverse business packet remains a datagram with no control round-trip wait");
+        if(slowRoute)pressureReport=await ControlledPressureTests.Run(a,b,adapters,owner,guest,server,client,Check,token,Path.ChangeExtension(output,"pressure.json"),proxy.Snapshot);
         await Task.Delay(1200,token);var after=LegacyControlGovernor.Shared.Snapshot();
         Check(after.AdmittedPackets>before.AdmittedPackets&&!server.Exited&&!client.Exited,mode+": controls were actually admitted while both protocol workers stayed live");
         // Receiving UDP on a scheduled managed continuation can drain two
@@ -182,7 +189,7 @@ async Task<object> Pair(string mode,int? rate=null)
         var paced=LegacyTransportLedger.Shared.Snapshot().Resources.Where(r=>!r.RetirementRequested&&r.BusinessEgress!=null).Select(r=>r.BusinessEgress!).ToArray();
         if(rate.HasValue)Check(paced.Length==2&&paced.All(s=>s.InjectedPackets>0&&s.InjectedBytes>1280&&s.Failure.Length==0)&&serverPacer!.Snapshot().SentBytes==paced[0].InjectedBytes&&clientPacer!.Snapshot().SentBytes==paced[1].InjectedBytes,"actual native compatibility business uses shared outer-byte pacer and successful parent injection receipts, rate="+rate);
         if(rate.HasValue){var native=LegacyTransportLedger.Shared.Snapshot().Resources.Where(r=>!r.RetirementRequested).Select(r=>r.BusinessHandoff).Where(r=>r!=null).ToArray();Check(native.Length==2&&native.All(n=>n!.Injected>0&&n.PeakOutstanding<=64&&n.Faults==0),"bounded native handoff telemetry and actual parent receipts reach the production ledger");}
-        return new{mode,rate,authenticatedMs,elapsedMs=clock.Elapsed.TotalMilliseconds,before,after,queueReports,paced,serverPacer=serverPacer?.Snapshot(),clientPacer=clientPacer?.Snapshot(),rawPackets=proxy.Packets,httpGapMs=proxy.HttpGaps.ToArray(),nativeHttpGapUs=nativeHttpGaps,
+        return new{mode,rate,slowRoute,pressureReport,authenticatedMs,elapsedMs=clock.Elapsed.TotalMilliseconds,before,after,queueReports,paced,serverPacer=serverPacer?.Snapshot(),clientPacer=clientPacer?.Snapshot(),rawPackets=proxy.Packets,httpGapMs=proxy.HttpGaps.ToArray(),nativeHttpGapUs=nativeHttpGaps,
             scope="actual named pipes/C++/HTTP/MeshRouter and real UDP raw-IP carrier; memory IP adapter, no physical NAT or Windows driver"};
     }finally{client?.Dispose();server?.Dispose();}
 }
@@ -218,7 +225,14 @@ sealed class Proxy:IAsyncDisposable
     readonly ConcurrentDictionary<ushort,IPEndPoint> targets=[];readonly Dictionary<string,long> http=[];
     public readonly ConcurrentBag<double> HttpGaps=[];public long Packets;
     public int Port=>((IPEndPoint)socket.Client.LocalEndPoint!).Port;
-    public Proxy(int serverPort,IPEndPoint server){socket.Client.IOControl((IOControlCode)unchecked((int)0x9800000C),new byte[]{0,0,0,0},null);targets[(ushort)serverPort]=server;running=Run();}
+    public object Snapshot()=>new{Packets,receiveBufferBytes=socket.Client.ReceiveBufferSize,sendBufferBytes=socket.Client.SendBufferSize};
+    public Proxy(int serverPort,IPEndPoint server){
+        // This extra loopback hop is a test carrier, not a product queue. Its
+        // default 64KiB buffer drops the combined bidirectional burst before
+        // either native receiver; match the product bridge's 1MiB buffer.
+        socket.Client.SendBufferSize=socket.Client.ReceiveBufferSize=1<<20;
+        socket.Client.IOControl((IOControlCode)unchecked((int)0x9800000C),new byte[]{0,0,0,0},null);targets[(ushort)serverPort]=server;running=Run();
+    }
     public bool Inject(ReadOnlyMemory<byte> packet){int h=(packet.Span[0]&15)*4;ushort port=BinaryPrimitives.ReadUInt16BigEndian(packet.Span.Slice(h+2));return targets.TryGetValue(port,out var target)&&socket.Send(packet.Span,target)==packet.Length;}
     async Task Run(){try{while(true){var received=await socket.ReceiveAsync(stop.Token);var p=received.Buffer;if(p.Length<28)continue;
         int ip=(p[0]&15)*4;if(p.Length<ip+8)continue;ushort source=BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip)),target=BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip+2));

@@ -391,9 +391,13 @@ int send_raw_packet(raw_info_t &, const char *packet, int length) {
 
 void native_capture_shutdown() { stop_capture(); }
 
-void native_drain_packets(conn_info_t *client) {
+void native_check_health() {
     if(native_legacy_control_failed()){mylog(log_fatal,"legacy control owner lost\n");myexit(74);}
     if(native_legacy_egress_failed()){mylog(log_fatal,"legacy egress owner lost\n");myexit(74);}
+}
+
+void native_drain_packets(conn_info_t *client) {
+    native_check_health();
     if (reader_error.load()) {
         mylog(log_fatal, "native receive loop failed: %lu\n", reader_error.load());
         myexit(-1);

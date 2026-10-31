@@ -57,6 +57,7 @@ static partial class Program
         }
         await TcpTests.Run();
         await Migration();
+        await ListenerFailure();
         await AliveProcessRecovery();
         await HalfOpenRecovery();
         await PumpFaultRecovery();
@@ -108,6 +109,30 @@ static partial class Program
         await Until(() => newPath.DataPackets == 1, "business packet uses the validated replacement");
         paths.Update(2, "", "peer", "expired announcement");
         Check(!newTransport.Disposed, "expired discovery metadata does not tear down a proven path");
+        router.FailLegacyListener();
+        Check(router.UsesPath(2,newPath.Endpoint),"listener failure preserves a path owned by an independent client");
+        router.FailLegacyTransport(2,oldPath.Endpoint);
+        Check(router.UsesPath(2,newPath.Endpoint),"failure of a retired owner cannot revoke the replacement's fresh proof");
+        newTransport.Exited=true;
+        paths.Update(2,newPath.Endpoint.ToString(),"peer","fixture native exit",()=>false);
+        Check(!router.HasHealthyPath(2)&&router.Status().Single().Liveness?.Reason=="TransportExited"&&newTransport.Disposed&&!adapter.Disposed,
+            "confirmed active transport exit revokes health immediately without waiting twelve seconds or recreating the adapter");
+        await newPath.Send(peer.Ping()!,router.LocalEndpoint);await Task.Delay(150);
+        Check(!router.HasHealthyPath(2),"late authenticated traffic from the failed owner's endpoint cannot restore health");
+    }
+    static async Task ListenerFailure()
+    {
+        var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
+        byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var peer=new MeshLink(2,1,key);CryptographicOperations.ZeroMemory(key);
+        await using var inbound=new PeerEndpoint(peer);var adapter=new MemoryAdapter();await using var router=new MeshRouter(owner,adapter);
+        router.SetLegacyListenerControl(true);
+        await inbound.Send(peer.Hello(),router.LocalEndpoint);
+        await Until(()=>router.UsesPath(2,inbound.Endpoint),"unsolicited authenticated listener traffic proves its own return path");
+        router.FailLegacyListener();
+        Check(!router.HasHealthyPath(2)&&router.Status().Single().Liveness?.Reason=="TransportExited"&&!adapter.Disposed,
+            "shared listener exit revokes its incoming paths without closing the adapter");
+        await inbound.Send(peer.Ping()!,router.LocalEndpoint);await Task.Delay(150);
+        Check(!router.HasHealthyPath(2),"late listener datagrams cannot resurrect a confirmed failed owner");
     }
     static async Task AliveProcessRecovery(string? output=null)
     {

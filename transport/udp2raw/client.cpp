@@ -27,6 +27,7 @@ extern int pcap_captured_full_len;
 int client_on_timer(conn_info_t &conn_info)  // for client. called when a timer is ready in epoll
 {
 #ifdef UDP2RAW_NATIVE
+    native_check_health();
     if (!native_so_client_gate(conn_info)) return 0;
 #endif
     packet_info_t &send_info = conn_info.raw_info.send_info;

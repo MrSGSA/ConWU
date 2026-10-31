@@ -9,6 +9,7 @@ public interface IMeshTransport : IDisposable
     IPEndPoint? ClientEndpoint { get; }
     bool Exited { get; }
     bool ControlsWirePackets => false;
+    string FailureReason => Exited ? "TransportExited" : "";
 }
 // A server multiplexes authenticated peers on the same mapped public port.
 // Outbound clients are independent: changing one peer never recreates the TUN.
@@ -20,18 +21,21 @@ public sealed class MeshTransport : IMeshTransport
     readonly LegacyTransportLedger.Handle? accounting;
     readonly LegacyControlChannel? control;
     readonly LegacyEgressChannel? business;
+    readonly LegacyRouteEvidence? route;
     int disposed;
     public IPEndPoint? ClientEndpoint { get; }
     public bool Exited => job.AnyExited || control?.Failed == true || business?.Failed==true;
     public bool ControlsWirePackets => true;
     internal string ControlFailure => (control?.Failure??"")+" "+(business?.Snapshot().Failure??"");
+    public string FailureReason => control?.Failed==true ? "ControlChannel:"+control.Failure : business?.Failed==true ? "BusinessChannel:"+business.Snapshot().Failure : job.AnyExited ? "NativeProcessExited" : "";
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel)
         : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, null) { }
     public MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping, string logLevel,
         Action<IPEndPoint>? reserveEndpoint,EgressPacer? pacer=null)
         : this(components, sessionRoot, profile, target, server, listenPort, mapping, logLevel, null, reserveEndpoint,pacer) { }
     internal MeshTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target, bool server, int listenPort, IMapping? mapping,
-        string logLevel, Dictionary<string, string>? testEnvironment, Action<IPEndPoint>? reserveEndpoint = null,EgressPacer? pacer=null,Func<ReadOnlyMemory<byte>,bool>? testInject=null)
+        string logLevel, Dictionary<string, string>? testEnvironment, Action<IPEndPoint>? reserveEndpoint = null,EgressPacer? pacer=null,Func<ReadOnlyMemory<byte>,bool>? testInject=null,
+        Func<IPEndPoint,IPEndPoint,Guid,ulong,EgressRouteWitness>? routeObserver=null)
     {
         Directory.CreateDirectory(sessionRoot);
         configuration = Path.Combine(sessionRoot, "raw-" + Guid.NewGuid().ToString("N") + ".conf");
@@ -56,9 +60,10 @@ public sealed class MeshTransport : IMeshTransport
                 if (!pair.Key.StartsWith("STREAMLINK_TEST_", StringComparison.Ordinal)) throw new ArgumentException("Only explicit test backend variables can be injected");
                 environment[pair.Key] = pair.Value;
             }
-            var route=new LegacyRouteEvidence(accounting.ResourceId,pacer!=null,testInject==null?null:(s,t,g,e)=>new(g,e,s.ToString(),t.ToString(),0,0,"LoopbackFixture","LoopbackFixture","LoopbackFixture",""));
+            route=new LegacyRouteEvidence(accounting.ResourceId,pacer!=null,routeObserver??(testInject==null?null:(s,t,g,e)=>new(g,e,s.ToString(),t.ToString(),0,0,"LoopbackFixture","LoopbackFixture","LoopbackFixture","")));
             accounting.Route=route.Snapshot;
             control = new(accounting.ResourceId, profile.Pair.Mode == "faketcp", server ? listenPort : 0,route:route);
+            accounting.Control=control.Snapshot;
             if(pacer!=null){
                 if(profile.Pair.Mode!="faketcp")throw new NotSupportedException("Experimental compatibility egress currently requires FakeTCP");
                 LegacyNativeCapabilities.RequireEgress(binary);
@@ -81,6 +86,6 @@ public sealed class MeshTransport : IMeshTransport
     public void Dispose() {
         if (Interlocked.Exchange(ref disposed, 1) != 0) return;
         try { job.Dispose(); }
-        finally { business?.Dispose();control?.Dispose(); accounting?.Dispose(); File.Delete(configuration); }
+        finally { try{business?.Dispose();control?.Dispose(); accounting?.Dispose();}finally{route?.Dispose();File.Delete(configuration);} }
     }
 }
