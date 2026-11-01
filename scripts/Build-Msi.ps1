@@ -23,7 +23,9 @@ $xml=[xml]@'
   <Property Id="ARPPRODUCTICON" Value="AppIcon" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
   <Property Id="REBOOT" Value="ReallySuppress" />
-  <Property Id="REINSTALLMODE" Value="amus" />
+  <!-- Preserve identical versioned components, especially a loaded official
+       WinDivert driver. Product FileVersion increases with every MSI release. -->
+  <Property Id="REINSTALLMODE" Value="omus" />
   <Property Id="STREAMLINK_TRANSACTION" Secure="yes" />
   <Property Id="STREAMLINK_DISPLAY_VERSION" Value="DISPLAYVERSION" />
   <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
