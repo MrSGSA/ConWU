@@ -63,10 +63,21 @@ static class WintunUpgradeTests
             catch (IOException ex) when (ex.Message.Contains("活动会话")) { activeRejected = true; }
             Check(activeRejected && Present(guid), "legacy active session without new lease cannot be removed", checks);
             end(session); session = IntPtr.Zero;
-            var result = WintunMaintenance.PrepareUpgrade(components, mesh.Pair.Network, 1, messages.Add);
-            Check(result.Adapter == "RemovedStaleAdapter" && !result.RebootRequired && !Present(guid), "dormant owned PnP node uninstalled without reboot", checks);
+            WintunMaintenanceResult result;
+            bool fixtureReleaseNeeded = false;
+            try { result = WintunMaintenance.PrepareUpgrade(components, mesh.Pair.Network, 1, messages.Add); }
+            catch (Win32Exception ex) when (ex.NativeErrorCode is 183 or unchecked((int)0x800700B7)) {
+                // Unlike a stopped/joined service, this dormant fixture still
+                // owns its software-device handle after PnP removal. Official
+                // Create must refuse that retained owner, never Open/borrow it.
+                Check(messages.Any(m => m.Contains("正在使用官方 Wintun")), "orphan reset refuses the fixture's retained software-device handle", checks);
+                fixtureReleaseNeeded = true;
+                close(raw); raw = IntPtr.Zero;
+                result = WintunMaintenance.PrepareUpgrade(components, mesh.Pair.Network, 1, messages.Add);
+            }
+            Check((fixtureReleaseNeeded || result.Adapter is "RemovedStaleAdapter" or "RecycledOrphanInterface") && messages.Contains("自动卸载本实例遗留的 Wintun 网卡") && !result.RebootRequired && !Present(guid), "dormant owned PnP node uninstalled and any orphan row cleared after fixture ownership ends, without reboot", checks);
             Check(result.Driver == "PreservedOtherAdapters", "foreign shared Wintun driver preserved", checks);
-            close(raw); raw = IntPtr.Zero;
+            if (raw != IntPtr.Zero) { close(raw); raw = IntPtr.Zero; }
 
             // Same GUID is insufficient: a different tunnel owner is preserved.
             raw = create(identity.Name, "Other Test Owner", ref guid);
@@ -76,6 +87,16 @@ static class WintunUpgradeTests
             catch (IOException ex) when (ex.Message.Contains("身份或驱动")) { foreignRejected = true; }
             Check(foreignRejected && Present(guid), "same GUID with foreign owner label preserved", checks);
             close(raw); raw = IntPtr.Zero;
+            // Clean this deliberately foreign-labelled test fixture through
+            // its own owner API. Product maintenance must not adopt that row.
+            if (Present(guid)) {
+                raw = create(identity.Name, "Other Test Owner", ref guid);
+                if (raw == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastPInvokeError(), "foreign fixture self-cleanup failed");
+                close(raw); raw = IntPtr.Zero;
+            }
+            var closed = Stopwatch.StartNew();
+            while (Present(guid) && closed.Elapsed < TimeSpan.FromSeconds(15)) Thread.Sleep(100);
+            Check(!Present(guid), "foreign fixture cleans its own interface before normal reopen tests", checks);
 
             for (int round = 1; round <= 3; round++) {
                 WintunMaintenance.PrepareUpgrade(components, mesh.Pair.Network, 1, messages.Add);
@@ -95,7 +116,7 @@ static class WintunUpgradeTests
             checks.Add(new { name = "all pre-existing interface identities preserved", status = preserved ? "Pass" : "Fail" });
             if (!preserved) failure = (failure ?? "") + " pre-existing interface disappeared";
             File.WriteAllText(output, JsonSerializer.Serialize(new { status = failure == null ? "Pass" : "Fail", identity, checks, messages, failure,
-                limitations = "Isolated signed Wintun on this host; dormant PnP fixture retains a handle. Shared-driver deletion not exercised because foreign Wintun devices exist. No reboot or physical WAN streaming test." }, new JsonSerializerOptions { WriteIndented = true }));
+                limitations = "Isolated signed Wintun on this host; dormant PnP fixture initially retains a handle, released if official recreation correctly refuses that retained owner. Shared-driver deletion not exercised because foreign Wintun devices exist. No reboot or physical WAN streaming test." }, new JsonSerializerOptions { WriteIndented = true }));
         }
         if (failure != null) throw new IOException(failure);
     }

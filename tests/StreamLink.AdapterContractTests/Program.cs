@@ -19,6 +19,15 @@ if(args is ["--native-lifecycle-child",var childComponents,"--output",var childO
 if(args is ["--native-lifecycle",var components,"--output",var output,"--rounds",var roundText]) { try{await NativeLifecycleTests.Run(Path.GetFullPath(components),Path.GetFullPath(output),int.Parse(roundText));}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return; }
 int checks=0;
 void Check(bool ok,string reason){if(!ok)throw new Exception(reason);checks++;}
+var orphanIdentity=WintunIdentity.For("0123456789abcdef0123456789abcdef",1);
+WintunMaintenance.RequireOrphanIdentity(orphanIdentity,orphanIdentity.Name,"StreamLink Tunnel");
+WintunMaintenance.RequireOrphanIdentity(orphanIdentity,orphanIdentity.Name,"StreamLink Tunnel #2");
+WintunMaintenance.RequireOrphanIdentity(orphanIdentity,orphanIdentity.Name,"StreamLink Tunnel #12");
+foreach(var (name,description) in new[]{("foreign","StreamLink Tunnel"),(orphanIdentity.Name,"Other Tunnel"),(orphanIdentity.Name+"-Npcap Packet Driver (NPCAP)-0000","StreamLink Tunnel-Npcap Packet Driver (NPCAP)-0000"),
+    (orphanIdentity.Name,"StreamLink Tunnel #2-Npcap"),(orphanIdentity.Name,"StreamLink Tunnel #"),(orphanIdentity.Name,"StreamLink Tunnel #0"),(orphanIdentity.Name,"StreamLink Tunnel #2 "),(orphanIdentity.Name,"StreamLink Tunnel #+2")}) {
+    bool refused=false;try{WintunMaintenance.RequireOrphanIdentity(orphanIdentity,name,description);}catch(IOException){refused=true;}
+    Check(refused,"orphan recovery cannot reset a foreign name, tunnel type or capture-filter interface");
+}
 IPAddress Ip(string text)=>IPAddress.Parse(text);
 var overlay=Ip("10.217.141.0");
 OverlayConflict[] Routes(params (string,int)[] entries)=>OverlayRouteConflicts.Evaluate(overlay,[],entries.Select(p=>new OverlayRoutePrefix("foreign",Ip(p.Item1),p.Item2)));
