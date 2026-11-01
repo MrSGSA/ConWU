@@ -26,5 +26,13 @@
     "status": "StoppedAfterFailuresBeforeRefreeze",
     "fixes": ["omit null virtual-IP patch fields for strict legacy schemas and reject an orphan address precondition", "test log-off suppression explicitly, then re-enable logging before the unchanged secret-redaction assertion", "reserve fixture TCP ports with the same exclusive-bind semantics as production helpers", "manually open the tray for uninstall after startup was disabled; verify disabled login launch exits"],
     "followup": "Affected tests, then a new clean frozen Full core run and isolated MSI lifecycle. Original failed logs retained; no reliability threshold changes."
+  },
+  "secondFrozenCoreReview": {
+    "sourceCommit": "f133900c3a4a700f28c5637fb36109720d06866f",
+    "evidence": "artifacts/rc8-core-f133900/interrupted.json",
+    "status": "StoppedAfterNewCancellationRace",
+    "cause": "A failed optional mapping probe completed in the same tick as caller cancellation; the cancellation-dependent catch filter let its IOException escape as a stop failure.",
+    "fix": "Normalize the probe result to caller cancellation before retry/logging, while retaining the independent cleanup proof and MeshShutdownException contract.",
+    "regression": "Deterministically cancel within the probe callback and return a failed task. Pre-fix failure retained in artifacts/rc8-probe-cancel-before.log; assert cancellation plus adapter/discovery ownership cleanup after the fix."
   }
 }

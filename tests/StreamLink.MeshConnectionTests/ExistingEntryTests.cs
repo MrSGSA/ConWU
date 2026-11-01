@@ -55,8 +55,25 @@ static partial class Program
             endpoint.ReplyPacket=Packet(remote.LocalIp,routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().ReceivedBytes>0,"signed custom source address delivers return traffic");
             long received=router.Status().Single().ReceivedBytes;endpoint.ReplyPacket=Packet("10.171.139.2",routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().LocalDrops!.ReceivePolicyRejected>0,"peer cannot impersonate its old slot-derived address");Check(router.Status().Single().ReceivedBytes==received,"spoofed packet is not delivered to adapter");
         }
-        await ExistingRunner(false);await ExistingRunner(true);
+        await ExistingRunner(false);await ExistingRunner(true);await MappingProbeCancellation();
         Console.WriteLine($"PASS {checks} existing entry and custom addressing checks");
+    }
+    static async Task MappingProbeCancellation()
+    {
+        var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
+        var discovery=new Discovery(owner,guest,"");var adapter=new MemoryAdapter();using var stop=new CancellationTokenSource();int probes=0;
+        string folder=Path.Combine(Path.GetTempPath(),"streamlink-probe-cancel-"+Guid.NewGuid().ToString("N"));
+        var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{
+            probes++;stop.Cancel();return Task.FromException<IMapping>(new IOException("probe failure concurrent with stop"));
+        },_=>throw new Exception("no transport should be created"),(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
+            NetworkWake=()=>new MeshNetworkWake(false),Candidates=(_,_,_,_)=>Task.FromResult<IMeshCandidateFactory?>(null)
+        };
+        var runner=new MeshRunner(new DeviceProfile{Mesh=owner},_=>{},_=>{},_=>{},_=>{},services);
+        try {
+            bool cancelled=false;try{await runner.Run(stop.Token).WaitAsync(TimeSpan.FromSeconds(3));}catch(OperationCanceledException)when(stop.IsCancellationRequested){cancelled=true;}
+            Check(cancelled&&probes==1,"failed optional probe concurrent with stop reports caller cancellation");
+            Check(runner.CleanupComplete&&adapter.Disposed&&discovery.Disposed,"probe cancellation still joins adapter and discovery cleanup");
+        } finally {stop.Cancel();if(Directory.Exists(folder)){foreach(var d in Directory.EnumerateDirectories(folder))Directory.Delete(d);Directory.Delete(folder);}}
     }
     sealed class EntryHttp : HttpMessageHandler {
         public string Body="{\"endpoints\":[\"203.0.113.1:44680\",\"edge.example.com:44681\"]}";

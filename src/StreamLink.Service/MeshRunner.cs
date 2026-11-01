@@ -218,7 +218,12 @@ public sealed class MeshRunner
                         if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress)) { server.Dispose(); server = null; }
                         maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
                     }
-                    catch (Exception ex) when (!stop.IsCancellationRequested) { log("入口暂不可用，可使用其他成员入口：" + ex.Message); nextProbe = now + Math.Min(45000, 5000L << Math.Min(probeFailures++, 4)); }
+                    catch (Exception ex) {
+                        // A completed probe can fault in the same tick as user stop.
+                        // Report cancellation; the finally block still proves owner cleanup.
+                        stop.ThrowIfCancellationRequested();
+                        log("入口暂不可用，可使用其他成员入口：" + ex.Message); nextProbe = now + Math.Min(45000, 5000L << Math.Min(probeFailures++, 4));
+                    }
                     finally { probe = null; }
                 }
                 if (mapping is TcpMapping tcp && profile.LastStun != tcp.StunServer) {
