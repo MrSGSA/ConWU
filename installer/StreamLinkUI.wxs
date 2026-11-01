@@ -61,7 +61,7 @@
         <Control Id="Repair" Type="PushButton" X="178" Y="137" Width="101" Height="26" Default="yes" Text="修复安装(&amp;R)" DisableCondition="ARPNOREPAIR">
           <Publish Event="SpawnDialog" Value="OutOfDiskDlg" Order="1" Condition="OutOfDiskSpace = 1" />
           <Publish Property="WixUI_InstallMode" Value="Repair" Order="2" Condition="OutOfDiskSpace &lt;&gt; 1" />
-          <Publish Event="ReinstallMode" Value="ecmus" Order="3" Condition="OutOfDiskSpace &lt;&gt; 1" />
+          <Publish Event="ReinstallMode" Value="omus" Order="3" Condition="OutOfDiskSpace &lt;&gt; 1" />
           <Publish Event="Reinstall" Value="All" Order="4" Condition="OutOfDiskSpace &lt;&gt; 1" />
           <Publish Event="EndDialog" Value="Return" Order="5" Condition="OutOfDiskSpace &lt;&gt; 1" />
         </Control>
