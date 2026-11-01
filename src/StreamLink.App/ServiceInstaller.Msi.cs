@@ -28,10 +28,11 @@ public static partial class ServiceInstaller
         if(UiUserSelection.ResolveAccount(account)!=sid.Value)throw new IOException("安装用户身份核对失败");
         string? before=store.UiUserSnapshot();string after=before??sid.Value;
         string state=MsiStatePath(transaction);if(File.Exists(state))throw new IOException("上次安装授权恢复尚未完成，未覆盖原记录");
-        File.WriteAllText(state,JsonSerializer.Serialize(new MsiAuthorization(transaction,before,after)));
-        if(before==null){store.AuthorizeUiUser(after);store.AuditUiAuthorization("msi-explicit-user-grant",before,after);}
         if(!Installed)throw new IOException("Windows 安装程序尚未登记个人服务");
         using(var service=new System.ServiceProcess.ServiceController(WindowsInstance.Name))if(service.Status!=System.ServiceProcess.ServiceControllerStatus.Stopped)throw new IOException("原个人服务尚未停止，拒绝修改运行中的服务路径");
+        PrepareWintunUpgrade(store);
+        File.WriteAllText(state,JsonSerializer.Serialize(new MsiAuthorization(transaction,before,after)));
+        if(before==null){store.AuthorizeUiUser(after);store.AuditUiAuthorization("msi-explicit-user-grant",before,after);}
         string command="\""+Path.Combine(AppContext.BaseDirectory,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
         await Sc("config",WindowsInstance.Name,"binPath=",command,"start=","auto","obj=","LocalSystem","DisplayName=","StreamLink Personal Network");
         await Sc("description",WindowsInstance.Name,"StreamLink 原生直连网络；配置保留于受保护的 ProgramData 目录。");

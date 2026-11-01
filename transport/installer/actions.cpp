@@ -60,6 +60,28 @@ void restore_policy(SC_HANDLE service,HKEY saved){
 }
 bool running(const wchar_t *name){service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT)};service_handle service{manager.value?OpenServiceW(manager.value,name,SERVICE_QUERY_STATUS):nullptr};SERVICE_STATUS status{};return service.value&&QueryServiceStatus(service.value,&status)&&status.dwCurrentState!=SERVICE_STOPPED;}
 bool has_legacy_service(){service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT)};service_handle service{manager.value?OpenServiceW(manager.value,L"StreamLink",SERVICE_QUERY_STATUS):nullptr};return service.value!=nullptr;}
+void stop_service(MSIHANDLE h,const context &c){
+    service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT)};if(!manager.value)throw std::wstring(L"无法查询原服务。");
+    service_handle service{OpenServiceW(manager.value,c.service.c_str(),SERVICE_QUERY_STATUS|SERVICE_STOP)};
+    if(!service.value){if(GetLastError()==ERROR_SERVICE_DOES_NOT_EXIST)return;throw std::wstring(L"无法停止原服务。");}
+    SERVICE_STATUS_PROCESS state{};DWORD size=0;
+    if(!QueryServiceStatusEx(service.value,SC_STATUS_PROCESS_INFO,reinterpret_cast<BYTE*>(&state),sizeof(state),&size))throw std::wstring(L"无法核对原服务进程。");
+    handle process{state.dwProcessId?OpenProcess(SYNCHRONIZE,FALSE,state.dwProcessId):nullptr};
+    if(state.dwProcessId&&!process.value&&GetLastError()!=ERROR_INVALID_PARAMETER)throw std::wstring(L"无法取得原服务进程退出凭据。");
+    if(state.dwCurrentState!=SERVICE_STOPPED){
+        log(h,L"Stopping prior service and waiting for its process to exit");
+        SERVICE_STATUS ignored{};if(state.dwCurrentState!=SERVICE_STOP_PENDING&&!ControlService(service.value,SERVICE_CONTROL_STOP,&ignored)&&GetLastError()!=ERROR_SERVICE_NOT_ACTIVE)throw std::wstring(L"原服务未接受停止请求。");
+        ULONGLONG began=GetTickCount64();
+        do {
+            if(!QueryServiceStatusEx(service.value,SC_STATUS_PROCESS_INFO,reinterpret_cast<BYTE*>(&state),sizeof(state),&size))throw std::wstring(L"无法核对原服务停止状态。");
+            if(state.dwCurrentState==SERVICE_STOPPED)break;
+            if(GetTickCount64()-began>=50000)throw std::wstring(L"原服务仍未停止；未清理 Wintun 或强制结束网络进程。");
+            Sleep(100);
+        }while(true);
+    }
+    if(process.value&&WaitForSingleObject(process.value,10000)!=WAIT_OBJECT_0)throw std::wstring(L"原服务进程仍未退出；未清理 Wintun 或启动第二个资源所有者。");
+    log(h,L"Prior service process exit proven; safe to replace files");
+}
 bool old_frontend(const std::wstring &file){DWORD ignored=0,size=GetFileVersionInfoSizeW(file.c_str(),&ignored);if(!size)return true;std::vector<BYTE> bytes(size);VS_FIXEDFILEINFO *info=nullptr;UINT count=0;if(!GetFileVersionInfoW(file.c_str(),0,size,bytes.data())||!VerQueryValueW(bytes.data(),L"\\",reinterpret_cast<void**>(&info),&count)||!info)return true;return HIWORD(info->dwFileVersionMS)==0;}
 struct close_windows { DWORD pid; UINT message; };
 BOOL CALLBACK close_window(HWND window,LPARAM parameter){auto &request=*reinterpret_cast<close_windows*>(parameter);DWORD pid=0;GetWindowThreadProcessId(window,&pid);if(pid==request.pid){DWORD_PTR ignored=0;SendMessageTimeoutW(window,request.message,0,0,SMTO_ABORTIFHUNG,300,&ignored);SendMessageTimeoutW(window,WM_CLOSE,0,0,SMTO_ABORTIFHUNG,300,&ignored);}return TRUE;}
@@ -112,12 +134,12 @@ void snapshot_service(const context &c){
     snapshot_policy(service.value,saved.value);
     set_number(saved.value,L"Complete",1);
 }
-void restore_service(const context &c){
+void restore_service(MSIHANDLE h,const context &c){
     registry saved;if(RegOpenKeyExW(HKEY_LOCAL_MACHINE,c.transaction.c_str(),0,KEY_READ|KEY_WOW64_64KEY,&saved.value)!=ERROR_SUCCESS)return;
     if(!read_number(saved.value,L"Complete")||!read_number(saved.value,L"MutationPermitted"))return; // preparation failed before any service mutation
     service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_ALL_ACCESS)};if(!manager.value)throw std::wstring(L"无法恢复服务管理状态。");
     service_handle service{OpenServiceW(manager.value,c.service.c_str(),SERVICE_ALL_ACCESS)};
-    if(service.value){SERVICE_STATUS state{};if(QueryServiceStatus(service.value,&state)&&state.dwCurrentState!=SERVICE_STOPPED){ControlService(service.value,SERVICE_CONTROL_STOP,&state);ULONGLONG start=GetTickCount64();do{Sleep(100);if(!QueryServiceStatus(service.value,&state))break;}while(state.dwCurrentState!=SERVICE_STOPPED&&GetTickCount64()-start<50000);if(state.dwCurrentState!=SERVICE_STOPPED)throw std::wstring(L"新服务仍未停止，不能启动第二个资源所有者。");}}
+    stop_service(h,c);
     if(!read_number(saved.value,L"Existed")){if(service.value)DeleteService(service.value);return;}
     std::wstring image=read_string(saved.value,L"ImagePath"),display=read_string(saved.value,L"Display");if(image.empty())throw std::wstring(L"原服务恢复路径为空。");
     DWORD start=read_number(saved.value,L"Start");
@@ -130,7 +152,7 @@ void remove_snapshot(const context &c){RegDeleteTreeW(HKEY_LOCAL_MACHINE,c.trans
 template<class F>UINT action(MSIHANDLE h,F operation){try{context c=parameters(h);operation(c);return ERROR_SUCCESS;}catch(const std::wstring &message){log(h,message,true);return ERROR_INSTALL_FAILURE;}catch(...){log(h,L"安装操作发生异常，正在按安装事务恢复。",true);return ERROR_INSTALL_FAILURE;}}
 }
 extern "C" __declspec(dllexport) UINT __stdcall NewTransaction(MSIHANDLE h){GUID id{};wchar_t text[40]{};if(FAILED(CoCreateGuid(&id))||!StringFromGUID2(id,text,40))return ERROR_INSTALL_FAILURE;return MsiSetPropertyW(h,L"STREAMLINK_TRANSACTION",text);}
-extern "C" __declspec(dllexport) UINT __stdcall PrepareUpgrade(MSIHANDLE h){return action(h,[&](const context &c){snapshot_service(c);close_clients(h,c,true);registry saved;if(RegOpenKeyExW(HKEY_LOCAL_MACHINE,c.transaction.c_str(),0,KEY_SET_VALUE|KEY_WOW64_64KEY,&saved.value)!=ERROR_SUCCESS)throw std::wstring(L"安装恢复记录不可写。");set_number(saved.value,L"MutationPermitted",1);});}
+extern "C" __declspec(dllexport) UINT __stdcall PrepareUpgrade(MSIHANDLE h){return action(h,[&](const context &c){snapshot_service(c);close_clients(h,c,true);registry saved;if(RegOpenKeyExW(HKEY_LOCAL_MACHINE,c.transaction.c_str(),0,KEY_SET_VALUE|KEY_WOW64_64KEY,&saved.value)!=ERROR_SUCCESS)throw std::wstring(L"安装恢复记录不可写。");set_number(saved.value,L"MutationPermitted",1);stop_service(h,c);});}
 extern "C" __declspec(dllexport) UINT __stdcall CloseClients(MSIHANDLE h){return action(h,[&](const context &c){close_clients(h,c,false);});}
-extern "C" __declspec(dllexport) UINT __stdcall RollbackUpgrade(MSIHANDLE h){return action(h,[&](const context &c){restore_service(c);remove_snapshot(c);});}
+extern "C" __declspec(dllexport) UINT __stdcall RollbackUpgrade(MSIHANDLE h){return action(h,[&](const context &c){restore_service(h,c);remove_snapshot(c);});}
 extern "C" __declspec(dllexport) UINT __stdcall CommitUpgrade(MSIHANDLE h){return action(h,[&](const context &c){remove_snapshot(c);});}

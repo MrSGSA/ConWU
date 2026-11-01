@@ -1,0 +1,25 @@
+{
+  "spec": "AQ-1",
+  "version": "1.0.1-rc.5",
+  "baseCommit": "ad03f46",
+  "review": "正确性与安全自审；与产品检查分开，由同一执行者完成",
+  "checked": [
+    "MSI 在文件替换前先正常停止所属服务，持有旧进程句柄证明退出；手动安装和失败回退也等待进程退出，不强杀网络进程",
+    "安装锁、ControlWorker 的 runtime.lock、按网络身份的跨进程文件锁共同阻止重复所有者；所有权锁文件不删除，避免分裂锁身份",
+    "从受保护且签名验证后的本实例配置取得网络与 slot；读取维护配置不迁移、不写回 DPAPI",
+    "设备卸载要求精确 SWD 实例路径、NetCfgInstanceId、wintun 服务和 StreamLink Tunnel 类型同时匹配；活动会话拒绝卸载",
+    "清理前重查设备身份；使用 Windows DiUninstallDevice 卸载本网卡，等待 PnP 与网络接口消失后才允许新版启动",
+    "包括断开与隐藏设备在内的任何其他 Wintun 网卡都会阻止共享驱动清理；没有其他网卡时才调用哈希锁定的官方 WintunDeleteDriver",
+    "官方驱动清理失败记录错误并保留复用，不强删 INF/SYS/注册表；设备卸载要求重启或移除未收敛则失败回退",
+    "真实隔离测试已验证跨进程排他、活动旧会话保护、错误所有者标签保护、遗留设备卸载和同身份三轮重新创建",
+    "未改 FakeTCP＋HTTP 业务语义、用户固定协议选择、12 秒健康证明、身份认证、共享配额或日用独立管理通道"
+  ],
+  "targetedEvidence": "artifacts/wintun-upgrade-20261101/native-cleanup.json 和 windows-tests.log",
+  "limits": [
+    "本网卡卸载测试使用保留句柄的休眠隔离设备模拟遗留节点，没有强删运行中的日用网络",
+    "本机存在其他 Wintun 使用者，未执行共享驱动删除分支的真实系统测试",
+    "Windows 官方 PnP 调用为同步操作，不通过超时强杀或提前释放资源制造成功",
+    "历史 4319 不能据此宣布根治；未覆盖所有 Windows 设备故障和重启状态"
+  ],
+  "finalValidation": "冻结后核心回归、最终包内回归、实际 MSI 升级与清理失败回退结果见交付目录 delivery-status.json"
+}

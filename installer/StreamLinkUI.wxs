@@ -146,12 +146,12 @@
         <Control Id="Finish" Type="PushButton" X="344" Y="298" Width="90" Height="23" Default="yes" Cancel="yes" Text="关闭(&amp;C)"><Publish Event="EndDialog" Value="Exit" /></Control>
       </Dialog>
 
-      <ProgressText Action="PrepareUpgrade" Message="正在关闭上一版本并准备更新" />
+      <ProgressText Action="PrepareUpgrade" Message="正在关闭旧版本并等待网络进程退出" />
       <ProgressText Action="CloseClients" Message="正在关闭 StreamLink 窗口与托盘" />
       <ProgressText Action="StopServices" Message="正在停止后台网络服务" />
       <ProgressText Action="InstallFiles" Message="正在复制程序文件" />
       <ProgressText Action="InstallServices" Message="正在配置后台网络服务" />
-      <ProgressText Action="ConfigureAuthorization" Message="正在配置本机访问权限" />
+      <ProgressText Action="ConfigureAuthorization" Message="正在清理旧 Wintun 网卡并配置本机访问权限" />
       <ProgressText Action="StartServices" Message="正在启动后台服务" />
       <ProgressText Action="VerifyReady" Message="正在等待后台准备就绪" />
       <ProgressText Action="RemoveFiles" Message="正在移除程序文件" />

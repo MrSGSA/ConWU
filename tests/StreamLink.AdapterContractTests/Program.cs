@@ -2,6 +2,9 @@ using System.Net;
 using System.Text.Json;
 using StreamLink.Core;
 
+if(args is ["--wintun-lease-child",var leaseNetwork]){Environment.ExitCode=WintunUpgradeTests.LeaseChild(leaseNetwork);return;}
+if(args is ["--wintun-upgrade",var upgradeComponents,var upgradeOutput]){WintunUpgradeTests.Run(Path.GetFullPath(upgradeComponents),Path.GetFullPath(upgradeOutput));return;}
+
 if(args is ["--lifecycle-watchdog-hang"]) { Console.WriteLine("intentional isolated watchdog child");Console.Out.Flush();Thread.Sleep(Timeout.Infinite);return; }
 if(args is ["--lifecycle-axes-contract",var axesOutput]){NativeLifecycleTests.AxesContractTest(Path.GetFullPath(axesOutput));return;}
 if(args is ["--bridge-open-diagnostics",var bridge, var bridgeOutput]){BridgeOpenDiagnostics.Run(Path.GetFullPath(bridge),Path.GetFullPath(bridgeOutput));return;}

@@ -60,6 +60,15 @@ public sealed class ProfileStore
         }
         return profile;
     }
+    // Maintenance identifies only the protected instance's signed mesh profile.
+    // It must not migrate/save settings while the installation may roll back.
+    public DeviceProfile LoadForMaintenance()
+    {
+        if (!File.Exists(file)) return new();
+        if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException("配置文件不能是链接");
+        var profile = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)) ?? throw new IOException("配置为空");
+        profile.Validate(); return profile;
+    }
     public void Save(DeviceProfile profile)
     {
         profile.Validate();

@@ -39,6 +39,7 @@ public sealed class NativeAdapter : IPacketAdapter
     static readonly SemaphoreSlim lifecycle = new(1, 1);
     readonly TracedClose? tracedClose;
     readonly IntPtr library;
+    readonly FileStream identityLease;
     IntPtr adapter;
     readonly Close close;
     readonly ReadPacket read;
@@ -59,8 +60,11 @@ public sealed class NativeAdapter : IPacketAdapter
         LifecycleTrace=lifecycleTrace;
         cancellationToken.ThrowIfCancellationRequested();
         if (!WindowsHost.IsAdmin) throw new IOException("创建虚拟网卡需要管理员权限");
-        var guid = new Guid(SHA256.HashData(Encoding.ASCII.GetBytes($"streamlink-wintun-v4/{network}/{slot}")).AsSpan(0, 16));
-        string name = $"StreamLink-{network[..8]}-{slot}";
+        var identity = WintunIdentity.For(network, slot);
+        var guid = identity.Guid;
+        string name = identity.Name;
+        identityLease = identity.Acquire();
+        try {
         // Let an existing owner acquire the close gate while we wait for its
         // identity to disappear. Do not hold lifecycle across this poll.
         WaitForVacantIdentity(guid, name, cancellationToken);
@@ -100,11 +104,12 @@ public sealed class NativeAdapter : IPacketAdapter
                 _ => "原生虚拟网卡创建失败。"
             }) + "阶段=" + openStage);
             if(NativeLibrary.TryGetExport(library,"sltun_luid",out var identityExport)) {
-                error=Marshal.GetDelegateForFunctionPointer<ReadLuid>(identityExport)(adapter,out var identity);
-                if(error!=0||identity==0)throw new IOException("网卡实际 LUID 身份无效");InterfaceLuid=identity;
+                error=Marshal.GetDelegateForFunctionPointer<ReadLuid>(identityExport)(adapter,out var luid);
+                if(error!=0||luid==0)throw new IOException("网卡实际 LUID 身份无效");InterfaceLuid=luid;
             }
         } catch { if(adapter!=IntPtr.Zero){close!(adapter);adapter=IntPtr.Zero;}NativeLibrary.Free(library); throw; }
         } finally { lifecycle.Release(); }
+        } catch { identityLease.Dispose(); throw; }
     }
     void WaitForVacantIdentity(Guid guid, string name, CancellationToken token)
     {
@@ -172,6 +177,7 @@ public sealed class NativeAdapter : IPacketAdapter
             // recorded separately. Do not block all statistics/cancel callers
             // behind unbounded interface enumeration or alter foreign drivers.
             Trace("bridge-library-free-begin");NativeLibrary.Free(library);Trace("library-free-complete");
+            identityLease.Dispose();
         }finally{io.ExitWriteLock();}
         // Do not dispose the guard: late calls must deterministically observe
         // the adapter's disposed state rather than touch a closed native handle.

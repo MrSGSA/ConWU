@@ -50,6 +50,7 @@ public static partial class ServiceInstaller
         }
         await ServiceInstallTransaction.Execute(async()=>{
             if(existed)await StopRegistered();
+            PrepareWintunUpgrade(profileStore);
             if(profileStore.UiUserSnapshot()!=previousUi)throw new IOException("安装期间UI授权已改变，拒绝覆盖");
             if(previousUi==null){
                 profileStore.AuthorizeUiUser(selectedUi);wroteUi=true;
@@ -201,9 +202,15 @@ public static partial class ServiceInstaller
     {
         if (!Installed) return;
         using var service = new ServiceController(WindowsInstance.Name);
-        if (service.Status == ServiceControllerStatus.Stopped) return;
-        if (service.Status != ServiceControllerStatus.StopPending) await Sc("stop", WindowsInstance.Name);
-        await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(50)));
+        using var process = CaptureServiceProcess(service);
+        if (service.Status != ServiceControllerStatus.Stopped) {
+            if (service.Status != ServiceControllerStatus.StopPending) await Sc("stop", WindowsInstance.Name);
+            await Task.Run(() => service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(50)));
+        }
+        if (process != null) {
+            try { await process.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (System.TimeoutException ex) { throw new IOException("原服务进程仍未退出；未清理 Wintun，也未启动第二个资源所有者", ex); }
+        }
     }
     public static async Task StartIfNeeded()
     {

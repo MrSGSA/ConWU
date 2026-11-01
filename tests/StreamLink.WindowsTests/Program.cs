@@ -153,8 +153,12 @@ static class Program
         // Keep test artifacts in an isolated temporary directory; never touch SCM, drivers, routes or the live profile.
         Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT", null);
     }
-    [STAThread] static void Main()
+    [STAThread] static void Main(string[] args)
     {
+        if(args is ["--wintun-installer",var instance,var operation,var output]) {
+            try { WintunInstallerHarness.Run(instance,operation,output).GetAwaiter().GetResult(); }
+            catch(Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode=1; } return;
+        }
         ApplicationConfiguration.Initialize();
         using var host = new Form { ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new(-30000, -30000) };
         host.Shown += async (_, _) => {
