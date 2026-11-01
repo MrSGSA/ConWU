@@ -9,6 +9,7 @@ foreach($size in $sizes){
  $g=[Drawing.Graphics]::FromImage($bitmap);$g.SmoothingMode='AntiAlias';$g.PixelOffsetMode='HighQuality';$g.Clear([Drawing.Color]::Transparent);$g.ScaleTransform($size/256.0,$size/256.0)
  $tile=[Drawing.Drawing2D.GraphicsPath]::new();foreach($arc in @(@(0,0,112,112,180),@(144,0,112,112,270),@(144,144,112,112,0),@(0,144,112,112,90))){$tile.AddArc($arc[0],$arc[1],$arc[2],$arc[3],$arc[4],90)};$tile.CloseFigure()
  $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml('#1a1b26'));$g.FillPath($brush,$tile)
+ $g.TranslateTransform(128,128);$g.RotateTransform(45);$g.TranslateTransform(-128,-128)
  $path=[Drawing.Drawing2D.GraphicsPath]::new();$path.AddLine(96,76,76,76);$path.AddArc(24,76,104,104,270,-180);$path.AddLine(76,180,96,180);$path.StartFigure();$path.AddLine(160,76,180,76);$path.AddArc(128,76,104,104,270,180);$path.AddLine(180,180,160,180);$path.StartFigure();$path.AddLine(88,128,168,128)
  $pen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml('#7aa2f7'),24);$pen.StartCap='Round';$pen.EndCap='Round';$pen.LineJoin='Round';$g.DrawPath($pen,$path)
  $memory=[IO.MemoryStream]::new();$bitmap.Save($memory,[Drawing.Imaging.ImageFormat]::Png);$images.Add($memory.ToArray())

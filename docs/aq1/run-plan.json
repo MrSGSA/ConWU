@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-11-01 user requested eleven UI/installer improvements and explicitly approved serverless direct invitations. Build fixed-protocol clients, signed direct membership synchronization, coherent Tokyo Night assets and MSI first-paint fix; preserve live daily clients and coordinator.",
+  "userConfirmedScope": "2026-11-01: finish prior eleven UI/installer fixes and serverless invitations; additionally implement generic target-host entry + six-digit direct pairing, integrate entry/role/method controls and rotate the common logo 45 degrees clockwise. Dedicated EasyTier/皎月连 integration deferred. Preserve current clients and coordinator.",
   "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.9",
-  "msiVersion": "1.0.15",
-  "startCommit": "efb79cde4c7709cc297fbef1c79b041150d78248",
+  "candidateVersion": "1.0.1-rc.10",
+  "msiVersion": "1.0.16",
+  "startCommit": "67d13d589c10cb51592872ff48c6c1f0d0d0e41e",
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
   "control": "HTTPS for server networks; authenticated MeshLink synchronization for explicit serverless networks",
@@ -33,7 +33,10 @@
     "existing server-assisted six-digit approval and fixed-protocol autonomous hole punching retained",
     "unified Tokyo Night code-native logo and palette; MSI artwork no longer overlaps interactive controls",
     "monotonic directory preservation across async settings saves",
-    "affected checks, two separate self-reviews, frozen core, isolated native MSI rendering and actual lifecycle; runnable installer/ZIP/source"
+    "affected checks, two separate self-reviews, frozen core, isolated native MSI rendering and actual lifecycle; runnable installer/ZIP/source",
+    "same fixed-protocol ingress carries bounded pre-membership short pairing; committed ECDH and explicit SAS owner approval, single-device signed encrypted enrollment",
+    "new DirectBootstrap capability uses public outer carriage only; per-member MeshLink keys remain the business security boundary; native pre-auth caps 64 pending / 16 ready / 2 conversations, application 5 replies/s and 1200-byte maximum",
+    "short-pair core, real restricted service and real C++ FakeTCP/UDP loopback checks; fresh frozen Full core and isolated installer lifecycle"
   ],
   "baselineOrder": [
     "Q2 final application physical route first when second endpoint is available",
@@ -66,7 +69,7 @@
     "status": "PendingUserTrial"
   },
   "regression": {
-    "orchestration": "Frozen product code core run; only delivery metadata may follow with exact source-tree equivalence documented. Package builds and installed lifecycle are sequential. Preserve any initial build-lock/test failure logs and historical pressure failures.",
+    "orchestration": "Freeze new rc.10 after targeted fixes and two separate reviews; run fresh Full core including direct short pairing/native/service cases; package and isolated MSI sequentially. Retain rc.9 and rc.10 development failures with exact evidence scope.",
     "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,

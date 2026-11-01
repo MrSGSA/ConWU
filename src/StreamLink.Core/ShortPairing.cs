@@ -73,9 +73,9 @@ public sealed class PairKeyExchange : IDisposable
         if (new Uri(pair.Service) != new Uri(service) || !pair.CertificatePin.Equals(pin, StringComparison.OrdinalIgnoreCase)) throw new CryptographicException("邀请中的协调服务器不符");
         return pair;
     }
-    public static string DecryptInvitation(byte[] shared, string cipher, string room, string candidate)
+    public static string DecryptInvitation(byte[] shared, string cipher, string room, string candidate, int maximumCipher=6000)
     {
-        if (cipher is null || cipher.Length > 6000) throw new FormatException("加密邀请过大");
+        if (cipher is null || cipher.Length > maximumCipher) throw new FormatException("加密邀请过大");
         byte[] data = Convert.FromBase64String(cipher); if (data.Length < 29) throw new FormatException("加密邀请截断");
         byte[] plain = new byte[data.Length - 28]; using var aes = new AesGcm(shared, 16);
         aes.Decrypt(data.AsSpan(0, 12), data.AsSpan(28), data.AsSpan(12, 16), plain, Encoding.UTF8.GetBytes(room + "/" + candidate));
@@ -86,7 +86,17 @@ public sealed class PairKeyExchange : IDisposable
     public void Dispose() => key.Dispose();
 }
 
-public sealed class ShortPairClient : IDisposable
+public interface IShortPairClient : IDisposable
+{
+    Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel);
+    Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="");
+    Task<PairRoomState> Poll(PairRoomTicket ticket,bool owner,CancellationToken cancel);
+    Task<PairRoomState> Reveal(PairRoomTicket ticket,bool owner,PairKeyExchange key,CancellationToken cancel);
+    Task<PairRoomState> Approve(PairRoomTicket ticket,string candidate,string cipher,CancellationToken cancel);
+    Task Close(PairRoomTicket ticket,CancellationToken cancel);
+    Task<PairRoomState> Finish(PairRoomTicket ticket,bool owner,CancellationToken cancel);
+}
+public sealed class ShortPairClient : IShortPairClient
 {
     readonly HttpClient http;
     public ShortPairClient(string service, string pin)

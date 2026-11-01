@@ -30,7 +30,7 @@ sealed class RawLoopback : IAsyncDisposable
             var ticket = new Invitation(1, profile.Pair.Network, profile.Pair.Secret, "127.0.0.1:1", "faketcp", "test.ustc.edu.cn", DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
             void Start(string name, string mode, string local, string remote, int rawPort) {
                 string file = Path.Combine(root, name + ".conf");
-                File.WriteAllText(file, $"{mode}\n-l {local}\n-r {remote}\n-k {ticket.RawKey}\n--raw-mode faketcp\n--fake-http test.ustc.edu.cn\n--seq-mode 3\n--fix-gro\n--hb-mode 0\n--log-level 2\n");
+                File.WriteAllText(file, $"{mode}\n-l {local}\n-r {remote}\n-k {(profile.Pair.DirectBootstrap?DirectPairWire.CarriageKey:ticket.RawKey)}\n--raw-mode faketcp\n--fake-http test.ustc.edu.cn\n--seq-mode 3\n--fix-gro\n--hb-mode 0\n--log-level 2\n");
                 job.Start(Path.GetFullPath(executable), ["--conf-file", file], Path.Combine(root, name + ".log"), new Dictionary<string, string> { ["STREAMLINK_TEST_BIND"] = rawPort.ToString(), ["STREAMLINK_TEST_PEER"] = ((IPEndPoint)wire.Client.LocalEndPoint!).Port.ToString() }, [ticket.RawKey]);
             }
             for (int slot = 0; slot < applications.Length; slot++) {

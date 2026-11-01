@@ -25,10 +25,21 @@ extern int enable_dns_resolve;
 
 extern int ttl_value;
 
-const u32_t max_handshake_conn_num = 10000;
-const u32_t max_ready_conn_num = 1000;
+// A public rendezvous carriage cannot use the legacy ten-thousand-conversation
+// allowance. The application authenticates membership independently; these
+// caps apply before that authentication and never evict established sessions.
+inline bool direct_rendezvous_limits() {
+#ifdef UDP2RAW_NATIVE
+    const char *value=getenv("STREAMLINK_DIRECT_RENDEZVOUS");
+    return value && strcmp(value,"1")==0;
+#else
+    return false;
+#endif
+}
+const u32_t max_handshake_conn_num = direct_rendezvous_limits() ? 64 : 10000;
+const u32_t max_ready_conn_num = direct_rendezvous_limits() ? 16 : 1000;
 const u32_t anti_replay_window_size = 4000;
-const int max_conv_num = 10000;
+const int max_conv_num = direct_rendezvous_limits() ? 2 : 10000;
 
 const u32_t client_handshake_timeout = 5000;  // unit ms
 const u32_t client_retry_interval = 1000;     // ms

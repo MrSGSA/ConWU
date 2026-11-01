@@ -6,12 +6,12 @@ namespace StreamLink.Core;
 internal static class LegacyNativeCapabilities
 {
     static readonly object gate = new();
-    static readonly Dictionary<string, (long Size, DateTime At)> ready = [];
-    internal static void Require(string binary)
+    static readonly Dictionary<string, (long Size, DateTime At,bool Direct)> ready = [];
+    internal static void Require(string binary,bool direct=false)
     {
         var file = new FileInfo(binary);
         lock (gate) {
-            if (ready.TryGetValue(file.FullName, out var old) && old.Size == file.Length && old.At == file.LastWriteTimeUtc) return;
+            if (ready.TryGetValue(file.FullName, out var old) && old.Size == file.Length && old.At == file.LastWriteTimeUtc && (!direct||old.Direct)) return;
             var info = new ProcessStartInfo(file.FullName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             info.ArgumentList.Add("--native-info");
             using var process = Process.Start(info) ?? throw new IOException("Native capability process could not start");
@@ -23,7 +23,9 @@ internal static class LegacyNativeCapabilities
             if (!parsed.RootElement.TryGetProperty("legacyControl", out var control) || control.ValueKind != JsonValueKind.Number || control.GetInt32() != 1)
                 throw new NotSupportedException("Native component does not support authenticated compatibility control; verify the matching software bundle");
             if (ready.Count >= 32) ready.Clear();
-            ready[file.FullName] = (file.Length, file.LastWriteTimeUtc);
+            bool pairing=parsed.RootElement.TryGetProperty("directPairing",out var pairingCap)&&pairingCap.GetInt32()==1;
+            if(direct&&!pairing)throw new NotSupportedException("原生组件不支持受限直连配对，请更新完整安装包");
+            ready[file.FullName] = (file.Length, file.LastWriteTimeUtc,pairing);
         }
     }
     internal static void RequireEgress(string binary)

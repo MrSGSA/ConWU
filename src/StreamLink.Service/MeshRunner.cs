@@ -14,6 +14,7 @@ public sealed class MeshRunner
     readonly Action<SessionStatus> report;
     readonly Action<MeshDirectory> remember;
     readonly MeshRuntimeServices services;
+    public Func<ReadOnlyMemory<byte>,byte[]?>? DirectPairing {get;set;}
     public MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string>? rememberStun = null)
         : this(profile, log, report, remember, rememberStun ?? (_ => { }), MeshRuntimeServices.Default) { }
     internal MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string> rememberStun, MeshRuntimeServices services)
@@ -195,6 +196,7 @@ public sealed class MeshRunner
                     // validation. Only a successful Router takes the adapter.
                     lock (gate) {
                         router = new(wireMesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
+                        router.DirectPairing=packet=>DirectPairing?.Invoke(packet);
                         (discovery as DirectMeshDiscovery)?.Attach(router);
                         pendingAdapter = null;
                     }

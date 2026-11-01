@@ -13,6 +13,7 @@ function Fill($g,[string]$color,[single]$x,[single]$y,[single]$w,[single]$h){
 }
 function Mark($g,[single]$x,[single]$y,[single]$size){
  $saved=$g.Save();$g.TranslateTransform($x,$y);$g.ScaleTransform($size/256,$size/256)
+ $g.TranslateTransform(128,128);$g.RotateTransform(45);$g.TranslateTransform(-128,-128)
  $path=[Drawing.Drawing2D.GraphicsPath]::new()
  $path.AddLine(96,76,76,76);$path.AddArc(24,76,104,104,270,-180);$path.AddLine(76,180,96,180);$path.StartFigure();$path.AddLine(160,76,180,76);$path.AddArc(128,76,104,104,270,180);$path.AddLine(180,180,160,180);$path.StartFigure();$path.AddLine(88,128,168,128)
  $pen=[Drawing.Pen]::new((Color '#7aa2f7'),24);$pen.StartCap='Round';$pen.EndCap='Round';$pen.LineJoin='Round'

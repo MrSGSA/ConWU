@@ -69,6 +69,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     int disposed;
     public IPEndPoint LocalEndpoint => (IPEndPoint)socket.LocalEndPoint!;
     public Task Completion { get; }
+    public Func<ReadOnlyMemory<byte>,byte[]?>? DirectPairing {get;set;}
     public Guid BootId { get; }
     public PathSelection Selection { get; }
     public bool LegacyAllowed => Selection.Allows(profile.Pair.Mode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
@@ -273,7 +274,13 @@ public sealed partial class MeshRouter : IAsyncDisposable
             SocketReceiveFromResult received;
             try { received = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), stop.Token); }
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
-            if (received.ReceivedBytes < MeshLink.Overhead || !IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
+            if (!IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
+            if(profile.Pair.DirectBootstrap && profile.IsOwner && DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
+                var response=DirectPairing?.Invoke(buffer.AsMemory(0,received.ReceivedBytes));
+                if(response!=null)Send(response,(IPEndPoint)received.RemoteEndPoint);
+                continue;
+            }
+            if(received.ReceivedBytes < MeshLink.Overhead)continue;
             lock (gate) if (peers.TryGetValue(buffer[5], out var peer)) {
                 if (!LegacyAllowed) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
                 if (peer.Managed != null) continue; // managed data arrives through its registered resource only

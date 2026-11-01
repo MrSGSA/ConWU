@@ -9,6 +9,7 @@ static partial class Program
 {
     static async Task DirectNetworks()
     {
+        await DirectShortPairing();
         static void Reject(Action action){try{action();}catch(Exception ex)when(ex is FormatException or CryptographicException or System.IO.IOException){return;}throw new Exception("unexpected direct credential acceptance");}
         var owner=MeshIdentity.Create("","","faketcp","10.171.139.1",direct:true);
         var code=DirectInvitation.Issue(owner,[new(0,"txt://stun.example.com")]);var first=DirectInvitation.Import(code);

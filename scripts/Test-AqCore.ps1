@@ -49,6 +49,8 @@ try {
  Managed 'LegacyWireTests' @('--native-report',(Join-Path $OutputDirectory 'legacy-native.json'),'--output',(Join-Path $OutputDirectory 'legacy-wire.json'))
  Managed 'LegacyControlTests' @('--native',$native,'--output',(Join-Path $OutputDirectory 'legacy-control.json'),'--rounds',$repeatRounds) 900
  Run 'mesh-native-wire' 'dotnet' @('run','--project','tests/StreamLink.MeshTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--raw',$native)
+ Run 'direct-short-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-native',$native,(Join-Path $OutputDirectory 'direct-short-native'))
+ Run 'direct-short-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-service')
  # Enabled personal paths: 30 SO/UDP deterministic rounds plus real factory
  # source-learning, resource cancellation, stale-network and failure cleanup.
  foreach($mode in @('baseline','source','network','shutdown-failure')) {

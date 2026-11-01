@@ -85,7 +85,7 @@ public static class MeshIdentity
         if(virtualIp.Length>0)MeshAddressing.ValidateAddress(virtualIp);
         using var owner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var profile = new MeshProfile { OwnerKey = Convert.ToBase64String(owner.ExportSubjectPublicKeyInfo()), OwnerPrivate = Convert.ToBase64String(owner.ExportPkcs8PrivateKey()) };
-        profile.Pair = Pairing.Create(direct?"https://unused.invalid/":service, direct?"":pin, mode) with { Network = NetworkId(profile.OwnerKey), Direct=direct, Service=direct?"":service };
+        profile.Pair = Pairing.Create(direct?"https://unused.invalid/":service, direct?"":pin, mode) with { Network = NetworkId(profile.OwnerKey), Direct=direct, DirectBootstrap=direct, Service=direct?"":service };
         var keys = NewMember(profile.Pair.Network, profile.OwnerPrivate, 1,virtualIp.Length>0?virtualIp:null);
         profile.Self = keys.member; profile.SigningPrivate = keys.signing; profile.ExchangePrivate = keys.exchange;
         profile.Directory = SignDirectory(profile, [profile.Self], 2); profile.Validate(); return profile;

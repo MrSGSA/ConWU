@@ -92,7 +92,7 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default);
+                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
                 else runner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -115,6 +115,8 @@ public sealed partial class ControlWorker : BackgroundService
     }
     async Task End(CancellationToken token = default)
     {
+        if(uiPairClient is DirectPairHost)ResetUiPair("连接已停止，请重新生成配对码");
+        uiDirectHost.Clear();
         runStop?.Cancel();measureStop?.Cancel();
         Task[] ending=new[]{running,measuring}.Where(t=>t!=null).Cast<Task>().ToArray();
         try {await Task.WhenAll(ending.Select(ObserveShutdown)).WaitAsync(TimeSpan.FromSeconds(15),token);}
