@@ -2,19 +2,18 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-10-31 user is ready for real-machine testing after development-only work. Prepare current MSI/ZIP and affected local regression for Thinkbook and Akane. User reports the old coordinator is probably gone; prepare a matching coordinator bundle without deployment. No automatic daily installation or remote deployment; a usable HTTPS coordination address is still required.",
+  "userConfirmedScope": "2026-11-01 user approved the five-page WebUI preview and asked to build it with existing-entry discovery. Implement and validate the real application, build MSI/ZIP and matching coordinator. No automatic daily installation, Akane update, server deployment or public release in this turn.",
   "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.2",
-  "msiVersion": "1.0.8",
-  "startCommit": "e05263715c894f0bf390f1b9e50f0032403455fe",
-  "startDirty": true,
+  "candidateVersion": "1.0.1-rc.8",
+  "msiVersion": "1.0.14",
+  "startCommit": "ba1d7466b9f909a9b67622db3173232a850d7b91",
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
   "control": "HTTPS",
   "adapters": ["official Wintun 0.14.1", "WinDivert 2.2.2"],
   "preserve": ["any still-present legacy service and management channel; do not reinstall previously removed 0.3.2", "HTTP/SEQ wire semantics", "2000ms observation freshness", "90s quality cooldown", "bounded resource ownership"],
   "outOfScopeByUserDecision": ["ResearchTunDriver", "ResearchWfpReplacement", "mandatory true TLS dataplane research"],
-  "implementation": ["same-path bidirectional liveness and unchanged-endpoint recovery", "distinguish operational pump failure from actual resource-close failure", "real backend retry and structured phase/timing/cause feedback", "three-entry WebUI with draft protection and bounded session renewal", "affected fault, browser, native-load and frozen core checks; self-contained MSI/ZIP"],
+  "implementation": ["five-page WebUI connected to the restricted real backend, with draft protection and bounded session renewal", "bounded address/TXT/HTTP existing-entry discovery with identity validation, healthy-path retention and same-protocol autonomous-punch fallback", "authenticated join approval, rejection and cancellation with visible preallocated IP", "signed custom virtual addresses and spoof-resistant routing", "persisted startup preference through MSI update and repair", "affected regression, frozen core and isolated installer checks; self-contained MSI/ZIP and matching coordinator"],
   "baselineOrder": ["Q2 final application physical route first when second endpoint is available", "Q0/Q1 only to localize a measured defect", "Q3 same build enhanced path", "Q4 shared-egress checks"],
   "quality": {
     "profile": "Historical50Short",
@@ -31,7 +30,7 @@
   "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true, "pnpConvergenceSeconds": 5, "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"},
   "userTrial": {"application": "Moonlight or actual user streaming application", "minutes": 10, "status": "PendingUserTrial"},
   "regression": {
-    "orchestration": "Serial package, frozen core, native sustained load and isolated installer/driver phases; no simultaneous build of the same test output. Retain aborted ed04a07f matrix and first soak/lifecycle failures.",
+    "orchestration": "Serial package, frozen core and isolated installer phases; no simultaneous build of the same test output. Retain the interrupted dea938a core and historical pressure/soak/lifecycle failures. This feature candidate does not claim a new physical quality measurement.",
     "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,
@@ -43,6 +42,6 @@
     "disabledResearchFailuresRemainHistorical": true
   },
   "formalOnly": ["eight independent Windows stacks / 28 edges", "60 minute application stream", "100 lifecycle rounds", "clean Windows VM and cross-account cold boot"],
-  "externalRequirements": ["restored HTTPS coordinator for pairing and discovery; STUN alone is insufficient", "authorized second Windows endpoint with physical reachability", "independent management before stopping any existing channel", "user streaming confirmation"],
+  "externalRequirements": ["matching HTTPS coordinator with pairingDecisions=1 and meshAddressing=1 for new admissions and custom addresses; STUN alone is insufficient", "authorized second Windows endpoint and a real existing mapping for cross-NAT verification", "independent management before stopping any existing channel", "user streaming confirmation"],
   "stopRule": "Deliver runnable fixed package, source, hashes, two review checklists and honest per-item state after available work. PartialCode is not an external blocker."
 }

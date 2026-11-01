@@ -19,5 +19,12 @@
     "packages": ["self-contained Windows MSI/ZIP", "Linux x64 coordination service", "exact source archive, hashes and licenses"],
     "installation": "isolated instance only; preserve daily service PIDs and configuration",
     "deployment": "no production upgrade, server deployment or GitHub publishing in this turn"
+  },
+  "firstFrozenCoreReview": {
+    "sourceCommit": "dea938aa343d1986d88c789303639e9e3ae81bc8",
+    "evidence": "artifacts/rc8-core-dea938a/interrupted.json",
+    "status": "StoppedAfterFailuresBeforeRefreeze",
+    "fixes": ["omit null virtual-IP patch fields for strict legacy schemas and reject an orphan address precondition", "test log-off suppression explicitly, then re-enable logging before the unchanged secret-redaction assertion", "reserve fixture TCP ports with the same exclusive-bind semantics as production helpers", "manually open the tray for uninstall after startup was disabled; verify disabled login launch exits"],
+    "followup": "Affected tests, then a new clean frozen Full core run and isolated MSI lifecycle. Original failed logs retained; no reliability threshold changes."
   }
 }

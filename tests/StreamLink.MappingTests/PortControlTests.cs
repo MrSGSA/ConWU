@@ -122,7 +122,7 @@ static partial class PortControlTests
         // without router/firewall/native mutations or an Internet destination.
         await using (var server = new Server { ChangePortOnRenew = true })
         await using (var helper = new Reflector { Silent = false }) {
-            var temporary = new TcpListener(IPAddress.Loopback, 0); temporary.Start(); int source = ((IPEndPoint)temporary.LocalEndpoint).Port; temporary.Stop();
+            var temporary = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true }; temporary.Start(); int source = ((IPEndPoint)temporary.LocalEndpoint).Port; temporary.Stop();
             var (binding, observed) = await TcpBinding.Connect(source, IPAddress.Loopback, _ => { }, ct, [helper.Endpoint.ToString()]);
             var lease = await PortControlLease.Open(server.Route, 41086, 40008, PortMappingProtocol.Tcp, () => true, ct);
             await using var mapping = new TcpMapping(lease, binding, observed, _ => { });

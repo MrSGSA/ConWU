@@ -106,7 +106,7 @@ static partial class PortControlTests
         }
         await using (var server = new Server { Lifetime = 180 })
         await using (var helper = new Reflector()) {
-            var temporary = new TcpListener(IPAddress.Loopback, 0); temporary.Start(); int source = ((IPEndPoint)temporary.LocalEndpoint).Port; temporary.Stop();
+            var temporary = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true }; temporary.Start(); int source = ((IPEndPoint)temporary.LocalEndpoint).Port; temporary.Stop();
             var (binding, observed) = await TcpBinding.Connect(source, IPAddress.Loopback, _ => { }, token, [helper.Endpoint.ToString()]);
             var lease = await PortControlLease.Open(server.Route, 41127, 40027, PortMappingProtocol.Tcp, () => true, token);
             await using var mapping = new TcpMapping(lease, binding, observed, _ => { });

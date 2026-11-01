@@ -18,10 +18,16 @@ draft.EditLevel("error");patch=draft.CreatePatch();Check(patch.DeviceName==null&
 draft.Reset(State("admin name","error"));Check(!draft.Dirty,"successful save acknowledgement resets the draft");
 var legacy=new UiSettingsDraft();legacy.Observe(State(version:1));legacy.EditName("legacy edit");
 string wire=JsonSerializer.Serialize(legacy.CreatePatch());Check(!wire.Contains("Expected"),"new client omits unsupported null precondition members for v1 Disallow schemas");
+Check(!wire.Contains("VirtualIp"),"unused new virtual-IP patch fields are omitted for old strict schemas");
 var profile=new DeviceProfile{DeviceName="before",LogLevel="info",ManagedEgressMbps=17};profile.Validate();
 var updated=new UiConfigPatch("after",null,"before").ApplyTo(profile);
 Check(updated.DeviceName=="after"&&profile.DeviceName=="before"&&updated.ManagedEgressMbps==17,"patch copies current profile without mutating caller or unrelated settings");
 Reject(()=>new UiConfigPatch("after",null,"wrong").ApplyTo(profile),"service side detects stale edited-field base");
+var addressPatch=new UiConfigPatch{RequestedVirtualIp="10.171.139.1",ExpectedVirtualIp=""};
+Check(addressPatch.ApplyTo(profile).RequestedVirtualIp=="10.171.139.1"&&profile.RequestedVirtualIp=="","virtual-IP patch preserves caller and checks only edited fields");
+Reject(()=>addressPatch.ApplyTo(new DeviceProfile{RequestedVirtualIp="10.171.139.2"}),"virtual-IP patch cannot overwrite another window's newer address");
+bool orphanRejected=false;try{new UiConfigPatch{ExpectedVirtualIp=""}.ApplyTo(profile);}catch(FormatException){orphanRejected=true;}
+Check(orphanRejected,"virtual-IP precondition requires the corresponding edited field");
 Check(UiAuthorizationPolicy.SelectForInstall("A",null)=="A","administrator upgrade preserves A instead of selecting installer B");
 Check(UiAuthorizationPolicy.SelectForInstall("A","A")=="A","explicit same-user reinstall is allowed");
 Reject(()=>UiAuthorizationPolicy.SelectForInstall("A","B"),"installation cannot silently change an existing authorization");

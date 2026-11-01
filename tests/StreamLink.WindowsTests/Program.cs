@@ -93,6 +93,11 @@ static class Program
             try{new ProfileStore().Save(rollback);}catch(CryptographicException){rollbackRejected=true;}catch(IOException){rollbackRejected=true;}
             Check(rollbackRejected&&new ProfileStore().Load().Mesh!.Directory!.Revision==revoked.Mesh!.Directory!.Revision,"same-network save cannot lower the persistent revocation revision");
             string[] credentials=[revoked.Mesh.Pair.Secret,revoked.Mesh.OwnerPrivate,revoked.Mesh.SigningPrivate,revoked.Mesh.ExchangePrivate,new Invitation(1,revoked.Mesh.Pair.Network,revoked.Mesh.Pair.Secret,"","faketcp","",0).RawKey];
+            int logsBefore=(await worker.Handle(new("status"))).Logs.Length;
+            typeof(ControlWorker).GetMethod("Log",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(worker,["security log negative while recording is off"]);
+            Check((await worker.Handle(new("status"))).Logs.Length==logsBefore,"off suppresses new in-memory logs as well as file output");
+            var logging=ProfileChanges.Copy(revoked);logging.LogLevel="info";
+            Check((await worker.Handle(new("save",logging))).Ok,"logging can be explicitly re-enabled for credential-redaction verification");
             typeof(ControlWorker).GetMethod("Log",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(worker,["security log negative: "+string.Join(' ',credentials)+" "+reply.Invite]);
             string logged=(await worker.Handle(new("status"))).Logs.Last();
             Check(credentials.All(c=>!logged.Contains(c))&&!logged.Contains(reply.Invite)&&logged.Contains("隐藏"),"actual worker log redacts raw/shared/member secrets and complete invitations");
@@ -101,7 +106,7 @@ static class Program
             Check(!(await worker.Handle(new("save", changed))).Ok, "Settings replaced the native identity");
             reply = await worker.Handle(new("mesh-join", Invite: reply.Invite));
             Check(reply.Ok && !reply.Profile!.Mesh!.IsOwner, "Native member import failed");
-            Check(reply.Profile.Mesh.Directory!.Revision==revoked.Mesh.Directory!.Revision&&!reply.Profile.Mesh.Directory.Members.Any(m=>m.Slot==2),"same-network re-import cannot erase already known member revocation");
+            Check(reply.Profile!.Mesh!.Directory!.Revision==revoked.Mesh.Directory!.Revision&&!reply.Profile.Mesh.Directory.Members.Any(m=>m.Slot==2),"same-network re-import cannot erase already known member revocation");
             Check(!(await worker.Handle(new("mesh-invite"))).Ok, "Guest issued a new member credential");
             await worker.StopLocal();
         }

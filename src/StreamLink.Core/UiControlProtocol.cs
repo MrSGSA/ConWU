@@ -66,13 +66,15 @@ public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedDeviceName=null,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLogLevel=null)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? RequestedVirtualIp {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? ExpectedVirtualIp {get;init;}
     // Preconditions concern ONLY edited fields. An unrelated network setting
     // changing while the request waits must not conflict or be copied back.
     public DeviceProfile ApplyTo(DeviceProfile current)
     {
-        if(DeviceName==null&&ExpectedDeviceName!=null || LogLevel==null&&ExpectedLogLevel!=null)
+        if(DeviceName==null&&ExpectedDeviceName!=null || LogLevel==null&&ExpectedLogLevel!=null || RequestedVirtualIp==null&&ExpectedVirtualIp!=null)
             throw new FormatException("补丁前置值必须对应一个待修改字段");
         if(DeviceName!=null&&ExpectedDeviceName!=null&&current.DeviceName!=ExpectedDeviceName ||
            LogLevel!=null&&ExpectedLogLevel!=null&&current.LogLevel!=ExpectedLogLevel ||

@@ -57,8 +57,10 @@ function State([string]$Folder,[string]$Label){
 function Same([object]$Before,[object]$After,[string]$Label){
  Check ($Before.ProfileSha256 -eq $After.ProfileSha256 -and $Before.Network -eq $After.Network -and $Before.UiSid -eq $After.UiSid -and -not $After.NetworkEnabled) ($Label+' preserves profile, network identity and SID; remains disabled')
 }
-function StartTray([string]$Label){
- & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'StreamLink.exe') -Arguments @('--validation-instance',$ValidationInstance,'--startup') -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
+function StartTray([string]$Label,[switch]$Manual){
+ $trayArguments=@('--validation-instance',$ValidationInstance)
+ if(-not $Manual){$trayArguments+='--startup'}
+ & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'StreamLink.exe') -Arguments $trayArguments -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
  $launch=Get-Content (Join-Path $OutputDirectory ($Label+'/launch-result.json')) -Raw|ConvertFrom-Json
  Check ($launch.exit -eq 0 -and $launch.admin -eq $false -and -not $launch.error) ($Label+' ordinary launcher')
  $watch=[Diagnostics.Stopwatch]::StartNew()
@@ -88,7 +90,7 @@ function FailurePolicy {
 }
 function Uninstall([string]$Label){
  $profile=if(Test-Path (Join-Path $data 'profile.dpapi')){(Get-FileHash (Join-Path $data 'profile.dpapi')).Hash}else{''}
- $ui=StartTray ($Label+'-tray')
+ $ui=StartTray ($Label+'-tray') -Manual
  MsiRun '/x' $Msi $Label
  Gone $ui $Label
  Check (-not(Get-Service -Name $service -ErrorAction SilentlyContinue)) ($Label+' removes owned service')
@@ -141,6 +143,8 @@ try {
  MsiRun '/fomus' $Msi 'repair-startup-disabled'
  Same $startupBefore (State $runtime 'startup-disabled-after-repair') 'disabled startup repair'
  Check ((Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$service)).Start -eq 3) 'repair preserves explicitly disabled automatic service startup'
+ App $runtime @('--startup')
+ Check (@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0) 'disabled login startup exits without tray or Web processes'
  Uninstall 'uninstall'
  if($LegacyBundle){
   App $LegacyBundle @('--install','--ui-user-account',[Security.Principal.WindowsIdentity]::GetCurrent().Name)
