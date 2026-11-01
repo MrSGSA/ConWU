@@ -9,6 +9,8 @@ namespace StreamLink.Core;
 
 public sealed record Pairing(string Network, string Secret, string Service, string CertificatePin, string Mode = "faketcp")
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Direct { get; init; }
     public static Pairing Create(string service, string pin, string mode = "faketcp")
     {
         var ticket = Invitation.Create("127.0.0.1:1", "faketcp", "");
@@ -17,7 +19,7 @@ public sealed record Pairing(string Network, string Secret, string Service, stri
     public void Validate()
     {
         if (!Guid.TryParseExact(Network, "N", out _) || !Regex.IsMatch(Secret ?? "", "^[A-Za-z0-9_-]{43}$")) throw new FormatException("配对身份无效");
-        if (!Uri.TryCreate(Service, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.UserInfo.Length != 0 || !uri.AbsolutePath.EndsWith('/') || uri.Query.Length != 0 || uri.Fragment.Length != 0) throw new FormatException("发现服务必须是以 / 结尾的 HTTPS 地址");
+        if (Direct ? Service != "" || CertificatePin != "" : !Uri.TryCreate(Service, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.UserInfo.Length != 0 || !uri.AbsolutePath.EndsWith('/') || uri.Query.Length != 0 || uri.Fragment.Length != 0) throw new FormatException("发现服务必须是以 / 结尾的 HTTPS 地址；无服务器网络不使用协调地址");
         if (CertificatePin is null || (CertificatePin.Length != 0 && !Regex.IsMatch(CertificatePin, "^[A-Fa-f0-9]{64}$"))) throw new FormatException("证书指纹无效");
         if (Mode is not ("faketcp" or "udp")) throw new FormatException("传输方式无效");
     }

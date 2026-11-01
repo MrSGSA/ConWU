@@ -1,16 +1,16 @@
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
   <Fragment>
     <UI Id="StreamLinkUI">
-      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" Red="32" Green="49" Blue="41" />
+      <TextStyle Id="WixUI_Font_Normal" FaceName="Microsoft YaHei UI" Size="9" Red="52" Green="59" Blue="88" />
       <TextStyle Id="WixUI_Font_Bigger" FaceName="Microsoft YaHei UI" Size="12" Bold="yes" />
       <TextStyle Id="WixUI_Font_Title" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" />
-      <TextStyle Id="SL_Title" FaceName="Microsoft YaHei UI" Size="18" Bold="yes" Red="24" Green="45" Blue="34" />
-      <TextStyle Id="SL_Heading" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" Red="32" Green="49" Blue="41" />
-      <TextStyle Id="SL_Muted" FaceName="Microsoft YaHei UI" Size="9" Red="94" Green="108" Blue="100" />
-      <TextStyle Id="SL_Small" FaceName="Microsoft YaHei UI" Size="8" Red="94" Green="108" Blue="100" />
-      <TextStyle Id="SL_Brand" FaceName="Segoe UI" Size="16" Bold="yes" Red="239" Green="247" Blue="234" />
-      <TextStyle Id="SL_OnDark" FaceName="Microsoft YaHei UI" Size="11" Red="195" Green="215" Blue="197" />
-      <TextStyle Id="SL_OnDarkSmall" FaceName="Microsoft YaHei UI" Size="8" Red="170" Green="194" Blue="172" />
+      <TextStyle Id="SL_Title" FaceName="Microsoft YaHei UI" Size="18" Bold="yes" Red="52" Green="59" Blue="88" />
+      <TextStyle Id="SL_Heading" FaceName="Microsoft YaHei UI" Size="10" Bold="yes" Red="52" Green="59" Blue="88" />
+      <TextStyle Id="SL_Muted" FaceName="Microsoft YaHei UI" Size="9" Red="86" Green="95" Blue="137" />
+      <TextStyle Id="SL_Small" FaceName="Microsoft YaHei UI" Size="8" Red="86" Green="95" Blue="137" />
+      <TextStyle Id="SL_Brand" FaceName="Segoe UI" Size="16" Bold="yes" Red="192" Green="202" Blue="245" />
+      <TextStyle Id="SL_OnDark" FaceName="Microsoft YaHei UI" Size="11" Red="169" Green="177" Blue="214" />
+      <TextStyle Id="SL_OnDarkSmall" FaceName="Microsoft YaHei UI" Size="8" Red="122" Green="162" Blue="247" />
       <Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
       <Property Id="ARPNOMODIFY" Value="1" />
       <DialogRef Id="ErrorDlg" />

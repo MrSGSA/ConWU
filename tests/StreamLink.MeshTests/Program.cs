@@ -107,7 +107,7 @@ static partial class Program
         } finally { File.Delete(Path.Combine(root, "mesh-networks.json")); Directory.Delete(root); }
         // Three complete routing nodes over isolated loopback datagrams; no real
         // adapter, firewall, service, discovery server or production profile.
-        var a = MeshIdentity.Create("https://example.com/", "", "faketcp"); var n2 = Guest(a); var n3 = Guest(a); n2.Directory = n3.Directory = a.Directory;
+        var a = MeshIdentity.Create("", "", "faketcp",direct:true); var n2 = Guest(a); var n3 = Guest(a); n2.Directory = n3.Directory = a.Directory;
         var adapters = new[] { new MemoryAdapter(), new MemoryAdapter(), new MemoryAdapter() };
         await using (var r1 = new MeshRouter(a, adapters[0]))
         await using (var r2 = new MeshRouter(n2, adapters[1]))
@@ -119,6 +119,13 @@ static partial class Program
             r2.SetCandidate(1, Via(2, 1, r1), "A", ""); r2.SetCandidate(3, Via(2, 3, r3), "C", "");
             r3.SetCandidate(1, Via(3, 1, r1), "A", ""); r3.SetCandidate(2, Via(3, 2, r2), "B", "");
             await Until(() => new[] { r1, r2, r3 }.All(r => r.Status().Count(p => p.Connected) == 2), "three nodes establish six independent directed paths");
+            using(var d1=new DirectMeshDiscovery(a))using(var d2=new DirectMeshDiscovery(n2)){
+                d1.Attach(r1);d2.Attach(r2);
+                await d1.Publish(new(1,a.Self.Device,DateTime.UtcNow.Ticks,DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(),"203.0.113.1:44680","native direct host"),default);
+                long deadline=Environment.TickCount64+15000;bool synchronized=false;
+                while(Environment.TickCount64<deadline){d1.Tick(Environment.TickCount64);d2.Tick(Environment.TickCount64);if((await d2.Read(default))!.Nodes.Any(n=>n.Slot==1)){synchronized=true;break;}await Task.Delay(110);}
+                Check(synchronized,raw?"serverless signed metadata crosses actual udp2raw FakeTCP HTTP protocol loops":"serverless signed metadata crosses the encrypted router path");
+            }
             adapters[0].Outgoing.Add(Packet(a.LocalIp, n2.LocalIp)); adapters[0].Outgoing.Add(Packet(a.LocalIp, n3.LocalIp)); adapters[1].Outgoing.Add(Packet(n2.LocalIp, n3.LocalIp));
             await Until(() => adapters[1].Incoming.Count == 1 && adapters[2].Incoming.Count == 2, "three-node router delivers only to the addressed peer");
             adapters[0].Outgoing.Add(Packet(n2.LocalIp, n3.LocalIp)); await Task.Delay(150); Check(adapters[2].Incoming.Count == 2, "router refuses transit traffic even from local adapter");

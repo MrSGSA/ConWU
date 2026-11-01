@@ -8,9 +8,9 @@ foreach($size in $sizes){
  $bitmap=[Drawing.Bitmap]::new($size,$size,[Drawing.Imaging.PixelFormat]::Format32bppArgb)
  $g=[Drawing.Graphics]::FromImage($bitmap);$g.SmoothingMode='AntiAlias';$g.PixelOffsetMode='HighQuality';$g.Clear([Drawing.Color]::Transparent);$g.ScaleTransform($size/256.0,$size/256.0)
  $tile=[Drawing.Drawing2D.GraphicsPath]::new();foreach($arc in @(@(0,0,112,112,180),@(144,0,112,112,270),@(144,144,112,112,0),@(0,144,112,112,90))){$tile.AddArc($arc[0],$arc[1],$arc[2],$arc[3],$arc[4],90)};$tile.CloseFigure()
- $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml('#102218'));$g.FillPath($brush,$tile)
- $path=[Drawing.Drawing2D.GraphicsPath]::new();$path.AddLine(181,75,109,75);$path.AddBezier(109,75,84,75,66,89,66,110);$path.AddBezier(66,110,66,131,83,142,109,142);$path.AddLine(109,142,144,142);$path.AddBezier(144,142,160,142,169,149,169,160);$path.AddBezier(169,160,169,171,159,180,144,180);$path.AddLine(144,180,75,180)
- $pen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml('#bde29a'),24);$pen.StartCap='Round';$pen.EndCap='Round';$pen.LineJoin='Round';$g.DrawPath($pen,$path)
+ $brush=[Drawing.SolidBrush]::new([Drawing.ColorTranslator]::FromHtml('#1a1b26'));$g.FillPath($brush,$tile)
+ $path=[Drawing.Drawing2D.GraphicsPath]::new();$path.AddLine(96,76,76,76);$path.AddArc(24,76,104,104,270,-180);$path.AddLine(76,180,96,180);$path.StartFigure();$path.AddLine(160,76,180,76);$path.AddArc(128,76,104,104,270,180);$path.AddLine(180,180,160,180);$path.StartFigure();$path.AddLine(88,128,168,128)
+ $pen=[Drawing.Pen]::new([Drawing.ColorTranslator]::FromHtml('#7aa2f7'),24);$pen.StartCap='Round';$pen.EndCap='Round';$pen.LineJoin='Round';$g.DrawPath($pen,$path)
  $memory=[IO.MemoryStream]::new();$bitmap.Save($memory,[Drawing.Imaging.ImageFormat]::Png);$images.Add($memory.ToArray())
  $memory.Dispose();$pen.Dispose();$path.Dispose();$brush.Dispose();$tile.Dispose();$g.Dispose();$bitmap.Dispose()
 }

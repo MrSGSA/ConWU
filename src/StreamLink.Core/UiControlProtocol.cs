@@ -49,11 +49,13 @@ public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats?
 public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State)
 {
     public string ProposedIp {get;init;}="";
+    public bool Direct {get;init;}
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)
 {
     public string ConnectionSource {get;init;}="custom";
+    public bool DirectMode {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];
     public string[]? TcpStun {get;init;}
     public string[]? UdpStun {get;init;}

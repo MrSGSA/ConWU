@@ -92,7 +92,7 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default);
+                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default);
                 else runner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -238,7 +238,7 @@ public sealed partial class ControlWorker : BackgroundService
                     // healthy official adapter to discover an unsigned backend.
                     if(updated.AdapterBackend!=profile.AdapterBackend)await PersonalPacketAdapters.Preflight(updated,operation.Stop.Token);
                     if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
-                    try {lock (sync) {store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
+                    try {lock (sync) {PreserveLatestDirectory(updated);store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":

@@ -59,6 +59,10 @@ native_wire_kind native_wire_classify(char type,const char *data,int length) {
     if(length<64 || memcmp(data,"SLM4",4)) return native_wire_kind::handshake;
     switch(static_cast<unsigned char>(data[4])) {
     case 4: wire_peer=static_cast<unsigned char>(data[6]);return native_wire_kind::business;
+    // Signed membership snapshots use the established encrypted lane. The
+    // router caps this at one MTU per peer per 100 ms, independently of probes.
+    // They must never spend or starve the handshake/keepalive allowance.
+    case 9: wire_peer=static_cast<unsigned char>(data[6]);return native_wire_kind::business;
     case 8: return native_wire_kind::diagnostic;
     case 5: case 6: return native_wire_kind::maintenance;
     case 2: case 3: case 7: return native_wire_kind::completion;

@@ -5,7 +5,14 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed record ExistingEntry(int PeerSlot, string Source);
+public sealed record ExistingEntry(int PeerSlot, string Source)
+{
+    // Stable before enrollment: connects to the network owner, never publishes
+    // this address as the joining device's own ingress.
+    public const int NetworkOwner = -1;
+    public static ExistingEntry[] ForJoinedNetwork(ExistingEntry[] entries) => entries.Where(e=>e.PeerSlot is 0 or NetworkOwner)
+        .Select(e=>e.PeerSlot==NetworkOwner?e with {PeerSlot=1}:e).Distinct().ToArray();
+}
 public sealed record EntryResolution(int PeerSlot, int Index, string Kind, string[] Endpoints, string Error);
 
 // These are hints, never membership credentials or proof of connectivity.
@@ -40,7 +47,7 @@ public sealed class ExistingEntryResolver : IDisposable
     {
         if (entries == null || entries.Length > MaximumSources) throw new FormatException("已有入口最多填写 12 项");
         foreach (var entry in entries) {
-            if (entry == null || entry.PeerSlot is < 0 or > 254 || entry.Source is not {Length: >0 and <=2048} s || s.Any(char.IsControl) || s != s.Trim())
+            if (entry == null || entry.PeerSlot is < ExistingEntry.NetworkOwner or > 254 || entry.Source is not {Length: >0 and <=2048} s || s.Any(char.IsControl) || s != s.Trim())
                 throw new FormatException("入口归属或地址无效");
             if (Kind(s) == "TXT") { if (!Host(s[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名"); }
             else if (Kind(s) is "HTTP" or "HTTPS") {

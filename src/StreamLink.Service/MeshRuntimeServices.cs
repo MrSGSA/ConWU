@@ -38,7 +38,7 @@ internal sealed record MeshRuntimeServices(
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
     public static MeshRuntimeServices Default => new(
-        mesh => new MeshDiscoveryClient(mesh),
+        mesh => mesh.Pair.Direct ? new DirectMeshDiscovery(mesh) : new MeshDiscoveryClient(mesh),
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
         async (profile, log, token) => profile.TransportMode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)

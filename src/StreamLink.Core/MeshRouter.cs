@@ -304,6 +304,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     // business observation probes; do not discard those pongs.
                     peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                 }
+                if(result.Synchronization!=null && endpoint.Equals(peer.Active))ReceiveSynchronization(peer,result.Synchronization);
                 if (result.Packet != null) {
                     if (Deliver(peer, result.Packet, MeshPackets.Accept(result.Packet, local, peer.Host))) {
                         peer.Received += result.Packet.Length;

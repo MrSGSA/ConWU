@@ -6,6 +6,14 @@ public enum ProfileChangeImpact { None, LiveMetadata, NextAttempt, RestartNetwor
 public static class ProfileChanges
 {
     public static DeviceProfile Copy(DeviceProfile value) => JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(value))!;
+    public static void PreserveLatestDirectory(DeviceProfile current,DeviceProfile draft)
+    {
+        if(draft.Mesh is {} next && current.Mesh is {} live && next.Pair.Network==live.Pair.Network &&
+           next.OwnerKey==live.OwnerKey && live.Directory is {} latest && latest.Revision>(next.Directory?.Revision??0)){
+            MeshIdentity.ValidateDirectory(latest,next.Pair.Network,next.OwnerKey);
+            next.Directory=latest;
+        }
+    }
     public static ProfileChangeImpact Impact(DeviceProfile before, DeviceProfile after)
     {
         var comparable=Copy(after);

@@ -5,7 +5,7 @@ using System.Text;
 
 namespace StreamLink.Core;
 
-public sealed record MeshReceive(bool Authenticated, byte[]? Reply = null, byte[]? Packet = null, long? PongToken = null, byte[]? Control = null, byte[]? Diagnostic = null);
+public sealed record MeshReceive(bool Authenticated, byte[]? Reply = null, byte[]? Packet = null, long? PongToken = null, byte[]? Control = null, byte[]? Diagnostic = null, byte[]? Synchronization = null);
 
 // Authenticated datagrams with independent directional/session keys. No data
 // retransmission or in-order delivery: reordered packets within the replay
@@ -60,6 +60,7 @@ public sealed class MeshLink : IDisposable
         }
     }
     public byte[]? Data(ReadOnlySpan<byte> packet) { lock (gate) return Connected ? Encode(4, remoteEpoch!, packet) : null; }
+    internal byte[]? Synchronize(ReadOnlySpan<byte> payload) { lock(gate) return Connected ? Encode(9,remoteEpoch!,payload) : null; }
     // Only negotiated traversal peers use kind 7. It shares this member's one
     // AEAD counter, session epoch and replay window across every candidate path.
     public byte[]? Control(ReadOnlySpan<byte> payload)
@@ -87,14 +88,14 @@ public sealed class MeshLink : IDisposable
     public MeshReceive Receive(ReadOnlySpan<byte> message)
     {
         lock (gate) {
-            if (disposed || message.Length < Overhead || message.Length > Overhead + Mtu || !message[..4].SequenceEqual("SLM4"u8) || message[5] != remote || message[6] != local || message[7] != 0 || message[4] is < 1 or > 8) return new(false);
+            if (disposed || message.Length < Overhead || message.Length > Overhead + Mtu || !message[..4].SequenceEqual("SLM4"u8) || message[5] != remote || message[6] != local || message[7] != 0 || message[4] is < 1 or > 9) return new(false);
             byte kind = message[4]; var senderEpoch = message.Slice(8, 16); var targetEpoch = message.Slice(24, 16);
             if (kind == 1 ? targetEpoch.IndexOfAnyExcept((byte)0) >= 0 : !targetEpoch.SequenceEqual(epoch)) return new(false);
             if ((kind is 1 or 2 or 3) && message.Length != Overhead || (kind is 5 or 6) && message.Length != Overhead + 8) return new(false);
             if (kind == 7 && message.Length is < Overhead + 1 or > Overhead + 256) return new(false);
             if (kind == 8 && message.Length is < Overhead + 512 or > Overhead + Mtu) return new(false);
             bool same = remoteEpoch != null && senderEpoch.SequenceEqual(remoteEpoch);
-            if (!same && (kind is 4 or 5 or 6 or 7 or 8 || retired.Contains(Convert.ToHexString(senderEpoch)))) return new(false);
+            if (!same && (kind is >=4 and <=9 || retired.Contains(Convert.ToHexString(senderEpoch)))) return new(false);
             ulong sequence = BinaryPrimitives.ReadUInt64BigEndian(message[40..]); if (sequence == 0) return new(false);
             // Hello cannot replace an established session or advance its replay window.
             if (kind != 1 && same && (sequence <= highest && highest - sequence >= (ulong)seen.Length || seen[sequence % (ulong)seen.Length] == sequence)) return new(false);
@@ -126,6 +127,7 @@ public sealed class MeshLink : IDisposable
                 6 => Pong(plain),
                 7 => new(true, Control: plain),
                 8 => new(true, Diagnostic: plain),
+                9 => new(true, Synchronization: plain),
                 _ => new(true)
             };
         }

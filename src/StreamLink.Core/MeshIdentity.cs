@@ -80,12 +80,12 @@ public static class MeshIdentity
         }
         return directory with { Signature = Sign(profile.OwnerPrivate, DirectoryData(directory)) };
     }
-    public static MeshProfile Create(string service, string pin, string mode, string virtualIp="")
+    public static MeshProfile Create(string service, string pin, string mode, string virtualIp="", bool direct=false)
     {
         if(virtualIp.Length>0)MeshAddressing.ValidateAddress(virtualIp);
         using var owner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var profile = new MeshProfile { OwnerKey = Convert.ToBase64String(owner.ExportSubjectPublicKeyInfo()), OwnerPrivate = Convert.ToBase64String(owner.ExportPkcs8PrivateKey()) };
-        profile.Pair = Pairing.Create(service, pin, mode) with { Network = NetworkId(profile.OwnerKey) };
+        profile.Pair = Pairing.Create(direct?"https://unused.invalid/":service, direct?"":pin, mode) with { Network = NetworkId(profile.OwnerKey), Direct=direct, Service=direct?"":service };
         var keys = NewMember(profile.Pair.Network, profile.OwnerPrivate, 1,virtualIp.Length>0?virtualIp:null);
         profile.Self = keys.member; profile.SigningPrivate = keys.signing; profile.ExchangePrivate = keys.exchange;
         profile.Directory = SignDirectory(profile, [profile.Self], 2); profile.Validate(); return profile;
@@ -124,6 +124,7 @@ public static class MeshIdentity
     }
     public static void ValidateDirectory(MeshDirectory directory, string network, string owner, long minimumRevision = 0)
     {
+        if(directory==null||directory.Members is not {Length:>=1 and <=MaxMembers}||directory.Members.Any(m=>m==null))throw new CryptographicException("成员目录结构无效");
         if (directory.Network != network || directory.OwnerKey != owner || directory.Revision < Math.Max(1, minimumRevision) || directory.NextSlot is < 2 or > 255 || directory.Members is not { Length: >= 1 and <= MaxMembers } || directory.Members.Select(m => m.Slot).Distinct().Count() != directory.Members.Length || directory.Members.Select(m => m.Device).Distinct().Count() != directory.Members.Length || directory.Members.Count(m => m.Slot == 1) != 1 || directory.Members.Any(m => m.Slot >= directory.NextSlot) || !Verify(owner, DirectoryData(directory), directory.Signature)) throw new CryptographicException("成员目录无效或已回退");
         foreach (var member in directory.Members) ValidateMember(network, owner, member);
         var addresses=directory.Members.Select(m=>MeshAddressing.Address(network,m)).ToArray();

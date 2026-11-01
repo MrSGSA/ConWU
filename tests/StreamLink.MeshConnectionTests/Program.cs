@@ -24,6 +24,7 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--direct-only"]){await DirectNetworks();return;}
         if (args is ["--existing-entries-only"]) { await ExistingEntries(); return; }
         if (args is ["--probe-cancel-only"]) { await MappingProbeCancellation(); return; }
         if (args is ["--connection-feedback-only"]) { ConnectionFeedback(); return; }
@@ -64,6 +65,7 @@ static partial class Program
         ConnectionFeedback();
         await TcpTests.Run();
         await ExistingEntries();
+        await DirectNetworks();
         await EntryProbeReuse();
         await Migration();
         await ListenerFailure();

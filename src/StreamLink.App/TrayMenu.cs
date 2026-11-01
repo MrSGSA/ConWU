@@ -33,7 +33,7 @@ public sealed class TrayMenu : ContextMenuStrip
     {
         public MenuRenderer(){RoundedEdges=false;}
         static bool Contrast=>SystemInformation.HighContrast;
-        static Color Foreground=>Contrast?SystemColors.MenuText:Color.FromArgb(38,42,45);
+        static Color Foreground=>Contrast?SystemColors.MenuText:Color.FromArgb(192,202,245);
         static float Factor(ToolStrip? strip)=>(strip?.DeviceDpi??96)/96f;
         static GraphicsPath Rounded(RectangleF r,float radius)
         {
@@ -42,18 +42,18 @@ public sealed class TrayMenu : ContextMenuStrip
         }
         protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
         {
-            e.Graphics.Clear(Contrast?SystemColors.Menu:Color.FromArgb(250,250,250));
+            e.Graphics.Clear(Contrast?SystemColors.Menu:Color.FromArgb(26,27,38));
         }
         protected override void OnRenderToolStripBorder(ToolStripRenderEventArgs e)
         {
-            using var pen=new Pen(Contrast?SystemColors.WindowFrame:Color.FromArgb(216,219,220));
+            using var pen=new Pen(Contrast?SystemColors.WindowFrame:Color.FromArgb(59,66,97));
             e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
             using var border=Rounded(new RectangleF(.5f,.5f,e.ToolStrip.Width-1,e.ToolStrip.Height-1),7*Factor(e.ToolStrip));e.Graphics.DrawPath(pen,border);
         }
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
             float f=Factor(e.ToolStrip);bool active=e.Item.Selected&&e.Item.Enabled;
-            if(active){using var brush=new SolidBrush(Contrast?SystemColors.Highlight:Color.FromArgb(231,238,235));using var shape=Rounded(new RectangleF(0,1,e.Item.Width-1,e.Item.Height-2),5*f);e.Graphics.FillPath(brush,shape);}
+            if(active){using var brush=new SolidBrush(Contrast?SystemColors.Highlight:Color.FromArgb(41,46,66));using var shape=Rounded(new RectangleF(0,1,e.Item.Width-1,e.Item.Height-2),5*f);e.Graphics.FillPath(brush,shape);}
             using var pen=new Pen(active&&Contrast?SystemColors.HighlightText:Foreground,1.55f*f){StartCap=LineCap.Round,EndCap=LineCap.Round,LineJoin=LineJoin.Round};
             e.Graphics.SmoothingMode=SmoothingMode.AntiAlias;
             float x=14*f,y=(e.Item.Height-18*f)/2;
@@ -75,7 +75,7 @@ public sealed class TrayMenu : ContextMenuStrip
         }
         protected override void OnRenderSeparator(ToolStripSeparatorRenderEventArgs e)
         {
-            using var pen=new Pen(Contrast?SystemColors.GrayText:Color.FromArgb(225,228,226));
+            using var pen=new Pen(Contrast?SystemColors.GrayText:Color.FromArgb(59,66,97));
             int inset=(int)(10*Factor(e.ToolStrip));e.Graphics.DrawLine(pen,inset,e.Item.Height/2,e.Item.Width-inset,e.Item.Height/2);
         }
     }
