@@ -2,19 +2,45 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-11-01 user approved the five-page WebUI preview and asked to build it with existing-entry discovery. Implement and validate the real application, build MSI/ZIP and matching coordinator. No automatic daily installation, Akane update, server deployment or public release in this turn.",
+  "userConfirmedScope": "2026-11-01 user requested eleven UI/installer improvements and explicitly approved serverless direct invitations. Build fixed-protocol clients, signed direct membership synchronization, coherent Tokyo Night assets and MSI first-paint fix; preserve live daily clients and coordinator.",
   "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.8",
-  "msiVersion": "1.0.14",
-  "startCommit": "ba1d7466b9f909a9b67622db3173232a850d7b91",
+  "candidateVersion": "1.0.1-rc.9",
+  "msiVersion": "1.0.15",
+  "startCommit": "efb79cde4c7709cc297fbef1c79b041150d78248",
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
-  "control": "HTTPS",
-  "adapters": ["official Wintun 0.14.1", "WinDivert 2.2.2"],
-  "preserve": ["any still-present legacy service and management channel; do not reinstall previously removed 0.3.2", "HTTP/SEQ wire semantics", "2000ms observation freshness", "90s quality cooldown", "bounded resource ownership"],
-  "outOfScopeByUserDecision": ["ResearchTunDriver", "ResearchWfpReplacement", "mandatory true TLS dataplane research"],
-  "implementation": ["five-page WebUI connected to the restricted real backend, with draft protection and bounded session renewal", "bounded address/TXT/HTTP existing-entry discovery with identity validation, healthy-path retention and same-protocol autonomous-punch fallback", "authenticated join approval, rejection and cancellation with visible preallocated IP", "signed custom virtual addresses and spoof-resistant routing", "persisted startup preference through MSI update and repair", "affected regression, frozen core and isolated installer checks; self-contained MSI/ZIP and matching coordinator"],
-  "baselineOrder": ["Q2 final application physical route first when second endpoint is available", "Q0/Q1 only to localize a measured defect", "Q3 same build enhanced path", "Q4 shared-egress checks"],
+  "control": "HTTPS for server networks; authenticated MeshLink synchronization for explicit serverless networks",
+  "adapters": [
+    "official Wintun 0.14.1",
+    "WinDivert 2.2.2"
+  ],
+  "preserve": [
+    "any still-present legacy service and management channel; do not reinstall previously removed 0.3.2",
+    "HTTP/SEQ wire semantics",
+    "2000ms observation freshness",
+    "90s quality cooldown",
+    "bounded resource ownership"
+  ],
+  "outOfScopeByUserDecision": [
+    "ResearchTunDriver",
+    "ResearchWfpReplacement",
+    "mandatory true TLS dataplane research"
+  ],
+  "implementation": [
+    "create-page delete/leave and invitation generation; simplified join input and transient completion feedback; matching connection-method cards",
+    "pre-enrollment owner ingress, plain TXT and normalized HTTPS server input",
+    "SL5 per-device signed bearer invitations, initial signed directory, bounded authenticated direct snapshot propagation and revocation; no HTTPS coordinator in direct mode",
+    "existing server-assisted six-digit approval and fixed-protocol autonomous hole punching retained",
+    "unified Tokyo Night code-native logo and palette; MSI artwork no longer overlaps interactive controls",
+    "monotonic directory preservation across async settings saves",
+    "affected checks, two separate self-reviews, frozen core, isolated native MSI rendering and actual lifecycle; runnable installer/ZIP/source"
+  ],
+  "baselineOrder": [
+    "Q2 final application physical route first when second endpoint is available",
+    "Q0/Q1 only to localize a measured defect",
+    "Q3 same build enhanced path",
+    "Q4 shared-egress checks"
+  ],
   "quality": {
     "profile": "Historical50Short",
     "requestedMbps": 50,
@@ -27,10 +53,20 @@
     "unknownIsNotPass": true,
     "physicalUnderlayRequired": true
   },
-  "lifecycle": {"personalStartStopRounds": 5, "closePerformanceTargetSeconds": 3, "resourceSafetyIsIndependent": true, "pnpConvergenceSeconds": 5, "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"},
-  "userTrial": {"application": "Moonlight or actual user streaming application", "minutes": 10, "status": "PendingUserTrial"},
+  "lifecycle": {
+    "personalStartStopRounds": 5,
+    "closePerformanceTargetSeconds": 3,
+    "resourceSafetyIsIndependent": true,
+    "pnpConvergenceSeconds": 5,
+    "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"
+  },
+  "userTrial": {
+    "application": "Moonlight or actual user streaming application",
+    "minutes": 10,
+    "status": "PendingUserTrial"
+  },
   "regression": {
-    "orchestration": "Serial package, frozen core and isolated installer phases; no simultaneous build of the same test output. Retain the interrupted dea938a core and historical pressure/soak/lifecycle failures. This feature candidate does not claim a new physical quality measurement.",
+    "orchestration": "Frozen product code core run; only delivery metadata may follow with exact source-tree equivalence documented. Package builds and installed lifecycle are sequential. Preserve any initial build-lock/test failure logs and historical pressure failures.",
     "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,
@@ -41,7 +77,17 @@
     "officialBundleAndIsolatedInstall": true,
     "disabledResearchFailuresRemainHistorical": true
   },
-  "formalOnly": ["eight independent Windows stacks / 28 edges", "60 minute application stream", "100 lifecycle rounds", "clean Windows VM and cross-account cold boot"],
-  "externalRequirements": ["matching HTTPS coordinator with pairingDecisions=1 and meshAddressing=1 for new admissions and custom addresses; STUN alone is insufficient", "authorized second Windows endpoint and a real existing mapping for cross-NAT verification", "independent management before stopping any existing channel", "user streaming confirmation"],
+  "formalOnly": [
+    "eight independent Windows stacks / 28 edges",
+    "60 minute application stream",
+    "100 lifecycle rounds",
+    "clean Windows VM and cross-account cold boot"
+  ],
+  "externalRequirements": [
+    "authorized second Windows endpoint and reachable StreamLink-compatible existing mapping for cross-NAT serverless verification",
+    "same existing rc.8 HTTPS coordinator for six-digit pairing; no coordinator needed for SL5 invitations",
+    "independent management before stopping any existing channel",
+    "long user streaming confirmation; formal eight-stack/cross-account/clean-VM checks remain unverified"
+  ],
   "stopRule": "Deliver runnable fixed package, source, hashes, two review checklists and honest per-item state after available work. PartialCode is not an external blocker."
 }

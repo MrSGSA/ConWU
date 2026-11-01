@@ -30,6 +30,7 @@ int checks=0;var rows=new List<object>();
 void Check(bool pass,string why){if(!pass)throw new IOException(why);checks++;Console.WriteLine("PASS "+why);}
 using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(Math.Max(240,120+rounds*30)));var token=deadline.Token;
 try {
+    rows.Add(await EqualPortCarrier());
     rows.Add(await Budget());
     rows.Add(await RouteEvidence());
     rows.Add(await RouteLatencyTests.Run(Check,token));
@@ -65,6 +66,21 @@ async Task<object> Budget()
     foreach(var id in owners)governor.Retire(id);
     Check(governor.Snapshot().TupleRecords==0,"retiring resources releases their tuple/window records");
     return new{elapsedMs=clock.Elapsed.TotalMilliseconds,shares,stats,usage,scope="eight logical owners, actual shared controller/timers; no claim of eight real devices"};
+}
+async Task<object> EqualPortCarrier()
+{
+    using var server=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));
+    using var client=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));
+    await using var wire=new Proxy(32097,(IPEndPoint)server.Client.LocalEndPoint!);
+    var packet=new byte[28];packet[0]=0x45;packet[9]=17;
+    BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(20),32097);BinaryPrimitives.WriteUInt16BigEndian(packet.AsSpan(22),32097);
+    await client.SendAsync(packet,new IPEndPoint(IPAddress.Loopback,wire.Port),token);
+    var forward=await server.ReceiveAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(1),token);
+    Check(forward.Buffer.SequenceEqual(packet),"equal client/server raw ports route to server carrier instead of reflecting to sender");
+    packet[27]=1;await server.SendAsync(packet,new IPEndPoint(IPAddress.Loopback,wire.Port),token);
+    var reply=await client.ReceiveAsync(token).AsTask().WaitAsync(TimeSpan.FromSeconds(1),token);
+    Check(reply.Buffer.SequenceEqual(packet),"equal raw port reply returns to the distinct client carrier");
+    return new{scope="actual two-carrier UDP routing with identical raw source/destination ports",status="Pass"};
 }
 async Task<object> RouteEvidence()
 {
@@ -221,12 +237,14 @@ sealed class Adapter:IPacketAdapter
 }
 sealed class Proxy:IAsyncDisposable
 {
+    readonly int serverPort;readonly IPEndPoint serverCarrier;IPEndPoint? clientCarrier;
     readonly UdpClient socket=new(new IPEndPoint(IPAddress.Loopback,0));readonly CancellationTokenSource stop=new();readonly Task running;
     readonly ConcurrentDictionary<ushort,IPEndPoint> targets=[];readonly Dictionary<string,long> http=[];
     public readonly ConcurrentBag<double> HttpGaps=[];public long Packets;
     public int Port=>((IPEndPoint)socket.Client.LocalEndPoint!).Port;
     public object Snapshot()=>new{Packets,receiveBufferBytes=socket.Client.ReceiveBufferSize,sendBufferBytes=socket.Client.SendBufferSize};
     public Proxy(int serverPort,IPEndPoint server){
+        this.serverPort=serverPort;serverCarrier=server;
         // This extra loopback hop is a test carrier, not a product queue. Its
         // default 64KiB buffer drops the combined bidirectional burst before
         // either native receiver; match the product bridge's 1MiB buffer.
@@ -236,11 +254,18 @@ sealed class Proxy:IAsyncDisposable
     public bool Inject(ReadOnlyMemory<byte> packet){int h=(packet.Span[0]&15)*4;ushort port=BinaryPrimitives.ReadUInt16BigEndian(packet.Span.Slice(h+2));return targets.TryGetValue(port,out var target)&&socket.Send(packet.Span,target)==packet.Length;}
     async Task Run(){try{while(true){var received=await socket.ReceiveAsync(stop.Token);var p=received.Buffer;if(p.Length<28)continue;
         int ip=(p[0]&15)*4;if(p.Length<ip+8)continue;ushort source=BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip)),target=BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(ip+2));
-        targets[source]=received.RemoteEndPoint;Interlocked.Increment(ref Packets);
+        // Two physical devices may legitimately use the same source/target
+        // port. Their separate carrier sockets represent those devices here;
+        // a port-only table would overwrite the server and reflect handshakes.
+        bool fromServer=received.RemoteEndPoint.Equals(serverCarrier);
+        if(!fromServer)clientCarrier=received.RemoteEndPoint;
+        if(source!=serverPort)targets[source]=received.RemoteEndPoint;
+        Interlocked.Increment(ref Packets);
         int headers=ip+(p[9]==6?(p[ip+12]>>4)*4:8);string tuple=source+"/"+target;
         if(p.Length>=headers+4&&p.AsSpan(headers,4).SequenceEqual("GET "u8))http[tuple]=Stopwatch.GetTimestamp();
         else if(http.Remove(tuple,out long sent))HttpGaps.Add(Stopwatch.GetElapsedTime(sent).TotalMilliseconds);
-        if(targets.TryGetValue(target,out var destination))await socket.SendAsync(p,destination,stop.Token);
+        var destination=fromServer?clientCarrier:serverCarrier;
+        if(destination!=null)await socket.SendAsync(p,destination,stop.Token);
     }}catch(OperationCanceledException)when(stop.IsCancellationRequested){}}
     public async ValueTask DisposeAsync(){stop.Cancel();await running;socket.Dispose();stop.Dispose();}
 }
