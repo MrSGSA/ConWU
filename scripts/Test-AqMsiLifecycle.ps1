@@ -123,7 +123,7 @@ try {
  App $runtime @('--acceptance-create-network')
  $before=State $runtime 'before-repair'
  $pids=StartTray 'before-repair-tray'
- MsiRun '/famus' $Msi 'repair'
+ MsiRun '/fomus' $Msi 'repair'
  Gone $pids 'repair'
  Same $before (State $runtime 'after-repair') 'repair'
  if($FaultMsi){
@@ -136,6 +136,11 @@ try {
   Check ((Get-CimInstance Win32_Service -Filter "Name='$service'").PathName -eq $image -and (Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash -eq $hash) 'failed update restores ImagePath and original binary'
   Check ((FailurePolicy) -eq $policy) 'failed update restores SCM failure actions and description'
  }
+ App $runtime @('--acceptance-disable-startup')
+ $startupBefore=State $runtime 'startup-disabled'
+ MsiRun '/fomus' $Msi 'repair-startup-disabled'
+ Same $startupBefore (State $runtime 'startup-disabled-after-repair') 'disabled startup repair'
+ Check ((Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$service)).Start -eq 3) 'repair preserves explicitly disabled automatic service startup'
  Uninstall 'uninstall'
  if($LegacyBundle){
   App $LegacyBundle @('--install','--ui-user-account',[Security.Principal.WindowsIdentity]::GetCurrent().Name)

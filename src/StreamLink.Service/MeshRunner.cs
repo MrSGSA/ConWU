@@ -47,7 +47,7 @@ public sealed class MeshRunner
     string? QualityKey(IPAddress address)
     {
         lock (gate) {
-            var peer = mesh.Directory?.Members.FirstOrDefault(m => m.Slot != mesh.Self.Slot && MeshIdentity.Address(mesh.Pair.Network, m.Slot) == address.ToString());
+            var peer = mesh.Directory?.Members.FirstOrDefault(m => m.Slot != mesh.Self.Slot && MeshAddressing.Address(mesh.Pair.Network, m) == address.ToString());
             if (peer == null) return null;
             byte[] key = MeshIdentity.SharedKey(mesh, peer); try { return Convert.ToHexString(key); } finally { CryptographicOperations.ZeroMemory(key); }
         }
@@ -63,7 +63,11 @@ public sealed class MeshRunner
     {
         if (Interlocked.CompareExchange(ref runStarted, 1, 0) != 0) throw new InvalidOperationException("同一网络运行器不能重复或并发启动");
         profile.Validate(); mesh.Validate();
-        bool legacyAllowed=profile.Selection().Allows(mesh.Pair.Mode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
+        // Explicit workers use the user's current fixed protocol, not the mode stored
+        // in the original enrollment. This cannot enable an unselected protocol.
+        var wireMesh=JsonSerializer.Deserialize<MeshProfile>(JsonSerializer.Serialize(mesh))!;
+        wireMesh.Pair=wireMesh.Pair with {Mode=profile.TransportMode};
+        bool legacyAllowed=profile.Selection().Allows(profile.TransportMode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
@@ -86,6 +90,13 @@ public sealed class MeshRunner
         IMeshTransport? server = null;
         IPAddress? serverAddress = null;
         var clients = new Dictionary<int, MeshPeerTransports>();
+        var existingPlans=new Dictionary<int,ExistingEntryPlan>();
+        var externalSources=profile.ConnectionSource=="existing" ? profile.ExistingEntries : [];
+        if(externalSources.Length==0 && profile.ManualEndpoint.Length>0)externalSources=[new(0,profile.ManualEndpoint)];
+        Task<EntryResolution[]>? resolving=null;
+        EntryResolution[] resolved=[];
+        long nextResolve=0;
+        string[] localExisting=[];
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
@@ -103,7 +114,7 @@ public sealed class MeshRunner
         IPacketAdapter? actualAdapter=null, pendingAdapter=null;
         string adapterPhase = "lifecycle-wait";
         long nextAdapterReport = 0;
-        string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? profile.ManualEndpoint : "";
+        string Candidate() => server != null && !server.Exited ? mapping is { IsValid: false } ? "" : mapping?.PublicEndpoint.ToString() ?? localExisting.FirstOrDefault() ?? "" : "";
         void Warning(Exception ex)
         {
             coordinatorUnavailable = true;
@@ -119,10 +130,18 @@ public sealed class MeshRunner
                 throw new IOException("此运行环境未提供官方 Wintun 准入工厂");
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
+                if(externalSources.Length>0 && resolving==null && now>=nextResolve){resolving=services.ResolveEntries(externalSources,profile.TransportMode,stop);nextResolve=now+60000;}
+                if(resolving?.IsCompleted==true){
+                    try {resolved=await resolving;localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
+                        foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error:$"已解析 {item.Endpoints.Length} 个地址，仍需验证直连"));
+                    }catch(Exception ex)when(!stop.IsCancellationRequested){log("已有入口解析失败："+ex.GetType().Name);resolved=[];localExisting=[];}
+                    resolving=null;
+                }
                 if(Interlocked.Exchange(ref retryRequested,0)!=0) {
                     entryProbeRequested = mapping == null && probe == null;
                     nextProbe = nextRead = nextServer = now; lastPublish = 0;
                     traversal?.RequestRetry();
+                    foreach(var plan in existingPlans.Values)plan.Retry();nextResolve=0;
                     foreach(var client in clients)if(!router!.HasHealthyPath(client.Key))client.Value.WakeRetry();
                     (mapping as IMappingRefresh)?.RequestRefresh();
                     log("已请求重新探测：保留健康直连、在途验证和虚拟网卡，唤醒等待中的重试");
@@ -133,6 +152,7 @@ public sealed class MeshRunner
                     probeFailures = readFailures = serverFailures = 0;
                     lastPublish = 0;
                     foreach (var client in clients) client.Value.InvalidatePreparation(client.Key);
+                    foreach(var plan in existingPlans.Values)plan.Retry();nextResolve=0;
                     (mapping as IMappingRefresh)?.RequestRefresh();
                     log("网络变化或系统唤醒，正在复核入口和发现信息；保留已验证的直连路径");
                 }
@@ -154,7 +174,7 @@ public sealed class MeshRunner
                     // Keep startup ownership through descriptor/logging/router
                     // validation. Only a successful Router takes the adapter.
                     lock (gate) {
-                        router = new(mesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
+                        router = new(wireMesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
                         pendingAdapter = null;
                     }
                     services.Record(folder, rule);
@@ -178,7 +198,8 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
-                if (legacyAllowed && probe == null && mapping == null && releasing == null && profile.ManualEndpoint.Length == 0 && now >= nextProbe) {
+                if (legacyAllowed && probe == null && mapping == null && releasing == null && now >= nextProbe &&
+                    (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                     bool needed = restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
@@ -212,7 +233,7 @@ public sealed class MeshRunner
                     // independently of candidate publication/lease renewal. Keep
                     // it until process failure, a source-address change or stop.
                     // Legacy raw UDP still has a helper-specific shared bind.
-                    if (mesh.Pair.Mode == "udp") { server?.Dispose(); server = null; }
+                    if (profile.TransportMode == "udp") { server?.Dispose(); server = null; }
                     retiringMapping = mapping!;
                     releasing = ReleaseMapping(retiringMapping); mapping = null; maintain = null; nextProbe = now + 1000;
                 }
@@ -222,8 +243,8 @@ public sealed class MeshRunner
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
-                if (legacyAllowed && router != null && server == null && (mapping != null || profile.ManualEndpoint.Length > 0) && now >= nextServer) {
-                    try { server = services.Transport(new(folder, mesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
+                if (legacyAllowed && router != null && server == null && (mapping != null || localExisting.Length > 0) && now >= nextServer) {
+                    try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
@@ -285,7 +306,9 @@ public sealed class MeshRunner
                 string candidate = Candidate();
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
-                    publishing = discovery.Publish(new(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities), stop);
+                    publishing = discovery.Publish(new(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
+                        ExistingEndpoints=server!=null&&!server.Exited&&localExisting.Length>0?localExisting:null
+                    }, stop);
                 }
                 // Negotiated mode shares 40 requests/minute across these HTTP
                 // operations and traversal states. Legacy keeps its old cadence.
@@ -308,12 +331,29 @@ public sealed class MeshRunner
                     await Task.Delay(100, stop); continue;
                 }
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
-                string remoteAddresses = string.Join(',', members.Select(m => MeshIdentity.Address(mesh.Pair.Network, m.Slot)));
+                string remoteAddresses = string.Join(',', members.Select(m => MeshAddressing.Address(mesh.Pair.Network, m)));
                 if (firewallMembers != remoteAddresses) {
                     services.Firewall(rule, mesh.LocalIp, remoteAddresses); firewallMembers = remoteAddresses;
                 }
                 foreach (int slot in clients.Keys.Where(s => !members.Any(m => m.Slot == s)).ToArray()) { await clients[slot].DisposeAsync(); clients.Remove(slot); announcements.Remove(slot); }
-                traversal?.Tick(announcements, candidate);
+                foreach(int slot in existingPlans.Keys.Where(s=>!members.Any(m=>m.Slot==s)).ToArray())existingPlans.Remove(slot);
+                var selectedEntries=new Dictionary<int,string>();var priorityPeers=new HashSet<int>();
+                foreach(var member in members){
+                    announcements.TryGetValue(member.Slot,out var remote);
+                    bool fresh=remote?.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
+                        .Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
+                    if(hints.Length==0&&localExisting.Length==0)continue;
+                    if(!existingPlans.TryGetValue(member.Slot,out var plan))existingPlans[member.Slot]=plan=new();
+                    bool fellBack=plan.FellBack;
+                    string fallback=fresh && !(remote!.ExistingEndpoints??[]).Contains(remote.Endpoint)?remote.Endpoint:"";
+                    selectedEntries[member.Slot]=plan.Select(hints,fallback,localExisting.Length>0,router.HasHealthyPath(member.Slot),now);
+                    if(plan.Priority)priorityPeers.Add(member.Slot);
+                    if(!fellBack && plan.FellBack)log($"设备 {member.Slot} 已有入口未通过直连验证，开始自主打洞；保持 {profile.TransportMode} 协议");
+                }
+                // Locally configured peer entries also count as explicit hints to the scheduler.
+                var scheduling=announcements.ToDictionary(p=>p.Key,p=>selectedEntries.TryGetValue(p.Key,out var chosen)&&chosen.Length>0?p.Value with {Endpoint=chosen}:p.Value);
+                traversal?.Tick(scheduling, candidate,priorityPeers);
                 foreach (var member in members) {
                     if(!legacyAllowed) {
                         router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待所选传输模式建立直连");
@@ -326,13 +366,15 @@ public sealed class MeshRunner
                     }
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
+                    if(selectedEntries.TryGetValue(member.Slot,out var selected))endpoint=selected;
                     if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router,
-                        (ep, preparationToken) => LegacyStartupQueue.Shared.Start(() => services.Transport(new(folder, mesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel) {
+                        (ep, preparationToken) => LegacyStartupQueue.Shared.Start(() => services.Transport(new(folder, wireMesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel) {
                             ReserveEndpoint = endpoint => router.CancelLegacyCandidate(member.Slot, endpoint),Egress=sharedEgress
                         }), preparationToken), log);
-                    paths.Update(member.Slot, endpoint, announcement?.Name ?? "", traversal?.WaitingDetail(member.Slot) ??
+                    bool preferred=priorityPeers.Contains(member.Slot);
+                    paths.Update(member.Slot, endpoint, announcement?.Name ?? "", preferred?"正在优先验证已有入口，失败后自主打洞":traversal?.WaitingDetail(member.Slot) ??
                         (endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发"),
-                        traversal == null ? null : () => traversal.BeginLegacyAttempt(member.Slot), traversal?.KeepLegacyAttempt(member.Slot) ?? true);
+                        traversal == null ? null : () => preferred?existingPlans[member.Slot].Admit(()=>traversal.BeginLegacyAttempt(member.Slot)):traversal.BeginLegacyAttempt(member.Slot), traversal?.KeepLegacyAttempt(member.Slot) ?? true);
                     traversal?.ObserveLegacyPending(member.Slot, paths.HasPending);
                 }
                 if (now >= nextReport) {
@@ -340,7 +382,7 @@ public sealed class MeshRunner
                     ConnectionProgress? unavailable=!legacyAllowed && gatheringFactory==null && factory==null
                         ? new("Blocked","当前传输模式的连接组件不可用，请检查安装或在设置中选择可用模式；不会自动切换协议。") {ReasonCode="SelectedTransportUnavailable"} : null;
                     statuses = router.Status().Select(peer=>feedback.Observe(peer,
-                        traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable,
+                        priorityPeers.Contains(peer.Slot) ? new ConnectionProgress("Verifying",existingPlans[peer.Slot].Detail+"；失败后自主打洞，保持所选协议。",CanRetry:true) : traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable,
                         announcements.TryGetValue(peer.Slot,out var remote) && remote.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),now)).ToArray();
                     foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);
                     foreach(var peer in statuses)if(peer.Quality is{}assessment){
@@ -445,7 +487,7 @@ public sealed class MeshRunner
             if (opening != null) try { pendingAdapter=await opening; } catch { }
             if (pendingAdapter != null) try { pendingAdapter.Dispose(); } catch (Exception ex) { CleanupFailed("adapter-startup",ex,pendingAdapter); }
             ShutdownStage("maintenance-and-http");
-            foreach (var task in new[] { maintain, quality, reading, publishing, saving, releasing }) if (task != null) {
+            foreach (var task in new Task?[] { maintain, quality, reading, publishing, saving, releasing,resolving }) if (task != null) {
                 try { await task; }
                 catch (Exception ex) {
                     // Even a cancelled release is unproven ownership. An HTTP

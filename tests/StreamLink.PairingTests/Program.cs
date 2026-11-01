@@ -59,6 +59,20 @@ Check(PairKeyExchange.Decrypt(second, state.Ciphertext, ticket.Room, join.Candid
 clock.Advance(TimeSpan.FromMinutes(6)); Check((await Execute(rooms.Exchange(Auth(join.Token), ticket.Room, false))).Status == 404, "Expired room still exists");
 var revoked = Value<PairRoomTicket>((await Execute(rooms.Create(new(host.Commitment, "Host")))).Body);
 Check((await Execute(rooms.Exchange(Auth(revoked.Token), revoked.Room, true, close: true))).Status == 200, "Revoke failed"); Check((await Execute(rooms.Join(new(revoked.Code, guest.Commitment, "Guest")))).Status == 404, "Revoked code reused");
+// Rejection/cancellation are explicit terminal states, readable by both roles.
+foreach(bool reject in new[]{true,false}) {
+    var offer=Value<PairRoomTicket>((await Execute(rooms.Create(new(host.Commitment,"Decision Host")))).Body);
+    var applicant=Value<PairRoomTicket>((await Execute(rooms.Join(new(offer.Code,guest.Commitment,"Decision Guest","10.171.139.5",1)))).Body);
+    var requested=Value<PairRoomState>((await Execute(rooms.Exchange(Auth(offer.Token),offer.Room,true))).Body);
+    Check(requested.RequestedIp=="10.171.139.5"&&requested.Addressing==1,"Requested address capability preserved for owner approval");
+    Check((await Execute(rooms.Exchange(Auth(applicant.Token),offer.Room,true,finish:true))).Status==401,"Guest cannot impersonate host rejection");
+    var finished=await Execute(rooms.Exchange(Auth(reject?offer.Token:applicant.Token),offer.Room,reject,finish:true));
+    Check(finished.Status==200,"Explicit decision accepted for authenticated role");
+    var outcome=Value<PairRoomState>((await Execute(rooms.Exchange(Auth(applicant.Token),offer.Room,false))).Body);
+    Check(outcome.Outcome==(reject?"Rejected":"Cancelled")&&!outcome.Approved,"Decision is visible to waiting applicant without expiry guess");
+    Check((await Execute(rooms.Exchange(Auth(offer.Token),offer.Room,true,new(host.PublicKey)))).Status==409,"Cancelled/rejected exchange cannot resume");
+    Check((await Execute(rooms.Join(new(offer.Code,attacker.Commitment,"Late")))).Status==404,"Terminal decision cannot reuse pairing code");
+}
 Console.WriteLine($"PASS {count}: committed key exchange, authenticated invite, replay/expiry/revocation, role separation, STUN and settings.");
 if (args.Length >= 2 && args[0] == "--server") {
     string pin = args.Length >= 4 && args[2] == "--pin" ? args[3] : "";

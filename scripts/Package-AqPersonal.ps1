@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.0.1-rc.7',[string]$MsiVersion='1.0.13')
+      [string]$Version='1.0.1-rc.8',[string]$MsiVersion='1.0.14')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -44,7 +44,7 @@ try {
  if(Get-ChildItem $stage -Recurse -File|Where-Object Name -match 'ResearchAdapters|StreamLinkTun|easytier|Lucky'){throw 'Excluded product component present'}
  Copy-Item -LiteralPath docs/aq1/使用与回退.txt -Destination $runtime
  Copy-Item -LiteralPath docs/aq1/安装与更新.txt -Destination (Join-Path $stage '使用说明.txt')
- Copy-Item -LiteralPath docs/aq1/实机测试.txt -Destination $stage
+ Copy-Item -LiteralPath docs/aq1/实机测试.txt,docs/aq1/已有入口与新版界面.txt -Destination $stage
  Copy-Item -LiteralPath docs/aq1/run-plan.json -Destination $runtime
  $licenses=Join-Path $runtime 'licenses';New-Item -ItemType Directory -Path $licenses|Out-Null
  Copy-Item LICENSE -Destination "$licenses/StreamLink-MIT.txt"

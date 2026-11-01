@@ -10,7 +10,9 @@ public sealed class PairRooms(TimeProvider? time = null)
         public string Id = Guid.NewGuid().ToString("N"), Code = "", Owner = NewToken(), Guest = "", HostCommit = "", HostName = "", Candidate = "", GuestCommit = "", GuestName = "", HostPublic = "", GuestPublic = "", Cipher = "";
         public long Expires = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds();
         public bool Approved;
-        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires);
+        public string Outcome="", RequestedIp="";
+        public int Addressing;
+        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires) {Outcome=Outcome,RequestedIp=RequestedIp,Addressing=Addressing};
     }
     readonly Dictionary<string, Room> rooms = new();
     readonly object gate = new();
@@ -36,21 +38,25 @@ public sealed class PairRooms(TimeProvider? time = null)
     }
     public IResult Join(PairRoomJoin input)
     {
+        try { if(input.RequestedIp.Length>0)MeshAddressing.ValidateAddress(input.RequestedIp);if(input.Addressing is <0 or >1)return Results.BadRequest(); }catch{return Results.BadRequest();}
         if (!PairKeyExchange.ValidCommitment(input.Commitment) || !NameOk(input.Name) || input.Code is null || input.Code.Length != 6 || input.Code.Any(c => c is < '0' or > '9')) return Results.BadRequest();
         lock (gate) {
-            Prune(); var room = rooms.Values.FirstOrDefault(r => r.Code == input.Code && !r.Approved);
+            Prune(); var room = rooms.Values.FirstOrDefault(r => r.Code == input.Code && !r.Approved && r.Outcome.Length==0);
             if (room == null) return Results.NotFound();
             if (room.Candidate.Length > 0) return Results.Conflict();
             room.Candidate = Guid.NewGuid().ToString("N"); room.Guest = NewToken(); room.GuestCommit = input.Commitment; room.GuestName = input.Name;
+            room.RequestedIp=input.RequestedIp;room.Addressing=input.Addressing;
             return Results.Json(new PairRoomTicket(room.Id, "", room.Guest, room.HostCommit, room.HostName, room.Expires, room.Candidate));
         }
     }
-    public IResult Exchange(HttpContext context, string id, bool owner, PairRoomReveal? reveal = null, PairRoomApproval? approve = null, bool close = false)
+    public IResult Exchange(HttpContext context, string id, bool owner, PairRoomReveal? reveal = null, PairRoomApproval? approve = null, bool close = false, bool finish=false)
     {
         lock (gate) {
             Prune(); if (!rooms.TryGetValue(id, out var room)) return Results.NotFound();
             if (!Authorized(context, owner ? room.Owner : room.Guest)) return Results.Unauthorized();
             if (close) { rooms.Remove(id); return Results.Json(new { closed = true }); }
+            if(finish){if(room.Approved)return Results.Conflict();room.Outcome=owner?"Rejected":"Cancelled";room.Code="";return Results.Json(room.State());}
+            if(room.Outcome.Length>0){if(reveal!=null||approve!=null)return Results.Conflict();return Results.Json(room.State());}
             if (reveal != null) {
                 if (room.Candidate.Length == 0 || (!owner && room.HostPublic.Length == 0) || room.Approved) return Results.Conflict();
                 try { PairKeyExchange.ValidatePublic(reveal.PublicKey, owner ? room.HostCommit : room.GuestCommit); } catch { return Results.BadRequest(); }

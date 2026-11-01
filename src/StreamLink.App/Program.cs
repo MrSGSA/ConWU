@@ -39,6 +39,14 @@ static class Program
             try {var created=StreamLink.Core.ServiceProtocol.Call(new("mesh-create",Service:"https://example.com/")).GetAwaiter().GetResult();if(!created.Ok)throw new IOException(created.Error);}
             catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
         }
+        if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-disable-startup"]) {
+            try {
+                var reply=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
+                var profile=reply.Profile??throw new IOException("后台配置不可用");profile.AutoStart=false;
+                var saved=StreamLink.Core.ServiceProtocol.Call(new("save",Profile:profile)).GetAwaiter().GetResult();
+                if(!saved.Ok)throw new IOException(saved.Error);StreamLink.Core.StartupSettings.Set(false);
+            }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
+        }
         if (args.Length == 2 && args[0] == "--verify-bundle") {
             try { int files = ServiceInstaller.VerifyBundle(AppContext.BaseDirectory); File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Pass", files, version = ApplicationVersion.Release })); }
             catch (Exception ex) { Environment.ExitCode = 1; File.WriteAllText(Path.GetFullPath(args[1]), System.Text.Json.JsonSerializer.Serialize(new { status = "Fail", error = ex.Message })); }
@@ -65,6 +73,7 @@ static class Program
         }
         // Preserve old shortcuts as aliases, with WebUI as the only business UI.
         bool startup=args is ["--startup"];
+        if(startup&&!StreamLink.Core.StartupSettings.Read().AutoStart)return;
         if(args.Length!=0 && args is not ["--desktop"] && !startup) {
             Environment.ExitCode=2;MessageBox.Show("无法识别启动参数。请从桌面快捷方式或 StreamLink.exe 打开 WebUI。","StreamLink");return;
         }

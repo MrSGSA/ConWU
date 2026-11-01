@@ -25,6 +25,10 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
+    public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> ResolveEntries {get;init;} = async (entries,mode,token)=>{
+        using var resolver=new ExistingEntryResolver();return await resolver.Resolve(entries,mode,token);
+    };
+
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
     public Func<DeviceProfile,string,Action<string>,CancellationToken,EgressPacer?,Task<IMeshCandidateFactory?>>? CandidatesWithEgress{get;init;}
     public Func<IMeshNetworkWake> NetworkWake { get; init; } = () => new MeshNetworkWake();
@@ -36,7 +40,7 @@ internal sealed record MeshRuntimeServices(
     public static MeshRuntimeServices Default => new(
         mesh => new MeshDiscoveryClient(mesh),
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
-        async (profile, log, token) => profile.Mesh!.Pair.Mode == "udp"
+        async (profile, log, token) => profile.TransportMode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.Device)
             : await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.Device, profile.PortControlMapping),
         r => new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint,r.Egress),

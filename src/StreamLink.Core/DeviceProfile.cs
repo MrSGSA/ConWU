@@ -16,11 +16,19 @@ public sealed class DeviceProfile
     public MeshProfile? Mesh { get; set; }
     public int Slot { get; set; } = 1;
     public bool Enabled { get; set; }
+    public bool AutoStart {get;set;}=true;
     public string Preference { get; set; } = "auto";
     public int LastEntry { get; set; }
     public int ListenPort { get; set; } = PersonalFeature.Enabled ? 44680 : 42680;
     public int SourcePort { get; set; } = PersonalFeature.Enabled ? 44691 : 42691;
     public string ManualEndpoint { get; set; } = "";
+    public string ConnectionSource { get; set; } = "custom";
+    public string CoordinationService { get; set; } = "";
+    public string CoordinationPin { get; set; } = "";
+    public ExistingEntry[] ExistingEntries { get; set; } = [];
+    public string RequestedVirtualIp { get; set; } = "";
+    public long NetworkEstablishedAt { get; set; }
+    public bool NetworkCreatedHere { get; set; }
     public string[] TcpStun { get; set; } = Stun.TcpServers.ToArray();
     public string[] UdpStun { get; set; } = Stun.UdpServers.ToArray();
     public string LastStun { get; set; } = "";
@@ -101,6 +109,11 @@ public sealed class DeviceProfile
     public string LogDirectory { get; set; } = "";
     public void Validate()
     {
+        if (ConnectionSource is not ("custom" or "existing")) throw new FormatException("公共协调服务尚未提供，请选择自建服务或已有入口");
+        if (CoordinationService is null || CoordinationPin is null || RequestedVirtualIp is null) throw new FormatException("本机连接设置无效");
+        if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();
+        ExistingEntryResolver.Validate(ExistingEntries);
+        if (RequestedVirtualIp.Length > 0) MeshAddressing.ValidateAddress(RequestedVirtualIp);
         if (MigrationNotice is null || MigrationNotice.Length > 512) throw new FormatException("迁移提示无效");
         if (!Enum.IsDefined(AdapterBackend)) throw new FormatException("虚拟网卡后端无效");
         if (AdapterBackend == PacketAdapterBackend.StreamLinkTun && Pair != null) throw new FormatException("自研 TUN 使用原生 Mesh 网络；不支持旧 EasyTier 配对实例");
@@ -109,7 +122,7 @@ public sealed class DeviceProfile
         if (ListenPort is < 1024 or > 65535 || SourcePort is < 1024 or > 65535 || SourcePort == ListenPort) throw new FormatException("源端口与监听端口必须是不同的 1024–65535 端口");
         ValidateServers(TcpStun); ValidateServers(UdpStun); Pair?.Validate();
         if (DeviceName is null || DeviceName.Length is < 1 or > 64 || DeviceName.Any(char.IsControl)) throw new FormatException("设备名称需为 1–64 个可见字符");
-        if (TransportMode is not ("faketcp" or "udp") || LogLevel is not ("off" or "error" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
+        if (TransportMode is not ("faketcp" or "udp") || LogLevel is not ("off" or "error" or "warn" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
         if (TraversalMode is not ("legacy" or "tcp" or "tcp-udp")) throw new FormatException("打洞试验模式无效");
         if (TcpPortCalibration && (!TcpSynObservation || TraversalMode == "legacy")) throw new FormatException("TCP 端口校准需同时开启受管打洞和 TCP 观察诊断");
         if (TcpPortPrediction && !TcpPortCalibration) throw new FormatException("实验 TCP 预测需启用独立端口校准");

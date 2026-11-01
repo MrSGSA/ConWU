@@ -1,110 +1,130 @@
 <!doctype html>
 <html lang="zh-CN" data-theme="dark">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="color-scheme" content="dark light">
-  <title>StreamLink</title>
-  <link rel="icon" href="/icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/style.css">
-  <script src="/app.js" defer></script>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>StreamLink</title>
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<a class="skip" href="#main">跳到主要内容</a>
-<header class="topbar">
-  <a class="brand" href="#main"><span class="mark" aria-hidden="true">S</span>StreamLink</a>
-  <nav aria-label="主要导航">
-    <button class="nav active" data-page="overview" aria-current="page">连接</button>
-    <button class="nav" data-page="network">添加设备</button>
-    <button class="nav" data-page="settings">设置</button>
-  </nav>
-  <button id="theme" class="icon-button" aria-label="切换深浅色">◐</button>
-</header>
-<main id="main">
-  <div class="page-heading"><h1 id="page-title">连接</h1><div class="backend"><span id="backend-state">正在连接后台</span><button id="refresh" class="quiet">刷新</button></div></div>
-  <div id="notice" role="status" aria-live="polite" hidden></div>
-  <div id="migration" class="warning" hidden></div>
-  <section id="overview" class="page">
-    <article class="connection-card" id="connection-card" data-state="waiting">
-      <div class="connection-heading"><span class="status-dot" aria-hidden="true"></span><h2 id="network-state" aria-live="polite">正在读取连接状态</h2></div>
-      <p id="state-detail">正在联系本机后台。</p>
-      <ol class="steps" id="connection-steps" aria-label="连接进度" hidden>
-        <li data-step="0">准备网络</li><li data-step="1">发现设备</li><li data-step="2">验证直连</li>
-      </ol>
-      <p id="connection-progress" class="progress-text" aria-live="off"></p>
-      <div class="connection-bottom">
-        <div class="local-address"><span id="device-label">本机</span><strong id="local-ip">—</strong><button id="copy-local" class="quiet">复制 IP</button></div>
-        <div class="actions">
-          <button id="connect" class="primary" data-command="start" data-backend>连接网络</button>
-          <button id="retry" data-command="retry" data-backend hidden>重新探测</button>
-          <button id="disconnect" data-command="stop" data-backend hidden>断开</button>
-          <button id="setup" class="primary" data-open="network" hidden>添加设备</button>
-        </div>
-      </div>
-    </article>
-    <div class="section-heading"><h2>设备 <span id="peer-count" class="muted">—</span></h2><span id="rates" class="muted">流量尚未更新</span></div>
-    <div id="peer-list" class="peer-list"><p class="empty">连接后台后显示设备。</p></div>
-    <p class="hint">直连后，在串流软件中添加对方的虚拟 IP。关闭此页面不会中断连接。</p>
+<svg xmlns="http://www.w3.org/2000/svg" data-static-style="s1" aria-hidden="true">
+<symbol id="i-logo" viewBox="0 0 24 24"><path d="m17 4-9 5 8 5-9 6M7 4l10 6-10 5"/></symbol>
+<symbol id="i-overview" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-create" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4M12 8v5M9.5 10.5h5"/></symbol>
+<symbol id="i-join" viewBox="0 0 24 24"><path d="M13 4h6a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6M3 12h12m-4-4 4 4-4 4"/></symbol>
+<symbol id="i-log" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h9m4 0h3M4 17h3m4 0h9"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="17" r="2"/></symbol>
+<symbol id="i-laptop" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="12" rx="2"/><path d="M2 20h20l-2-4H4l-2 4Z"/></symbol>
+<symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M8 21h8M12 16v5"/></symbol>
+<symbol id="i-server" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M16 6.5h2M16 17.5h2"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+<symbol id="i-x" viewBox="0 0 24 24"><path d="m6 6 12 12M6 18 18 6"/></symbol>
+<symbol id="i-up" viewBox="0 0 24 24"><path d="M12 20V4m-6 6 6-6 6 6"/></symbol>
+<symbol id="i-down" viewBox="0 0 24 24"><path d="M12 4v16m-6-6 6 6 6-6"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m10 13 4-4M9 16l-2 2a4 4 0 0 1-6-6l4-4a4 4 0 0 1 6 0m2 1 2-2a4 4 0 0 1 6 6l-4 4a4 4 0 0 1-6 0" transform="translate(1 0)"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 4 6v6c0 5 8 9 8 9s8-4 8-9V6l-8-3Z"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4" ry="9"/><path d="M3 12h18"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6 7a7 7 0 0 1 12-1l2 3M4 15l2 3a7 7 0 0 0 12-1"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20.5 13.5A9 9 0 0 1 10.5 3a9 9 0 1 0 10 10.5Z"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.4 1.4m11.2 11.2L19 19M5 19l1.4-1.4M17.6 6.4 19 5"/></symbol>
+<symbol id="i-edit" viewBox="0 0 24 24"><path d="m15 4 5 5M4 20l5-1 12-12a2 2 0 0 0-5-5L4 14l-1 7 1-1Z"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="m8 4 12 8-12 8V4Z"/></symbol>
+<symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+<symbol id="i-dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+</svg>
+<a class="skip-link" href="#main">跳到主要内容</a>
+<aside class="sidebar">
+ <a class="brand" href="#overview" aria-label="StreamLink 概况"><span class="brand-mark"><svg class="icon"><use href="#i-logo"/></svg></span>StreamLink</a>
+ <div class="nav-label">设备管理</div>
+ <nav class="nav-list" aria-label="主要导航">
+  <button class="nav active" data-page="overview" aria-current="page"><svg class="icon"><use href="#i-overview"/></svg><span class="nav-copy">概况</span></button>
+  <button class="nav" data-page="create"><svg class="icon"><use href="#i-create"/></svg><span class="nav-copy">创建网络</span></button>
+  <button class="nav" data-page="join"><svg class="icon"><use href="#i-join"/></svg><span class="nav-copy">加入网络<span id="request-nav-badge" class="nav-note">新加入申请</span></span></button>
+  <button class="nav" data-page="logs"><svg class="icon"><use href="#i-log"/></svg><span class="nav-copy">日志</span></button>
+  <button class="nav" data-page="settings"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-copy">设置</span></button>
+ </nav>
+ <div class="nav-bottom">
+  <div class="sidebar-network"><div class="row"><span class="dot green" id="sidebar-dot"></span><strong id="sidebar-network-name">— 的网络</strong></div><div class="small muted" id="sidebar-network-detail">3 台设备 · 2 台在线</div></div>
+  <div class="sidebar-foot"><div class="avatar">TB</div><div><div id="sidebar-device-name">—</div><div data-static-style="s2">本机设备</div></div><span class="spacer"></span><svg class="icon" data-static-style="s3"><use href="#i-shield"/></svg></div>
+ </div>
+</aside>
+<div class="workspace">
+ <header class="topbar">
+  <div class="breadcrumb"><span>设备网络</span><span>/</span><strong id="breadcrumb-page">概况</strong></div>
+  <div class="mobile-brand"><span class="brand-mark"><svg class="icon"><use href="#i-logo"/></svg></span>StreamLink</div>
+  <div class="top-actions"><span id="backend-state" class="small muted">正在读取后台</span><button class="theme-button" id="theme-toggle" aria-label="切换浅色外观" title="切换深浅色"><svg class="icon"><use href="#i-sun"/></svg></button></div>
+ </header>
+ <main id="main" tabindex="-1"><div id="notice" class="notice" role="status" hidden></div>
+  <section id="page-overview" class="page" aria-labelledby="overview-title">
+   <div class="page-heading"><div><h1 id="overview-title">概况</h1><p id="overview-subtitle">所有设备与连接状态，尽在这里。</p></div><div class="actions"><button id="retry-network" class="button compact">重新尝试</button><span id="overview-status" class="pill good"><span class="dot green"></span>正在读取</span><button id="network-toggle" class="button compact">断开网络</button></div></div>
+   <div id="empty-overview" class="card empty-network" hidden><div class="device-avatar"><svg class="icon"><use href="#i-link"/></svg></div><h2>连接，从一个网络开始</h2><p>创建你的设备网络，或输入另一台设备提供的配对码加入。</p><div class="actions"><button class="button primary" data-open="create">创建网络</button><button class="button" data-open="join">加入网络</button></div></div>
+   <div id="connection-progress-card" class="card connect-card" role="status" hidden><div class="row between"><div><h2 id="connect-title">正在建立连接</h2><p id="connect-description">正在检查已有入口。</p></div><span class="small muted mono" id="connect-elapsed">00:01</span></div><div class="connect-progress" id="connect-steps"></div></div>
+   <div class="identity-grid" id="identity-grid">
+    <article class="card identity-card"><div class="identity-top"><div class="device-avatar"><svg class="icon"><use href="#i-laptop"/></svg></div><div><div class="row"><span class="identity-name" id="overview-device-name">—</span><span class="pill small">本机</span></div><div class="identity-sub" id="overview-local-state">正在读取</div></div><span class="spacer"></span><button class="button ghost icon-only" data-settings="identity" aria-label="修改本机设置"><svg class="icon"><use href="#i-edit"/></svg></button></div><div class="identity-fields"><div><div class="field-caption">虚拟网络 IP</div><div class="ip-value mono"><span id="overview-ip"></span><button class="copy" data-copy-ip aria-label="复制本机虚拟 IP"><svg class="icon"><use href="#i-copy"/></svg></button></div></div><div><div class="field-caption">当前连接</div><div class="row" data-static-style="s4"><span class="dot green" id="local-ready-dot"></span><span id="local-connection-label">正在读取</span></div></div></div></article>
+    <article class="card pair-card"><div class="row between"><h2 class="card-title" data-static-style="s5">本机配对码</h2><span class="pill" data-static-style="s6">邀请设备</span></div><div class="pair-code"><span id="overview-code">—</span><button class="copy" data-copy-code aria-label="复制本机配对码"><svg class="icon"><use href="#i-copy"/></svg></button></div><div class="pair-bottom"><span id="code-expiry">—</span><button id="refresh-code">换一个配对码</button></div></article>
+   </div>
+   <article class="card metric-panel" id="metric-panel">
+    <div class="metrics"><div class="metric"><div class="metric-label"><svg class="icon"><use href="#i-link"/></svg>连接协议</div><div class="metric-value protocol" id="metric-protocol">—</div><div class="metric-sub" id="metric-route">等待后台状态</div></div><div class="metric"><div class="metric-label"><svg class="icon"><use href="#i-clock"/></svg>往返延迟</div><div class="metric-value"><span id="metric-latency">—</span><span class="unit">ms</span></div><div class="metric-sub" id="metric-latency-label">—</div></div><div class="metric"><div class="metric-label"><svg class="icon" data-static-style="s7"><use href="#i-up"/></svg>实时上传</div><div class="metric-value"><span id="metric-up">—</span><span class="unit">MB/s</span></div><div class="metric-sub">累计 <span id="metric-up-total">—</span></div></div><div class="metric"><div class="metric-label"><svg class="icon" data-static-style="s8"><use href="#i-down"/></svg>实时下载</div><div class="metric-value"><span id="metric-down">—</span><span class="unit">MB/s</span></div><div class="metric-sub">累计 <span id="metric-down-total">—</span></div></div></div>
+    <div class="flow-chart"><div class="chart-label"><span><i class="legend-line"></i>下载</span><span><i class="legend-line up"></i>上传</span></div><svg viewBox="0 0 1100 88" preserveAspectRatio="none" aria-label="最近一分钟的上下行速度趋势" role="img"><defs><linearGradient id="chart-fill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="var(--green)" stop-opacity=".11"/><stop offset="1" stop-color="var(--green)" stop-opacity="0"/></linearGradient></defs><path id="chart-area" fill="url(#chart-fill)"/><path id="chart-download" stroke="var(--green)" stroke-width="1.5" vector-effect="non-scaling-stroke" fill="none"/><path id="chart-upload" stroke="var(--accent)" stroke-width="1.15" stroke-opacity=".7" vector-effect="non-scaling-stroke" fill="none"/></svg><span class="chart-end">最近 60 秒</span></div>
+   </article>
+   <article class="card table-card"><div class="table-heading row between"><h2>网络设备<span id="device-count">—</span></h2><div class="network-status-detail"><span class="dot green" data-static-style="s9"></span><span>自动更新</span></div></div><div class="table-wrap"><table><thead><tr><th>设备</th><th>虚拟 IP</th><th>连接状态 / 协议</th><th>延迟</th><th>上传</th><th>下载</th><th><span class="visually-hidden">详情</span></th></tr></thead><tbody id="device-rows"></tbody></table></div><div class="table-footer row between"><span>流量按本次网络运行统计</span><span id="device-summary">正在读取</span></div></article>
   </section>
-  <section id="network" class="page" hidden>
-    <div class="two-columns">
-      <article class="card">
-        <h2>连接另一台电脑</h2>
-        <p class="muted">第一台创建网络，另一台输入配对码加入。</p>
-        <form id="pair-form">
-          <label>协调服务器<input id="server" type="url" placeholder="https://你的协调服务器/" required autocomplete="off"></label>
-          <label>配对码 <span class="muted">加入时填写</span><input id="pair-code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6 位数字" autocomplete="off"></label>
-          <details><summary>高级选项</summary>
-            <label>证书 SHA-256（仅自签证书）<input id="pin" maxlength="64" autocomplete="off"></label>
-            <label>新网络承载<select id="mode"><option value="faketcp">FakeTCP＋HTTP（默认）</option><option value="udp">直接 UDP</option></select></label>
-          </details>
-          <div class="actions"><button type="submit" name="action" value="create" class="primary" data-backend>创建网络</button><button type="submit" name="action" value="join" data-backend>加入网络</button></div>
-        </form>
-      </article>
-      <article class="card">
-        <h2>确认配对</h2><p id="pair-state">尚未发起配对</p>
-        <span class="muted">给另一台电脑的配对码</span><div id="room-code" class="code">— — — — — —</div>
-        <span class="muted">双方校验码</span><div id="verification" class="code small">—</div><p id="pair-peer" class="muted"></p>
-        <div class="actions"><button id="approve" class="primary" data-backend disabled>校验码一致，允许加入</button><button id="invite" data-backend>邀请下一台</button><button id="pair-cancel" data-backend>取消配对</button></div>
-        <p class="hint">配对码有效期 5 分钟。请通过可信方式核对双方校验码，再允许加入。支持最多 8 台设备。</p>
-      </article>
-    </div>
+  <section id="page-create" class="page" aria-labelledby="create-title" hidden>
+   <div class="page-heading"><div><h1 id="create-title">创建网络</h1><p>从这台设备开始，建立属于你的设备网络。</p></div></div>
+   <div class="content-grid"><article class="card card-pad">
+    <h2 class="card-title">网络信息</h2><p class="form-intro">创建后，将配对码发给你要连接的另一台设备。</p>
+    <form id="create-form"><label class="field">本机设备名称<input id="create-name" value="—" maxlength="64" autocomplete="off" required><span class="field-hint">其他设备会通过这个名称识别你。</span></label>
+     <div id="create-feedback" aria-live="polite"></div>
+     <div id="created-fields" hidden><div class="form-columns"><label class="field">本机虚拟 IP<div class="input-with-button"><input id="created-ip" class="mono" value="" readonly><button type="button" class="copy" data-copy-ip aria-label="复制本机虚拟 IP"><svg class="icon"><use href="#i-copy"/></svg></button></div></label><label class="field">配对码<div class="input-with-button"><input id="created-code" class="mono" value="—" readonly><button type="button" class="copy" data-copy-code aria-label="复制配对码"><svg class="icon"><use href="#i-copy"/></svg></button></div></label></div></div>
+     <div class="actions" data-static-style="s10"><button id="create-submit" type="submit" class="button primary"><svg class="icon"><use href="#i-plus"/></svg><span>创建网络</span></button><button type="button" class="button ghost" id="create-view-overview" data-open="overview" hidden>查看概况<svg class="icon"><use href="#i-chevron"/></svg></button></div>
+     <div id="create-time" class="creation-time" hidden><svg class="icon"><use href="#i-clock"/></svg><span id="create-time-label">创建成功于</span> <strong id="create-time-value"></strong></div>
+    </form>
+   </article><div class="stack"><article class="card card-pad"><div class="help-title"><svg class="icon"><use href="#i-link"/></svg>接下来怎么连接？</div><ol class="numbered-list"><li><div>在本机创建网络<span>StreamLink 会准备虚拟 IP 和配对码。</span></div></li><li><div>让另一台设备输入配对码<span>在对方的“加入网络”中填写即可。</span></div></li><li><div>核对申请，再同意加入<span>申请会出现在本机“加入网络”页面。</span></div></li></ol></article><article class="card card-pad"><div class="help-title"><svg class="icon"><use href="#i-server"/></svg>当前网络管理服务</div><div class="row between"><span class="small muted" id="create-server-label">自建协调服务</span><button class="link-like small" data-settings="network">更改</button></div><p class="small muted" data-static-style="s11" id="create-server-address">尚未配置</p></article></div></div>
   </section>
-  <section id="settings" class="page" hidden>
-    <article class="card">
-      <h2>本机设置</h2>
-      <form id="metadata-form"><div class="two-columns">
-        <label>设备名称<input id="device-name" maxlength="64" required></label>
-        <label>日志级别<select id="log-level"><option value="off">关闭文件日志</option><option value="error">仅错误</option><option value="info">常规</option><option value="debug">详细</option></select></label>
-      </div><div class="actions"><button type="submit" class="primary" data-backend>保存设备设置</button><button type="button" id="reset-metadata">放弃草稿</button><span id="metadata-dirty" class="muted"></span></div></form>
-    </article>
-    <details class="card" id="connection-settings"><summary>连接设置</summary>
-      <form id="connection-form">
-        <label>传输模式<select id="policy"><option value="faketcp-only">FakeTCP＋HTTP（默认）</option><option value="udp-only">直接 UDP</option></select></label>
-        <p class="hint">两端请选择相同模式。连接失败会重试当前模式，不会自动切换协议。</p>
-        <label class="check"><input id="allow-quality" type="checkbox">允许已配对设备发起手动质量测试</label>
-        <details><summary>入口与端口</summary>
-          <p class="muted">默认自动发现和映射；有可达公网入口时可手动填写。</p>
-          <label>显式公网端点（可留空）<input id="endpoint" placeholder="公网IP:端口" autocomplete="off"></label>
-          <div class="two-columns"><label>监听端口<input id="listen-port" type="number" min="1024" max="65535" required></label><label>源端口<input id="source-port" type="number" min="1024" max="65535" required></label></div>
-        </details>
-        <div class="actions"><button type="submit" class="primary" data-backend>保存连接设置</button><button type="button" id="reset-connection">放弃草稿</button><span id="connection-dirty" class="muted"></span></div>
-      </form>
-    </details>
-    <details class="card" id="diagnostics"><summary>诊断与日志</summary>
-      <p id="quality-text">质量尚未测量</p><label>测试设备<select id="quality-peer"></select></label>
-      <div class="actions"><button data-command="check" data-backend>检查准备状态</button><button id="quality" data-backend>50 Mbps / 20 秒</button><button id="cancel-operation" data-backend>取消当前任务</button><button id="export">导出脱敏诊断</button></div>
-      <p id="operation" class="muted"></p>
-      <p class="hint">测速检查对端 → 本机方向；两端均需允许。单次 20 秒，之后冷却 90 秒。准备检查、RTT 和直连成功不代表实际串流质量已达标。</p>
-      <p id="diagnostics-notice" class="hint" hidden></p>
-      <h3>最近日志</h3><pre id="logs" tabindex="0">等待后台</pre>
-      <h3>传输与组件</h3>
-      <p class="muted">业务默认为 FakeTCP＋明文 HTTP 前导，内层 MeshLink 认证加密，保持数据报语义。HTTPS 用于协调控制，业务没有 TLS 握手。直连业务不经协调服务器转发。</p>
-      <p id="adapter" class="muted">网卡未打开</p>
-      <p class="muted">运行包自带运行库、官方 Wintun 与 WinDivert。安装、更新与卸载使用 MSI；托盘保留打开 WebUI 和退出。</p>
-    </details>
+  <section id="page-join" class="page" aria-labelledby="join-title" hidden>
+   <div class="page-heading"><div><h1 id="join-title">加入网络</h1><p>加入另一台设备的网络，或处理收到的加入申请。</p></div></div>
+   <div class="segmented" role="tablist" aria-label="加入网络方式"><button id="join-tab-outgoing" role="tab" aria-controls="outgoing-pane" aria-selected="true" class="active">加入其他网络</button><button id="join-tab-incoming" role="tab" aria-controls="incoming-pane" aria-selected="false">收到的申请<span class="count" id="request-count">1</span></button></div>
+   <div id="outgoing-pane" role="tabpanel" aria-labelledby="join-tab-outgoing"><div class="content-grid"><article class="card card-pad"><div id="join-form-view"><h2 class="card-title">输入对方的配对码</h2><p class="form-intro">对方需要先创建网络，并与你使用相同的网络管理服务。</p><form id="join-form"><label class="field">本机设备名称<input id="join-name" value="—" maxlength="64" autocomplete="off" required></label><label class="field" id="join-current-ip-field">本机当前虚拟 IP<input id="join-current-ip" class="mono" value="" readonly><span class="field-hint">加入成功后，显示新网络分配的 IP。</span></label><label class="field" id="join-code-field">要加入设备的配对码<input id="join-code" class="mono" maxlength="7" inputmode="numeric" placeholder="输入 6 位配对码" autocomplete="off" required><span id="join-code-error" class="field-error" hidden></span></label><button type="submit" class="button primary" id="join-submit">请求加入<svg class="icon"><use href="#i-join"/></svg></button></form></div><div id="join-status-view" hidden aria-live="polite"></div></article><article class="card card-pad"><div class="help-title"><svg class="icon"><use href="#i-shield"/></svg>双方确认，才会加入</div><p class="small muted" data-static-style="s12">请求发送后，另一台设备会看到你的名称和预分配 IP。核对双方校验码后，由对方同意加入。</p><div class="rule"></div><div class="small muted" data-static-style="s13">你可以在等待时取消申请。原网络会保留到新申请通过；加入成功后再切换连接。</div></article></div></div>
+   <div id="incoming-pane" role="tabpanel" aria-labelledby="join-tab-incoming" hidden><div class="content-narrow"><div id="incoming-list"></div><div id="request-history" class="card card-pad" hidden><h2 class="card-title" data-static-style="s14">已处理</h2><div id="request-history-items"></div></div></div></div>
   </section>
-  <footer><span id="version">StreamLink</span><span id="status-time">等待状态更新</span></footer>
-</main>
+  <section id="page-logs" class="page" aria-labelledby="logs-title" hidden>
+   <div class="page-heading"><div><h1 id="logs-title">日志</h1><p>查看网络活动和连接过程。</p></div><div class="actions"><button id="copy-logs" class="button compact"><svg class="icon"><use href="#i-copy"/></svg>复制日志</button><button id="download-logs" class="button compact"><svg class="icon"><use href="#i-down"/></svg>导出</button></div></div>
+   <div class="logs-toolbar"><div class="log-filter"><select id="log-filter" aria-label="筛选日志等级"><option value="all">全部等级</option><option value="INFO">常规 INFO</option><option value="WARN">警告 WARN</option><option value="ERROR">错误 ERROR</option><option value="DEBUG">详细 DEBUG</option></select><div class="search-input"><svg class="icon"><use href="#i-search"/></svg><input id="log-search" placeholder="搜索日志内容" aria-label="搜索日志内容" autocomplete="off"></div></div><div class="terminal-controls"><label class="row" data-static-style="s15"><span>自动滚动</span><span class="switch"><input type="checkbox" id="auto-scroll" checked aria-label="自动滚动日志"></span></label><select id="terminal-theme" aria-label="终端外观"><option value="auto">跟随界面</option><option value="dark">深色终端</option><option value="light">浅色终端</option></select></div></div>
+   <article class="log-terminal" id="log-terminal" data-terminal="dark"><header class="terminal-top"><span class="row" data-static-style="s16"><svg class="icon"><use href="#i-log"/></svg><span>StreamLink / <span id="terminal-device-name">—</span></span></span><span class="mono" id="log-session-date"></span></header><div class="terminal-content" id="terminal-content" role="log" aria-label="日志内容" tabindex="0"></div><div class="terminal-footer"><span id="log-line-count">共 12 条</span><span id="log-scroll-label">自动滚动已开启</span></div></article>
+   <div class="level-legend"><span><i data-static-style="s17"></i>INFO 常规</span><span><i data-static-style="s18"></i>WARN 警告</span><span><i data-static-style="s19"></i>ERROR 错误</span><span><i data-static-style="s20"></i>DEBUG 详细</span></div>
+  </section>
+  <section id="page-settings" class="page" aria-labelledby="settings-title" hidden>
+   <div class="page-heading"><div><h1 id="settings-title">设置</h1><p>按你的使用方式，调整设备与连接。</p></div></div>
+   <div class="settings-layout"><nav class="settings-menu" aria-label="设置分类"><button class="active" data-setting-section="system">启动与服务</button><button data-setting-section="identity">本机设置</button><button data-setting-section="network">协调与连接</button><button data-setting-section="logging">日志设置</button></nav><div id="settings-sections">
+    <section class="card settings-card" id="settings-system"><h2>启动与服务</h2><p class="muted">后台连接与本机托盘</p><div class="setting-row"><div><div class="setting-title">开机启动</div><div class="setting-description">后台随 Windows 启动，登录后显示托盘。</div></div><label class="switch"><input id="startup-toggle" type="checkbox" checked aria-label="开机启动"></label></div><div class="setting-row"><div><div class="setting-title">注册为系统服务</div><div class="setting-description" id="service-description">关闭浏览器后，连接仍会保持。</div></div><div class="actions"><span id="service-status" class="pill good">正在读取</span><button id="service-action" class="button compact">管理</button></div></div></section>
+    <section class="card settings-card" id="settings-identity"><h2>本机设置</h2><p class="muted">名称与虚拟网络地址</p><form id="identity-form" class="setting-form"><label class="field">设备名称<input id="settings-name" value="—" required maxlength="64" autocomplete="off"></label><div class="field" data-static-style="s21"><div data-static-style="s22">虚拟 IP 分配</div><div class="radio-group"><label class="radio-label"><input name="ip-mode" type="radio" value="auto" checked>自动分配</label><label class="radio-label"><input name="ip-mode" type="radio" value="manual">自定义 IP</label></div></div><label class="field" id="custom-ip-field" hidden>自定义虚拟 IP<input id="custom-ip" class="mono" placeholder="" value="" autocomplete="off"><span class="field-hint" id="custom-ip-hint">创建网络时确定 /24 网段；加入时须选择主机网段中未占用的 IP。</span><span class="field-error" id="custom-ip-error" hidden></span></label><div class="save-row"><button type="submit" class="button primary">保存本机设置</button><small>自定义 IP 在下次创建或加入网络时生效。</small></div></form><div class="rule"></div><button id="leave-network" class="button">退出当前网络</button></section>
+    <section class="card settings-card" id="settings-network"><h2>协调与连接</h2><p class="muted">选择连接协议，以及设备之间的发现方式。</p><form id="network-form">
+     <label class="field" data-static-style="s23">连接协议<select id="protocol"><option value="faketcp">FakeTCP + HTTP</option><option value="udp">直接 UDP</option></select><span class="field-hint">两端请选择相同协议。</span></label>
+     <div class="field-caption" data-static-style="s24">连接方式</div>
+     <div class="connection-choices" role="radiogroup" aria-label="连接方式">
+      <label class="mode-choice"><input type="radio" name="connection-mode" value="public" disabled><svg class="icon"><use href="#i-globe"/></svg><strong>公共服务器</strong><span>公共协调服务<br>暂未提供</span><i class="choice-check"></i></label>
+      <label class="mode-choice"><input type="radio" name="connection-mode" value="custom" checked><svg class="icon"><use href="#i-server"/></svg><strong>自建协调服务</strong><span>使用你的 HTTPS 服务<br>自主发现与打洞</span><i class="choice-check"></i></label>
+      <label class="mode-choice"><input type="radio" name="connection-mode" value="existing"><svg class="icon"><use href="#i-link"/></svg><strong>优先使用已有入口</strong><span>使用现成的地址或打洞结果<br>不可用时自主打洞</span><i class="choice-check"></i></label>
+     </div>
+     <div id="custom-coordination" class="coord-field"><label class="field">HTTPS 协调服务器<input id="coordination-url" type="url" value="" placeholder="https://你的协调服务器" autocomplete="off"><span class="field-hint">用于配对、加入审批和设备发现。</span></label></div>
+     <div id="existing-entry-settings" hidden><div class="entry-editor"><div class="row between" data-static-style="s25"><h3 data-static-style="s26">已有连接地址</h3><span class="pill blue" data-static-style="s27">支持多个来源</span></div><label class="field">这些入口属于<select id="entry-owner"><option value="0">本机 · 提供给网络内其他设备</option></select></label><label class="field">地址来源<textarea id="entry-sources" spellcheck="false" placeholder="每行一个地址&#10;203.0.113.42:44680&#10;edge.example.com:44680&#10;txt://_streamlink.edge.example.com&#10;https://edge.example.com/streamlink.json"></textarea><span class="field-hint">可填写 IP:端口、域名、DNS TXT 或 HTTP(S) 更新地址。</span><span id="entry-error" class="field-error" hidden></span></label><div class="actions"><button id="resolve-entries" type="button" class="button compact"><svg class="icon"><use href="#i-refresh"/></svg>解析地址</button><span class="small muted" id="resolve-summary" data-static-style="s28">尚未解析</span></div><div id="resolver-results" class="resolver-list" hidden></div><details class="format-help"><summary>支持的格式与转发要求</summary><p data-static-style="s29">已有入口需要通向对应设备的 StreamLink，并与所选协议兼容。Lucky 等工具负责建立映射；这些地址用于直连入口发现。</p><p data-static-style="s30">DNS TXT 记录示例：</p><pre>streamlink=203.0.113.42:44680</pre><p data-static-style="s31">HTTP 页面可返回纯文本地址，或 JSON：</p><pre>{"endpoints":["203.0.113.42:44680","edge.example.com:44680"]}</pre><p>地址解析后仍会验证设备身份；任意网页或其它软件的业务端口不能直接当作 StreamLink 入口。</p></details></div><div class="field-hint">切换入口归属可分别填写多台设备的地址；本机最多保存 12 项来源。</div><div class="entry-priority"><span>连接顺序</span><span class="priority-item">已有入口</span><svg class="icon" data-static-style="s32"><use href="#i-chevron"/></svg><span class="priority-item">自主打洞</span><span>保持所选协议</span></div><details class="coord-management" open><summary>配对与审批使用的网络管理服务</summary><label class="field">HTTPS 协调服务器<input id="entry-coordination-url" type="url" value="" placeholder="https://你的协调服务器" autocomplete="off"><span class="field-hint">沿用已配置的协调服务；已有入口负责加快直连。</span></label></details></div>
+     <div class="rule"></div><label class="field">TCP STUN 服务器<textarea id="stun-servers" spellcheck="false" data-static-style="s33"></textarea><span class="field-hint">每行一个地址，用于自主打洞。留空时使用内置默认列表。</span></label><label class="field">UDP STUN 服务器<textarea id="udp-stun-servers" spellcheck="false"></textarea><span class="field-hint">每行一个 主机名:端口；留空恢复内置列表。</span></label><details class="format-help"><summary>证书与本机接收端口</summary><label class="field">协调服务器证书指纹（可选）<input id="certificate-pin" maxlength="64" autocomplete="off"><span class="field-hint">留空使用系统证书信任；当前网络的协调身份固定。</span></label><label class="field">StreamLink 接收端口<input id="listen-port" type="number" min="1024" max="65535"><span class="field-hint">本机已有映射须转发到这个端口，并使用所选协议；不会接管 Lucky 的业务端口。</span></label></details><div class="save-row"><button type="submit" class="button primary">保存连接设置</button><small>应用后会重新连接网络。</small></div><div class="field-error" id="network-error" hidden></div>
+    </form></section>
+    <section class="card settings-card" id="settings-logging"><h2>日志设置</h2><p class="muted">控制记录内容的详细程度</p><div class="setting-form"><label class="field">日志等级<select id="logging-level"><option value="error">仅错误</option><option value="warn">警告与错误</option><option value="info" selected>常规</option><option value="debug">详细</option><option value="off">关闭记录</option></select><span id="logging-description" class="field-hint">记录连接状态和重要操作，适合日常使用。</span></label><div class="save-row"><button id="save-log-settings" class="button primary" type="button">保存日志设置</button><button class="button ghost" data-open="logs">查看日志<svg class="icon"><use href="#i-chevron"/></svg></button></div></div></section>
+   </div></div>
+  </section>
+ </main>
+ <footer class="footer"><span><svg class="icon" data-static-style="s34"><use href="#i-shield"/></svg>StreamLink · 设备直连</span><span id="app-version"></span></footer>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<div class="modal-backdrop" id="modal-backdrop" hidden><section class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" aria-describedby="modal-description"><h2 id="modal-title"></h2><p id="modal-description"></p><div class="actions"><button class="button" id="modal-cancel">取消</button><button class="button" id="modal-confirm">确认</button></div></section></div>
+<script src="/app.js" defer></script>
 </body>
 </html>

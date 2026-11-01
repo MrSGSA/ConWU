@@ -7,7 +7,11 @@ using System.Text.Json;
 namespace StreamLink.Core;
 
 public sealed record MeshAnnouncement(int Slot, string Device, long Revision, long Expires, string Endpoint, string Name,
-    MeshTraversalCapabilities? Traversal = null);
+    MeshTraversalCapabilities? Traversal = null)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? ExistingEndpoints {get;init;}
+}
 public sealed record MeshEnvelope(int Slot, string Device, long Revision, string Data, string Signature);
 public sealed record MeshSnapshot(MeshDirectory Directory, MeshEnvelope[] Nodes,
     MeshTraversalMessage[]? Traversal = null, int TraversalVersion = 0, int UdpIpv6 = 0, int FakeTcpIpv6 = 0, int TcpPrediction = 0, int TcpPeerReflexive = 0, int UdpExploration = 0, int QualityFeedback = 0, int StandbyPaths = 0,int PathDiagnostics=0,int AutoQuality=0,int DiagnosticTiming=0);
@@ -44,6 +48,7 @@ public static class MeshMetadata
         if (node.Slot is < 1 or > 254 || !Guid.TryParseExact(node.Device, "N", out _) || node.Revision <= 0 || node.Name is null || node.Name.Length is < 1 or > 64 || node.Name.Any(char.IsControl)) throw new FormatException("公告内容无效");
         if (node.Endpoint is null || node.Endpoint.Length > 64 || node.Endpoint.Length > 0 && (!IPEndPoint.TryParse(node.Endpoint, out var ep) || ep.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || ep.Address.Equals(IPAddress.Any) || ep.Port == 0)) throw new FormatException("端点无效");
         MeshTraversal.ValidateCapabilities(node.Traversal);
+        if(node.ExistingEndpoints is {} entries && (entries.Length>8 || entries.Any(e=>!IPEndPoint.TryParse(e,out var ip) || ip.Port==0 || !ExistingEntryResolver.EndpointAddress(ip.Address))))throw new FormatException("已有入口公告无效");
     }
 }
 public interface IMeshDiscovery : IDisposable

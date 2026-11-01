@@ -32,7 +32,12 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public ControlOperationStatus? Operation {get;init;}
     public UiStageLedger? Stages {get;init;}
     public string DiagnosticsNotice {get;init;}="";
+    public long NetworkEstablishedAt {get;init;}
+    public bool NetworkCreatedHere {get;init;}
+    public EntryResolution[] EntryResolutions {get;init;}=[];
+    public UiDesktopStatus? Desktop {get;init;}
 }
+public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);
 public sealed record UiLegacyStage(Guid ResourceId,int ProcessId,string Mode,string Listener,string Target,
     LegacyBusinessHandoffReport? Handoff,LegacyBusinessEgressStats? Egress,EgressRouteWitness[] Routes);
 public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats? Egress,UiLegacyStage[] ExplicitWorkers)
@@ -41,16 +46,28 @@ public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats?
     public string Accounting => "Wintun inner packets/bytes; Mesh counters are inner bytes; native injection is local API acceptance. Encapsulation sizes differ and cannot be subtracted. Remote/application delivery requires paired measurement.";
     public string PhysicalDelivery => "UnknownWithoutIndependentWitness";
 }
-public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State);
+public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State)
+{
+    public string ProposedIp {get;init;}="";
+}
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
-public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691);
+public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)
+{
+    public string ConnectionSource {get;init;}="custom";
+    public ExistingEntry[] ExistingEntries {get;init;}=[];
+    public string[]? TcpStun {get;init;}
+    public string[]? UdpStun {get;init;}
+    public string RequestedVirtualIp {get;init;}="";
+}
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
-public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp");
+public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="");
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedDeviceName=null,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedLogLevel=null)
 {
+    public string? RequestedVirtualIp {get;init;}
+    public string? ExpectedVirtualIp {get;init;}
     // Preconditions concern ONLY edited fields. An unrelated network setting
     // changing while the request waits must not conflict or be copied back.
     public DeviceProfile ApplyTo(DeviceProfile current)
@@ -58,11 +75,13 @@ public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null
         if(DeviceName==null&&ExpectedDeviceName!=null || LogLevel==null&&ExpectedLogLevel!=null)
             throw new FormatException("补丁前置值必须对应一个待修改字段");
         if(DeviceName!=null&&ExpectedDeviceName!=null&&current.DeviceName!=ExpectedDeviceName ||
-           LogLevel!=null&&ExpectedLogLevel!=null&&current.LogLevel!=ExpectedLogLevel)
+           LogLevel!=null&&ExpectedLogLevel!=null&&current.LogLevel!=ExpectedLogLevel ||
+           RequestedVirtualIp!=null&&ExpectedVirtualIp!=null&&current.RequestedVirtualIp!=ExpectedVirtualIp)
             throw new IOException("设置已被其他窗口修改；草稿已保留，请核对最新值后重试");
         var updated=ProfileChanges.Copy(current);
         if(DeviceName!=null)updated.DeviceName=DeviceName;
         if(LogLevel!=null)updated.LogLevel=LogLevel;
+        if(RequestedVirtualIp!=null)updated.RequestedVirtualIp=RequestedVirtualIp;
         updated.Validate();
         return updated;
     }

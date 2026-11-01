@@ -34,6 +34,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     sealed class Peer(MeshMember member, MeshLink link)
     {
         public readonly MeshMember Member = member;
+        public byte Host;
         public readonly MeshLink Link = link;
         public IPEndPoint? Candidate, Active;
         public long ActiveReceived, ActiveRoundTrip;
@@ -62,6 +63,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     readonly byte[] local;
     readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
     readonly Dictionary<int, Peer> peers = [];
+    readonly Dictionary<int, Peer> peersByHost = [];
     readonly CancellationTokenSource stop = new();
     readonly Task transmit, receive, heartbeat;
     int disposed;
@@ -114,9 +116,10 @@ public sealed partial class MeshRouter : IAsyncDisposable
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
                 byte[] shared = MeshIdentity.SharedKey(profile, member);
-                try { peers.Add(member.Slot, new(member, new(profile.Self.Slot, member.Slot, shared))); } finally { CryptographicOperations.ZeroMemory(shared); }
+                try { peers.Add(member.Slot, new(member, new(profile.Self.Slot, member.Slot, shared)) {Host=IPAddress.Parse(MeshAddressing.Address(profile.Pair.Network,member)).GetAddressBytes()[3]}); } finally { CryptographicOperations.ZeroMemory(shared); }
             }
             profile.Directory = directory;
+            peersByHost.Clear();foreach(var peer in peers.Values)peersByHost.Add(peer.Host,peer);
         }
     }
     public void SetCandidate(int slot, IPEndPoint? candidate, string name, string detail)
@@ -210,7 +213,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         lock (gate) return peers.Values.OrderBy(p => p.Member.Slot).Select(p => {
             bool healthy = Healthy(p), udp = p.Managed?.Active?.Identity.Profile == TraversalProfile.UdpDirect || p.Managed == null && profile.Pair.Mode == "udp";
             bool degraded = healthy && udp && Selection.Policy != PathPolicy.UdpOnly;
-            return new MeshPeerStatus(p.Member.Slot, MeshIdentity.Address(profile.Pair.Network, p.Member.Slot), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
+            return new MeshPeerStatus(p.Member.Slot, MeshAddressing.Address(profile.Pair.Network, p.Member), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? udp ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
                 p.Sent, p.Received, p.Dropped) { Degraded = degraded, Liveness = Liveness(p),
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
@@ -243,7 +246,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         while (!stop.IsCancellationRequested) {
             int count = adapter.Read(buffer,stop.Token); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
-            lock (gate) if (peers.TryGetValue(slot, out var peer)) {
+            lock (gate) if (peersByHost.TryGetValue(slot,out var peer)) {
                 byte[]? encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
                 if (encoded != null) peer.Managed?.Active?.Traffic.Epoch(true, new Guid(encoded.AsSpan(8, 16)), Environment.TickCount64);
                 bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && Send(encoded, peer.Active));
@@ -302,7 +305,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                 }
                 if (result.Packet != null) {
-                    if (Deliver(peer, result.Packet, MeshPackets.Accept(result.Packet, local, peer.Member.Slot))) {
+                    if (Deliver(peer, result.Packet, MeshPackets.Accept(result.Packet, local, peer.Host))) {
                         peer.Received += result.Packet.Length;
                         if (endpoint.Equals(peer.Active)) peer.Recovery.Business(Environment.TickCount64);
                     }

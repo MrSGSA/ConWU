@@ -1,0 +1,23 @@
+{
+  "candidate": "1.0.1-rc.8",
+  "baseHead": "ba1d7466b9f909a9b67622db3173232a850d7b91",
+  "spec": "AQ-1 plus the user's approved five-page preview and existing-entry feature",
+  "correctnessSecurityReview": {
+    "status": "ReviewedAndTargetedRegressionPassed",
+    "changesChecked": ["bounded resolver and DNS rebinding guard", "untrusted text output and strict CSP", "signed virtual addresses and source-spoof rejection", "role-authenticated cancellation/rejection", "fixed protocol for explicit workers", "healthy transport and adapter ownership retention", "SID-restricted configuration and no arbitrary service paths"],
+    "evidence": ["artifacts/existing-entry-tests-final.log", "artifacts/pairing-v2-final.log", "artifacts/mesh-v2-tests.log", "artifacts/web-v2-final.log"],
+    "limits": "No new physical-WAN or sustained throughput qualification. New approval flow requires matching coordinator. Custom addressing does not silently renumber an existing network."
+  },
+  "productQualityReview": {
+    "status": "ReviewedWithFixesPendingFrozenVerification",
+    "evidence": "artifacts/webui-v2-recheck/result.json",
+    "fixes": ["remove redundant connected-state progress card", "separate admission labels from IP/code values", "retain pending request focus", "remove initial preview telemetry", "mark stale status and rates unknown", "preserve startup choice through installer repair"],
+    "retainedFailures": "Historical pressure/native-loopback loss gates remain unqualified; no threshold relaxation."
+  },
+  "freezePlan": {
+    "core": "scripts/Test-AqCore.ps1 -Profile Full on frozen source",
+    "packages": ["self-contained Windows MSI/ZIP", "Linux x64 coordination service", "exact source archive, hashes and licenses"],
+    "installation": "isolated instance only; preserve daily service PIDs and configuration",
+    "deployment": "no production upgrade, server deployment or GitHub publishing in this turn"
+  }
+}

@@ -185,7 +185,7 @@ public sealed partial class MeshRouter
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) && (!path.AutoQuality || path.ProofAt != 0 && path.Nomination.PeerAdopted) ||
                             path.Retired && Environment.TickCount64 <= path.ReceiveUntil;
-                        if (Deliver(peer, message.Packet, allowed && MeshPackets.Accept(message.Packet, local, peer.Member.Slot))) {
+                        if (Deliver(peer, message.Packet, allowed && MeshPackets.Accept(message.Packet, local, peer.Host))) {
                             peer.Received += message.Packet.Length;
                             path.Traffic.Receive(message.Packet.Length, Environment.TickCount64);
                             if (ReferenceEquals(peer.Managed!.Active, path)) path.Delivery?.Receive(new Guid(packet.Span.Slice(8, 16)),

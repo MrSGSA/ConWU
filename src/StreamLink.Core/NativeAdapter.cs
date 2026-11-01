@@ -55,7 +55,7 @@ public sealed class NativeAdapter : IPacketAdapter
     public ulong? InterfaceLuid {get;}
     public PacketAdapterStatistics Statistics{get{io.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed,this);var c=new ulong[7];uint error=stats(adapter,c);if(error!=0)throw new Win32Exception((int)error);return new((long)c[0],(long)c[1],(long)c[2],(long)c[3],(long)c[4],(long)c[5],(long)c[6],Volatile.Read(ref stopping)!=0);}finally{io.ExitReadLock();}}}
     bool disposed;
-    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null, CancellationToken cancellationToken=default)
+    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null, CancellationToken cancellationToken=default, string? virtualIp=null)
     {
         LifecycleTrace=lifecycleTrace;
         cancellationToken.ThrowIfCancellationRequested();
@@ -71,7 +71,9 @@ public sealed class NativeAdapter : IPacketAdapter
         Trace("lifecycle-wait"); lifecycle.Wait(cancellationToken);
         try {
         cancellationToken.ThrowIfCancellationRequested();
-        string prefix = MeshIdentity.Prefix(network) + ".";
+        string address=virtualIp??MeshIdentity.Address(network,slot);
+        MeshAddressing.ValidateAddress(address);
+        string prefix = MeshAddressing.Prefix(address) + ".";
         var conflicts=OverlayRouteConflicts.Inspect(IPAddress.Parse(prefix+"0"));
         RouteWarnings=Array.AsReadOnly(conflicts.Where(c=>c.Severity=="Warning").ToArray());
         if(conflicts.Any(c=>c.Severity=="Block"))throw new IOException($"虚拟网段 {prefix}0/24 与现有地址/路由冲突，请新建网络；不会单机改网段或删除其他路由");
@@ -87,7 +89,7 @@ public sealed class NativeAdapter : IPacketAdapter
             PacketAdapterProviders.RequireProduction(Descriptor);
             string openStage="bridge-open";uint error;
             NativeCloseTrace callback=phase=>{if(phase>=100)openStage=OpenStage(phase);Trace(phase>=100?openStage:"open-rollback/"+CloseStage(phase));};
-            byte[] ip = IPAddress.Parse(MeshIdentity.Address(network,slot)).GetAddressBytes();
+            byte[] ip = IPAddress.Parse(address).GetAddressBytes();
             cancellationToken.ThrowIfCancellationRequested();
             if(NativeLibrary.TryGetExport(library,"sltun_open_cancellable",out var cancellableOpen))
                 error=Marshal.GetDelegateForFunctionPointer<CancellableOpen>(cancellableOpen)(driver,name,ref guid,ip,out adapter,callback,cancellationToken.WaitHandle.SafeWaitHandle);

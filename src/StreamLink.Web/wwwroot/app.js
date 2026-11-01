@@ -1,333 +1,151 @@
 'use strict';
-const $ = id => document.getElementById(id);
-const titles = {overview:'连接', network:'添加设备', settings:'设置'};
-let csrf='', state=null, busy=false, online=false, expired=false, refreshing=null;
-let connectionDirty=false, metadataDirty=false, connectionBase=null, metadataBase=null;
-let lastTraffic=null, cooldownUntil=0, lastStatusAt=0;
-let statusGeneration=0;
-const rows=new Map();
-const phaseNames={Idle:'网络已就绪',Offline:'未在线',StartingAdapter:'准备网络',WaitingPeer:'等待设备',WaitingEntry:'寻找入口',Connecting:'正在连接',Queued:'等待名额',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
-
-function notice(message,error=false) {
-  $('notice').textContent=message; $('notice').hidden=!message;
-  $('notice').classList.toggle('error',error);
+const $=id=>document.getElementById(id);
+const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const icon=name=>'<svg class="icon" aria-hidden="true"><use href="#i-'+name+'"/></svg>';
+const titles={overview:'概况',create:'创建网络',join:'加入网络',logs:'日志',settings:'设置'};
+let csrf='',state=null,online=false,busy=false,expired=false,reading=null,generation=0,lastStatusAt=0;
+let page='overview',settingsSection='system',joinTab='outgoing',networkDirty=false,identityDirty=false,logDirty=false,networkBase='',identityBase=null;
+let entryDraft=[],entryOwner=0,toastTimer,modalResolve,modalFocus,previousTraffic=null,historyTraffic=[],logLines=[],lastLogs=[],lastPairPoll=0,lastPairError='',pairNotice='';
+let theme='dark';try{theme=localStorage.getItem('streamlink-theme')||'dark';}catch{}
+const expanded=new Set(), renderedHtml=new Map();
+function html(id,markup){if(renderedHtml.get(id)===markup)return;const current=document.activeElement,control=current?.closest('[data-detail],[data-peer-copy],[data-revoke],[data-approve],[data-reject],[data-cancel-join]');const restore=control&&$(id).contains(control)?Object.entries(control.dataset)[0]:null;$(id).innerHTML=markup;renderedHtml.set(id,markup);if(restore){const [key,value]=restore;const attribute='data-'+key.replace(/[A-Z]/g,c=>'-'+c.toLowerCase());$(id).querySelector('['+attribute+'="'+CSS.escape(value)+'"]')?.focus({preventScroll:true});}}
+const phaseNames={Idle:'网络已就绪',Offline:'设备未在线',StartingAdapter:'准备虚拟网卡',WaitingPeer:'等待设备响应',WaitingEntry:'寻找入口',Connecting:'正在连接',Queued:'排队连接',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
+const protocol=value=>!value||value==='None'?'—':/udp/i.test(value)?'直接 UDP':/fake|legacy/i.test(value)?'FakeTCP + HTTP':value;
+const total=value=>value>=1e9?(value/1e9).toFixed(2)+' GB':value>=1e6?(value/1e6).toFixed(1)+' MB':value>=1000?(value/1000).toFixed(1)+' KB':Math.max(0,value||0)+' B';
+const speed=value=>value==null?'—':(value/1e6).toFixed(2)+' MB/s';
+const duration=ms=>{let seconds=Math.max(0,Math.floor((ms||0)/1000));return Math.floor(seconds/60).toString().padStart(2,'0')+':'+(seconds%60).toString().padStart(2,'0');};
+const stamp=value=>new Date(value*1000).toLocaleString('zh-CN',{hour12:false});
+function notice(message,error=false){$('notice').textContent=message;$('notice').hidden=!message;$('notice').classList.toggle('error',error);}
+function notify(message){clearTimeout(toastTimer);$('toast').innerHTML=icon('check')+'<span>'+esc(message)+'</span>';$('toast').classList.add('show');toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3200);}
+const safe=fn=>async event=>{try{await fn(event);}catch(error){notice(error.message,true);}};
+function modal(title,description,label='确认'){
+ if(modalResolve)modalResolve(false);modalFocus=document.activeElement;
+ $('modal-title').textContent=title;$('modal-description').textContent=description;$('modal-confirm').textContent=label;$('modal-backdrop').hidden=false;$('modal-cancel').focus();
+ return new Promise(resolve=>modalResolve=resolve);
 }
-function show(page) {
-  notice('');
-  document.querySelectorAll('.page').forEach(e=>e.hidden=e.id!==page);
-  document.querySelectorAll('.nav').forEach(e=>{
-    e.classList.toggle('active',e.dataset.page===page);
-    if(e.dataset.page===page)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');
-  });
-  $('page-title').textContent=titles[page];
+function closeModal(result=false){$('modal-backdrop').hidden=true;const resolve=modalResolve;modalResolve=null;modalFocus?.focus();resolve?.(result);}
+async function copy(value){if(!value||value==='—')throw Error('暂无可复制的内容');await navigator.clipboard.writeText(value);notify('已复制');}
+function navigate(next){page=titles[next]?next:'overview';document.querySelectorAll('.page').forEach(e=>e.hidden=e.id!=='page-'+page);document.querySelectorAll('.nav').forEach(e=>{const active=e.dataset.page===page;e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});$('breadcrumb-page').textContent=titles[page];document.title=titles[page]+' · StreamLink';window.scrollTo(0,0);if(page==='logs')renderLogs();}
+function openSettings(section){settingsSection=section;navigate('settings');document.querySelectorAll('#settings-sections>.settings-card').forEach(e=>e.hidden=e.id!=='settings-'+section);document.querySelectorAll('[data-setting-section]').forEach(e=>e.classList.toggle('active',e.dataset.settingSection===section));}
+function switchJoin(tab){joinTab=tab;$('outgoing-pane').hidden=tab!=='outgoing';$('incoming-pane').hidden=tab!=='incoming';for(const value of ['outgoing','incoming']){$('join-tab-'+value).classList.toggle('active',value===tab);$('join-tab-'+value).setAttribute('aria-selected',String(value===tab));}}
+function setTheme(value){theme=value==='light'?'light':'dark';document.documentElement.dataset.theme=theme;$('theme-toggle').innerHTML=icon(theme==='dark'?'sun':'moon');$('theme-toggle').setAttribute('aria-label',theme==='dark'?'切换浅色外观':'切换深色外观');try{localStorage.setItem('streamlink-theme',theme);}catch{}terminalTheme();}
+function terminalTheme(){$('log-terminal').dataset.terminal=$('terminal-theme').value==='auto'?theme:$('terminal-theme').value;}
+function controls(){
+ const ready=online&&state?.serviceReady&&!busy,paired=!!state?.networkId;
+ for(const id of ['network-toggle','retry-network','create-submit','join-submit','refresh-code','resolve-entries','save-log-settings','startup-toggle','leave-network'])$(id).disabled=!ready;
+ $('network-toggle').disabled=!ready||!paired;$('retry-network').disabled=!ready||!state?.networkEnabled;$('retry-network').hidden=!state?.connection?.canRetry||state?.directPeers===state?.totalPeers;
+ $('refresh-code').disabled=!ready||!state?.isOwner;
+ $('create-submit').disabled=!ready||paired;$('leave-network').disabled=!ready||!paired;
+ $('service-action').disabled=busy||!online||state?.serviceReady;
+ document.querySelectorAll('[data-reject],[data-cancel-join],[data-revoke],#identity-form button[type=submit],#network-form button[type=submit]').forEach(e=>e.disabled=!ready);
+ const approve=document.querySelector('[data-approve]');if(approve)approve.disabled=!ready||!state?.pairing?.verification;
+ const active=online&&state?.pairing?.owner&&state.pairing.active&&state.pairing.code&&state.pairing.expires*1000>Date.now();
+ document.querySelectorAll('[data-copy-code]').forEach(e=>e.disabled=!active);
 }
-function unavailable(message) {
-  online=false; lastTraffic=null;
-  $('backend-state').textContent=expired?'面板授权已过期':'后台状态未更新';
-  $('network-state').textContent=expired?'请重新打开面板':'面板暂未连接后台';
-  $('state-detail').textContent=message;
-  $('connection-card').dataset.state='stale';
-  $('connection-progress').textContent='当前无法确认网络状态；后台中的串流不受面板刷新影响。';
-  $('connection-steps').hidden=true; $('rates').textContent='流量未知';
-  for(const [slot,row] of rows){
-    row.badge.textContent='状态未更新';row.badge.classList.remove('online');
-    row.progress.textContent='请等待后台状态恢复';row.progress.hidden=false;
-    row.timing.textContent='';row.timing.hidden=true;
-    row.waiting.textContent='';row.waiting.hidden=true;
-    row.address.textContent=state?.peers.find(p=>p.slot===slot)?.virtualIp||'—';
+function unavailable(message){online=false;previousTraffic=null;$('backend-state').textContent=expired?'面板授权已过期':'后台状态未更新';$('backend-state').classList.add('error');$('overview-status').textContent='状态待确认';$('connect-description').textContent=message;$('connection-progress-card').hidden=false;$('connect-title').textContent='暂时无法读取后台';$('device-rows').classList.add('stale');document.querySelectorAll('.peer-state').forEach(e=>e.textContent='状态未更新');document.querySelectorAll('.peer-speed').forEach(e=>e.textContent='—');$('metric-latency').textContent='—';$('metric-up').textContent=$('metric-down').textContent='—';controls();}
+async function api(path,body,valid=()=>true){
+ const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),body?.method==='register-service'?65000:body?25000:8000);
+ try{
+  const result=await fetch(path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json','X-StreamLink-CSRF':csrf}:{},body:body?JSON.stringify(body):undefined,signal:abort.signal});
+  if(!result.ok){let problem;try{problem=await result.json();}catch{}
+   if(result.status===401){if(valid()){expired=true;csrf='';unavailable('请从 StreamLink 托盘重新打开 WebUI，后台连接继续运行。');}throw Error('面板授权已过期，请从托盘重新打开 WebUI。');}
+   throw Error(problem?.error||'请求未完成（HTTP '+result.status+'），请刷新状态后再操作。');
   }
-  controls();
+  return await result.json();
+ }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const message='本机后台暂未响应，操作结果尚待确认；正在自动刷新。';if(valid())unavailable(message);throw Error(message);}throw error;}finally{clearTimeout(timer);}
 }
-async function api(path,body,current=()=>true) {
-  const controller=new AbortController();
-  const timeout=setTimeout(()=>controller.abort(),body?25000:8000);
-  try {
-    const response=await fetch(path,{
-      method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',signal:controller.signal,
-      headers:body?{'Content-Type':'application/json','X-StreamLink-CSRF':csrf}:{},
-      body:body?JSON.stringify(body):undefined
-    });
-    if(!response.ok) {
-      let detail;try{detail=await response.json();}catch{}
-      if(response.status===401) {
-        const message='面板授权已过期，请从托盘重新打开 WebUI。后台网络继续运行。';
-        if(current()){expired=true;csrf='';unavailable(message);}throw Error(message);
-      }
-      if(response.status===503) {
-        const message=detail?.error||'本机后台暂未响应，请稍候重试或检查 StreamLink 服务。';
-        if(current())unavailable(message);throw Error(message);
-      }
-      if(response.status===409)throw Error('重复请求已拒绝或面板操作额度已满。请刷新状态，必要时从托盘重新打开。');
-      throw Error(detail?.error||'本机面板请求未完成（'+response.status+'）');
-    }
-    return await response.json();
-  } catch(error) {
-    if(error.name==='AbortError'||error instanceof TypeError) {
-      const message=body?'请求超时或面板连接中断，操作结果尚待确认。请刷新状态后再操作。':'读取后台超时或面板连接中断，将自动重试。';
-      if(current())unavailable(message);throw Error(message);
-    }
-    throw error;
-  } finally {clearTimeout(timeout);}
-}
-async function command(method,extra={},quiet=false) {
-  if(busy)throw Error('上一项操作仍在进行，请稍候。');
-  if(!online)throw Error('请先恢复面板与后台的连接。');
-  busy=true;statusGeneration++;document.body.setAttribute('aria-busy','true');controls();
-  if(!quiet)notice(({start:'正在请求连接网络…',stop:'正在请求断开并回收资源…',retry:'正在请求重新探测…',patch:'正在保存设备设置…',quality:'正在请求质量检测…',cancel:'正在请求取消任务…'})[method]||'正在提交操作…');
-  try {
-    const reply=await api('/api/command',{method,operationId:crypto.randomUUID(),...extra});
-    if(reply.status)render(reply.status);
-    else if(reply.statusNotice){unavailable(reply.statusNotice);renderOperation(reply.operation);}
-    if(!reply.ok)throw Error(reply.error);
-    if(!quiet)notice((method==='retry'?'已请求重新探测，健康连接保持运行。':'操作已提交，请查看连接状态。')+(reply.statusNotice||''));
-    return reply;
-  } finally {busy=false;document.body.removeAttribute('aria-busy');controls();}
+async function command(method,extra={},quiet=false){
+ if(busy)throw Error('上一项操作仍在进行，请稍候。');if(!online)throw Error('请先恢复面板与后台的连接。');
+ busy=true;generation++;controls();if(!quiet)notice(method==='register-service'?'请在 Windows 授权窗口确认服务操作…':'正在处理，请稍候…');
+ try{const reply=await api('/api/command',{method,operationId:crypto.randomUUID(),...extra});generation++;if(reply.status)render(reply.status);else if(reply.statusNotice)unavailable(reply.statusNotice);if(!reply.ok)throw Error(reply.error||'操作未完成');if(!quiet)notice('');return reply;}
+ finally{busy=false;controls();}
 }
 const network=(action,fields={},quiet=false)=>command('network',{network:{action,...fields}},quiet);
-function safe(fn){return async e=>{try{await fn(e);}catch(error){notice(error.message,true);}};}
-function refresh() {
-  // A read begun before a command cannot overwrite that command's result.
-  // Keep at most one polling request and do not issue new reads during writes.
-  if(busy)return Promise.resolve();
-  if(refreshing)return refreshing;
-  const generation=statusGeneration,current=()=>generation===statusGeneration;
-  refreshing=(async()=>{
-    try {
-      const reply=await api('/api/status',undefined,current);
-      if(!current())return;
-      if(!reply.ok)throw Error(reply.error);
-      if(!reply.status) {
-        const message=reply.statusNotice||'本次回复没有连接状态，将继续刷新。';
-        unavailable(message);renderOperation(reply.operation);throw Error(message);
-      }
-      const wasOffline=!online;render(reply.status);
-      if(wasOffline)notice('');
-    } catch(error) {if(current())throw error;}
-  })().finally(()=>{refreshing=null;controls();});
-  return refreshing;
+async function refresh(){
+ if(reading||expired||!csrf)return reading;const version=generation;
+ reading=(async()=>{try{const reply=await api('/api/status',undefined,()=>version===generation);if(version!==generation)return;if(!reply.ok||!reply.status)throw Error(reply.error||reply.statusNotice||'未收到完整状态');render(reply.status);}catch(error){if(version===generation)unavailable(error.message);}})().finally(()=>reading=null);return reading;
 }
-function text(tag,value,cls='') {
-  const node=document.createElement(tag);node.textContent=value;if(cls)node.className=cls;return node;
+function rates(s){
+ const now=performance.now(),previous=previousTraffic,peers=new Map();let up=0,down=0;const valid=previous&&previous.network===s.networkId&&now-previous.time>=100&&now-previous.time<10000;
+ for(const p of s.peers){const old=previous?.peers.get(p.slot);const rate={up:null,down:null};if(valid&&old&&p.sentBytes>=old.sentBytes&&p.receivedBytes>=old.receivedBytes){const dt=(now-previous.time)/1000;rate.up=(p.sentBytes-old.sentBytes)/dt;rate.down=(p.receivedBytes-old.receivedBytes)/dt;up+=rate.up;down+=rate.down;}peers.set(p.slot,rate);}
+ previousTraffic={time:now,network:s.networkId,peers:new Map(s.peers.map(p=>[p.slot,p]))};
+ if(valid){historyTraffic.push({time:now,up,down});historyTraffic=historyTraffic.filter(v=>now-v.time<=60000);}
+ return {peers,up:valid?up:null,down:valid?down:null};
 }
-function renderOperation(operation) {
-  $('operation').textContent=operation?(operation.completed?'上次操作：':'当前操作：')+operation.phase+(operation.error?' · '+operation.error:''):'当前没有控制任务';
+function drawChart(){const data=historyTraffic,now=performance.now(),max=Math.max(1,...data.map(p=>Math.max(p.up,p.down)));for(const [name,field] of [['download','down'],['upload','up']]){const path=data.map((p,i)=>(i?'L':'M')+(1100-Math.min(60000,now-p.time)/60000*1100).toFixed(1)+' '+(84-p[field]/max*57).toFixed(1)).join(' ');$('chart-'+name).setAttribute('d',path);}$('chart-area').setAttribute('d','');}
+function render(s){
+ const first=!state,changed=state?.networkId!==s.networkId;state=s;online=true;lastStatusAt=performance.now();$('backend-state').classList.remove('error');$('backend-state').textContent=s.serviceReady?'后台运行中':s.state;$('app-version').textContent=s.version?'v'+s.version.split('+')[0]:'';$('device-rows').classList.remove('stale');
+ if(changed){previousTraffic=null;historyTraffic=[];pairNotice='';}
+ const r=rates(s),peers=s.peers||[],live=peers.filter(p=>p.connected);s.rates=r;
+ $('sidebar-device-name').textContent=s.deviceName;$('sidebar-network-name').textContent=s.networkId?(s.isOwner?'本机创建的网络':'已加入的网络'):'尚未加入网络';$('sidebar-network-detail').textContent=s.networkId?(peers.length+1)+' 台设备 · '+live.length+' 台已直连':'创建或加入一个网络';$('sidebar-dot').className='dot '+(live.length?'green':'');
+ $('overview-device-name').textContent=s.deviceName;$('overview-ip').textContent=s.virtualIp||'—';$('overview-local-state').textContent=!s.serviceReady?'后台未启动，网络信息待恢复':s.networkId?(s.networkEnabled?'网络已启动 · Windows':'网络已停止 · Windows'):'尚未加入网络 · Windows';$('overview-status').textContent=s.serviceReady?s.state:'后台未就绪';$('overview-status').className='pill '+(live.length?'good':'');
+ $('local-connection-label').textContent=live.length?'已直连 '+live.length+' 台设备':s.networkId?(s.networkEnabled?'网络已就绪':'网络已停止'):'尚未组网';$('local-ready-dot').className='dot '+(live.length?'green':'');
+ $('empty-overview').hidden=!!s.networkId||!s.serviceReady;$('network-toggle').textContent=s.networkEnabled?'断开网络':'连接网络';
+ const p=s.connection;$('connection-progress-card').hidden=!s.networkEnabled||!p||['Idle','Connected'].includes(p.phase)&&!/(暂不可用|回收失败)/.test(p.detail||'');
+ $('connect-title').textContent=p?phaseNames[p.phase]||s.state:s.state;$('connect-description').textContent=p?.detail||'';$('connect-steps').replaceChildren();$('connect-elapsed').textContent=p&& !['Idle','Offline','Blocked','Connected'].includes(p.phase)?duration(p.elapsedMs)+' '+progressText(p):'';
+ const actual=[...new Set(live.map(p=>protocol(p.actualTransport)))];$('metric-protocol').textContent=actual.length?actual.join(' / '):'—';$('metric-route').textContent=live.length?'设备之间直接连接':'已选择 '+protocol(s.settings?.pathSelection);
+ $('metric-latency').textContent=live[0]?.rttMs==null?'—':live[0].rttMs.toFixed(0);$('metric-latency-label').textContent=live[0]?'至 '+live[0].name:'等待直连';$('metric-up').textContent=r.up==null?'—':(r.up/1e6).toFixed(2);$('metric-down').textContent=r.down==null?'—':(r.down/1e6).toFixed(2);$('metric-up-total').textContent=total(peers.reduce((n,p)=>n+p.sentBytes,0));$('metric-down-total').textContent=total(peers.reduce((n,p)=>n+p.receivedBytes,0));
+ renderPeers();renderPair();renderCreate();renderJoin();renderService();drawChart();appendLogs(s.logs||[]);
+ if(first||!identityDirty){$('settings-name').value=s.deviceName;$('create-name').value=s.deviceName;$('join-name').value=s.deviceName;$('custom-ip').value=s.settings?.requestedVirtualIp||'';document.querySelector('input[name=ip-mode][value='+($('custom-ip').value?'manual':'auto')+']').checked=true;$('custom-ip-field').hidden=!$('custom-ip').value;identityBase={name:s.deviceName,ip:s.settings?.requestedVirtualIp||''};}
+ if(!networkDirty)hydrateNetwork();if(!logDirty)$('logging-level').value=s.logLevel;loggingDescription();controls();
 }
-function copy(value) {
-  if(!value)throw Error('暂无可复制的地址');
-  return navigator.clipboard.writeText(value).then(()=>notice('地址已复制'));
+function renderPeers(){
+ const s=state;$('device-count').textContent=s.networkId?(s.peers.length+1)+' 台':'0 台';$('device-summary').textContent=s.peers.filter(p=>p.connected).length+' 台已直连';
+ $('device-rows').innerHTML=s.peers.length?s.peers.map(p=>{
+ const r=s.rates.peers.get(p.slot),live=p.connected,progress=p.connection;
+ return '<tr class="peer-row"><td><div class="row">'+icon('monitor')+'<div><div class="peer-name">'+esc(p.name)+'</div><div class="cell-sub">'+esc(live?'已认证直连':phaseNames[progress?.phase]||p.phase||'未在线')+'</div></div></div></td><td class="mono">'+esc(p.virtualIp)+'</td><td><div class="peer-state">'+(live?'已直连':'未连接')+'</div><div class="cell-sub">'+esc(live?protocol(p.actualTransport):'—')+'</div></td><td>'+(live&&p.rttMs!=null?p.rttMs.toFixed(0)+' ms':'—')+'</td><td><div class="peer-speed">'+speed(r?.up)+'</div><div class="cell-sub">累计 '+total(p.sentBytes)+'</div></td><td><div class="peer-speed">'+speed(r?.down)+'</div><div class="cell-sub">累计 '+total(p.receivedBytes)+'</div></td><td><button class="button ghost icon-only" data-detail="'+p.slot+'" aria-expanded="'+expanded.has(p.slot)+'" aria-label="查看 '+esc(p.name)+' 详情">'+icon('dots')+'</button></td></tr>'+
+ (expanded.has(p.slot)?'<tr class="peer-detail"><td colspan="7"><p>'+esc(progress?.detail||p.phase||'等待设备上线')+'</p><p>'+esc(progressText(progress))+'</p><p>入口 '+esc(p.outerTarget||'—')+' · '+esc(protocol(p.actualTransport))+'</p><div class="actions"><button class="button compact" data-peer-copy="'+p.slot+'">复制 IP</button>'+(s.isOwner?'<button class="button compact" data-revoke="'+p.slot+'">移出网络</button>':'')+'</div></td></tr>':'');
+ }).join(''):'<tr class="empty-row"><td colspan="7">'+(s.networkId?'网络已就绪，邀请设备后开始直连。':'创建或加入网络后，这里会显示设备。')+'</td></tr>';
 }
-function controls() {
-  document.querySelectorAll('[data-backend]').forEach(e=>e.disabled=!online||busy);
-  $('refresh').disabled=busy||!!refreshing;
-  const s=state,p=s?.pairing;
-  $('approve').disabled=!online||busy||!(p?.active&&p.owner&&p.verification);
-  $('invite').disabled=!online||busy||!s?.isOwner;
-  $('pair-cancel').disabled=!online||busy||!p?.active;
-  $('quality').disabled=!online||busy||!$('quality-peer').options.length||Date.now()<cooldownUntil;
-  $('cancel-operation').disabled=!online||busy||!s?.operation?.cancelable;
-  for(const row of rows.values())row.remove.disabled=!online||busy;
+function renderPair(){const p=state?.pairing,active=p?.active&&p.owner&&p.code&&p.expires*1000>Date.now();$('overview-code').textContent=active?p.code.slice(0,3)+' '+p.code.slice(3):'— — —';$('created-code').value=active?p.code:'尚未生成';$('code-expiry').textContent=active?duration(p.expires*1000-Date.now())+' 后过期':state?.isOwner?'生成配对码后邀请其他设备':'配对码由网络创建者提供';$('refresh-code').textContent=active?'换一个配对码':'生成配对码';}
+function renderCreate(){const s=state,created=!!s.networkId;$('created-fields').hidden=!created;$('created-ip').value=s.virtualIp||'';$('create-view-overview').hidden=!created;$('create-time').hidden=!created||!s.networkEstablishedAt;$('create-time-label').textContent=s.networkCreatedHere?'创建成功于':'加入成功于';$('create-time-value').textContent=s.networkEstablishedAt?stamp(s.networkEstablishedAt):'';$('create-server-address').textContent=s.settings?.service||'请在设置中填写 HTTPS 协调地址';$('create-server-label').textContent='自建协调服务';$('create-submit').querySelector('span').textContent=created?'当前已有网络':'创建网络';const op=s.operation;$('create-feedback').textContent=op?.error?op.error:created?(s.isOwner?'网络已创建，可将配对码发给另一台设备。':'已加入其他设备的网络；退出后可以创建新网络。'):op&&!op.completed?op.phase:op?.error||'';$('create-feedback').className=$('create-feedback').textContent?'form-feedback':'';}
+function renderJoin(){
+ const s=state,p=s.pairing,incoming=!!(p?.active&&p.owner&&p.candidate),waiting=!!(p?.active&&!p.owner);
+ $('request-nav-badge').hidden=!incoming;$('request-count').hidden=!incoming;$('request-count').textContent=incoming?'1':'0';
+ $('join-current-ip-field').hidden=!s.networkId;$('join-current-ip').value=s.virtualIp||'';$('join-form-view').hidden=waiting;$('join-status-view').hidden=!waiting&&!pairNotice;
+ html('join-status-view',waiting?'<div class="waiting-view"><div class="waiting-visual">'+icon('clock')+'</div><h2>正在等待主机同意</h2><p>'+esc(p.peerName)+' 将核对你的设备信息。</p><div class="soft-box"><div class="info-line"><span>本机设备</span><strong>'+esc(s.deviceName)+'</strong></div><div class="info-line"><span>双方校验码</span><strong class="mono request-code">'+esc(p.verification||'正在交换')+'</strong></div></div><p>'+esc(p.state)+'</p><button class="button" data-cancel-join>取消申请</button></div>':pairNotice?'<div class="form-feedback">'+esc(pairNotice)+'</div>':'');
+ html('incoming-list',incoming?'<article class="card request-card"><div class="request-name">'+esc(p.peerName)+'</div><p class="muted small">请求加入你的网络</p><div class="request-meta"><div><span class="field-caption">预分配 IP</span><strong class="mono">'+esc(p.proposedIp||'正在分配')+'</strong></div><div><span class="field-caption">本次配对码</span><strong class="mono">'+esc(p.code)+'</strong></div><div><span class="field-caption">双方校验码</span><strong class="mono request-code">'+esc(p.verification||'正在交换')+'</strong></div></div><div class="request-footer"><span class="muted small">请与对方核对校验码</span><div class="actions"><button class="button" data-reject>拒绝</button><button class="button" data-approve '+(!p.verification?'disabled':'')+'>同意</button></div></div></article>':'<div class="card card-pad join-empty"><h2 class="card-title">暂无加入申请</h2><p class="muted small">'+esc(p?.state||'新申请会显示在这里。')+'</p></div>');
+ $('request-history').hidden=true;
 }
-function duration(ms) {
-  const seconds=Math.max(0,Math.floor((Number.isFinite(ms)?ms:0)/1000));
-  return seconds<60?seconds+' 秒':Math.floor(seconds/60)+' 分 '+seconds%60+' 秒';
+function renderService(){const d=state.desktop;$('startup-toggle').checked=!!d?.autoStart;$('service-status').textContent=d?.serviceRegistered?(state.serviceReady?'已注册 · 运行中':'已注册 · 已停止'):'未注册';$('service-status').className='pill '+(state.serviceReady?'good':'');$('service-action').textContent=d?.serviceRegistered?'启动服务':'注册服务';$('service-description').textContent=state.serviceReady?'关闭浏览器后，连接仍会保持。':'注册或启动服务时，Windows 会请求管理员授权。';}
+function hydrateNetwork(){const settings=state?.settings;if(!settings)return;networkBase=state.settingsRevision;$('protocol').value=settings.pathSelection==='udp-only'?'udp':'faketcp';document.querySelector('input[name=connection-mode][value='+settings.connectionSource+']').checked=true;$('coordination-url').value=$('entry-coordination-url').value=settings.service;$('certificate-pin').value=settings.certificatePin;$('listen-port').value=settings.listenPort;$('stun-servers').value=(settings.tcpStun||[]).join('\n');$('udp-stun-servers').value=(settings.udpStun||[]).join('\n');entryDraft=(settings.existingEntries||[]).map(e=>({...e}));renderEntryOwners();$('entry-sources').value=entryDraft.filter(e=>e.peerSlot===entryOwner).map(e=>e.source).join('\n');updateMode();}
+function renderEntryOwners(){const options=[{slot:0,name:'本机 · 提供给网络内其他设备'},...(state?.peers||[]).map(p=>({slot:p.slot,name:p.name+' · 本机连接对方的入口'})),...[...new Set(entryDraft.map(e=>e.peerSlot))].filter(slot=>slot!==0&&!(state?.peers||[]).some(p=>p.slot===slot)).map(slot=>({slot,name:'已移出设备 '+slot+' · 清空地址可删除'}))];if(!options.some(p=>p.slot===entryOwner))entryOwner=0;$('entry-owner').innerHTML=options.map(p=>'<option value="'+p.slot+'">'+esc(p.name)+'</option>').join('');$('entry-owner').value=String(entryOwner);}
+function captureEntries(){entryDraft=entryDraft.filter(e=>e.peerSlot!==entryOwner).concat($('entry-sources').value.split(/\r?\n/).map(source=>source.trim()).filter(Boolean).map(source=>({peerSlot:entryOwner,source})));}
+function updateMode(){const existing=document.querySelector('input[name=connection-mode]:checked').value==='existing';$('custom-coordination').hidden=existing;$('existing-entry-settings').hidden=!existing;}
+function draftSettings(){captureEntries();const mode=document.querySelector('input[name=connection-mode]:checked').value;let service=$(mode==='existing'?'entry-coordination-url':'coordination-url').value.trim();if(service){let uri=new URL(service);if(uri.protocol!=='https:'||uri.username||uri.password||uri.search||uri.hash)throw Error('协调服务器必须是 HTTPS 地址，不能包含账号、查询参数或片段。');if(!uri.pathname.endsWith('/'))uri.pathname+='/';service=uri.toString();}const lines=id=>$(id).value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);return {...state.settings,manualEndpoint:'',service,certificatePin:$('certificate-pin').value.trim(),pathSelection:$('protocol').value==='udp'?'udp-only':'faketcp-only',connectionSource:mode,existingEntries:entryDraft,listenPort:Number($('listen-port').value),tcpStun:lines('stun-servers'),udpStun:lines('udp-stun-servers')};}
+async function saveNetwork(event){event.preventDefault();const settings=draftSettings();if(settings.connectionSource==='existing'&&!settings.existingEntries.length)throw Error('请至少填写一个已有入口。');if(state.networkEnabled&&!await modal('应用连接设置','保存后会重建受影响的连接，可能短暂中断串流；STUN 列表更新在下一次打洞时使用。','保存并应用'))return;await network('settings',{settings,expectedRevision:networkBase,confirmReplace:true});networkDirty=false;hydrateNetwork();notify('连接设置已保存');}
+async function resolveEntries(){const settings=draftSettings();await network('resolve-entries',{settings});const results=state.entryResolutions||[];$('resolver-results').hidden=false;$('resolver-results').innerHTML=results.map(r=>'<div class="resolved-row"><div><div class="resolved-kind">来源 '+(r.index+1)+' · '+esc(r.kind)+'</div><div class="resolved-address">'+esc(r.error||r.endpoints.join('、'))+'</div><div class="resolved-info">'+(r.error?'将继续尝试其他入口与自主打洞':r.peerSlot===0?'保存后提供给对端，仍需对端验证':'已解析，保存后验证设备身份与直连')+'</div></div><span class="pill">'+(r.error?'未解析':'已解析')+'</span></div>').join('');$('resolve-summary').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 项已解析';}
+async function saveIdentity(event){event.preventDefault();const name=$('settings-name').value.trim();const ip=document.querySelector('input[name=ip-mode]:checked').value==='manual'?$('custom-ip').value.trim():'';await command('patch',{patch:{deviceName:name,expectedDeviceName:identityBase.name,requestedVirtualIp:ip,expectedVirtualIp:identityBase.ip}});identityDirty=false;render(state);notify('本机设置已保存；IP 在下次创建或加入时生效');}
+async function saveName(id){const name=$(id).value.trim();if(name!==state.deviceName)await command('patch',{patch:{deviceName:name,expectedDeviceName:state.deviceName}},true);}
+function requireCoordination(){if(!state?.settings?.service){openSettings('network');throw Error('请先填写并保存 HTTPS 协调服务器。STUN 地址不能用作协调地址。');}return {service:state.settings.service,certificatePin:state.settings.certificatePin,mode:state.settings.pathSelection==='udp-only'?'udp':'faketcp',expectedNetwork:state.networkId};}
+async function createNetwork(event){event.preventDefault();const config=requireCoordination();if(state.networkId)throw Error('当前已有网络；如需替换，请先在设置中退出当前网络。');await saveName('create-name');$('create-feedback').textContent='正在检查协调服务并创建网络…';try{await network('create',config);notify('网络已创建');}catch(error){$('create-feedback').textContent=error.message;throw error;}}
+async function joinNetwork(event){event.preventDefault();const config=requireCoordination(),code=$('join-code').value.replace(/\s/g,'');if(!/^\d{6}$/.test(code))throw Error('请输入 6 位数字配对码。');if(state.networkId&&!await modal('加入另一网络','申请通过前保留当前网络；主机同意后，将切换到新网络。','发送申请'))return;await saveName('join-name');pairNotice='';await network('join',{...config,code,confirmReplace:!!state.networkId});switchJoin('outgoing');}
+async function pollPair(){if(!online||busy||!state?.pairing?.active||Date.now()-lastPairPoll<2500)return;lastPairPoll=Date.now();try{await network('pair-poll',{},true);lastPairError='';if(!state.pairing?.active){pairNotice=state.pairing?.state||'';renderJoin();}}catch(error){lastPairPoll=Date.now()+10000;if(error.message!==lastPairError){lastPairError=error.message;notice(error.message,true);}}}
+function progressText(p){if(!p)return '';const parts=[];if(p.attempt)parts.push('第 '+p.attempt+' 次尝试');if(p.retryInSeconds!=null)parts.push(p.retryInSeconds+' 秒后重试');else if(p.remainingSeconds!=null)parts.push('本轮剩余 '+p.remainingSeconds+' 秒');return parts.join(' · ');}
+function appendLogs(lines){let overlap=0;for(let n=Math.min(lastLogs.length,lines.length);n>0;n--){if(lastLogs.slice(-n).every((v,i)=>v===lines[i])){overlap=n;break;}}for(const line of lines.slice(overlap)){const match=line.match(/^(\d\d:\d\d:\d\d) (?:\[(INFO|WARN|ERROR|DEBUG)\] )?(.*)$/);logLines.push({time:match?.[1]||'',level:match?.[2]||'INFO',message:match?.[3]||line});}lastLogs=lines.slice();if(logLines.length>500)logLines.splice(0,logLines.length-500);if(page==='logs')renderLogs();}
+function visibleLogs(){const selected=$('log-filter').value.toUpperCase(),search=$('log-search').value.toLowerCase();return logLines.filter(l=>(selected==='ALL'||l.level===selected)&&(!search||l.message.toLowerCase().includes(search)));}
+function renderLogs(){const scroll=$('terminal-content').scrollTop;const lines=visibleLogs();$('terminal-device-name').textContent=state?.deviceName||'StreamLink';$('log-session-date').textContent='当前后台日志';$('terminal-content').innerHTML=lines.map((l,i)=>'<div class="log-line"><span class="log-number">'+(i+1)+'</span><span class="log-time">'+esc(l.time)+'</span><span class="log-severity '+l.level.toLowerCase()+'">'+l.level+'</span><span class="log-message">'+esc(l.message)+'</span></div>').join('');$('log-line-count').textContent=lines.length+' 条 · 最多保留 500 条面板日志';$('log-scroll-label').textContent=$('auto-scroll').checked?'自动滚动':'已暂停滚动';if($('auto-scroll').checked)$('terminal-content').scrollTop=$('terminal-content').scrollHeight;else $('terminal-content').scrollTop=scroll;}
+function logsText(){return visibleLogs().map(l=>l.time+' ['+l.level+'] '+l.message).join('\n');}
+function loggingDescription(){$('logging-description').textContent=({off:'停止产生新日志，已有日志保留。',error:'仅记录错误。',warn:'记录警告与错误。',info:'记录连接过程与重要状态。',debug:'包含连接资源与诊断细节。'})[$('logging-level').value];}
+function bind(){
+ document.querySelectorAll('[data-page]').forEach(e=>e.addEventListener('click',()=>navigate(e.dataset.page)));document.querySelectorAll('[data-open]').forEach(e=>e.addEventListener('click',()=>navigate(e.dataset.open)));document.querySelectorAll('[data-settings]').forEach(e=>e.addEventListener('click',()=>openSettings(e.dataset.settings)));document.querySelectorAll('[data-setting-section]').forEach(e=>e.addEventListener('click',()=>openSettings(e.dataset.settingSection)));
+ $('theme-toggle').onclick=()=>setTheme(theme==='dark'?'light':'dark');$('terminal-theme').onchange=terminalTheme;$('join-tab-outgoing').onclick=()=>switchJoin('outgoing');$('join-tab-incoming').onclick=()=>switchJoin('incoming');
+ $('modal-cancel').onclick=()=>closeModal(false);$('modal-confirm').onclick=()=>closeModal(true);$('modal-backdrop').onclick=e=>{if(e.target===$('modal-backdrop'))closeModal(false);};document.addEventListener('keydown',e=>{if(!modalResolve)return;if(e.key==='Escape')closeModal(false);if(e.key==='Tab'){e.preventDefault();(document.activeElement===$('modal-cancel')?$('modal-confirm'):$('modal-cancel')).focus();}});
+ document.querySelectorAll('[data-copy-ip]').forEach(e=>e.onclick=safe(()=>copy(state?.virtualIp)));document.querySelectorAll('[data-copy-code]').forEach(e=>e.onclick=safe(()=>copy(state?.pairing?.code)));
+ $('create-form').onsubmit=safe(createNetwork);$('join-form').onsubmit=safe(joinNetwork);$('identity-form').onsubmit=safe(saveIdentity);$('network-form').onsubmit=safe(saveNetwork);$('resolve-entries').onclick=safe(resolveEntries);
+ $('identity-form').addEventListener('input',()=>{identityDirty=true;$('custom-ip-field').hidden=document.querySelector('input[name=ip-mode]:checked').value!=='manual';});for(const id of ['create-name','join-name'])$(id).addEventListener('input',()=>identityDirty=true);
+ $('network-form').addEventListener('input',()=>{if(!networkDirty)networkBase=state?.settingsRevision||'';networkDirty=true;});document.querySelectorAll('input[name=connection-mode]').forEach(e=>e.onchange=updateMode);
+ $('entry-owner').onchange=()=>{captureEntries();entryOwner=Number($('entry-owner').value);$('entry-sources').value=entryDraft.filter(e=>e.peerSlot===entryOwner).map(e=>e.source).join('\n');};
+ $('coordination-url').oninput=()=>$('entry-coordination-url').value=$('coordination-url').value;$('entry-coordination-url').oninput=()=>$('coordination-url').value=$('entry-coordination-url').value;
+ $('refresh-code').onclick=safe(async()=>{if(state.pairing?.active&&state.pairing.candidate&&!await modal('更换配对码','更换后会取消当前尚未处理的加入申请。','更换'))return;await network('invite',{expectedNetwork:state.networkId});notify('已生成新配对码');});
+ $('network-toggle').onclick=safe(async()=>{if(state.networkEnabled&&!await modal('断开网络','当前串流会中断，配对与设置将保留。','断开'))return;await command(state.networkEnabled?'stop':'start');});$('retry-network').onclick=safe(()=>command('retry'));
+ $('leave-network').onclick=safe(async()=>{if(await modal('退出当前网络','退出后停止本机连接，并移除本机保存的网络凭据；此操作不会删除其他设备或系统网卡。','退出网络'))await network('leave',{expectedNetwork:state.networkId,confirmReplace:true});});
+ $('startup-toggle').onchange=safe(async()=>{try{await network($('startup-toggle').checked?'startup-enable':'startup-disable');notify('启动设置已保存');}finally{renderService();}});$('service-action').onclick=safe(()=>command('register-service'));
+ $('logging-level').onchange=()=>{logDirty=true;loggingDescription();};$('save-log-settings').onclick=safe(async()=>{await command('patch',{patch:{logLevel:$('logging-level').value,expectedLogLevel:state.logLevel}});logDirty=false;notify('日志设置已保存');});
+ for(const id of ['log-filter','log-search','auto-scroll'])$(id).addEventListener('input',renderLogs);$('copy-logs').onclick=safe(()=>copy(logsText()));$('download-logs').onclick=()=>{const blob=new Blob([logsText()],{type:'text/plain;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download='StreamLink-'+new Date().toISOString().slice(0,10)+'.log';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
+ $('device-rows').onclick=safe(async e=>{const detail=e.target.closest('[data-detail]');if(detail){const slot=Number(detail.dataset.detail);expanded.has(slot)?expanded.delete(slot):expanded.add(slot);renderPeers();controls();}const copyButton=e.target.closest('[data-peer-copy]');if(copyButton)await copy(state.peers.find(p=>p.slot===Number(copyButton.dataset.peerCopy))?.virtualIp);const revoke=e.target.closest('[data-revoke]');if(revoke){const p=state.peers.find(p=>p.slot===Number(revoke.dataset.revoke));if(p&&await modal('移出设备','移除 '+p.name+' 的网络授权？其 IP 会继续保留，不分配给其他设备。','移出'))await network('revoke',{expectedNetwork:state.networkId,peerSlot:p.slot});}});
+ $('incoming-list').onclick=safe(async e=>{const approve=e.target.closest('[data-approve]'),reject=e.target.closest('[data-reject]');if(!approve&&!reject)return;const p=state.pairing;if(approve&&!await modal('确认双方校验码','请确认 '+p.peerName+' 上显示的校验码也是 '+p.verification+'。','同意加入'))return;await network(approve?'approve':'reject',{candidate:p.candidate,verification:p.verification,proposedIp:p.proposedIp});notify(approve?'已同意申请':'已拒绝申请');});
+ $('join-status-view').onclick=safe(async e=>{if(e.target.closest('[data-cancel-join]')){await network('pair-cancel');pairNotice='已取消加入申请';renderJoin();}});
 }
-function progressText(progress,extraMs=0) {
-  if(!progress||['Idle','Offline','Blocked'].includes(progress.phase))return '';
-  const parts=[phaseNames[progress.phase]||'正在处理'];
-  parts.push((progress.phase==='Connected'?'持续 ':'已等待 ')+duration((progress.elapsedMs||0)+extraMs));
-  if(progress.attempt>0&&progress.phase!=='Connected')parts.push('第 '+progress.attempt+' 次尝试');
-  if(progress.retryInSeconds!=null)parts.push(Math.max(0,progress.retryInSeconds-Math.floor(extraMs/1000))+' 秒后重试');
-  else if(progress.remainingSeconds!=null&&progress.phase!=='Connected')parts.push('本轮剩余 '+Math.max(0,progress.remainingSeconds-Math.floor(extraMs/1000))+' 秒');
-  return parts.join(' · ');
-}
-function tick() {
-  if(!online)return;
-  const age=performance.now()-lastStatusAt;
-  if(age>10000){unavailable('超过 10 秒未收到后台状态，正在重新读取。当前连接情况尚待确认。');return;}
-  $('connection-progress').textContent=state?.networkEnabled?progressText(state.connection,age):'';
-  for(const p of state?.peers||[]) {
-    const row=rows.get(p.slot);
-    if(row){
-      const value=progressText(p.connection,age);
-      row.timing.textContent=p.connected?value:'';row.timing.hidden=!row.timing.textContent;
-      row.waiting.textContent=p.connected?'':value;row.waiting.hidden=!row.waiting.textContent;
-    }
-  }
-  $('quality').textContent=Date.now()<cooldownUntil?'冷却 '+Math.ceil((cooldownUntil-Date.now())/1000)+' 秒':'50 Mbps / 20 秒';
-  controls();
-}
-function makePeer(slot) {
-  const root=text('article','','peer'),main=text('div','','peer-main'),info=text('div','');
-  const title=text('div','','peer-title'),name=text('h3','','peer-name'),badge=text('span','','badge'),address=text('p','','peer-address');
-  title.append(name,badge);info.append(title,address);
-  const actions=text('div','','actions'),copyButton=text('button','复制 IP','quiet'),remove=text('button','移除','quiet');
-  copyButton.onclick=safe(()=>copy(state?.peers.find(p=>p.slot===slot)?.virtualIp));
-  remove.onclick=safe(async()=>{
-    const p=state?.peers.find(p=>p.slot===slot);
-    if(p&&confirm('移除 '+(p.name||p.virtualIp)+' 的网络授权？'))await network('revoke',{expectedNetwork:state.networkId,peerSlot:slot});
-  });
-  actions.append(copyButton);main.append(info,actions);
-  const progress=text('p','','peer-progress'),timing=text('p','','peer-progress'),details=text('details',''),summary=text('summary','链路详情');
-  const transport=text('p',''),quality=text('p',''),liveness=text('p','');
-  const management=text('div','','actions');management.append(remove);
-  details.append(summary,timing,transport,quality,liveness,management);root.append(main,progress,details);
-  // Pending devices show their timer without requiring an expanded panel.
-  const waiting=text('p','','peer-progress');root.insertBefore(waiting,details);
-  return {root,name,badge,address,remove,progress,timing,waiting,transport,quality,liveness};
-}
-function renderPeers(peers,s) {
-  const list=$('peer-list'),slots=new Set(peers.map(p=>p.slot));
-  for(const [slot,row] of rows)if(!slots.has(slot)){row.root.remove();rows.delete(slot);}
-  list.querySelector('.empty')?.remove();
-  if(!peers.length)list.append(text('p',s.networkId?'当前没有其他设备。需要时可在“添加设备”中邀请电脑。':'添加另一台电脑后，在这里查看连接与复制 IP。','empty'));
-  for(const p of peers) {
-    let row=rows.get(p.slot);
-    if(!row){row=makePeer(p.slot);rows.set(p.slot,row);list.append(row.root);}
-    row.name.textContent=p.name||'设备 '+p.slot;
-    row.badge.textContent=p.connected?'已直连':phaseNames[p.connection?.phase]||'未连接';
-    row.badge.classList.toggle('online',p.connected);
-    row.address.textContent=p.virtualIp+(p.connected&&p.rttMs!=null?' · '+p.rttMs.toFixed(1)+' ms':'');
-    row.progress.textContent=p.connected?'':p.connection?.detail||p.phase;
-    row.progress.hidden=p.connected;
-    row.waiting.hidden=p.connected;
-    row.transport.textContent='承载 '+p.actualTransport+' · 建链 '+p.traversalMethod;
-    row.quality.textContent='质量 '+(p.quality==='Unknown'?'未测量':p.quality)+' · 本机丢弃 '+p.droppedPackets+' 包';
-    const drops=p.localDrops;
-    row.quality.title=drops?'本机拒绝：无可用路径 '+drops.noHealthyPath+'，发送拒绝 '+drops.sendRejected+'，认证或重放拒绝 '+drops.authenticationRejected+'，来源或路径拒绝 '+drops.receivePolicyRejected+'，网卡写入拒绝 '+drops.adapterWriteRejected+'。这些计数不等于物理链路丢包。':'';
-    row.liveness.textContent=p.liveness?'最近有效接收 '+(p.liveness.receiveAgeMs==null?'未知':duration(p.liveness.receiveAgeMs))+'前 · 最近往返 '+(p.liveness.roundTripAgeMs==null?'未知':duration(p.liveness.roundTripAgeMs))+'前':'';
-    row.remove.hidden=!s.isOwner;
-  }
-}
-function render(s) {
-  if(!s)return;
-  state=s;online=true;expired=false;lastStatusAt=performance.now();
-  $('backend-state').textContent=s.serviceReady?'后台已就绪':'后台正在准备';
-  $('network-state').textContent=s.state||'尚未连接';
-  $('connection-card').dataset.state=s.directPeers>0?'connected':s.networkEnabled?(s.connection?.phase==='Idle'?'idle':'waiting'):'stopped';
-  $('local-ip').textContent=s.virtualIp||'—';$('device-label').textContent=s.deviceName||'本机';
-  $('peer-count').textContent=s.directPeers+' / '+s.totalPeers;
-  $('state-detail').textContent=!s.networkId?'先添加另一台电脑，创建或加入同一网络。':!s.networkEnabled?'网络已停止，配对与设置已保留。':s.connection?.detail||'正在读取连接进度。';
-  $('connect').hidden=!!s.networkEnabled||!s.networkId;
-  $('disconnect').hidden=!s.networkEnabled;
-  $('retry').hidden=!s.networkEnabled||!s.connection?.canRetry;
-  $('setup').hidden=!!s.networkId;
-  $('copy-local').disabled=!s.virtualIp;
-  const allConnected=s.totalPeers>0&&s.directPeers===s.totalPeers;
-  const phase=s.connection?.phase;
-  $('connection-steps').hidden=!s.networkEnabled||allConnected||['Idle','Connected','Blocked'].includes(phase);
-  const step=phase==='StartingAdapter'?0:['WaitingPeer','WaitingEntry','Queued','Preparing','Connecting'].includes(phase)?1:2;
-  document.querySelectorAll('[data-step]').forEach(e=>{
-    const n=Number(e.dataset.step),done=allConnected;
-    e.classList.toggle('done',done||n<step);e.classList.toggle('current',!done&&n===step);
-    if(!done&&n===step)e.setAttribute('aria-current','step');else e.removeAttribute('aria-current');
-  });
-  $('adapter').textContent='虚拟网卡：'+(s.adapter?.state==='Opened'?'Wintun 已打开':s.adapter?.reason||'未打开');
-  $('migration').textContent=s.migrationNotice;$('migration').hidden=!s.migrationNotice;
-  $('quality-text').textContent=s.qualityText||'质量尚未测量';$('logs').textContent=(s.logs||[]).join('\n')||'暂无日志';
-  $('diagnostics-notice').textContent=s.diagnosticsNotice||'';$('diagnostics-notice').hidden=!s.diagnosticsNotice;
-  $('version').textContent='StreamLink '+s.version.split('+')[0];
-  $('status-time').textContent='状态更新 '+new Date().toLocaleTimeString('zh-CN',{hour12:false});
-  renderOperation(s.operation);
-  const peers=s.peers||[],sent=peers.reduce((a,p)=>a+p.sentBytes,0),received=peers.reduce((a,p)=>a+p.receivedBytes,0),now=performance.now();
-  if(lastTraffic&&now-lastTraffic.at>500&&sent>=lastTraffic.sent&&received>=lastTraffic.received)
-    $('rates').textContent='↑ '+((sent-lastTraffic.sent)*8/(now-lastTraffic.at)/1000).toFixed(2)+'  ↓ '+((received-lastTraffic.received)*8/(now-lastTraffic.at)/1000).toFixed(2)+' Mbps';
-  else if(!lastTraffic||sent<lastTraffic.sent||received<lastTraffic.received)$('rates').textContent='等待流量采样';
-  lastTraffic={sent,received,at:now};renderPeers(peers,s);
-  const select=$('quality-peer'),eligible=peers.filter(p=>p.connected),old=select.value;
-  if(JSON.stringify([...select.options].map(o=>[o.value,o.textContent]))!==JSON.stringify(eligible.map(p=>[String(p.slot),(p.name||'设备')+' · '+p.virtualIp]))) {
-    select.replaceChildren();
-    for(const p of eligible){const option=text('option',(p.name||'设备')+' · '+p.virtualIp);option.value=p.slot;select.append(option);}
-    if([...select.options].some(o=>o.value===old))select.value=old;
-  }
-  if(!connectionDirty&&s.settings) {
-    connectionBase={...s.settings,revision:s.settingsRevision};
-    $('policy').value=s.settings.pathSelection;$('endpoint').value=s.settings.manualEndpoint;
-    $('listen-port').value=s.settings.listenPort;$('source-port').value=s.settings.sourcePort;
-    $('allow-quality').checked=s.settings.allowManualQualityRequests;
-  }
-  if(!metadataDirty){metadataBase={name:s.deviceName,level:s.logLevel};$('device-name').value=s.deviceName;$('log-level').value=s.logLevel;}
-  if(!$('server').value&&s.settings?.service)$('server').value=s.settings.service;
-  const pair=s.pairing;
-  $('room-code').textContent=pair?.code||'— — — — — —';$('verification').textContent=pair?.verification||(pair?.active?'等待申请':'—');
-  $('pair-state').textContent=pair?.state||'尚未发起配对';
-  $('pair-peer').textContent=pair?.peerName?'对方设备：'+pair.peerName:'';
-  tick();
-}
-document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>show(b.dataset.page));
-document.querySelectorAll('[data-open]').forEach(b=>b.onclick=()=>show(b.dataset.open));
-document.querySelectorAll('[data-command]').forEach(b=>b.onclick=safe(()=>command(b.dataset.command)));
-$('refresh').onclick=safe(refresh);$('copy-local').onclick=safe(()=>copy(state?.virtualIp));
-$('pair-form').onsubmit=safe(async e=>{
-  e.preventDefault();const action=e.submitter.value,existing=!!state?.networkId;
-  let service=$('server').value.trim();if(!service.endsWith('/'))service+='/';
-  const url=new URL(service);
-  if(url.protocol!=='https:'||url.username||url.password)throw Error('请填写 HTTPS 协调地址');
-  if(action==='join'&&!/^\d{6}$/.test($('pair-code').value))throw Error('请输入 6 位配对码');
-  if(existing&&!confirm('这会替换当前网络。仅添加设备请使用“邀请下一台”。继续？'))return;
-  await network(action,{service,certificatePin:$('pin').value.trim(),code:action==='join'?$('pair-code').value:'',mode:$('mode').value,expectedNetwork:state?.networkId||'',confirmReplace:existing});
-  $('pair-code').value='';
-});
-$('approve').onclick=safe(async()=>{
-  const p=state?.pairing;if(!p?.verification)throw Error('暂无待核对的校验码');
-  await network('approve',{verification:p.verification,candidate:p.candidate});
-});
-$('invite').onclick=safe(()=>network('invite',{expectedNetwork:state?.networkId||''}));
-$('pair-cancel').onclick=safe(()=>network('pair-cancel'));
-$('connection-form').oninput=()=>{connectionDirty=true;$('connection-dirty').textContent='有未保存的草稿';};
-$('reset-connection').onclick=()=>{connectionDirty=false;$('connection-dirty').textContent='';if(online)render(state);};
-$('connection-form').onsubmit=safe(async e=>{
-  e.preventDefault();if(!connectionBase)throw Error('后台状态尚未就绪');
-  const settings={...connectionBase,pathSelection:$('policy').value,manualEndpoint:$('endpoint').value.trim(),listenPort:Number($('listen-port').value),sourcePort:Number($('source-port').value),allowManualQualityRequests:$('allow-quality').checked};
-  delete settings.revision;
-  const restart=settings.pathSelection!==connectionBase.pathSelection||settings.manualEndpoint!==connectionBase.manualEndpoint||settings.listenPort!==connectionBase.listenPort||settings.sourcePort!==connectionBase.sourcePort;
-  if(restart&&state.networkEnabled&&!confirm('这些连接设置会重建网络，是否继续？'))return;
-  await network('settings',{settings,expectedRevision:connectionBase.revision,confirmReplace:restart});
-  connectionDirty=false;$('connection-dirty').textContent='';if(online){render(state);notice('设置已保存。');}
-});
-$('metadata-form').oninput=()=>{metadataDirty=true;$('metadata-dirty').textContent='有未保存的草稿';};
-$('reset-metadata').onclick=()=>{metadataDirty=false;$('metadata-dirty').textContent='';if(online)render(state);};
-$('metadata-form').onsubmit=safe(async e=>{
-  e.preventDefault();if(!metadataBase)throw Error('后台状态尚未就绪');
-  const patch={};
-  if($('device-name').value!==metadataBase.name){patch.deviceName=$('device-name').value;patch.expectedDeviceName=metadataBase.name;}
-  if($('log-level').value!==metadataBase.level){patch.logLevel=$('log-level').value;patch.expectedLogLevel=metadataBase.level;}
-  if(!Object.keys(patch).length)return;
-  await command('patch',{patch});metadataDirty=false;$('metadata-dirty').textContent='';if(online){render(state);notice('设备设置已保存，当前连接保持运行。');}
-});
-$('quality').onclick=safe(async()=>{
-  if(!$('quality-peer').value)throw Error('请先连接对端');
-  await command('quality',{peerSlot:Number($('quality-peer').value),mbps:50});
-  cooldownUntil=Date.now()+110000;controls();
-});
-$('cancel-operation').onclick=safe(async()=>{
-  if(!state?.operation?.cancelable)throw Error('没有可取消任务；资源退出阶段需要等待实际完成。');
-  await command('cancel',{cancelOperationId:state.operation.id});
-});
-$('export').onclick=safe(()=>{
-  if(!state)throw Error('暂无状态');
-  const clean={...state,pairing:undefined,statusFresh:online,lastStatusAgeMs:performance.now()-lastStatusAt,exportedAt:new Date().toISOString(),physicalRouteEvidence:'NotCollected',userStreamingTrial:'PendingUserTrial'};
-  const link=document.createElement('a');
-  link.href=URL.createObjectURL(new Blob([JSON.stringify(clean,null,2)],{type:'application/json'}));
-  link.download='StreamLink-diagnostics.json';link.click();setTimeout(()=>URL.revokeObjectURL(link.href),1000);
-});
-$('theme').onclick=()=>{
-  const theme=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=theme;
-  try{localStorage.setItem('streamlink-theme',theme);}catch{}
-};
-async function boot() {
-  try {
-    try{document.documentElement.dataset.theme=localStorage.getItem('streamlink-theme')||'dark';}catch{}
-    const fragment=location.hash.slice(1),ticket=/^[a-f0-9]{64}$/i.test(fragment)?fragment:'';
-    history.replaceState(null,'',location.pathname);
-    const session=ticket?await api('/api/session',{ticket}):await api('/api/session');
-    csrf=session.csrf;await refresh();notice('');
-  } catch(error){notice(error.message,true);}
-}
-controls();boot();setInterval(tick,1000);
-setInterval(async()=>{
-  if(!csrf||expired)return;
-  try {
-    if(state?.pairing?.active&&!busy&&online)await network('pair-poll',{},true);
-    else await refresh();
-  } catch(error){notice(error.message,true);}
-},2500);
+async function boot(){bind();setTheme(theme);openSettings('system');navigate('overview');controls();$('device-rows').innerHTML='<tr class="empty-row"><td colspan="7">正在读取网络状态…</td></tr>';try{const ticket=location.hash.slice(1);history.replaceState(null,'',location.pathname);const session=await api('/api/session',/^[A-F0-9]{64}$/.test(ticket)?{ticket}:undefined);csrf=session.csrf;await refresh();}catch(error){unavailable(error.message);notice(error.message,true);}setInterval(async()=>{if(expired)return;await refresh();await pollPair();},2000);setInterval(()=>{if(online&&performance.now()-lastStatusAt>10000)unavailable('超过 10 秒未收到状态，正在重新读取。');if(online)renderPair();},1000);}
+boot();

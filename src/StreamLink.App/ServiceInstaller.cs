@@ -57,7 +57,7 @@ public static partial class ServiceInstaller
                 profileStore.AuditUiAuthorization("install-explicit-grant",previousUi,selectedUi);
             }
             string command="\""+Path.Combine(destination,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
-            await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", "auto", "DisplayName=", "StreamLink P2P Network");
+            await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", new StreamLink.Service.ProfileStore().Load().AutoStart?"auto":"demand", "DisplayName=", "StreamLink P2P Network");
             await Sc("description", WindowsInstance.Name, "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
             await Sc("failure", WindowsInstance.Name, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             await Sc("start", WindowsInstance.Name);

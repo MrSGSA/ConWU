@@ -8,9 +8,14 @@ using System.Text.RegularExpressions;
 namespace StreamLink.Core;
 
 public sealed record PairRoomCreate(string Commitment, string Name);
-public sealed record PairRoomJoin(string Code, string Commitment, string Name);
+public sealed record PairRoomJoin(string Code, string Commitment, string Name, string RequestedIp="", int Addressing=0);
 public sealed record PairRoomTicket(string Room, string Code, string Token, string HostCommitment, string HostName, long Expires, string Candidate = "");
-public sealed record PairRoomState(string Candidate, string GuestCommitment, string GuestName, string HostPublic, string GuestPublic, string Ciphertext, bool Approved, long Expires);
+public sealed record PairRoomState(string Candidate, string GuestCommitment, string GuestName, string HostPublic, string GuestPublic, string Ciphertext, bool Approved, long Expires)
+{
+    public string Outcome {get;init;}="";
+    public string RequestedIp {get;init;}="";
+    public int Addressing {get;init;}
+}
 public sealed record PairRoomReveal(string PublicKey);
 public sealed record PairRoomApproval(string Candidate, string Ciphertext);
 
@@ -104,21 +109,33 @@ public sealed class ShortPairClient : IDisposable
         return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
     }
     public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name), null, cancel);
-    public async Task RequireMeshSupport(CancellationToken cancel)
+    public async Task RequireMeshSupport(CancellationToken cancel,bool requireDecisions=false,bool requireAddressing=false)
     {
         using var response = await http.GetAsync("health", cancel); response.EnsureSuccessStatusCode();
         using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancel));
         if (!document.RootElement.TryGetProperty("meshProtocol", out var version) || version.GetInt32() != 4)
-            throw new IOException("协调服务器尚未支持多机网络。请先升级服务器至 0.4，再创建或加入网络；当前连接已保留。");
+            throw new IOException("协调服务器尚未支持多机网络。请先部署随包提供的协调服务，再创建或加入网络；当前连接已保留。");
+        if(requireDecisions && (!document.RootElement.TryGetProperty("pairingDecisions",out var decisions)||decisions.GetInt32()!=1))
+            throw new IOException("新版加入审批需要更新协调服务（拒绝与取消支持）。请部署本次附带的协调服务包；已有直连不受影响");
+        if(requireAddressing && (!document.RootElement.TryGetProperty("meshAddressing",out var addressing)||addressing.GetInt32()!=1))
+            throw new IOException("自定义虚拟 IP 需要新版协调服务；请部署本次附带的协调服务包");
     }
-    public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel)
+    public async Task RequireAddressing(CancellationToken cancel)
+    {
+        using var response=await http.GetAsync("health",cancel);response.EnsureSuccessStatusCode();
+        using var document=JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancel));
+        if(!document.RootElement.TryGetProperty("meshAddressing",out var value)||value.GetInt32()!=1)
+            throw new IOException("自定义虚拟 IP 需要新版协调服务；请部署本次协调服务包后再使用，原网络仍保留");
+    }
+    public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel,string requestedIp="")
     {
         if (!Regex.IsMatch(code, "^[0-9]{6}$")) throw new FormatException("请输入 6 位数字配对码");
-        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name), null, cancel);
+        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name,requestedIp,1), null, cancel);
     }
     public Task<PairRoomState> Poll(PairRoomTicket ticket, bool owner, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Get, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}", null, ticket.Token, cancel);
     public Task<PairRoomState> Reveal(PairRoomTicket ticket, bool owner, PairKeyExchange key, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}/reveal", new PairRoomReveal(key.PublicKey), ticket.Token, cancel);
     public Task<PairRoomState> Approve(PairRoomTicket ticket, string candidate, string cipher, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/approve", new PairRoomApproval(candidate, cipher), ticket.Token, cancel);
     public async Task Close(PairRoomTicket ticket, CancellationToken cancel) => _ = await Send<JsonElement>(HttpMethod.Delete, $"v2/pair/{ticket.Room}", null, ticket.Token, cancel);
+    public Task<PairRoomState> Finish(PairRoomTicket ticket,bool owner,CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post,$"v2/pair/{ticket.Room}/{(owner?"reject":"guest/cancel")}",new {},ticket.Token,cancel);
     public void Dispose() => http.Dispose();
 }

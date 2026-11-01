@@ -1,110 +1,53 @@
-// Development-only browser checks. Product runtime contains no Node/Playwright.
+// Uses the shipped WebPanel with real restricted IPC handlers. Mocked network
+// snapshots below are rendering evidence only, never a physical NAT result.
 const {chromium}=require('../out/browser-tools/node_modules/playwright');
-const {spawn}=require('child_process');
-const {createInterface}=require('readline');
+const {spawn}=require('child_process'),{createInterface}=require('readline');
 const fs=require('fs'),path=require('path');
-const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'artifacts/aq-browser'));
+const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'artifacts/webui-v2'));
 fs.mkdirSync(out,{recursive:true});
-const exe=path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe');
-const child=spawn(exe,['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot')],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
-let errors='',browser;child.stderr.on('data',d=>errors+=d.toString());
-const lines=createInterface({input:child.stdout}),queue=[],waiting=[];
-lines.on('line',l=>waiting.length?waiting.shift()(l):queue.push(l));
-const line=()=>queue.length?Promise.resolve(queue.shift()):Promise.race([new Promise(r=>waiting.push(r)),new Promise((_,r)=>setTimeout(()=>r(Error('fixture startup timeout')),20000))]);
-let checks=0;const findings=[];function check(ok,label){checks++;if(!ok)throw Error(label);findings.push(label);}
-(async()=>{
- try{
-  child.stdin.write('open\n');const link=await line();if(!link.startsWith('http://127.0.0.1:'))throw Error('fixture returned no launch link');
-  browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
-  const context=await browser.newContext({viewport:{width:1440,height:1050}});const page=await context.newPage();const jsErrors=[];page.on('pageerror',e=>jsErrors.push(e.message));
-  await page.goto(link);await page.getByText('后台已就绪',{exact:true}).waitFor();
-  check(!page.url().includes('#'),'one-use fragment removed from browser location');
-  check(await page.locator('.nav').count()===3,'three navigation entries with device list on the connection page');
-  await page.screenshot({path:path.join(out,'overview-desktop.png'),fullPage:true});
-  await page.locator('[data-page="settings"]').click();await page.locator('#device-name').fill('AQ browser draft');
-  await page.waitForTimeout(3000);check(await page.locator('#device-name').inputValue()==='AQ browser draft','polling preserves edited metadata draft');
-  await page.getByRole('button',{name:'保存设备设置',exact:true}).click();await page.getByText('设备设置已保存，当前连接保持运行。',{exact:true}).waitFor();
-  await page.reload();await page.getByText('后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
-  check(await page.locator('#device-name').inputValue()==='AQ browser draft','real backend persisted metadata across page reload');
-  await page.locator('#connection-settings > summary').click();await page.locator('#allow-quality').check();
-  check(JSON.stringify(await page.locator('#policy option').evaluateAll(xs=>xs.map(x=>x.value)))===JSON.stringify(['faketcp-only','udp-only']),'settings expose exactly two fixed protocols and no automatic fallback');
-  await page.locator('#policy').selectOption('udp-only');
-  await page.waitForTimeout(3000);check(await page.locator('#allow-quality').isChecked(),'polling preserves connection settings draft');
-  await page.getByRole('button',{name:'保存连接设置',exact:true}).click();await page.getByText('设置已保存。',{exact:true}).waitFor();
-  check(await page.locator('#allow-quality').isChecked(),'permitted connection setting saved through restricted service handler');
-  await page.reload();await page.getByText('后台已就绪',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
-  check(await page.locator('#policy').inputValue()==='udp-only','explicit UDP choice persists after a real browser reload');
-  await page.locator('#connection-settings > summary').click();await page.locator('#policy').selectOption('faketcp-only');
-  await page.getByRole('button',{name:'保存连接设置',exact:true}).click();await page.getByText('设置已保存。',{exact:true}).waitFor();
-  check(await page.locator('#policy').inputValue()==='faketcp-only','user can return to fixed FakeTCP without re-pairing');
-  await page.locator('[data-page="network"]').click();await page.locator('#server').fill('http://127.0.0.1/');await page.getByRole('button',{name:'创建网络',exact:true}).click();
-  await page.getByText('请填写 HTTPS 协调地址',{exact:true}).waitFor();check(true,'invalid coordination scheme produces actionable error without I/O');
-  // Feed statuses through HTTP, exercising the shipped rendering/timers rather
-  // than calling JS internals. This section is UI evidence, not WAN evidence.
-  const base=(await (await page.request.get(new URL('/api/status',link).href)).json()).status;
-  const peer={slot:2,name:'Akane',virtualIp:'10.81.7.2',connected:true,degraded:false,rttMs:23.4,phase:'P2P 直连',actualTransport:'FakeTCP+HTTP',traversalMethod:'ExplicitEntry',sentBytes:1024,receivedBytes:2048,droppedPackets:0,quality:'Unknown',liveness:{reason:'Healthy',receiveAgeMs:10,roundTripAgeMs:50},connection:{phase:'Connected',detail:'已验证直连',elapsedMs:35000,attempt:1,canRetry:false}};
-  let mock={...base,state:'已直连',virtualIp:'10.81.7.1',networkId:'browser-fixture',networkEnabled:true,totalPeers:1,directPeers:1,peers:[peer],connection:{phase:'Connected',detail:'直连已通过双向验证，可复制设备 IP 开始串流。',elapsedMs:35000,attempt:1,canRetry:false}},failure=0,retryDeadline=0;
-  await page.route('**/api/status',r=>{
-    if(retryDeadline)mock.connection.retryInSeconds=Math.max(0,Math.ceil((retryDeadline-Date.now())/1000));
-    return r.fulfill({status:failure||200,contentType:'application/json',body:JSON.stringify(failure?{ok:false,code:'Stopped',error:'本机后台暂未响应'}:{ok:true,status:mock})});
-  });
-  await page.locator('[data-page="overview"]').click();await page.locator('#refresh').click();await page.getByRole('heading',{name:'Akane',exact:true}).waitFor();
-  check(await page.locator('#retry').isHidden(),'healthy connection does not invite unnecessary retry');
-  await page.locator('.peer details > summary').click();await page.waitForTimeout(3000);
-  check(await page.locator('.peer details').evaluate(e=>e.open),'polling preserves expanded peer details');
-  await page.screenshot({path:path.join(out,'connection-desktop.png'),fullPage:true});
-  const healthy={...mock};
-  const incompatible={phase:'Blocked',detail:'双方没有共同的可用打洞协议；请在两端设置中选择相同的传输模式，并检查组件是否可用。不会自动切换协议。',reasonCode:'NoCommonTransport',canRetry:false};
-  mock={...healthy,state:'有设备需要处理',directPeers:0,peers:[{...peer,connected:false,actualTransport:'None',traversalMethod:'None',connection:incompatible,liveness:null}],connection:incompatible};
-  await page.locator('#refresh').click();await page.getByRole('heading',{name:'有设备需要处理',exact:true}).waitFor();
-  check((await page.locator('#connection-card').innerText()).includes('不会自动切换协议')&&await page.locator('#retry').isHidden(),'incompatible modes explain the required settings change without inviting a futile retry');
-  check(await page.locator('#connection-steps').isHidden()&&!(await page.locator('#connection-card').innerText()).includes('已等待')&&!(await page.locator('body').innerText()).includes('NaN'),'blocked protocol choice has no running connection timer or invalid duration');
-  await page.screenshot({path:path.join(out,'incompatible-mode.png'),fullPage:true});
-  const offline={...peer,slot:3,name:'未开机的电脑',virtualIp:'10.81.7.3',connected:false,rttMs:null,connection:{phase:'Offline',detail:'尚未收到此设备的有效上线信息；上线后会自动连接。',elapsedMs:0,canRetry:false}};
-  mock={...healthy,totalPeers:2,peers:[peer,offline],connection:{...healthy.connection,detail:'已直连 1 台设备；另有 1 台设备未在线，上线后会自动连接。'}};
-  await page.locator('#refresh').click();await page.getByRole('heading',{name:'未开机的电脑',exact:true}).waitFor();
-  check(await page.locator('#network-state').innerText()==='已直连'&&await page.locator('#connection-steps').isHidden()&&await page.locator('#retry').isHidden(),'an offline paired device does not turn a healthy connection into waiting');
-  check(await page.locator('.peer').nth(1).locator('.badge').innerText()==='未在线'&&!(await page.locator('.peer').nth(1).innerText()).includes('已等待'),'offline device has no indefinitely growing wait timer');
-  await page.screenshot({path:path.join(out,'connected-with-offline-member.png'),fullPage:true});
-  mock={...mock,state:'网络已就绪',directPeers:0,totalPeers:1,peers:[offline],connection:{phase:'Idle',detail:'已配对设备暂未在线，上线后会自动连接。',elapsedMs:0,canRetry:false}};
-  await page.locator('#refresh').click();await page.getByRole('heading',{name:'网络已就绪',exact:true}).waitFor();
-  check(await page.locator('#connection-progress').innerText()===''&&await page.locator('#connection-steps').isHidden()&&await page.locator('#connection-card').getAttribute('data-state')==='idle','network with only offline members is ready without a pending progress indicator');
-  mock={...mock,totalPeers:0,peers:[],pairing:null,connection:{...mock.connection,detail:'当前没有其他设备；需要时可在“添加设备”中邀请电脑。'}};
-  await page.locator('#refresh').click();await page.locator('.empty').waitFor();
-  check(!(await page.locator('.empty').innerText()).includes('等待')&&await page.locator('#retry').isHidden(),'empty membership does not request more devices or repeated retries');
-  await page.screenshot({path:path.join(out,'idle-network.png'),fullPage:true});
-  await page.locator('[data-page="network"]').click();
-  check(await page.locator('#verification').innerText()==='—','no pairing request is shown as waiting unless an invitation is active');
-  mock={...healthy,directPeers:0,peers:[{...offline,connection:{phase:'WaitingPeer',detail:'等待本轮直连响应',elapsedMs:3000,remainingSeconds:10,canRetry:true}}],connection:{phase:'WaitingPeer',detail:'等待本轮直连响应',elapsedMs:3000,remainingSeconds:10,canRetry:true},state:'等待设备响应'};
-  await page.locator('[data-page="overview"]').click();await page.locator('#refresh').click();await page.getByRole('heading',{name:'等待设备响应',exact:true}).waitFor();
-  check(await page.locator('#connection-steps').isVisible()&&(await page.locator('#connection-progress').innerText()).includes('本轮剩余'),'a real bounded connection attempt still shows progress and deadline');
-  mock={...healthy};
-  peer.connected=false;peer.rttMs=null;peer.liveness={reason:'ReturnPathTimedOut',receiveAgeMs:25,roundTripAgeMs:12500};
-  peer.connection={phase:'Retrying',detail:'同路径往返验证超时，正在恢复。',elapsedMs:65000,attempt:2,retryInSeconds:9,canRetry:true};
-  retryDeadline=Date.now()+9000;
-  mock={...mock,state:'正在恢复',directPeers:0,connection:peer.connection};
-  await page.locator('#refresh').click();await page.getByRole('heading',{name:'正在恢复',exact:true}).waitFor();
-  check((await page.locator('#connection-progress').innerText()).includes('9 秒后重试')&&await page.locator('#retry').isVisible(),'real retry countdown and user action are visible during recovery');
-  await page.waitForFunction(()=>!document.getElementById('connection-progress').textContent.includes('9 秒后重试'),null,{timeout:4000});check(true,'retry timer advances between server polls');
-  let retryCommand='';await page.route('**/api/command',r=>{retryCommand=r.request().postDataJSON().method;return r.fulfill({contentType:'application/json',body:JSON.stringify({ok:true,status:mock})});});
-  await page.locator('#retry').click();await page.getByText('已请求重新探测，健康连接保持运行。',{exact:true}).waitFor();
-  check(retryCommand==='retry','retry action calls the dedicated backend method');await page.unroute('**/api/command');
-  failure=503;await page.locator('#refresh').click();await page.getByRole('heading',{name:'面板暂未连接后台',exact:true}).waitFor();
-  check(await page.locator('#retry').isDisabled()&&await page.locator('.badge').innerText()==='状态未更新','backend failure removes stale connected claims and disables network mutations');
-  failure=0;peer.name='<img src=x onerror=alert(1)>';await page.locator('#refresh').click();await page.getByText('后台已就绪',{exact:true}).waitFor();
-  check(await page.locator('.peer-name').innerText()===peer.name&&await page.locator('.peer img').count()===0,'peer names render as text, never HTML');
-  await page.locator('[data-page="overview"]').click();await page.locator('#theme').click();
-  check(await page.locator('html').getAttribute('data-theme')==='light','light theme works');
-  await page.screenshot({path:path.join(out,'overview-light.png'),fullPage:true});
-  await page.setViewportSize({width:390,height:844});
-  check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'390px layout has no horizontal overflow');
-  await page.screenshot({path:path.join(out,'overview-mobile.png'),fullPage:true});
-  await page.keyboard.press('Tab');check(await page.evaluate(()=>document.activeElement.tagName)!=='BODY','keyboard focus is reachable');
-  check(jsErrors.length===0,'no browser JavaScript errors');
-  failure=401;await page.locator('#refresh').click();await page.getByRole('heading',{name:'请重新打开面板',exact:true}).waitFor();
-  check((await page.locator('#state-detail').innerText()).includes('后台网络继续运行'),'panel session expiration is distinguished from data connection failure');
-  await page.close();const reopened=await context.newPage();await reopened.goto(new URL(link).origin);await reopened.getByText('后台已就绪',{exact:true}).waitFor();check(true,'closing/reopening browser page preserves backend');
-  fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Pass',checks,findings,scope:'real headless Edge + isolated actual ControlWorker for settings; synthetic HTTP status transitions for recovery/backend failure/expiration; no SCM/driver/physical WAN/user streaming claim'},null,2));
- }catch(e){fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Fail',checks,findings,error:e.message,stderr:errors},null,2));process.exitCode=1;}
- finally{if(browser)await browser.close();child.stdin.end('quit\n');await Promise.race([new Promise(r=>child.once('exit',r)),new Promise(r=>setTimeout(()=>{child.kill();r();},5000))]);lines.close();}
-})().then(()=>process.exit(process.exitCode||0));
+const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot')],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+let stderr='',browser;child.stderr.on('data',d=>stderr+=d);let waiting;const lines=[];createInterface({input:child.stdout}).on('line',l=>waiting?(waiting(l),waiting=null):lines.push(l));
+function nextLine(){if(lines.length)return Promise.resolve(lines.shift());return new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('fixture startup timeout '+stderr)),20000);waiting=l=>{clearTimeout(t);resolve(l);};});}
+let checks=0;const findings=[];function check(ok,message){if(!ok)throw Error(message);checks++;findings.push(message);}
+(async()=>{try{
+ child.stdin.write('open\n');const link=await nextLine();
+ browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
+ const context=await browser.newContext({viewport:{width:1440,height:1050}}),page=await context.newPage(),errors=[],csp=[];
+ page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|violates.*directive/i.test(m.text()))csp.push(m.text());});
+ await page.goto(link);await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();
+ check(!page.url().includes('#'),'one-use launch ticket is removed');check(await page.locator('.nav').count()===5,'five separate product pages');
+ check(!(await page.locator('body').innerText()).includes('交互预览'),'production page has no simulation controls');
+ await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=identity]').click();await page.locator('#settings-name').fill('浏览器 <test>');await page.waitForTimeout(2200);check(await page.locator('#settings-name').inputValue()==='浏览器 <test>','status polling retains metadata draft');
+ await page.locator('#identity-form button[type=submit]').click();await page.locator('#toast').filter({hasText:'本机设置已保存'}).waitFor();await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();
+ check(await page.locator('#overview-device-name').innerText()==='浏览器 <test>','real restricted backend saves device name across reload');
+ await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=network]').click();
+ check(JSON.stringify(await page.locator('#protocol option').evaluateAll(xs=>xs.map(x=>x.value)))===JSON.stringify(['faketcp','udp']),'exactly two fixed protocols with no UDP fallback');
+ await page.locator('#coordination-url').fill('https://example.com/');await page.locator('#protocol').selectOption('udp');await page.locator('#stun-servers').fill('');await page.locator('#udp-stun-servers').fill('stun.example.com:3478');await page.waitForTimeout(2200);check(await page.locator('#protocol').inputValue()==='udp','network draft survives polling');
+ await page.locator('#network-form button[type=submit]').click();await page.locator('#toast').filter({hasText:'连接设置已保存'}).waitFor();
+ await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();check(await page.locator('#protocol').inputValue()==='udp','protocol choice persists through real backend');check((await page.locator('#stun-servers').inputValue()).length>0,'blank STUN list restores built-in list');check(await page.locator('#udp-stun-servers').inputValue()==='stun.example.com:3478','UDP STUN list is saved separately');
+ await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=network]').click();await page.locator('#protocol').selectOption('faketcp');await page.locator('input[name=connection-mode][value=existing]').check();await page.locator('#entry-sources').fill('203.0.113.1:44680\n203.0.113.2:44681');await page.locator('#resolve-entries').click();await page.locator('#resolve-summary').filter({hasText:'2/2'}).waitFor();check((await page.locator('#resolver-results').innerText()).includes('仍需对端验证'),'resolver success does not imply authenticated business connectivity');
+ await page.locator('#network-form button[type=submit]').click();await page.locator('#toast').filter({hasText:'连接设置已保存'}).waitFor();
+ const base=(await (await page.request.get(new URL('/api/status',link).href)).json()).status;
+ check(base.settings.existingEntries.length===2&&base.settings.connectionSource==='existing','multiple source entries persist in restricted service settings');
+ const peer={slot:2,name:'Akane',virtualIp:'10.171.139.2',connected:true,rttMs:18,phase:'P2P 直连',actualTransport:'FakeTCP+HTTP',sentBytes:1000000,receivedBytes:100000000,outerTarget:'203.0.113.1:44680',connection:{phase:'Connected',detail:'已验证直连',elapsedMs:10000},liveness:{reason:'Healthy'}};
+ let mock={...base,deviceName:'Thinkbook',networkId:'browser-fixture',virtualIp:'10.171.139.1',isOwner:true,networkEnabled:true,state:'已直连',directPeers:1,totalPeers:2,networkEstablishedAt:Math.floor(Date.now()/1000)-3600,networkCreatedHere:true,desktop:{serviceRegistered:true,autoStart:true},peers:[peer,{...peer,slot:3,name:'离线设备',virtualIp:'10.171.139.3',connected:false,rttMs:null,actualTransport:'None',connection:{phase:'Offline',detail:'设备未在线'}}],connection:{phase:'Connected',detail:'已直连 1 台设备',elapsedMs:10000},pairing:{active:true,owner:true,code:'684219',candidate:'candidate-1',peerName:'Natsu <unsafe>',verification:'123456',proposedIp:'10.171.139.4',expires:Math.floor(Date.now()/1000)+300,state:'请核对校验码'},logs:['12:00:00 [INFO] 已直连','12:00:01 [WARN] 暂未找到入口','12:00:02 [ERROR] 测试错误','12:00:03 [DEBUG] <script>unsafe</script>']};
+ await page.route('**/api/command',r=>{const command=r.request().postDataJSON();return command.network?.action==='pair-poll'?r.fulfill({status:200,contentType:'application/json',body:JSON.stringify({ok:true,status:mock})}):r.continue();});
+ let failure=0;await page.route('**/api/status',r=>r.fulfill({status:failure||200,contentType:'application/json',body:JSON.stringify(failure?{ok:false,error:'后台暂不可用'}:{ok:true,status:mock})}));
+ await page.locator('[data-page=overview]').click();await page.locator('#overview-device-name').filter({hasText:'Thinkbook'}).waitFor();
+ check(await page.locator('.peer-row').count()===2,'overview renders per-device rows including offline members');check(await page.locator('#retry-network').isHidden(),'healthy connection does not invite unnecessary retry');
+ await page.locator('[data-detail="2"]').click();await page.waitForTimeout(2300);check(await page.locator('.peer-detail').count()===1,'expanded peer details survive refresh');
+ check((await page.locator('#device-rows').innerText()).includes('100.0 MB'),'per-peer counters are actual payload bytes');
+ await page.screenshot({path:path.join(out,'overview-desktop.png'),fullPage:true});
+ await page.locator('[data-page=join]').click();await page.locator('#join-tab-incoming').click();check(await page.locator('#request-nav-badge').isVisible(),'new request badge remains until request is processed');
+ check(await page.locator('[data-approve]').getAttribute('class')===await page.locator('[data-reject]').getAttribute('class'),'approve and reject have equal visual weight');check(await page.locator('#incoming-list script').count()===0&&(await page.locator('#incoming-list').innerText()).includes('Natsu <unsafe>'),'untrusted peer name is text, not HTML');
+ await page.screenshot({path:path.join(out,'join-request.png'),fullPage:true});
+ await page.locator('[data-page=logs]').click();check(await page.locator('.log-severity.warn').count()>0&&await page.locator('.log-severity.error').count()>0,'terminal uses severity-specific classes');await page.locator('#terminal-theme').selectOption('light');check(await page.locator('#log-terminal').getAttribute('data-terminal')==='light','terminal theme is independently configurable');check(await page.locator('#terminal-content script').count()===0,'log text cannot execute HTML');await page.screenshot({path:path.join(out,'logs-light.png'),fullPage:true});
+ await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=network]').click();check(await page.locator('#entry-owner option').count()===3,'entry owners match current network membership');check(await page.locator('input[name=connection-mode][value=public]').isDisabled(),'unprovided public coordination stays visibly unavailable');await page.screenshot({path:path.join(out,'existing-settings.png'),fullPage:true});
+ await page.setViewportSize({width:390,height:844});for(const name of ['overview','create','join','logs','settings']){await page.locator('[data-page='+name+']').click();check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth+1),'no horizontal overflow at 390px: '+name);await page.screenshot({path:path.join(out,name+'-mobile.png'),fullPage:true});}
+ mock={...mock,pairing:{...mock.pairing,owner:false,code:'',candidate:'candidate-2',peerName:'Host',state:'等待主机同意'}};await page.locator('[data-page=join]').click();await page.locator('#join-tab-outgoing').click();await page.locator('[data-cancel-join]').waitFor();check((await page.locator('#join-status-view').innerText()).includes('123456'),'joining device shows verification and cancellation');
+ failure=503;await page.locator('#backend-state').filter({hasText:'后台状态未更新'}).waitFor();check(await page.locator('#network-toggle').isDisabled(),'stale backend disables mutations');check(await page.locator('#metric-up').innerText()==='—','stale data never displays a current speed');
+ failure=0;await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();check(true,'existing panel session recovers after backend outage');
+ check(errors.length===0,'zero browser JavaScript errors');check(csp.length===0,'strict CSP without inline script or style violations');
+ fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Pass',checks,findings,jsErrors:errors,cspErrors:csp,scope:'Real local restricted handlers and browser rendering; mocked peer snapshots do not prove physical NAT/streaming'},null,2));console.log('PASS '+checks+' browser checks');
+ }catch(e){fs.writeFileSync(path.join(out,'failure.txt'),e.stack+'\n'+stderr);console.error(e);process.exitCode=1;}finally{if(browser)await browser.close();child.stdin.write('quit\n');setTimeout(()=>child.kill(),1500).unref();}
+})();

@@ -9,8 +9,16 @@ public sealed class MeshRevokedException() : IOException("本设备已被移出�
 // A network administrator signs membership; members have independent signing
 // and ECDH keys. The six-digit exchange delivers one device credential, never
 // the administrator key. Slots are never recycled within a network.
-public sealed record MeshMember(int Slot, string Device, string SigningKey, string ExchangeKey, string Signature);
-public sealed record MeshDirectory(string Network, string OwnerKey, long Revision, int NextSlot, MeshMember[] Members, string Signature);
+public sealed record MeshMember(int Slot, string Device, string SigningKey, string ExchangeKey, string Signature)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? VirtualIp {get;init;}
+}
+public sealed record MeshDirectory(string Network, string OwnerKey, long Revision, int NextSlot, MeshMember[] Members, string Signature)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string[]? ReservedAddresses {get;init;}
+}
 public sealed record MeshEnrollment(Pairing Pair, string OwnerKey, MeshMember Member, string SigningPrivate, string ExchangePrivate, long Expires);
 public sealed class MeshProfile
 {
@@ -22,7 +30,7 @@ public sealed class MeshProfile
     public string ExchangePrivate { get; set; } = "";
     public MeshDirectory? Directory { get; set; }
     public bool IsOwner => OwnerPrivate.Length > 0;
-    public string LocalIp => MeshIdentity.Address(Pair.Network, Self.Slot);
+    public string LocalIp => MeshAddressing.Address(Pair.Network, Self);
     public void Validate()
     {
         Pair.Validate(); MeshIdentity.ValidateMember(Pair.Network, OwnerKey, Self);
@@ -37,8 +45,12 @@ public static class MeshIdentity
 {
     public const int MaxMembers = 8;
     static byte[] Data(object value) => JsonSerializer.SerializeToUtf8Bytes(value);
-    static byte[] MemberData(string network, MeshMember member) => Data(new { domain = "streamlink-member-v4", network, member.Slot, member.Device, member.SigningKey, member.ExchangeKey });
-    static byte[] DirectoryData(MeshDirectory directory) => Data(new { domain = "streamlink-directory-v4", directory.Network, directory.OwnerKey, directory.Revision, directory.NextSlot, directory.Members });
+    static byte[] MemberData(string network, MeshMember member) => member.VirtualIp == null
+        ? Data(new { domain = "streamlink-member-v4", network, member.Slot, member.Device, member.SigningKey, member.ExchangeKey })
+        : Data(new { domain = "streamlink-member-address-v1", network, member.Slot, member.Device, member.SigningKey, member.ExchangeKey, member.VirtualIp });
+    static byte[] DirectoryData(MeshDirectory directory) => directory.ReservedAddresses == null
+        ? Data(new { domain = "streamlink-directory-v4", directory.Network, directory.OwnerKey, directory.Revision, directory.NextSlot, directory.Members })
+        : Data(new { domain = "streamlink-directory-address-v1", directory.Network, directory.OwnerKey, directory.Revision, directory.NextSlot, directory.Members, directory.ReservedAddresses });
     public static string NetworkId(string ownerKey) => Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(ownerKey)).AsSpan(0, 16)).ToLowerInvariant();
     public static string Prefix(string network)
     {
@@ -54,30 +66,37 @@ public static class MeshIdentity
         try { using var ec = ECDsa.Create(); byte[] bytes = Convert.FromBase64String(key); ec.ImportSubjectPublicKeyInfo(bytes, out int used); return used == bytes.Length && ec.KeySize == 256 && ec.ExportParameters(false).Curve.Oid.Value == "1.2.840.10045.3.1.7" && ec.VerifyData(data, Convert.FromBase64String(signature), HashAlgorithmName.SHA256); }
         catch (Exception ex) when (ex is CryptographicException or FormatException or ArgumentException) { return false; }
     }
-    static (MeshMember member, string signing, string exchange) NewMember(string network, string owner, int slot)
+    static (MeshMember member, string signing, string exchange) NewMember(string network, string owner, int slot, string? virtualIp=null)
     {
         using var sign = ECDsa.Create(ECCurve.NamedCurves.nistP256); using var exchange = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
-        var member = new MeshMember(slot, Guid.NewGuid().ToString("N"), Convert.ToBase64String(sign.ExportSubjectPublicKeyInfo()), Convert.ToBase64String(exchange.ExportSubjectPublicKeyInfo()), "");
+        var member = new MeshMember(slot, Guid.NewGuid().ToString("N"), Convert.ToBase64String(sign.ExportSubjectPublicKeyInfo()), Convert.ToBase64String(exchange.ExportSubjectPublicKeyInfo()), "") {VirtualIp=virtualIp};
         return (member with { Signature = Sign(owner, MemberData(network, member)) }, Convert.ToBase64String(sign.ExportPkcs8PrivateKey()), Convert.ToBase64String(exchange.ExportPkcs8PrivateKey()));
     }
     static MeshDirectory SignDirectory(MeshProfile profile, MeshMember[] members, int next) {
         var directory = new MeshDirectory(profile.Pair.Network, profile.OwnerKey, (profile.Directory?.Revision ?? 0) + 1, next, members.OrderBy(m => m.Slot).ToArray(), "");
+        if(profile.Directory?.ReservedAddresses!=null || members.Any(m=>m.VirtualIp!=null)) {
+            var prior=profile.Directory?.ReservedAddresses??(profile.Directory==null?[]:Enumerable.Range(1,profile.Directory.NextSlot-1).Select(i=>Address(profile.Pair.Network,i)).ToArray());
+            directory=directory with {ReservedAddresses=prior.Concat(members.Select(m=>MeshAddressing.Address(profile.Pair.Network,m))).Distinct().Order().ToArray()};
+        }
         return directory with { Signature = Sign(profile.OwnerPrivate, DirectoryData(directory)) };
     }
-    public static MeshProfile Create(string service, string pin, string mode)
+    public static MeshProfile Create(string service, string pin, string mode, string virtualIp="")
     {
+        if(virtualIp.Length>0)MeshAddressing.ValidateAddress(virtualIp);
         using var owner = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var profile = new MeshProfile { OwnerKey = Convert.ToBase64String(owner.ExportSubjectPublicKeyInfo()), OwnerPrivate = Convert.ToBase64String(owner.ExportPkcs8PrivateKey()) };
         profile.Pair = Pairing.Create(service, pin, mode) with { Network = NetworkId(profile.OwnerKey) };
-        var keys = NewMember(profile.Pair.Network, profile.OwnerPrivate, 1);
+        var keys = NewMember(profile.Pair.Network, profile.OwnerPrivate, 1,virtualIp.Length>0?virtualIp:null);
         profile.Self = keys.member; profile.SigningPrivate = keys.signing; profile.ExchangePrivate = keys.exchange;
         profile.Directory = SignDirectory(profile, [profile.Self], 2); profile.Validate(); return profile;
     }
-    public static MeshEnrollment Issue(MeshProfile owner)
+    public static MeshEnrollment Issue(MeshProfile owner,string requestedIp="")
     {
         owner.Validate(); if (!owner.IsOwner || owner.Directory == null) throw new IOException("仅创建者可以邀请成员");
         if (owner.Directory.Members.Length >= MaxMembers || owner.Directory.NextSlot > 254) throw new IOException("本网络的成员额度已用完");
-        var keys = NewMember(owner.Pair.Network, owner.OwnerPrivate, owner.Directory.NextSlot);
+        string ip=MeshAddressing.Next(owner,requestedIp);
+        var keys = NewMember(owner.Pair.Network, owner.OwnerPrivate, owner.Directory.NextSlot,
+            owner.Directory.ReservedAddresses!=null || ip!=Address(owner.Pair.Network,owner.Directory.NextSlot)?ip:null);
         owner.Directory = SignDirectory(owner, [.. owner.Directory.Members, keys.member], owner.Directory.NextSlot + 1);
         return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds());
     }
@@ -97,6 +116,7 @@ public static class MeshIdentity
     }
     public static void ValidateMember(string network, string owner, MeshMember member)
     {
+        if(member?.VirtualIp is {} ip)MeshAddressing.ValidateAddress(ip);
         if (member == null || member.Slot is < 1 or > 254 || !Guid.TryParseExact(member.Device, "N", out _) || NetworkId(owner) != network || !Verify(owner, MemberData(network, member), member.Signature)) throw new CryptographicException("成员签名无效");
         PairKeyExchange.ValidatePublic(member.ExchangeKey, Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(member.ExchangeKey))));
         using var sign = ECDsa.Create(); sign.ImportSubjectPublicKeyInfo(Convert.FromBase64String(member.SigningKey), out _);
@@ -106,6 +126,12 @@ public static class MeshIdentity
     {
         if (directory.Network != network || directory.OwnerKey != owner || directory.Revision < Math.Max(1, minimumRevision) || directory.NextSlot is < 2 or > 255 || directory.Members is not { Length: >= 1 and <= MaxMembers } || directory.Members.Select(m => m.Slot).Distinct().Count() != directory.Members.Length || directory.Members.Select(m => m.Device).Distinct().Count() != directory.Members.Length || directory.Members.Count(m => m.Slot == 1) != 1 || directory.Members.Any(m => m.Slot >= directory.NextSlot) || !Verify(owner, DirectoryData(directory), directory.Signature)) throw new CryptographicException("成员目录无效或已回退");
         foreach (var member in directory.Members) ValidateMember(network, owner, member);
+        var addresses=directory.Members.Select(m=>MeshAddressing.Address(network,m)).ToArray();
+        if(addresses.Distinct().Count()!=addresses.Length || addresses.Select(MeshAddressing.Prefix).Distinct().Count()!=1)throw new CryptographicException("成员 IP 冲突或网段不一致");
+        if(directory.ReservedAddresses is {} reserved){
+            if(reserved.Length is <1 or >254 || reserved.Distinct().Count()!=reserved.Length || addresses.Any(ip=>!reserved.Contains(ip)))throw new CryptographicException("地址保留记录无效");
+            foreach(string ip in reserved)MeshAddressing.ValidateAddress(ip);
+        }
     }
     public static byte[] SharedKey(MeshProfile local, MeshMember peer)
     {

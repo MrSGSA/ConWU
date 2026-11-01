@@ -49,10 +49,14 @@ public sealed partial class ControlWorker : BackgroundService
         lock (sync)
         {
             text=SensitiveText.Redact(text,profile);
-            string line = $"{DateTime.Now:HH:mm:ss} {text}"; logs.Enqueue(line); while (logs.Count > 80) logs.Dequeue();
+            bool error=text.Contains("失败")||text.Contains("异常");
+            bool warning=text.Contains("未完成")||text.Contains("不可用")||text.Contains("重试")||text.Contains("拒绝");
+            bool debug=text.StartsWith("ShutdownStage=")||text.StartsWith("CandidateFactoryReady")||text.StartsWith("TraversalReady")||text.StartsWith("RouterPressure")||text.StartsWith("WintunLifecycle");
+            string level=error?"ERROR":warning?"WARN":debug?"DEBUG":"INFO";
+            if(profile.LogLevel=="off" || profile.LogLevel=="error"&&!error || profile.LogLevel=="warn"&&!error&&!warning || profile.LogLevel!="debug"&&debug&&!error&&!warning)return;
+            string line = $"{DateTime.Now:HH:mm:ss} [{level}] {text}"; logs.Enqueue(line); while (logs.Count > 80) logs.Dequeue();
             PublishReply();
-            bool error = text.Contains("失败") || text.Contains("未完成") || text.Contains("不可用") || text.Contains("重试") || text.Contains("异常");
-            if (profile.LogLevel != "off" && (profile.LogLevel != "error" || error)) {
+            {
                 try {
                     string folder = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(ProfileStore.Root, "logs");
                     Directory.CreateDirectory(folder);

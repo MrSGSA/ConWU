@@ -21,7 +21,7 @@ internal static class PersonalPacketAdapters
         return await Task.Factory.StartNew<IPacketAdapter>(() => {
             // Official PnP APIs are synchronous. Keep their waits off the
             // packet/control thread pool and join their rollback on cancel.
-            var official = new NativeAdapter(Path.Combine(AppContext.BaseDirectory,"components"),mesh.Pair.Network,mesh.Self.Slot,trace,token);
+            var official = new NativeAdapter(Path.Combine(AppContext.BaseDirectory,"components"),mesh.Pair.Network,mesh.Self.Slot,trace,token,mesh.LocalIp);
             try { token.ThrowIfCancellationRequested(); PacketAdapterProviders.RequireProduction(official.Descriptor); return official; }
             catch { official.Dispose(); throw; }
         }, CancellationToken.None, TaskCreationOptions.LongRunning, TaskScheduler.Default);

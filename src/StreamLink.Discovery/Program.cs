@@ -75,7 +75,7 @@ app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatc
 app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch input) => meshRegistry.Traversal(c, network, input)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, meshProtocol = 4, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false }));
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, meshAddressing = 1, meshProtocol = 4, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false }));
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
 app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");
@@ -84,6 +84,8 @@ app.MapPost("/v2/pair/{room}/owner/reveal", (HttpContext c, string room, PairRoo
 app.MapPost("/v2/pair/{room}/guest/reveal", (HttpContext c, string room, PairRoomReveal input) => pairRooms.Exchange(c, room, false, input)).RequireRateLimiting("pair-room");
 app.MapPost("/v2/pair/{room}/approve", (HttpContext c, string room, PairRoomApproval input) => pairRooms.Exchange(c, room, true, approve: input)).RequireRateLimiting("pair-room");
 app.MapDelete("/v2/pair/{room}", (HttpContext c, string room) => pairRooms.Exchange(c, room, true, close: true)).RequireRateLimiting("pair-room");
+app.MapPost("/v2/pair/{room}/reject", (HttpContext c,string room) => pairRooms.Exchange(c,room,true,finish:true)).RequireRateLimiting("pair-room");
+app.MapPost("/v2/pair/{room}/guest/cancel", (HttpContext c,string room) => pairRooms.Exchange(c,room,false,finish:true)).RequireRateLimiting("pair-room");
 app.MapGet("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot) => Exchange(c, network, slot, null)).RequireRateLimiting("metadata");
 app.MapPut("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot, Envelope envelope) => Exchange(c, network, slot, envelope)).RequireRateLimiting("metadata");
 try { app.Run(); } finally { if (synCapture != null) await synCapture.DisposeAsync(); }

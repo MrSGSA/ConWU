@@ -152,7 +152,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             } catch (Exception ex) when (ex is FormatException or System.Security.Cryptography.CryptographicException) { log("已拒绝无效打洞控制消息"); }
         }
     }
-    public void Tick(IReadOnlyDictionary<int, MeshAnnouncement> announcements, string localExplicit)
+    public void Tick(IReadOnlyDictionary<int, MeshAnnouncement> announcements, string localExplicit,IReadOnlySet<int>? preferredEntries=null)
     {
         if (disposed) return;
         admissionWaiting.Clear();
@@ -175,6 +175,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
         MeshTraversalCapabilities? Remote(int slot) => announcements.TryGetValue(slot, out var a) && a.Expires > utc ? a.Traversal : null;
         bool HasExplicit(int slot) {
             if(!router.LegacyAllowed) return false;
+            if(preferredEntries?.Contains(slot)==true)return true;
             string remote = announcements.TryGetValue(slot, out var a) && a.Expires > utc ? a.Endpoint : "";
             string key = localExplicit + "|" + remote;
             if (key == "|") { explicitPriority.Remove(slot); return false; }
