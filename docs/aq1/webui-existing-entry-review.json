@@ -34,5 +34,13 @@
     "cause": "A failed optional mapping probe completed in the same tick as caller cancellation; the cancellation-dependent catch filter let its IOException escape as a stop failure.",
     "fix": "Normalize the probe result to caller cancellation before retry/logging, while retaining the independent cleanup proof and MeshShutdownException contract.",
     "regression": "Deterministically cancel within the probe callback and return a failed task. Pre-fix failure retained in artifacts/rc8-probe-cancel-before.log; assert cancellation plus adapter/discovery ownership cleanup after the fix."
+  },
+  "completedFrozenCoreReview": {
+    "sourceCommit": "a765393274a2c12efe255d8e7374d1887555bbb6",
+    "evidence": "artifacts/rc8-core-final/result.json",
+    "status": "36Of37Passed_OriginalFailureRetained",
+    "remainingTestContract": "runner-baseline counted all optional ingress probes as FakeTCP. The product now supports explicit UDP ingress; MeshRuntimeServices dispatches by profile.TransportMode. Record and assert the actual requested protocol instead of forbidding same-protocol UDP probes.",
+    "followup": "Only tests and this review change after the complete core. Rerun the affected baseline with the original 30 rounds per protocol. Carry the other 36 groups with an explicit runtime-source equality check; do not describe combined evidence as a single all-green Full run.",
+    "pressure": "The frozen core's 60-second native loopback achieved approximately 42.086 Mbps in each direction, 246656/246656 received packets both directions. Historical loss results retained; this one local result does not establish a physical-WAN or long-stream quality fix."
   }
 }
