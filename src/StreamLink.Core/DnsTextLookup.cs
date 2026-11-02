@@ -11,6 +11,7 @@ internal static class DnsTextLookup
 {
     public static async Task<string[]> Query(string host,CancellationToken token)
     {
+        if(OperatingSystem.IsWindows())return await WindowsDnsTextLookup.Query(host,token);
         var servers=NetworkInterface.GetAllNetworkInterfaces().Where(n=>n.OperationalStatus==OperationalStatus.Up)
             .SelectMany(n=>n.GetIPProperties().DnsAddresses).Where(ip=>!ip.Equals(IPAddress.Any)&&!ip.Equals(IPAddress.IPv6Any)).Distinct().Take(2).ToArray();
         if(servers.Length==0)throw new IOException("未配置系统 DNS");

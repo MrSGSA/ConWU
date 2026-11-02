@@ -57,6 +57,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public string ConnectionSource {get;init;}="custom";
     public bool DirectMode {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];
+    public int EntryRefreshSeconds {get;init;}=60;
     public string[]? TcpStun {get;init;}
     public string[]? UdpStun {get;init;}
     public string RequestedVirtualIp {get;init;}="";
@@ -112,6 +113,7 @@ public static class UiControlProtocol
             await pipe.ConnectAsync(3000,deadline.Token);ControlServerIdentity.Verify(pipe);
             await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);
         } catch(UnauthorizedAccessException ex){throw new UiBackendException("AccessDenied","当前 Windows 账号未获个人后台访问权限，请运行 MSI 修复安装并核对日常使用账号。",ex);}
+        catch(OperationCanceledException ex)when(!token.IsCancellationRequested){throw new UiBackendException("ResponseTimeout","本地后台响应超时，已受理的操作仍会继续；请刷新状态后确认结果。",ex);}
         catch(Exception ex)when(ex is IOException or TimeoutException && ex is not UiBackendException){
             string state=OperatingSystem.IsWindows()?ControlServerIdentity.Availability():"Unavailable";
             throw state switch {

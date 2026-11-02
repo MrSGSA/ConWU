@@ -33,11 +33,17 @@ static partial class Program
             Check(stopped,"cancellation joins outstanding resolver work");
         }
         var plan=new ExistingEntryPlan();string[] hints=["203.0.113.1:1","203.0.113.2:2"];
+        var reconnect=new PeerReconnectPolicy();
+        Check(!reconnect.Allow(false,false,false,hints,1000)&&reconnect.Allow(false,false,true,hints,1001),"server-backed offline member waits for fresh presence even when its old IP remains configured");
+        Check(reconnect.Allow(true,false,false,hints,1000)&&!reconnect.Allow(true,false,false,hints,20000)&&!reconnect.Allow(true,false,false,hints,70000),"serverless unanswered entry leaves a bounded attempt and pauses dense reconnects");
+        Check(reconnect.Allow(true,false,false,["203.0.113.3:3"],70001),"changed subscription endpoint immediately wakes a paused direct peer");
+        var period=new DeviceProfile{EntryRefreshSeconds=1};period.Validate();period.EntryRefreshSeconds=86400;period.Validate();period.EntryRefreshSeconds=0;Reject(period.Validate);
         Check(plan.Select(hints,"fallback",false,false,1000)==hints[0]&&plan.Priority,"first supplied endpoint wins priority");
         Check(plan.Select(hints,"fallback",false,false,5001)==hints[1]&&plan.Priority,"next endpoint is tried within one bounded window");
         Check(plan.Select(hints,"fallback",false,false,9001)=="fallback"&&!plan.Priority&&plan.FellBack,"exhausted hint window returns to autonomous candidate");
         Check(plan.Select(hints,"changed",false,true,10000)==""&&!plan.Priority,"healthy path is not churned by address refresh");
         Check(plan.Select(hints,"fallback",false,false,11000)==hints[0]&&plan.Priority,"loss of healthy path starts a new bounded hint window");
+        Check(plan.Select(["203.0.113.3:3"],"fallback",false,false,99000)=="203.0.113.3:3"&&plan.Priority,"updated subscription restarts an exhausted entry window");
         var custom=MeshIdentity.Create("https://example.com/","","faketcp","10.171.139.42");
         var enrolled=MeshIdentity.Issue(custom,"10.171.139.77");var guest=MeshIdentity.Import(MeshIdentity.Export(enrolled));guest.Directory=custom.Directory;
         Check(custom.LocalIp=="10.171.139.42"&&guest.LocalIp=="10.171.139.77","custom /24 addresses survive signed enrollment and import");
@@ -55,7 +61,7 @@ static partial class Program
             endpoint.ReplyPacket=Packet(remote.LocalIp,routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().ReceivedBytes>0,"signed custom source address delivers return traffic");
             long received=router.Status().Single().ReceivedBytes;endpoint.ReplyPacket=Packet("10.171.139.2",routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().LocalDrops!.ReceivePolicyRejected>0,"peer cannot impersonate its old slot-derived address");Check(router.Status().Single().ReceivedBytes==received,"spoofed packet is not delivered to adapter");
         }
-        await ExistingRunner(false);await ExistingRunner(true);await MappingProbeCancellation();
+        await ExistingRunner(false);await ExistingRunner(true);await ExistingRunner(false,true);await MappingProbeCancellation();
         Console.WriteLine($"PASS {checks} existing entry and custom addressing checks");
     }
     static async Task MappingProbeCancellation()
@@ -79,23 +85,35 @@ static partial class Program
         public string Body="{\"endpoints\":[\"203.0.113.1:44680\",\"edge.example.com:44681\"]}";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(Body,Encoding.UTF8)});
     }
-    static async Task ExistingRunner(bool fallback)
+    static async Task ExistingRunner(bool fallback,bool refresh=false)
     {
         var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
         byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var link=new MeshLink(2,1,key);CryptographicOperations.ZeroMemory(key);
         await using var endpoint=new PeerEndpoint(link);using var sink=new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback,0));string dead=sink.Client.LocalEndPoint!.ToString()!;
         var discovery=new Discovery(owner,guest,endpoint.Endpoint.ToString());var adapter=new MemoryAdapter();var logs=new ConcurrentQueue<string>();var transports=new ConcurrentBag<ForwardingTransport>();
-        int probes=0;SessionStatus? status=null;string folder=Path.Combine(Path.GetTempPath(),"streamlink-existing-"+Guid.NewGuid().ToString("N"));
+        int probes=0,resolutions=0;SessionStatus? status=null;string folder=Path.Combine(Path.GetTempPath(),"streamlink-existing-"+Guid.NewGuid().ToString("N"));
         var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{Interlocked.Increment(ref probes);return Task.FromException<IMapping>(new IOException("no local mapping"));},request=>{if(request.Mesh.Pair.Mode!=(fallback?"udp":"faketcp"))throw new Exception("wrong fixed wire mode");var t=new ForwardingTransport(request.Target);transports.Add(t);return t;},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
             NetworkWake=()=>new MeshNetworkWake(false),Candidates=(_,_,_,_)=>Task.FromResult<IMeshCandidateFactory?>(null),
-            ResolveEntries=(_,_,_)=>Task.FromResult(new EntryResolution[]{new(2,0,"地址",fallback?[dead]:[dead,endpoint.Endpoint.ToString()],"")})
+            ResolveEntries=(_,_,_)=>{int count=Interlocked.Increment(ref resolutions);return Task.FromResult(new EntryResolution[]{new(2,0,refresh?"TXT":"地址",refresh?(count==1?[dead]:[endpoint.Endpoint.ToString()]):fallback?[dead]:[dead,endpoint.Endpoint.ToString()],"")});}
         };
-        var runner=new MeshRunner(new DeviceProfile{Mesh=owner,TransportMode=fallback?"udp":"faketcp",PathSelection=fallback?"udp-only":"faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
+        var runner=new MeshRunner(new DeviceProfile{Mesh=owner,EntryRefreshSeconds=refresh?1:60,TransportMode=fallback?"udp":"faketcp",PathSelection=fallback?"udp-only":"faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
         using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
         try{await Until(()=>status?.Connected==true,fallback?"real Runner falls back from failed supplied endpoint to discovered authenticated entry":"real Runner tries a second supplied endpoint and authenticates it",10000);
+            Check(!refresh||resolutions>=2,"configured one-second subscription refresh adopts a changed endpoint without user retry");
             Check(!fallback||logs.Any(l=>l.Contains("开始自主打洞")),"fallback reason is observable without claiming parsed address is connected");
             int count=transports.Count;runner.RequestRetry();await Task.Delay(600);Check(transports.Count==count&&!adapter.Disposed,"manual retry preserves healthy existing transport and adapter");
             adapter.Outgoing.Add(Packet(owner.LocalIp,guest.LocalIp));await Until(()=>endpoint.DataPackets>0,"actual encrypted payload crosses selected supplied/fallback transport");
+            if(refresh){
+                int reads=discovery.Reads;discovery.ExpiresOverride=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+8;
+                await Until(()=>discovery.Reads>reads,"fixture publishes its bounded presence before simulating shutdown",6000);
+                await Task.Delay((int)Math.Max(0,(discovery.ExpiresOverride-DateTimeOffset.UtcNow.ToUnixTimeSeconds())*1000+300));
+                foreach(var transport in transports.Where(t=>!t.Disposed))transport.Exited=true;
+                await Until(()=>status?.Peers?.Single().Connection?.Phase=="Offline","expired remote presence settles the real Runner to offline despite a configured subscription",6000);
+                int offlineCount=transports.Count;await Task.Delay(1500);
+                Check(transports.Count==offlineCount,"offline device does not allocate fresh native transports on retry ticks");
+                discovery.ExpiresOverride=0;
+                await Until(()=>status?.Connected==true,"new valid presence automatically reconnects the returning member",7000);
+            }
         }finally{await Stop(running,stop);foreach(var d in Directory.EnumerateDirectories(folder))Directory.Delete(d);Directory.Delete(folder);}
         Check(transports.All(t=>t.Disposed)&&adapter.Disposed,"existing endpoint shutdown joins all transport owners");
     }

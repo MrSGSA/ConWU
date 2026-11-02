@@ -86,7 +86,7 @@ public sealed class ExistingEntryResolver : IDisposable
     }
     public async Task<EntryResolution[]> Resolve(ExistingEntry[] entries, string mode, CancellationToken token)
     {
-        Validate(entries);
+        Validate(entries);entries=entries.Distinct().ToArray();
         using var total=CancellationTokenSource.CreateLinkedTokenSource(token);total.CancelAfter(12000);
         using var limit=new SemaphoreSlim(2);
         return await Task.WhenAll(entries.Select(async (entry,index) => {
@@ -104,7 +104,9 @@ public sealed class ExistingEntryResolver : IDisposable
             string[] values;
             if(kind=="TXT") values=(await txt(entry.Source[6..],deadline.Token)).SelectMany(ParseDocument).ToArray();
             else if(kind is "HTTP" or "HTTPS") {
-                using var response=await http.GetAsync(entry.Source,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
+                using var request=new HttpRequestMessage(HttpMethod.Get,entry.Source);
+                request.Headers.CacheControl=new(){NoCache=true,NoStore=true};
+                using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
                 response.EnsureSuccessStatusCode();
                 if(response.Content.Headers.ContentLength>MaximumBody)throw new IOException("更新内容超过 8 KiB");
                 using var stream=await response.Content.ReadAsStreamAsync(deadline.Token);
@@ -127,7 +129,7 @@ public sealed class ExistingEntryResolver : IDisposable
             return new(entry.PeerSlot,index,kind,endpoints.ToArray(),"");
         } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
-            string reason=ex switch { OperationCanceledException=>"解析超时",HttpRequestException=>"更新页面访问失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" };
+            string reason=ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>"解析超时",HttpRequestException=>"更新页面访问失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" };
             return new(entry.PeerSlot,index,kind,[],reason);
         }
     }

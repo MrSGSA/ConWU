@@ -32,7 +32,7 @@ internal sealed class MeshConnectionFeedback(Action<string> log)
         if(!freshRemote && attempt.RemainingSeconds == null && attempt.Phase is "WaitingEntry" or "WaitingPeer" or "Connecting")
             return peer with { Connection = new("Offline","尚未收到此设备的有效上线信息；上线后会自动连接。") { ReasonCode="NoFreshAnnouncement" } };
         return peer with { Connection = attempt with {
-            Phase = prior.EverConnected && attempt.Phase is not ("Retrying" or "Queued" or "Releasing" or "Blocked") ? "Recovering" : attempt.Phase,
+            Phase = prior.EverConnected && attempt.Phase is not ("Offline" or "Retrying" or "Queued" or "Releasing" or "Blocked") ? "Recovering" : attempt.Phase,
             Detail = failure.Length > 0 ? failure + " " + attempt.Detail : attempt.Detail, ElapsedMs = now-prior.Since } };
     }
     public static (string State, ConnectionProgress Connection) Summarize(MeshPeerStatus[] statuses, long elapsedMs)

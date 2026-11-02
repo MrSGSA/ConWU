@@ -27,6 +27,7 @@ public sealed class DeviceProfile
     public string CoordinationService { get; set; } = "";
     public string CoordinationPin { get; set; } = "";
     public ExistingEntry[] ExistingEntries { get; set; } = [];
+    public int EntryRefreshSeconds {get;set;}=60;
     public string RequestedVirtualIp { get; set; } = "";
     public long NetworkEstablishedAt { get; set; }
     public bool NetworkCreatedHere { get; set; }
@@ -114,6 +115,7 @@ public sealed class DeviceProfile
         if (CoordinationService is null || CoordinationPin is null || RequestedVirtualIp is null) throw new FormatException("本机连接设置无效");
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();
         ExistingEntryResolver.Validate(ExistingEntries);
+        if(EntryRefreshSeconds is <1 or >86400)throw new FormatException("订阅更新间隔需为 1 秒至 24 小时");
         if (RequestedVirtualIp.Length > 0) MeshAddressing.ValidateAddress(RequestedVirtualIp);
         if (MigrationNotice is null || MigrationNotice.Length > 512) throw new FormatException("迁移提示无效");
         if (!Enum.IsDefined(AdapterBackend)) throw new FormatException("虚拟网卡后端无效");

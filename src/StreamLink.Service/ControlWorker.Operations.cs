@@ -15,6 +15,9 @@ public sealed partial class ControlWorker
         public TaskCompletionSource Completion {get;}=new(TaskCreationOptions.RunContinuationsAsynchronously);
         public ControlOperationStatus State {get;set;}=new(id,command,"排队",false,true);
         public bool Completed,Cancelable=true;
+        public bool UserCancelled;
+        public CancellationToken ServiceLifetime;
+        public string DisplayCommand {get;set;}=command;
     }
     readonly object operationGate=new();
     readonly Dictionary<Guid,Operation> operations=new();
@@ -46,21 +49,32 @@ public sealed partial class ControlWorker
             }
             if(operations.Values.Count(o=>!o.Completed)>=8)throw new IOException("已有太多控制操作，稍后重试");
             if(operations.Count>=64){var old=operations.Values.FirstOrDefault(o=>o.Completed);if(old!=null)operations.Remove(old.Id);}
+            // An authenticated UI request hands ownership to the service. Closing
+            // a tab or expiring a pipe must not cancel an accepted mutation.
+            // ServeUi passes the service lifetime here, never its response timer.
             var entry=new Operation(id,request.Command,digest,CancellationTokenSource.CreateLinkedTokenSource(token,disposing.Token));
-            operations.Add(id,entry);Volatile.Write(ref operationStatus,new(id,request.Command,"排队",false,true));PublishReply();return entry;
+            if(ui!=null)entry.ServiceLifetime=token;
+            if(ui!=null)entry.Stop.CancelAfter(TimeSpan.FromSeconds(90));
+            if(ui?.Network is {} action)entry.DisplayCommand=request.Command+":"+action.Action;
+            entry.State=entry.State with{Command=entry.DisplayCommand};
+            operations.Add(id,entry);Volatile.Write(ref operationStatus,entry.State);PublishReply();return entry;
         }
     }
-    void SetOperation(Operation operation,string phase,bool cancelable){lock(operationGate){operation.Cancelable=cancelable;operation.State=new(operation.Id,operation.Command,phase,false,cancelable);Volatile.Write(ref operationStatus,operation.State);}PublishReply();}
+    void SetOperation(Operation operation,string phase,bool cancelable){lock(operationGate){operation.Cancelable=cancelable;operation.State=new(operation.Id,operation.DisplayCommand,phase,false,cancelable);Volatile.Write(ref operationStatus,operation.State);}PublishReply();}
     void CompleteOperation(Operation operation,string error=""){
         lock(operationGate){if(operation.Completed)return;operation.Completed=true;operation.Cancelable=false;operation.Stop.Dispose();
-            operation.State=new(operation.Id,operation.Command,error.Length==0?"已完成":"未完成",true,false,error);
+            operation.State=new(operation.Id,operation.DisplayCommand,error.Length==0?"已完成":"未完成",true,false,error);
             if(operationStatus?.Id==operation.Id)Volatile.Write(ref operationStatus,operation.State);operation.Completion.TrySetResult();}
     }
     ControlReply CancelOperation(Guid id){
         lock(operationGate){if(id==Guid.Empty||!operations.TryGetValue(id,out var op)||op.Completed)return Reply("未找到运行中的操作");
-            if(!op.Cancelable)return Reply("操作已进入资源退出阶段，可取消界面等待，但不能撤销已请求的网络停止");op.Stop.Cancel();}
+            if(!op.Cancelable)return Reply("操作已进入资源退出阶段，可取消界面等待，但不能撤销已请求的网络停止");op.UserCancelled=true;op.Stop.Cancel();}
         return Reply();
     }
+    ControlOperationStatus? OperationState(Guid id){lock(operationGate)return operations.GetValueOrDefault(id)?.State;}
+    string OperationError(Exception error,Operation? operation=null)=>error is not OperationCanceledException?error.Message:
+        operation?.UserCancelled==true?"已按请求取消此操作":disposing.IsCancellationRequested||operation?.ServiceLifetime.IsCancellationRequested==true?"后台正在停止，请稍后重新打开面板":
+        operation?.Stop.IsCancellationRequested==true?"操作等待超时，请查看当前状态后重试":"对端或网络请求超时，请检查目标是否在线后重试";
     async Task ServeClient(NamedPipeServerStream pipe,SemaphoreSlim slots,CancellationToken stop){
         using(pipe)using(var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop)){
             timeout.CancelAfter(45000);

@@ -23,6 +23,7 @@ static partial class Program
             "connected plus offline members stays connected, accurately lists offline peers and uses verified connection age");
         var lost = feedback.Observe(peer with { Liveness=new("ReceiveTimedOut",13000,13000) },null,false,900);
         Check(lost.Connection?.Phase == "Offline","a previously connected member with no current announcement or attempt settles to offline");
+        Check(feedback.Observe(peer,new("Offline","等待上线"),false,901).Connection?.Phase=="Offline","explicit offline policy is not relabeled as endless recovery after an earlier connection");
         var online = feedback.Observe(peer,new("Connecting","正在连接",RemainingSeconds:10,CanRetry:true),true,1000);
         Check(online.Connection?.Phase == "Recovering","an online returning member retains active recovery feedback");
         var first = new MeshConnectionFeedback(_ => { });

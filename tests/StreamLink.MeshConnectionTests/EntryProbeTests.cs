@@ -16,6 +16,7 @@ static partial class Program
         Check(!MeshRunner.NeedsEntryProbe(peers, nodes, Healthy, 100), "offline members do not restart optional entry discovery beside a healthy path");
         nodes[offline.Self.Slot] = new(offline.Self.Slot, offline.Self.Device, 1, 99, "", "offline");
         Check(!MeshRunner.NeedsEntryProbe(peers, nodes, Healthy, 100), "expired announcements cannot keep optional probes running");
+        Check(!MeshRunner.NeedsEntryProbe(peers,nodes,_=>false,100),"no online member means optional STUN/gateway probes also stay idle");
         nodes[offline.Self.Slot] = nodes[offline.Self.Slot] with { Expires = 200 };
         Check(MeshRunner.NeedsEntryProbe(peers, nodes, Healthy, 100), "new online unconnected member can resume local entry discovery");
         Check(MeshRunner.NeedsEntryProbe(peers, nodes, _ => false, 100), "loss of the last healthy path resumes discovery without weakening health proof");

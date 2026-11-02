@@ -30,6 +30,14 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
             preparing != null ? "正在准备直连传输" : pending != null ? "正在验证直连往返" : "正在寻找可用直连入口",
             Attempt:attempts,RemainingSeconds:HasPending?(int)Math.Max(0,(preparationBegan+15000-now+999)/1000):null,CanRetry:true);
     public void WakeRetry() { nextAttempt = 0; failures = 0; }
+    public void Suspend(int slot,string name)
+    {
+        Update(slot,"",name,"设备未在线，等待上线后再连接",keepPending:false);
+        if(active!=null&&!router.HasHealthyPath(slot)){
+            router.FailLegacyTransport(slot,active.Value.Transport.ClientEndpoint);Close(active);active=null;
+            router.SetCandidate(slot,null,name,"设备未在线，等待上线后再连接");
+        }
+    }
     public void InvalidatePreparation(int slot)
     {
         preparationStop?.Cancel();

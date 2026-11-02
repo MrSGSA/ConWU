@@ -21,7 +21,7 @@ public sealed partial class ControlWorker
         ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
         DirectMode=p.Mesh?.Pair.Direct??p.DirectMode,
         ExistingEntries=p.ExistingEntries.Length>0?p.ExistingEntries:p.ManualEndpoint.Length>0?[new(0,p.ManualEndpoint)]:[],
-        TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp
+        TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
     };
     static string SettingsRevision(DeviceProfile p) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(PublicSettings(p))));
     void RequireUiNetwork(string expected)
@@ -217,6 +217,7 @@ public sealed partial class ControlWorker
                 if (updated.Mesh!=null && (settings.DirectMode!=updated.Mesh.Pair.Direct || !updated.Mesh.Pair.Direct && (settings.Service != PublicSettings(updated).Service || settings.CertificatePin != PublicSettings(updated).CertificatePin))) throw new IOException("当前网络的组网方式不能通过设置替换；请先删除或退出网络，再创建或加入新网络");
                 updated.ManualEndpoint = settings.ManualEndpoint; updated.SelectTransport(settings.PathSelection);
                 updated.ConnectionSource=settings.ConnectionSource;updated.ExistingEntries=settings.ExistingEntries;
+                updated.EntryRefreshSeconds=settings.EntryRefreshSeconds;
                 updated.DirectMode=settings.DirectMode;
                 if(settings.DirectMode&&settings.ConnectionSource!="existing")throw new FormatException("无服务器组网需要选择已有入口");
                 ExistingEntryResolver.Validate(settings.ExistingEntries);
@@ -231,7 +232,7 @@ public sealed partial class ControlWorker
                 bool resume = profile.Enabled;
                 if (restart && resume && !action.ConfirmReplace) throw new IOException("端口或承载设置需要重建连接，请确认后保存");
                 if (restart) { SetOperation(operation, "重建受影响资源", false); await End(token); }
-                try { lock (sync) { PreserveLatestDirectory(updated);store.Save(updated); profile = updated; if (!restart && runningProfile is {} active) {active.AllowManualQualityRequests = updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();} } }
+                try { lock (sync) { PreserveLatestDirectory(updated);store.Save(updated); profile = updated; if (!restart && runningProfile is {} active) {active.AllowManualQualityRequests = updated.AllowManualQualityRequests;active.EntryRefreshSeconds=updated.EntryRefreshSeconds;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();} } }
                 catch { if (restart && resume) Begin(); throw; }
                 if (restart && resume) Begin();
                 break;

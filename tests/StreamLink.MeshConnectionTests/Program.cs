@@ -24,6 +24,7 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--resolve-entry",var source]){using var resolver=new ExistingEntryResolver();Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await resolver.Resolve([new(-1,source)],"faketcp",default)));return;}
         if(args is ["--direct-only"]){await DirectNetworks();return;}
         if(args is ["--direct-short-only"]){await DirectShortPairing();return;}
         if(args is ["--direct-short-service"]){await DirectPairingService();return;}
@@ -313,7 +314,7 @@ static partial class Program
     }
     sealed class Discovery(MeshProfile owner, MeshProfile guest, string endpoint) : IMeshDiscovery, IMeshChangeDiscovery
     {
-        public int Reads, WaitingReads, Watches; public bool Disposed;
+        public int Reads, WaitingReads, Watches; public bool Disposed; public long ExpiresOverride;
         public bool SupportsLongPolling => true;
         public Task<MeshSnapshot?> WaitForChanges(CancellationToken token) { Interlocked.Increment(ref Watches); return Read(token); }
         public TaskCompletionSource? BlockReads;
@@ -326,7 +327,7 @@ static partial class Program
             if (BlockReads is {} wait) {
                 Interlocked.Increment(ref WaitingReads); try { await wait.Task.WaitAsync(token); } finally { Interlocked.Decrement(ref WaitingReads); }
             }
-            return new(owner.Directory!, [MeshMetadata.Seal(guest, new(2, guest.Self.Device, DateTime.UtcNow.Ticks, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), endpoint, "test peer"))]);
+            return new(owner.Directory!, [MeshMetadata.Seal(guest, new(2, guest.Self.Device, DateTime.UtcNow.Ticks, (ExpiresOverride==0?DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds():ExpiresOverride), endpoint, "test peer"))]);
         }
         public void Dispose() => Disposed = true;
     }

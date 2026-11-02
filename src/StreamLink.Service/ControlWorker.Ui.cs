@@ -24,10 +24,11 @@ public sealed partial class ControlWorker
     internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
-        if(request.Method=="status"&&request.Patch==null&&request.Network==null)return new(true,"",UiSnapshot());
+        if(request.Method=="status"&&request.Patch==null&&request.Network==null)return new(true,"",UiSnapshot(),Operation:PublicOperation(OperationState(request.OperationId),Volatile.Read(ref snapshot)!.Profile!));
         if(request.Method is not ("patch" or "start" or "stop" or "retry" or "network" or "check" or "quality" or "cancel")||request.Method!="patch"&&request.Patch!=null||request.Method!="network"&&request.Network!=null)return new(false,"此接口不允许该操作",UiSnapshot());
         if(request.Method=="patch"&&request.Patch==null)return new(false,"设置补丁为空",UiSnapshot());
         if(request.Method=="network"&&request.Network==null)return new(false,"网络操作为空",UiSnapshot());
+        if(request.Network is {} network && (network.Action is not {Length:>0 and <=32}||network.Action.Any(char.IsControl)))return new(false,"网络操作名称无效",UiSnapshot());
         var command=request.Method switch{"patch"=>"ui-patch","network"=>"ui-network","check"=>"personal-check",_=>request.Method};
         var result=await HandleCore(new(command,OperationId:request.OperationId,PeerSlot:request.PeerSlot,Mbps:request.Mbps,CancelOperationId:request.CancelOperationId),token,new UiOperation(callerSid,request.Patch,request.Network));
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户的UI控制授权已改变",null);
@@ -45,7 +46,13 @@ public sealed partial class ControlWorker
                 authorized=true;stage="read-request";
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
                 stage="handle-request";
-                var reply=await HandleUi(request,caller,deadline.Token);
+                var handling=HandleUi(request,caller,token);
+                UiControlReply reply;
+                if(request.OperationId!=Guid.Empty && request.Method!="status" && await Task.WhenAny(handling,Task.Delay(700,deadline.Token))!=handling){
+                    var operation=PublicOperation(OperationState(request.OperationId),Volatile.Read(ref snapshot)!.Profile!);
+                    reply=new(operation?.Completed!=true||operation.Error.Length==0,operation?.Error??"",UiSnapshot(),Operation:operation);
+                    _=handling.ContinueWith(t=>Log("UI后台操作异常："+t.Exception!.GetBaseException().GetType().Name),CancellationToken.None,TaskContinuationOptions.OnlyOnFaulted,TaskScheduler.Default);
+                }else reply=await handling;
                 stage="write-reply";
                 await ServiceProtocol.Write(pipe,FitUiReply(reply),deadline.Token);
             }catch(Exception)when(deadline.IsCancellationRequested){}catch(Exception ex){

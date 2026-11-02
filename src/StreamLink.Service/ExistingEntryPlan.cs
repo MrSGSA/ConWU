@@ -6,6 +6,7 @@ internal sealed class ExistingEntryPlan
 {
     long began;
     bool wasHealthy,admitted;
+    string sources="";
     public bool Priority {get;private set;}
     public bool FellBack {get;private set;}
     public string Detail {get;private set;}="";
@@ -13,6 +14,8 @@ internal sealed class ExistingEntryPlan
     public bool Admit(Func<bool> admit){if(admitted)return true;return admitted=admit();}
     public string Select(string[] endpoints,string fallback,bool localEntry,bool healthy,long now)
     {
+        string current=string.Join('|',endpoints);
+        if(current!=sources){sources=current;Retry();}
         if(healthy){wasHealthy=true;Priority=false;return "";}
         if(wasHealthy){Retry();wasHealthy=false;}
         if(endpoints.Length==0&&!localEntry){Priority=false;return fallback;}

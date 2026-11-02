@@ -21,6 +21,7 @@ public static class ProfileChanges
         comparable.AllowManualQualityRequests=before.AllowManualQualityRequests;
         comparable.RequestedVirtualIp=before.RequestedVirtualIp; // next enrollment only; never silently renumber a live network
         comparable.AutoStart=before.AutoStart;
+        comparable.EntryRefreshSeconds=before.EntryRefreshSeconds;
         // Runtime observations and opaque future options are not network start
         // parameters. Keep them without restarting an established path.
         comparable.LastEntry=before.LastEntry;comparable.LastStun=before.LastStun;

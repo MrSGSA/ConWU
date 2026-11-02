@@ -164,7 +164,7 @@ public sealed partial class ControlWorker : BackgroundService
         if(request.Command=="cancel")return CancelOperation(request.CancelOperationId);
         Operation operation;bool duplicate;
         try{operation=OpenOperation(request,token,out duplicate,ui);}
-        catch(Exception ex){return Reply(ex is OperationCanceledException?"操作已取消":ex.Message);}
+        catch(Exception ex){return Reply(OperationError(ex));}
         if(duplicate)return Reply(operation.State.Completed?operation.State.Error:"") with{Operation=operation.State};
         bool acquired=false,background=false;
         try
@@ -240,7 +240,7 @@ public sealed partial class ControlWorker : BackgroundService
                     // healthy official adapter to discover an unsigned backend.
                     if(updated.AdapterBackend!=profile.AdapterBackend)await PersonalPacketAdapters.Preflight(updated,operation.Stop.Token);
                     if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
-                    try {lock (sync) {PreserveLatestDirectory(updated);store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
+                    try {lock (sync) {PreserveLatestDirectory(updated);store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.EntryRefreshSeconds=updated.EntryRefreshSeconds;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
                     catch{if(restart&&resume)Begin();throw;}
                     if(restart&&resume)Begin();break;
                 case "start":
@@ -273,7 +273,7 @@ public sealed partial class ControlWorker : BackgroundService
             }
             if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued,Operation=operation.State } : Reply() with {Operation=operation.State};
         }
-        catch (Exception ex) { CompleteOperation(operation,ex is OperationCanceledException?"操作已取消":ex.Message);PublishReply();return Reply(ex is OperationCanceledException?"操作已取消":ex.Message) with {Operation=operation.State}; }
+        catch (Exception ex) { var error=OperationError(ex,operation);Log("控制操作 "+operation.DisplayCommand+" 未完成："+error);CompleteOperation(operation,error);PublishReply();return Reply(error) with {Operation=operation.State}; }
         finally { if(acquired)requests.Release(); }
     }
     public void StartLocal()

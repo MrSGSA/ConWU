@@ -49,6 +49,13 @@ static class UiPatchTests
             check(result.Ok&&!liveStop.IsCancellationRequested&&!live.Task.IsCompleted&&active.LogLevel=="debug","metadata patch leaves healthy worker and its resource reference alive");
         }finally{live.TrySetResult();await worker.StopLocal();}
         await gate.WaitAsync();Task<UiControlReply>? queued=null;
+        using(var caller=new CancellationTokenSource()){
+            var accepted=(Task<UiControlReply>)method.Invoke(worker,[new UiControlRequest("patch",new("must stop with service"),Guid.NewGuid()),sid,caller.Token])!;
+            caller.Cancel();gate.Release();
+            var result=await accepted.WaitAsync(TimeSpan.FromSeconds(2));
+            check(!result.Ok&&result.Status?.DeviceName!="must stop with service"&&result.Error.Contains("后台正在停止"),"service lifetime cancellation stops queued UI work without committing a late mutation");
+        }
+        await gate.WaitAsync();
         try{
             queued=Ui(new("patch",new("revoked caller"),Guid.NewGuid()));
             store.AuthorizeUiUser("S-1-5-21-111-222-333-444");

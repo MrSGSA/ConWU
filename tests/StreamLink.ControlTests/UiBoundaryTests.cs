@@ -33,6 +33,18 @@ static class UiBoundaryTests
             var secret=created.Profile!.Mesh!;check(!json.Contains(secret.Pair.Secret)&&!json.Contains(secret.SigningPrivate)&&!json.Contains(secret.ExchangePrivate)&&!json.Contains(secret.OwnerPrivate)&&!json.Contains("Profile")&&!json.Contains("Invite"),"UI status cannot receive profile, enrollment or any long-term credential");
             var patched=await Request(new("patch",new("ordinary UI name","error"),Guid.NewGuid()));var full=await worker.Handle(new("status"));
             check(patched.Ok&&full.Profile!.DeviceName=="ordinary UI name"&&full.Profile.LogLevel=="error"&&!full.Profile.Enabled,"restricted patch changes allowed metadata without enabling a driver/network");
+            var mutationGate=(SemaphoreSlim)typeof(ControlWorker).GetField("requests",flags)!.GetValue(worker)!;
+            var slowId=Guid.NewGuid();await mutationGate.WaitAsync();
+            try{
+                var accepted=await Request(new("patch",new("accepted UI work"),slowId));
+                check(accepted.Ok&&accepted.Operation is {Completed:false},"actual UI pipe promptly accepts a queued operation instead of occupying its 20-second response deadline");
+                await Task.Delay(100);
+            }finally{mutationGate.Release();}
+            UiControlReply progress=await Request(new("status",OperationId:slowId));
+            for(int n=0;n<40&&progress.Operation?.Completed!=true;n++){await Task.Delay(50);progress=await Request(new("status",OperationId:slowId));}
+            check(progress.Operation is {Completed:true,Error:""}&&progress.Status?.DeviceName=="accepted UI work","accepted work survives closure of its original pipe and is queried by its operation ID");
+            await worker.Handle(new("save",ProfileChanges.Copy((await worker.Handle(new("status"))).Profile!)));
+            check((await Request(new("status",OperationId:slowId))).Operation?.Id==slowId,"another operation cannot replace a caller's queried result");
             check(!(await Request(new("mesh-invite"))).Ok&&!(await Request(new("save"))).Ok,"restricted endpoint rejects full profile and private enrollment methods");
             bool denied=false;try{JsonSerializer.Deserialize<UiConfigPatch>("{\"LogDirectory\":\"C:/Windows\"}");}catch(JsonException){denied=true;}check(denied,"unmapped arbitrary log path/other settings are rejected by patch schema");
             var unauthorized=(Task<UiControlReply>)typeof(ControlWorker).GetMethod("HandleUi",flags)!.Invoke(worker,[new UiControlRequest("status"),"S-1-5-21-111-222-333-444",CancellationToken.None])!;

@@ -72,6 +72,11 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
     bool disposed;
     public MeshTraversalCapabilities Capabilities { get; }
     public bool Owns(int slot) => owned.Contains(slot);
+    public void PauseOffline(int slot)
+    {
+        if(!router.HasHealthyPath(slot)&&entries.TryGetValue(slot,out var entry)&&entry.Closing==null)
+            Fail(entry,"对端上线信息已过期，暂停重连",PredictionOutcome.Cancelled);
+    }
     public void RequestRetry()
     {
         foreach(var peer in router.Status().Where(p => !p.Connected)) {

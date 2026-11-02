@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-11-01: finish prior eleven UI/installer fixes and serverless invitations; additionally implement generic target-host entry + six-digit direct pairing, integrate entry/role/method controls and rotate the common logo 45 degrees clockwise. Dedicated EasyTier/皎月连 integration deferred. Preserve current clients and coordinator.",
+  "userConfirmedScope": "2026-11-02: fix frequent UI cancellation; offline reconnection; six underlined code digits; merge duplicate host-entry role; configurable subscription refresh and horizontal scrolling; real TXT and source counting.",
   "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.10",
-  "msiVersion": "1.0.16",
-  "startCommit": "67d13d589c10cb51592872ff48c6c1f0d0d0e41e",
+  "candidateVersion": "1.0.1-rc.11",
+  "msiVersion": "1.0.17",
+  "startCommit": "ca9c3d9ec20d60e06a9d608685e50631ee76ae06",
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
   "control": "HTTPS for server networks; authenticated MeshLink synchronization for explicit serverless networks",
@@ -36,7 +36,12 @@
     "affected checks, two separate self-reviews, frozen core, isolated native MSI rendering and actual lifecycle; runnable installer/ZIP/source",
     "same fixed-protocol ingress carries bounded pre-membership short pairing; committed ECDH and explicit SAS owner approval, single-device signed encrypted enrollment",
     "new DirectBootstrap capability uses public outer carriage only; per-member MeshLink keys remain the business security boundary; native pre-auth caps 64 pending / 16 ready / 2 conversations, application 5 replies/s and 1200-byte maximum",
-    "short-pair core, real restricted service and real C++ FakeTCP/UDP loopback checks; fresh frozen Full core and isolated installer lifecycle"
+    "short-pair core, real restricted service and real C++ FakeTCP/UDP loopback checks; fresh frozen Full core and isolated installer lifecycle",
+    "service-owned UI operations with short acknowledgement and per-ID progress; service-stop cancellation and explicit timeout causes",
+    "Windows system TXT lookup verified against the same rc.10 lookup on the real user domain",
+    "configurable 1s-24h subscription refresh, last-known endpoint retention and changed-source retry window",
+    "offline presence gates, serverless bounded attempt and low-rate checks, idle optional STUN/gateway probes",
+    "six underlined short-code slots, one owner role, scoped source counts and nonwrapping subscription URLs"
   ],
   "baselineOrder": [
     "Q2 final application physical route first when second endpoint is available",
@@ -69,7 +74,7 @@
     "status": "PendingUserTrial"
   },
   "regression": {
-    "orchestration": "Freeze new rc.10 after targeted fixes and two separate reviews; run fresh Full core including direct short pairing/native/service cases; package and isolated MSI sequentially. Retain rc.9 and rc.10 development failures with exact evidence scope.",
+    "orchestration": "Target affected control/entry/presence/browser cases, separate security and product reviews, freeze rc.11 and run Full core; package and validate isolated MSI without changing daily clients.",
     "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,
@@ -88,7 +93,7 @@
   ],
   "externalRequirements": [
     "authorized second Windows endpoint and reachable StreamLink-compatible existing mapping for cross-NAT serverless verification",
-    "same existing rc.8 HTTPS coordinator for six-digit pairing; no coordinator needed for SL5 invitations",
+    "existing rc.8 HTTPS coordinator for server-backed pairing; neither direct short codes plus host ingress nor SL5 invitations require a coordinator",
     "independent management before stopping any existing channel",
     "long user streaming confirmation; formal eight-stack/cross-account/clean-VM checks remain unverified"
   ],

@@ -125,7 +125,11 @@ public sealed class WebPanel : IAsyncDisposable
             }
             if (request.Method == "GET" && path == "/api/session") { Touch();await response.WriteAsJsonAsync(new {csrf=current.Csrf},context.RequestAborted); return; }
             UiControlRequest command;
-            if (request.Method == "GET" && path == "/api/status") command = new("status");
+            if (request.Method == "GET" && path == "/api/status") {
+                Guid operation=Guid.Empty;
+                if(request.Query.TryGetValue("operation",out var value)&&!Guid.TryParse(value,out operation)){response.StatusCode=400;return;}
+                command = new("status",OperationId:operation);
+            }
             else if (post && path == "/api/command") {
                 if (!Equal(request.Headers["X-StreamLink-CSRF"].ToString(),current.Csrf)) { response.StatusCode = 403; return; }
                 command = await JsonSerializer.DeserializeAsync<UiControlRequest>(request.Body,Json,context.RequestAborted) ?? throw new JsonException();
