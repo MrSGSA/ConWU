@@ -64,12 +64,14 @@ static partial class Program
         await using var endpoint = new PeerEndpoint(peer);
         var discovery = new Discovery(owner, guest, endpoint.Endpoint.ToString());
         var adapter = new MemoryAdapter(); var mapping = new Mapping(); using var wake = new MeshNetworkWake(false);
-        var transports = new ConcurrentBag<IMeshTransport>(); var logs = new ConcurrentQueue<string>(); int probes = 0, adapters = 0;
+        var transports = new ConcurrentBag<IMeshTransport>(); var logs = new ConcurrentQueue<string>(); int probes = 0, adapters = 0, clientStarts = 0;
         SessionStatus? status = null;
         string folder = Path.Combine(Path.GetTempPath(), "streamlink-network-wake-" + Guid.NewGuid().ToString("N"));
         var services = new MeshRuntimeServices(_ => discovery, _ => { Interlocked.Increment(ref adapters); return Task.FromResult<IPacketAdapter>(adapter); },
             (_, _, _) => Interlocked.Increment(ref probes) == 1 ? Task.FromException<IMapping>(new IOException("initial interface not ready")) : Task.FromResult<IMapping>(mapping),
-            request => { IMeshTransport transport = request.Server ? new StubTransport(null) : new ForwardingTransport(request.Target); transports.Add(transport); return transport; },
+            // Exercise a retired startup attempt as well as the eventual active
+            // connection. History may contain more than one transport.
+            request => { IMeshTransport transport = request.Server ? new StubTransport(null) : new ForwardingTransport(request.Target) { Exited=Interlocked.Increment(ref clientStarts)==1 }; transports.Add(transport); return transport; },
             (_, _, token) => Task.Delay(Timeout.Infinite, token), (_, _, _) => { }, (_, _) => { }, folder) {
                 NetworkWake = () => wake, Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(null)
             };
@@ -81,7 +83,11 @@ static partial class Program
             var clock = Stopwatch.StartNew(); wake.Signal(true);
             await Until(() => probes == 2 && transports.OfType<StubTransport>().Any(), "resume wakes the failed entry probe without waiting five seconds", 1500); retryMs = clock.Elapsed.TotalMilliseconds;
             await Until(() => status?.Connected == true, "same production Runner authenticates its independent direct peer path");
-            int count = transports.Count; var server = transports.OfType<StubTransport>().Single(); var client = transports.OfType<ForwardingTransport>().Single();
+            await Until(()=>clientStarts>=2&&transports.OfType<ForwardingTransport>().Any(t=>t.Disposed)&&status?.Connected==true,"failed startup client is joined before observing the healthy replacement");
+            var activeServers=transports.OfType<StubTransport>().Where(t=>!t.Disposed).ToArray();
+            var activeClients=transports.OfType<ForwardingTransport>().Where(t=>!t.Disposed).ToArray();
+            Check(activeServers.Length==1&&activeClients.Length==1,"exactly one live listener and client remain after startup recovery");
+            int count=transports.Count;var server=activeServers.Single();var client=activeClients.Single();
             clock.Restart(); wake.Signal(true);
             await Until(() => mapping.Refreshes == 1, "network wake requests refresh from the held mapping instead of rebinding its port", 3500); refreshMs = clock.Elapsed.TotalMilliseconds;
             Check(!server.Disposed && !client.Disposed && transports.Count == count && probes == 2 && adapters == 1 && status?.Connected == true,
@@ -100,7 +106,7 @@ static partial class Program
         }
         Check(adapter.Disposed && mapping.Disposed && transports.All(t => t is StubTransport s ? s.Disposed : ((ForwardingTransport)t).Disposed),
             "wake-aware runner joins and retires its original resources on explicit stop");
-        return new { retryMs, refreshMs, probes, adapters, helperRefreshHints = mapping.Refreshes, physicalInterfaceChange = false,
+        return new { retryMs, refreshMs, probes, adapters, clientStarts, helperRefreshHints = mapping.Refreshes, physicalInterfaceChange = false,
             scope = "actual encrypted UDP forwarded path and default legacy Runner; entry helper and notification source are controlled fixtures" };
     }
 }

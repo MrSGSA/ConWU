@@ -138,9 +138,13 @@ static partial class PortControlTests
             Check(server.Deletes == 1 && helper.Active == 0, "product disposal joins renewal/keepalive before releasing the helper and exact PCP lease");
             rows.Add(new { scope = "production TcpMapping + real loopback helper and gateway datagrams", hasNative = false, hasRealNat = false, actualPort = mapping.PublicEndpoint.Port, cleanup = true });
         }
-        await Notifications(Check, rows, ct);
-        await MulticastNotifications(Check, rows, ct);
-        await IndependentTcp(Check, rows, ct);
+        // Independent real-I/O suites do not inherit the time already spent
+        // on earlier protocol cases. Their own timing assertions are unchanged;
+        // the outer core runner still enforces its overall process watchdog.
+        foreach(var suite in new Func<Action<bool,string>,List<object>,CancellationToken,Task>[] { Notifications, MulticastNotifications, IndependentTcp }) {
+            using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(90));
+            await suite(Check,rows,deadline.Token);
+        }
         string output = Environment.GetEnvironmentVariable("STREAMLINK_MAPPING_REPORT") ?? "artifacts/m7-port-control-20261011.json";
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!);
         await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { status = "Pass", checks = passed, elapsedMs = clock.Elapsed.TotalMilliseconds, rows }, new JsonSerializerOptions { WriteIndented = true }));

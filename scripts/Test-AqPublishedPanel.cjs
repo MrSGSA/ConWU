@@ -20,14 +20,14 @@ function check(ok,label){if(!ok)throw Error(label);checks.push(label);}
  const operationId=require('crypto').randomUUID(),progress=await page.request.get(new URL('/api/status?operation='+operationId,link).href);
  check(progress.ok()&&(await progress.json()).ok,'installed Web host permits authenticated operation-ID queries');
  const faviconPath=await page.locator('link[rel=icon]').getAttribute('href'),favicon=await page.request.get(new URL(faviconPath,link).href);
- check(faviconPath==='/streamlink-tokyo-45.svg'&&favicon.ok()&&(await favicon.text()).includes('rotate(45 128 128)'),'installed tab icon uses the new 45-degree logo URL');
+ check(faviconPath==='/icon.svg'&&favicon.ok()&&(await favicon.text()).includes('rotate(45 128 128)'),'installed tab icon uses the unified Tokyo Night 45-degree logo');
  check(!page.url().includes('#'),'ticket removed');
  await page.screenshot({path:path.join(out,'published-overview.png'),fullPage:true});
  if(!readOnly){const deviceName='AQ installed '+Date.now().toString(36);
- await page.locator('[data-page="settings"]').click();await page.locator('[data-setting-section=identity]').click();await page.locator('#settings-name').fill(deviceName);
- await page.getByRole('button',{name:'保存本机设置',exact:true}).click();await page.locator('#toast').filter({hasText:'本机设置已保存'}).waitFor();
- await page.reload();await page.getByText('后台运行中',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();
- check(await page.locator('#settings-name').inputValue()===deviceName,'published Web -> SID pipe -> SCM service persisted restricted metadata');}
+ await page.locator('[data-page="settings"]').click();await page.locator('[data-section=identity]').click();await page.locator('#device-name').fill(deviceName);
+ await page.getByRole('button',{name:'保存全部设置',exact:true}).click();await page.locator('#toast').filter({hasText:'全部设置已保存'}).waitFor();
+ await page.reload();await page.getByText('后台运行中',{exact:true}).waitFor();await page.locator('[data-page="settings"]').click();await page.locator('[data-section=identity]').click();
+ check(await page.locator('#device-name').inputValue()===deviceName,'published Web -> SID pipe -> SCM service persisted restricted metadata');}
  await page.close();const reopened=await context.newPage();await reopened.goto(new URL(link).origin);await reopened.getByText('后台运行中',{exact:true}).waitFor();check(true,'browser close/reopen preserves actual service');
  check(errors.length===0,'no JavaScript errors');
  fs.writeFileSync(path.join(out,'browser.json'),JSON.stringify({status:'Pass',checks,readOnly,instance:id,scope:'published self-contained Web and assets + actual SCM service; launch token is documented separately by the caller; no physical streaming or cross-account/UAC interactive acceptance'},null,2));

@@ -55,5 +55,13 @@ public static partial class ServiceInstaller
         using var installation=MsiLock();string path=MsiStatePath(transaction);
         if(File.Exists(path)){if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("安装记录不能是链接");File.Delete(path);}
     }
-    public static Task VerifyMsiReady()=>WaitLocalReady(true);
+    public static async Task VerifyMsiReady()
+    {
+        // A same-version maintenance install may leave the service component
+        // unchanged: StartServices then skips it, although our quiesce action
+        // stopped the old owner. Start this configured instance explicitly.
+        // Its automatic/demand preference is preserved by ConfigureMsi.
+        await StartIfNeeded();
+        await WaitLocalReady(true);
+    }
 }
