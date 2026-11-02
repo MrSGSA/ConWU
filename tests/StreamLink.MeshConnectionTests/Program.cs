@@ -25,8 +25,10 @@ static partial class Program
     public static async Task Main(string[] args)
     {
         if(args is ["--resolve-entry",var source]){using var resolver=new ExistingEntryResolver();Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await resolver.Resolve([new(-1,source)],"faketcp",default)));return;}
+        if(args is ["--approval-guest-service"]){await ApprovalGuestService();return;}
+        if(args is ["--approval-invitation-only"]){await ApprovalInvitations();return;}
         if(args is ["--direct-only"]){await DirectNetworks();return;}
-        if(args is ["--direct-short-only"]){await DirectShortPairing();return;}
+        if(args is ["--direct-short-only"]){await ApprovalInvitations();await DirectShortPairing();return;}
         if(args is ["--direct-short-service"]){await DirectPairingService();return;}
         if(args is ["--direct-short-native",var pairingBinary,var pairingOutput]){foreach(var pairingMode in new[]{"faketcp","udp"})await DirectPairingNative(Path.GetFullPath(pairingBinary),Path.Combine(Path.GetFullPath(pairingOutput),pairingMode),pairingMode);return;}
         if (args is ["--existing-entries-only"]) { await ExistingEntries(); return; }

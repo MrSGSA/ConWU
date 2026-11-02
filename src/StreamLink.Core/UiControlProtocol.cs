@@ -63,7 +63,12 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public string RequestedVirtualIp {get;init;}="";
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
-public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="");
+public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="")
+{
+    public UiConfigPatch? Patch {get;init;}
+    public bool? AutoStart {get;init;}
+    public bool? ExpectedAutoStart {get;init;}
+}
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null,
     [property:System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] string? ExpectedDeviceName=null,

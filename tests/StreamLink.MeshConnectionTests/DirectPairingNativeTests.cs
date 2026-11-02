@@ -36,13 +36,13 @@ static partial class Program
         Dictionary<string,string> Env(int port)=>new(){["STREAMLINK_TEST_BIND"]=port.ToString(),["STREAMLINK_TEST_PEER"]=proxy.Port.ToString()};
         reservation.Dispose();
         using var nativeServer=new MeshTransport(components,folder,owner,router.LocalEndpoint,true,listener,null,"info",Env(serverWire));router.SetLegacyListenerControl(true);
-        var ticket=await host.Create(hostKey,"native host",default);var temporary=MeshIdentity.Create("","",mode,direct:true);
+        var opened=await host.CreateInvitation(hostKey,"native host",default);var ticket=opened.Ticket;var temporary=MeshIdentity.Create("","",mode,direct:true);
         MeshProfile enrolled;
         using(var client=new DirectPairClient(_=>new MeshTransport(components,folder,temporary,new(IPAddress.Loopback,listener),false,0,null,"info",Env(Port())))){
-            PairRoomTicket join;try{join=await client.Join(ticket.Code,guestKey,"native guest",default);}catch{Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new{proxy.FromServer,proxy.FromClient,proxy.Forwarded,proxy.SawHttp,stats=LegacyTransportLedger.Shared.Snapshot()}));throw;}
+            PairRoomTicket join;try{join=await client.Join(opened.Capability,guestKey,"native guest",default);}catch{Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new{proxy.FromServer,proxy.FromClient,proxy.Forwarded,proxy.SawHttp,stats=LegacyTransportLedger.Shared.Snapshot()}));throw;}
             await host.Reveal(ticket,true,hostKey,default);var state=await client.Reveal(join,false,guestKey,default);var ownerState=await host.Poll(ticket,true,default);
             var a=hostKey.Derive(ownerState.GuestPublic,ownerState.GuestCommitment,ticket.Room,join.Candidate,true);var b=guestKey.Derive(state.HostPublic,join.HostCommitment,join.Room,join.Candidate,false);
-            Check(PairKeyExchange.Verification(a)==PairKeyExchange.Verification(b),"actual native "+mode+" carries direct short-code commitments and matching SAS without a coordinator");
+            Check(PairKeyExchange.Verification(a)==PairKeyExchange.Verification(b),"actual native "+mode+" carries approval-invitation commitments and matching SAS without a coordinator");
             // Human approval can take longer than a native eight-second search window.
             await Task.Delay(9000);
             var invitation=DirectInvitation.Issue(owner,[new(0,"203.0.113.42:44680")]);router.ApplyDirectory(owner.Directory!);

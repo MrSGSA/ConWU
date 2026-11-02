@@ -1,0 +1,16 @@
+{
+  "version": "1.0.2",
+  "review": "Correctness and security, separate from product review",
+  "changes": [
+    "Global settings validate metadata, transport, sources, startup preconditions and revision before a single profile save; failed startup changes do not commit the profile.",
+    "Settings writes preserve the latest signed directory; optimistic concurrency protects configuration and edited metadata.",
+    "SL6 invitations contain signed host/network/transport/expiry/entry information and a random application capability, with no member private keys or administrator key.",
+    "Capability-only rooms reject their six-digit legacy locator. A committed key exchange and owner SAS approval precede member credential issuance.",
+    "The guest pins room, host commitment and approved network identity; selected transport mismatch is rejected.",
+    "Restricted loopback, SID IPC authorization, one-use bootstrap, CSRF, operation replay protection and external-only CSP assets remain in force. Accepted mutations are observed rather than resent after a timeout."
+  ],
+  "targetedValidation": ["Actual WebPanel and isolated service tests", "Live browser with deferred operations and transient progress read failure", "Capability room and signature tampering tests", "Owner and guest service approval tests", "Native FakeTCP and UDP local pairing"],
+  "releaseValidation": "Freeze the final source and execute CandidateCore, package preflight, manifest/ZIP integrity and MSI inspection. Results are delivered with the release.",
+  "limitations": ["No new public-WAN streaming claim", "Eight-stack and long-duration formal matrices remain incomplete", "Application publisher signature is still absent"],
+  "formalValidationGate": "NotPassed"
+}

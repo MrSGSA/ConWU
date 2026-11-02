@@ -50,6 +50,8 @@ try {
  Managed 'LegacyControlTests' @('--native',$native,'--output',(Join-Path $OutputDirectory 'legacy-control.json'),'--rounds',$repeatRounds) 900
  Run 'mesh-native-wire' 'dotnet' @('run','--project','tests/StreamLink.MeshTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--raw',$native)
  Run 'direct-short-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-native',$native,(Join-Path $OutputDirectory 'direct-short-native'))
+ Run 'approval-invitation' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-invitation-only')
+ Run 'approval-guest-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-guest-service')
  Run 'direct-short-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-service')
  # Enabled personal paths: 30 SO/UDP deterministic rounds plus real factory
  # source-learning, resource cancellation, stale-network and failure cleanup.

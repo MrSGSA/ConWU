@@ -29,13 +29,18 @@ public sealed class DirectPairHost : IShortPairClient
     readonly object gate=new();
     readonly TimeProvider clock;
     PairRoomTicket? ticket,guest;
+    string? invitationCapability;
     PairRoomState? state;
     long window;int replies,badCodes;bool delivered;
     public DirectPairHost(TimeProvider? clock=null)=>this.clock=clock??TimeProvider.System;
     static string Token()=>Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     static bool Equal(string a,string b)=>a!=null&&b!=null&&a.Length==b.Length&&CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a),Encoding.UTF8.GetBytes(b));
     void Live(){if(ticket==null||ticket.Expires<=clock.GetUtcNow().ToUnixTimeSeconds())throw new IOException("配对码无效或已过期，请主机重新生成");}
-    public void Clear(){lock(gate){ticket=guest=null;state=null;badCodes=0;delivered=false;}}
+    public void Clear(){lock(gate){ticket=guest=null;state=null;invitationCapability=null;badCodes=0;delivered=false;}}
+    public Task<(PairRoomTicket Ticket,string Capability)> CreateInvitation(PairKeyExchange key,string name,CancellationToken cancel)
+    {
+        lock(gate){var room=Create(key,name,cancel).GetAwaiter().GetResult();invitationCapability=Token();return Task.FromResult((room,invitationCapability));}
+    }
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel){lock(gate){cancel.ThrowIfCancellationRequested();if(state?.Approved==true&&!delivered&&ticket!.Expires>clock.GetUtcNow().ToUnixTimeSeconds())throw new IOException("上一台设备正在接收授权，请稍后再生成配对码");Clear();ticket=new(Guid.NewGuid().ToString("N"),RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"),Token(),key.Commitment,name,clock.GetUtcNow().AddMinutes(5).ToUnixTimeSeconds());state=new("","","","","","",false,ticket.Expires){Addressing=1};return Task.FromResult(ticket);}}
     public Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="")=>throw new NotSupportedException();
     void Owner(PairRoomTicket value){Live();if(value.Room!=ticket!.Room||!Equal(value.Token,ticket.Token))throw new IOException("配对会话已改变");}
@@ -59,10 +64,10 @@ public sealed class DirectPairHost : IShortPairClient
     {
         Live();
         if(r.Method=="join"){
-            if(r.Code is not {Length:6}||!Equal(r.Code,ticket!.Code)){if(++badCodes>=20)Clear();throw new IOException();}
+            if(!Equal(r.Code,invitationCapability??ticket!.Code)){if(++badCodes>=20)Clear();throw new IOException();}
             if(!PairKeyExchange.ValidCommitment(r.Commitment)||r.Name is not {Length:>0 and <=64}||r.Name.Any(char.IsControl)||state!.Approved||state.Outcome.Length>0)throw new IOException();
             if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name)throw new IOException();return new(r.Id,Ticket:guest);}
-            guest=new(ticket.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N"));
+            guest=new(ticket!.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N"));
             state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name};return new(r.Id,Ticket:guest);
         }
         if(guest==null||r.Room!=guest.Room||!Equal(r.Token,guest.Token))throw new IOException();
@@ -124,7 +129,7 @@ public sealed class DirectPairClient : IShortPairClient
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel)=>throw new NotSupportedException();
     public async Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="")
     {
-        if(code.Length!=6||code.Any(c=>c<'0'||c>'9'))throw new FormatException("请输入六位配对码");
+        if(!(code.Length==6&&code.All(char.IsAsciiDigit))&&!(code.Length==64&&code.All(char.IsAsciiHexDigit)))throw new FormatException("直连配对凭据无效");
         var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
         if(!Guid.TryParseExact(ticket.Room,"N",out _)||!Guid.TryParseExact(ticket.Candidate,"N",out _)||ticket.Token.Length!=64||!PairKeyExchange.ValidCommitment(ticket.HostCommitment)||ticket.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||ticket.Expires>DateTimeOffset.UtcNow.AddMinutes(6).ToUnixTimeSeconds()||ticket.HostName.Length>64)throw new IOException("主机配对响应无效");return ticket;
     }

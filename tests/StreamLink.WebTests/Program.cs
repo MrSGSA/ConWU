@@ -113,6 +113,15 @@ using(var worker=new ControlWorker()) {
   var loaded=new ProfileStore().Load();loaded.RequireFixedTransport();
   Check(loaded.PathSelection==selected && !loaded.Enabled,"UI protocol choice persists while idle without starting an adapter");
  }
+ var batchBefore=(await Ui(new("status"))).Status!;
+ var batchSettings=batchBefore.Settings! with{ListenPort=45002};
+ var rejectedBatch=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:batchSettings,ExpectedRevision:batchBefore.SettingsRevision){Patch=new(DeviceName:"Must-Not-Save",LogLevel:"invalid",ExpectedDeviceName:batchBefore.DeviceName)}));
+ var batchUnchanged=(await Ui(new("status"))).Status!;
+ Check(!rejectedBatch.Ok&&batchUnchanged.DeviceName==batchBefore.DeviceName&&batchUnchanged.Settings!.ListenPort==batchBefore.Settings!.ListenPort,"invalid global batch does not partially write name or network settings");
+ var batch=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:batchSettings,ExpectedRevision:batchBefore.SettingsRevision){Patch=new(DeviceName:"Batch-Device",LogLevel:"warn",ExpectedDeviceName:batchBefore.DeviceName,ExpectedLogLevel:batchBefore.LogLevel)}));
+ Check(batch.Ok&&batch.Status!.DeviceName=="Batch-Device"&&batch.Status.LogLevel=="warn"&&batch.Status.Settings!.ListenPort==45002,"one restricted batch saves name, logging and network settings together");
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:batchSettings,ExpectedRevision:batchBefore.SettingsRevision){Patch=new(DeviceName:"Stale-Write")}))).Ok,"global batch rejects stale configuration revision");
+ Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("pair-poll"){AutoStart=true,ExpectedAutoStart=false}))).Ok,"global startup fields rejected on unrelated actions");
  var fixedStatus=(await Ui(new("status"))).Status!;
  Check(!(await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:fixedStatus.Settings! with{PathSelection="prefer-faketcp"},ExpectedRevision:fixedStatus.SettingsRevision)))).Ok,"UI API rejects removed automatic fallback even when requested directly");
  var full=(await worker.Handle(new("status"))).Profile!;var json=JsonSerializer.Serialize((await Ui(new("status"))).Status);

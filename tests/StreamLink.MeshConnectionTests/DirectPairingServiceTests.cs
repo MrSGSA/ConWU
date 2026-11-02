@@ -21,10 +21,10 @@ static partial class Program
         async Task<UiControlReply> Action(string action,string candidate="",string verification="",string ip="")=>await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new(action,ExpectedNetwork:owner.Pair.Network,Candidate:candidate,Verification:verification,ProposedIp:ip)),sid,default);
         try{
             await Until(()=>listener!=null,"actual control worker owns a direct native-listener target with no coordination service");
-            var invited=await Action("invite-short");Check(invited.Ok&&invited.Status!.Pairing!.Code.Length==6,"restricted UI generates direct short code on running owner");
+            var invited=await Action("invite");Check(invited.Ok&&invited.Status!.Pairing!.Code.StartsWith("SL6."),"restricted UI generates approval invitation on running owner");
             using var guestKey=new PairKeyExchange();using var guest=new DirectPairClient(_=>new PairTransport(listener!));
-            var joined=await guest.Join(invited.Status!.Pairing!.Code,guestKey,"service guest",default);
-            var polled=await Action("pair-poll");Check(polled.Ok&&polled.Status!.Pairing!.PeerName=="service guest","incoming short request reaches actual service UI snapshot");
+            var joined=await guest.Join(DirectPairInvitation.Import(invited.Status!.Pairing!.Code).Capability,guestKey,"service guest",default);
+            var polled=await Action("pair-poll");Check(polled.Ok&&polled.Status!.Pairing!.PeerName=="service guest","incoming invitation request reaches actual service UI snapshot");
             var remote=await guest.Poll(joined,false,default);await guest.Reveal(joined,false,guestKey,default);polled=await Action("pair-poll");
             var p=polled.Status!.Pairing!;var shared=guestKey.Derive(remote.HostPublic,joined.HostCommitment,joined.Room,joined.Candidate,false);
             Check(p.Verification==PairKeyExchange.Verification(shared)&&p.ProposedIp.Length>0,"service exposes matching SAS and preallocated address before granting membership");
