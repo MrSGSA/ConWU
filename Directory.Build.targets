@@ -1,6 +1,6 @@
 <Project>
   <PropertyGroup>
-    <StreamLinkReleaseVersion Condition="'$(StreamLinkReleaseVersion)'==''">1.0.1-rc.13</StreamLinkReleaseVersion>
+    <StreamLinkReleaseVersion Condition="'$(StreamLinkReleaseVersion)'==''">1.0.1-rc.14</StreamLinkReleaseVersion>
     <Version>$(StreamLinkReleaseVersion)</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>

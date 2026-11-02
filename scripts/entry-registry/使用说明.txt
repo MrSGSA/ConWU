@@ -1,0 +1,44 @@
+StreamLink 标签订阅服务
+
+本模块挂到现有 Lucky Registry Handler 的 do_GET/do_POST 开头：
+from streamlink_entries import handle as handle_streamlink
+if handle_streamlink(self): return
+
+Handler 提供 send_json、send_text、bearer；镜像需包含本模块。
+保持原 EasyTier Handler、数据库、令牌及 /healthz 路由。
+
+配置文件（仅服务账户可读，默认 /data/streamlink-entry-secrets.json）：
+{"node":"b","read_token":"至少32字符的独立随机只读令牌","write_token":"至少32字符且不同于只读令牌的随机写入令牌"}
+可用 STREAMLINK_ENTRY_CONFIG / STREAMLINK_ENTRY_DB 指定配置和 SQLite 路径。
+不要把令牌放进源码、镜像、示例配置或日志。
+
+使用与原 Registry 相同的路径：
+POST /api/v1/report/b
+Authorization: Bearer <StreamLink写入令牌>
+Content-Type: application/json
+{"address":"streamlink=实际公网IPv4:端口"}
+
+GET /connector/b?token=<StreamLink只读令牌>
+返回：streamlink=实际公网IPv4:端口\n
+客户端共享来源写法：https://你的域名/connector/b?token=<只读令牌>#streamlink
+#streamlink 是本机筛选标记，不发送给服务器。
+沿用原 EasyTier 令牌的请求仍由原 Handler 处理，不会得到 StreamLink 内容。
+
+多条规则使用 POST /api/v1/report/b?entry=规则名。
+名称为 1–32 位英文字母、数字、下划线或连字符，省略时为 akane，以兼容已部署数据。
+每个规则只替换自己的地址，可上报多行 streamlink= 或逗号分隔地址。
+所有有效规则合计最多 8 个去重入口，同时最多 8 个规则。
+每 60 秒及地址变化后上报；1 小时未上报的规则不再对外返回。
+停止使用的规则会在过期后自动退出订阅。
+
+旧 /streamlink/report/akane 和 /streamlink/connector/akane 只作迁移兼容，
+旧写入正文可以不带标签，旧读取响应保持纯地址格式。迁移无需清空数据库或轮换令牌。
+新配置统一使用原 Registry 的 /api/v1/report/b 和 /connector/b。
+服务器只存地址提示，不签发配对凭据、不承担业务中继。
+
+部署前备份模块、镜像和 SQLite，先运行：
+python tests/test_entry_registry.py
+python tests/test_entry_registry_http.py <现有Registry的app.py快照>
+后者使用临时数据库、虚拟令牌和回环 HTTP，不接触生产数据。
+部署后检查原 EasyTier 读写路径、StreamLink 授权读取、未授权拒绝和旧路径兼容。
+若失败，恢复原镜像和模块；不要删除或回滚用户刚上报的地址。

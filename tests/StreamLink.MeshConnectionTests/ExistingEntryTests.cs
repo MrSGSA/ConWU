@@ -12,6 +12,7 @@ static partial class Program
     static async Task ExistingEntries()
     {
         await EntryResilience();
+        await TaggedEntries();
         static void Reject(Action action){try{action();}catch(Exception ex)when(ex is FormatException or CryptographicException){return;}throw new Exception("unexpected acceptance");}
         foreach(string invalid in new[]{"127.0.0.1:80","169.254.169.254:80","0.0.0.0:1","224.0.0.1:8","https://127.0.0.1/key","http://10.0.0.1/","file:///x","https://a:b@example.com/","[::1]:80","example.com:0"})Reject(()=>ExistingEntryResolver.Validate([new(0,invalid)]));
         Check(true,"existing sources reject local-service fetches, invalid ports, credentials, multicast and unsupported formats");

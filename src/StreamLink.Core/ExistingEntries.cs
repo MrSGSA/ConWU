@@ -78,7 +78,7 @@ public sealed class ExistingEntryResolver : IDisposable
             progress.Attempt=attempt;progress.Stage="连接／TLS／响应头";
             using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(6500);
             try {
-                using var request=new HttpRequestMessage(HttpMethod.Get,source);
+                using var request=new HttpRequestMessage(HttpMethod.Get,WithoutSelector(source));
                 request.Options.Set(ProgressKey,progress);request.Headers.CacheControl=new(){NoCache=true,NoStore=true};
                 using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);
                 if(!response.IsSuccessStatusCode)throw new EntryFetchException($"更新页面返回 HTTP {(int)response.StatusCode}",response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout);
@@ -88,22 +88,24 @@ public sealed class ExistingEntryResolver : IDisposable
                 var bytes=new byte[MaximumBody+1];int size=0,read;
                 while(size<bytes.Length&&(read=await stream.ReadAsync(bytes.AsMemory(size),budget.Token))>0)size+=read;
                 if(size>MaximumBody)throw new EntryFetchException("更新内容超过 8 KiB");
-                progress.Stage="内容解析";return ParseDocument(new UTF8Encoding(false,true).GetString(bytes,0,size));
+                progress.Stage="内容解析";return ParseDocuments([new UTF8Encoding(false,true).GetString(bytes,0,size)],RequiresTag(source));
             }catch(Exception ex)when(attempt==1&&!token.IsCancellationRequested&&Retryable(ex)) {await Task.Delay(200,token);}
         }
     }
     public static string Kind(string source) => source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";
+    static bool RequiresTag(string source)=>source.EndsWith("#streamlink",StringComparison.OrdinalIgnoreCase);
+    static string WithoutSelector(string source)=>RequiresTag(source)?source[..^11]:source;
     public static void Validate(ExistingEntry[]? entries)
     {
         if (entries == null || entries.Length > MaximumSources) throw new FormatException("已有入口最多填写 12 项");
         foreach (var entry in entries) {
             if (entry == null || entry.PeerSlot is < ExistingEntry.NetworkOwner or > 254 || entry.Source is not {Length: >0 and <=2048} s || s.Any(char.IsControl) || s != s.Trim())
                 throw new FormatException("入口归属或地址无效");
-            if (Kind(s) == "TXT") { if (!Host(s[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名"); }
+            if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink 限定标签"); }
             else if (Kind(s) is "HTTP" or "HTTPS") {
-                if (!Uri.TryCreate(s, UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !Host(uri.Host) || uri.IsLoopback)
-                    throw new FormatException("更新页面需为不含用户名和片段的 HTTP(S) 公网地址");
+                if (!Uri.TryCreate(WithoutSelector(s), UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !Host(uri.Host) || uri.IsLoopback)
+                    throw new FormatException("更新页面需为不含用户名的 HTTP(S) 公网地址，仅支持 #streamlink 标签选择");
                 if (IPAddress.TryParse(uri.Host, out var ip) && !PublicAddress(ip)) throw new FormatException("更新页面不能指向本机或内网服务");
             } else ParseEndpoint(s);
         }
@@ -154,7 +156,7 @@ public sealed class ExistingEntryResolver : IDisposable
         string kind=Kind(entry.Source);
         try {
             string[] values;
-            if(kind=="TXT") values=(await txt(entry.Source[6..],deadline.Token)).SelectMany(ParseDocument).ToArray();
+            if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
             progress.Stage="入口地址解析";
@@ -177,17 +179,49 @@ public sealed class ExistingEntryResolver : IDisposable
             return new(entry.PeerSlot,index,kind,[],reason+$"（{elapsed/1000d:F1} 秒，{progress.Attempt} 次）"){ElapsedMs=elapsed,Attempts=progress.Attempt};
         }
     }
-    internal static string[] ParseDocument(string text)
+    // Select across the entire TXT answer / HTTP document, before parsing any
+    // addresses. A foreign app's record must never poison or join a tagged set.
+    internal static string[] ParseDocuments(IEnumerable<string> documents,bool requireTag=false)
     {
-        text=text.Trim();
-        if(text.StartsWith("streamlink=",StringComparison.OrdinalIgnoreCase))text=text[11..].Trim();
+        var texts=documents.Select(s=>s.Trim()).ToArray();
+        if(texts.Any(s=>s.Length>MaximumBody))throw new FormatException("更新内容超过 8 KiB");
+        static bool Tagged(string s)=>s.StartsWith("streamlink=",StringComparison.OrdinalIgnoreCase);
+        static bool TaggedJson(string s)=>Tagged(s)&&(s[11..].TrimStart().StartsWith('{')||s[11..].TrimStart().StartsWith('['));
+        static string[] Lines(string s)=>TaggedJson(s)?[s]:s.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+        static IEnumerable<string> Tags(string record) {
+            if(TaggedJson(record))return [record[11..].Trim()];
+            // One label owns one whitespace-delimited field. This also handles a
+            // shared TXT RR: tcp://EasyTier:port streamlink=StreamLink:port.
+            // Unlabelled fields after a tag still belong to other applications.
+            return record.Split([' ','\t'],StringSplitOptions.RemoveEmptyEntries).Where(Tagged).Select(s=>s[11..]);
+        }
+        var records=texts.SelectMany(Lines).ToArray();
+        // A separate TXT RR may be arbitrary verification data, even invalid JSON.
+        // Do not interpret it when explicit StreamLink records exist elsewhere.
+        var tagged=records.SelectMany(Tags).ToArray();
+        if(tagged.Length==0) {
+            records=texts.SelectMany(s=>s.StartsWith('{')||s.StartsWith('[')?ParseJson(s):Lines(s)).ToArray();
+            tagged=records.SelectMany(Tags).ToArray();
+        }
+        if(tagged.Length==0&&requireTag)throw new FormatException("订阅中没有 streamlink= 入口，请检查上报或 TXT 记录");
+        var values=new List<string>();
+        foreach(var record in tagged.Length>0?tagged:records) {
+            var parts=record.StartsWith('{')||record.StartsWith('[')?ParseJson(record):record.Split([' ',',',';','\t'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+            if(parts.Length==0)throw new FormatException("streamlink= 入口不能为空");
+            values.AddRange(parts);
+        }
+        return values.Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+    }
+    internal static string[] ParseDocument(string text)=>ParseDocuments([text]);
+    static string[] ParseJson(string text)
+    {
         if(text.StartsWith('{') || text.StartsWith('[')) {
             using var doc=JsonDocument.Parse(text,new(){MaxDepth=4});var root=doc.RootElement;
             if(root.ValueKind==JsonValueKind.Object)root=root.TryGetProperty("endpoints",out var endpoints)?endpoints:root.TryGetProperty("addresses",out var addresses)?addresses:throw new FormatException("JSON 须包含 endpoints 数组");
             if(root.ValueKind!=JsonValueKind.Array)throw new FormatException("JSON 须包含 endpoints 数组");
             return root.EnumerateArray().Select(e=>e.ValueKind==JsonValueKind.String?e.GetString()!.Trim():throw new FormatException("入口必须为字符串")).ToArray();
         }
-        return text.Split(['\r','\n',',',';',' ','\t'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+        throw new FormatException("入口 JSON 格式无效");
     }
     public void Dispose()=>http.Dispose();
 }

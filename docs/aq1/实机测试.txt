@@ -1,6 +1,6 @@
-StreamLink 1.0.1-rc.13 · Thinkbook / Akane 实机复测
+StreamLink 1.0.1-rc.14 · Thinkbook / Akane 实机复测
 
-先结束串流，分别更新两端 MSI，界面版本应为 1.0.1-rc.13。现有配对和配置保留；不要为了显示长邀请而删除当前网络。业务默认 FakeTCP＋HTTP，不跨协议回退 UDP。
+先结束串流，分别更新两端 MSI，界面版本应为 1.0.1-rc.14。现有配对和配置保留；不要为了显示长邀请而删除当前网络。业务默认 FakeTCP＋HTTP，不跨协议回退 UDP。
 
 本次重点
 1. 按单独提供的 Lucky 配置说明新建 StreamLinkTCP 规则，通向主机 StreamLink 接收端口 44680。保留 EasyTier 11010 和现有管理通道。
@@ -16,3 +16,4 @@ StreamLink 1.0.1-rc.13 · Thinkbook / Akane 实机复测
 
 边界
 本次隔离 Wintun 重开、浏览器和核心回归不能替代真实 Lucky 映射兼容性、公网首次连接及长串流质量。测试数据、首次失败与后续修复复测分别保留；正式八栈、跨网络长期可靠性仍未验收。新版未自动安装到日用设备。
+rc.14 订阅验证：两端更新后，用个人配置中的新 HTTPS 地址及共享 TXT #streamlink 来源解析。结果只能是 StreamLink 端口，不得含 EasyTier 11010 所属映射；更新 Lucky 结果后观察订阅按设置间隔更新，健康业务路径不应重建。删除标签时应报告缺少 streamlink=，不应读取其他应用地址。实际打洞和长串流仍需两机确认。

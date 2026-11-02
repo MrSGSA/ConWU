@@ -12,9 +12,9 @@ static partial class Program
         await DirectShortPairing();
         static void Reject(Action action){try{action();}catch(Exception ex)when(ex is FormatException or CryptographicException or System.IO.IOException){return;}throw new Exception("unexpected direct credential acceptance");}
         var owner=MeshIdentity.Create("","","faketcp","10.171.139.1",direct:true);
-        var code=DirectInvitation.Issue(owner,[new(0,"txt://stun.example.com")]);var first=DirectInvitation.Import(code);
+        var code=DirectInvitation.Issue(owner,[new(0,"txt://stun.example.com#streamlink")]);var first=DirectInvitation.Import(code);
         Check(first.Mesh.Pair.Direct&&first.Mesh.Pair.Service==""&&!first.Mesh.IsOwner&&first.Mesh.LocalIp=="10.171.139.2","serverless invitation carries a per-device credential, signed IP and no coordinator/owner private key");
-        Check(first.Entries.Single()==new ExistingEntry(1,"txt://stun.example.com"),"invitation preserves dynamically refreshed owner ingress");
+        Check(first.Entries.Single()==new ExistingEntry(1,"txt://stun.example.com#streamlink"),"invitation preserves dynamically refreshed owner ingress and strict application selector");
         var original=JsonSerializer.Deserialize<DirectInvitation>(Convert.FromBase64String(code[4..]))!;
         string Encode(DirectInvitation value)=>"SL5."+Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(value));
         Reject(()=>DirectInvitation.Import(Encode(original with{Entries=[new(1,"203.0.113.99:42")]})));
