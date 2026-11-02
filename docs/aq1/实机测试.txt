@@ -1,6 +1,8 @@
-StreamLink 1.0.1-rc.14 · Thinkbook / Akane 实机复测
+简明使用指南见仓库 docs/使用指南.md；验证范围以本版发布说明为准。
 
-先结束串流，分别更新两端 MSI，界面版本应为 1.0.1-rc.14。现有配对和配置保留；不要为了显示长邀请而删除当前网络。业务默认 FakeTCP＋HTTP，不跨协议回退 UDP。
+StreamLink 1.0.1 · Thinkbook / Akane 实机复测
+
+先结束串流，分别更新两端 MSI，界面版本应为 1.0.1。现有配对和配置保留；不要为了显示长邀请而删除当前网络。业务默认 FakeTCP＋HTTP，不跨协议回退 UDP。
 
 本次重点
 1. 按单独提供的 Lucky 配置说明新建 StreamLinkTCP 规则，通向主机 StreamLink 接收端口 44680。保留 EasyTier 11010 和现有管理通道。
