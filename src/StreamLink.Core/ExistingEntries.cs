@@ -13,7 +13,11 @@ public sealed record ExistingEntry(int PeerSlot, string Source)
     public static ExistingEntry[] ForJoinedNetwork(ExistingEntry[] entries) => entries.Where(e=>e.PeerSlot is 0 or NetworkOwner)
         .Select(e=>e.PeerSlot==NetworkOwner?e with {PeerSlot=1}:e).Distinct().ToArray();
 }
-public sealed record EntryResolution(int PeerSlot, int Index, string Kind, string[] Endpoints, string Error);
+public sealed record EntryResolution(int PeerSlot, int Index, string Kind, string[] Endpoints, string Error)
+{
+    public long ElapsedMs {get;init;}
+    public int Attempts {get;init;}
+}
 
 // These are hints, never membership credentials or proof of connectivity.
 // Fetch only explicitly configured sources. Never follow returned URLs.
@@ -23,23 +27,70 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly HttpClient http;
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
+    internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
+    internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; }
+    readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
     public ExistingEntryResolver() : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query) { }
     internal ExistingEntryResolver(Func<string,CancellationToken,Task<IPAddress[]>> addresses,
-        Func<string,CancellationToken,Task<string[]>> txt, HttpMessageHandler? handler = null)
+        Func<string,CancellationToken,Task<string[]>> txt, HttpMessageHandler? handler = null,
+        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null)
     {
-        this.addresses = addresses; this.txt = txt;
+        this.addresses = addresses; this.txt = txt; this.connect = connect ?? ConnectSocket;
         http = new(handler ?? new SocketsHttpHandler {
             UseProxy=false, AllowAutoRedirect=false, UseCookies=false, MaxConnectionsPerServer=2,
             ConnectCallback=async (context, ct) => {
-                var ips = await addresses(context.DnsEndPoint.Host, ct);
-                // Pin DNS resolution to the actual connection, including redirects (disabled).
-                if (ips.Length == 0 || ips.Any(ip => !PublicAddress(ip))) throw new IOException("更新页面必须使用公网地址");
-                var ip = ips.FirstOrDefault(ip => ip.AddressFamily == AddressFamily.InterNetwork) ?? ips[0];
-                var socket = new Socket(ip.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-                try { await socket.ConnectAsync(new IPEndPoint(ip, context.DnsEndPoint.Port), ct); return new NetworkStream(socket, true); }
-                catch { socket.Dispose(); throw; }
+                context.InitialRequestMessage.Options.TryGetValue(ProgressKey,out var progress);
+                return await ConnectPage(context.DnsEndPoint,progress??new(),ct);
             }
-        }) { Timeout=TimeSpan.FromSeconds(4), MaxResponseContentBufferSize=MaximumBody };
+        }) { Timeout=Timeout.InfiniteTimeSpan, MaxResponseContentBufferSize=MaximumBody };
+    }
+    static async Task<Stream> ConnectSocket(IPEndPoint endpoint,CancellationToken token)
+    {
+        var socket=new Socket(endpoint.AddressFamily,SocketType.Stream,ProtocolType.Tcp);
+        try {await socket.ConnectAsync(endpoint,token);return new NetworkStream(socket,true);}
+        catch {socket.Dispose();throw;}
+    }
+    internal async Task<Stream> ConnectPage(DnsEndPoint endpoint,FetchProgress progress,CancellationToken token)
+    {
+        progress.Stage="DNS 查询";
+        var ips=await addresses(endpoint.Host,token);
+        // Validate the WHOLE answer before connecting, then pin each attempted
+        // socket. Never follow redirects, use a proxy, or retry a private answer.
+        if(ips.Length==0||ips.Any(ip=>!PublicAddress(ip)))throw new EntryFetchException("更新页面必须使用公网地址");
+        var v4=ips.Where(ip=>ip.AddressFamily==AddressFamily.InterNetwork).Distinct().ToArray();
+        var v6=ips.Where(ip=>ip.AddressFamily==AddressFamily.InterNetworkV6).Distinct().ToArray();
+        var ordered=Enumerable.Range(0,Math.Max(v4.Length,v6.Length)).SelectMany(i=>new[]{i<v4.Length?v4[i]:null,i<v6.Length?v6[i]:null}).OfType<IPAddress>().Take(3).ToArray();
+        for(int i=0;i<ordered.Length;i++) {
+            progress.Stage=$"TCP 建连（地址 {i+1}/{ordered.Length}）";
+            using var attempt=CancellationTokenSource.CreateLinkedTokenSource(token);attempt.CancelAfter(1800);
+            try {var stream=await connect(new(ordered[i],endpoint.Port),attempt.Token);progress.Stage="TLS／响应头";return stream;}
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is SocketException or IOException or OperationCanceledException){if(i==ordered.Length-1)throw new EntryFetchException("TCP 建连失败或超时",true);}
+        }
+        throw new EntryFetchException("无可用公网地址");
+    }
+    sealed class EntryFetchException(string message,bool transient=false):IOException(message) {public bool Transient {get;}=transient;}
+    static EntryFetchException? FetchFailure(Exception ex)=>ex as EntryFetchException??(ex.InnerException==null?null:FetchFailure(ex.InnerException));
+    static bool Retryable(Exception ex)=>FetchFailure(ex) is {} known?known.Transient:ex is OperationCanceledException or HttpIOException {HttpRequestError:HttpRequestError.ResponseEnded} ||
+        ex is HttpRequestException request && request.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.NameResolutionError or HttpRequestError.ResponseEnded;
+    async Task<string[]> Fetch(string source,FetchProgress progress,CancellationToken token)
+    {
+        for(int attempt=1;;attempt++) {
+            progress.Attempt=attempt;progress.Stage="连接／TLS／响应头";
+            using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(6500);
+            try {
+                using var request=new HttpRequestMessage(HttpMethod.Get,source);
+                request.Options.Set(ProgressKey,progress);request.Headers.CacheControl=new(){NoCache=true,NoStore=true};
+                using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);
+                if(!response.IsSuccessStatusCode)throw new EntryFetchException($"更新页面返回 HTTP {(int)response.StatusCode}",response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout);
+                progress.Stage="响应内容";
+                if(response.Content.Headers.ContentLength>MaximumBody)throw new EntryFetchException("更新内容超过 8 KiB");
+                using var stream=await response.Content.ReadAsStreamAsync(budget.Token);
+                var bytes=new byte[MaximumBody+1];int size=0,read;
+                while(size<bytes.Length&&(read=await stream.ReadAsync(bytes.AsMemory(size),budget.Token))>0)size+=read;
+                if(size>MaximumBody)throw new EntryFetchException("更新内容超过 8 KiB");
+                progress.Stage="内容解析";return ParseDocument(new UTF8Encoding(false,true).GetString(bytes,0,size));
+            }catch(Exception ex)when(attempt==1&&!token.IsCancellationRequested&&Retryable(ex)) {await Task.Delay(200,token);}
+        }
     }
     public static string Kind(string source) => source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";
@@ -87,8 +138,8 @@ public sealed class ExistingEntryResolver : IDisposable
     public async Task<EntryResolution[]> Resolve(ExistingEntry[] entries, string mode, CancellationToken token)
     {
         Validate(entries);entries=entries.Distinct().ToArray();
-        using var total=CancellationTokenSource.CreateLinkedTokenSource(token);total.CancelAfter(12000);
-        using var limit=new SemaphoreSlim(2);
+        using var total=CancellationTokenSource.CreateLinkedTokenSource(token);total.CancelAfter(30000);
+        using var limit=new SemaphoreSlim(3);
         return await Task.WhenAll(entries.Select(async (entry,index) => {
             bool acquired=false;
             try {await limit.WaitAsync(total.Token);acquired=true;return await ResolveOne(entry,index,mode,total.Token);}
@@ -98,23 +149,15 @@ public sealed class ExistingEntryResolver : IDisposable
     }
     async Task<EntryResolution> ResolveOne(ExistingEntry entry,int index,string mode,CancellationToken token)
     {
-        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(4500);
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(14000);
+        long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
         string kind=Kind(entry.Source);
         try {
             string[] values;
             if(kind=="TXT") values=(await txt(entry.Source[6..],deadline.Token)).SelectMany(ParseDocument).ToArray();
-            else if(kind is "HTTP" or "HTTPS") {
-                using var request=new HttpRequestMessage(HttpMethod.Get,entry.Source);
-                request.Headers.CacheControl=new(){NoCache=true,NoStore=true};
-                using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
-                response.EnsureSuccessStatusCode();
-                if(response.Content.Headers.ContentLength>MaximumBody)throw new IOException("更新内容超过 8 KiB");
-                using var stream=await response.Content.ReadAsStreamAsync(deadline.Token);
-                var bytes=new byte[MaximumBody+1];int size=0,read;
-                while(size<bytes.Length && (read=await stream.ReadAsync(bytes.AsMemory(size),deadline.Token))>0)size+=read;
-                if(size>MaximumBody)throw new IOException("更新内容超过 8 KiB");
-                values=ParseDocument(new UTF8Encoding(false,true).GetString(bytes,0,size));
-            } else values=[entry.Source];
+            else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
+            else values=[entry.Source];
+            progress.Stage="入口地址解析";
             if(values.Length is 0 or >MaximumEndpoints)throw new FormatException("每项来源须返回 1–8 个入口");
             var endpoints=new List<string>();
             foreach(var value in values) {
@@ -126,11 +169,12 @@ public sealed class ExistingEntryResolver : IDisposable
                 if(endpoints.Count>MaximumEndpoints)throw new FormatException("解析结果超过 8 个入口");
             }
             if(endpoints.Count==0)throw new IOException("没有可用的 IPv4 入口");
-            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),"");
+            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt};
         } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
-            string reason=ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>"解析超时",HttpRequestException=>"更新页面访问失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" };
-            return new(entry.PeerSlot,index,kind,[],reason);
+            string reason=FetchFailure(ex)?.Message??(ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>progress.Stage+"超时",HttpRequestException {HttpRequestError:HttpRequestError.SecureConnectionError}=>"TLS 安全连接失败",HttpRequestException=>progress.Stage+"失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" });
+            long elapsed=Environment.TickCount64-began;
+            return new(entry.PeerSlot,index,kind,[],reason+$"（{elapsed/1000d:F1} 秒，{progress.Attempt} 次）"){ElapsedMs=elapsed,Attempts=progress.Attempt};
         }
     }
     internal static string[] ParseDocument(string text)

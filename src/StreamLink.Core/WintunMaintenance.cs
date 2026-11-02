@@ -20,6 +20,19 @@ public sealed record WintunMaintenanceResult(string Adapter, string Driver, int 
 public static class WintunMaintenance
 {
     static readonly Guid NetClass = new("4d36e972-e325-11ce-bfc1-08002be10318");
+    // Caller holds the identity lease and has proof that this process joined
+    // every pump and completed native close. This is not installer cleanup:
+    // no PnP removal or shared-driver deletion is permitted here.
+    internal static bool RecoverClosedInterface(string components,WintunIdentity identity)
+    {
+        if(Find(identity)!=null)return false;
+        var interfaces=NetworkInterface.GetAllNetworkInterfaces();RequireNoNameConflict(identity,interfaces);
+        var residual=interfaces.SingleOrDefault(n=>Guid.TryParse(n.Id,out var id)&&id==identity.Guid);
+        if(residual==null)return true; // disappearance completed during enumeration
+        RequireOrphanIdentity(identity,residual.Name,residual.Description);
+        if(Find(identity)!=null)return false;
+        RecycleOrphanInterface(components,identity);return true;
+    }
     const string DriverHash = "E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE";
     sealed record Device(string Id, string Service, string Hardware, string Friendly, Guid? Interface)
     {

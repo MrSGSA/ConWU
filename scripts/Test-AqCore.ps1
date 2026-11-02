@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.1-rc.1',[ValidateSet('Full','InstallerRefresh')][string]$Profile='Full')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.1-rc.1',[ValidateSet('Full','InstallerRefresh','CandidateCore')][string]$Profile='Full')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
@@ -63,7 +63,7 @@ try {
  $pass=@($rows|Where-Object status -eq 'Fail').Count -eq 0 -and -not $dirty
  [ordered]@{schemaVersion=1;spec='AQ-1';sourceCommit=$commit;sourceDirtyAfter=$dirty;version=$Version;profile=$Profile;legacyControlRounds=[int]$repeatRounds;runnerBaselineRounds=[int]$repeatRounds;fullThirtyRoundGate=$($Profile -eq 'Full');status=$(if($pass){'Pass'}else{'Fail'});steps=$rows.ToArray();
   scope='Frozen personal core, deterministic/native-loopback/actual Windows control + headless Edge. Separate bundle/official-driver/SCM results required; physical WAN and user streaming not claimed.';
-  repetitionScope='Full repeats transport/control 30 times. InstallerRefresh covers every same core case once after installation/UI-only changes; it does not claim a new 30-round reliability result.';
+  repetitionScope='Full repeats transport/control 30 times. InstallerRefresh and CandidateCore cover every same core case once; neither claims a new 30-round reliability result. CandidateCore is a single-pass core regression after targeted feature/lifecycle tests.';
   ordinaryTokenGate=$(if((Get-Content (Join-Path $OutputDirectory 'ControlTests.log') -Raw).Contains('BLOCKED ordinary-token')){'BlockedEnvironment'}else{'SeeControlTestsLog'});
   excluded='Archived research drivers; disabled prediction runtime historical freshness failure; extra transports; formal eight-stack/long-run matrices; unverified ordinary/cross-account interactive launch'}|ConvertTo-Json -Depth 10|Set-Content (Join-Path $OutputDirectory 'result.json') -Encoding utf8NoBOM
  if(-not $pass){exit 1}

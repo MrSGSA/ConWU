@@ -50,7 +50,16 @@ try {
     Check(ProfileChanges.Impact(saved.Profile,servers)==ProfileChangeImpact.NextAttempt,"STUN edits classify as next-attempt input rather than a whole-network rebuild");
     var serversSaved=await worker.Handle(new("save",servers)).WaitAsync(TimeSpan.FromSeconds(1));
     Check(serversSaved.Ok&&!nextStop.IsCancellationRequested&&!nextHeld.Task.IsCompleted&&activeProfile.TcpStun.SequenceEqual(servers.TcpStun)&&activeProfile.UdpStun.SequenceEqual(servers.UdpStun),"saving STUN lists preserves live owner/Active and passes immutable array replacements to subsequent collection");
+    var entrySettings=ProfileChanges.Copy(serversSaved.Profile!);entrySettings.ConnectionSource="existing";entrySettings.ExistingEntries=[new(0,"203.0.113.1:44680")];
+    Check(ProfileChanges.Impact(serversSaved.Profile!,entrySettings)==ProfileChangeImpact.NextAttempt,"entry changes do not require Wintun reconstruction");
+    var entriesSaved=await worker.Handle(new("save",entrySettings)).WaitAsync(TimeSpan.FromSeconds(1));
+    Check(entriesSaved.Ok&&!nextStop.IsCancellationRequested&&!nextHeld.Task.IsCompleted,"saving a source retains the live network owner");
+    var portSettings=ProfileChanges.Copy(entriesSaved.Profile!);portSettings.ListenPort++;
+    var slowSave=worker.Handle(new("save",portSettings));
+    await Task.Delay(16000);
+    Check(!slowSave.IsCompleted&&nextStop.IsCancellationRequested,"slow safe shutdown remains one pending save beyond the former 15-second timeout");
     nextHeld.TrySetResult();
+    Check((await slowSave.WaitAsync(TimeSpan.FromSeconds(2))).Ok,"original save completes after resource join without a second click");
     var extension=JsonSerializer.Deserialize<DeviceProfile>("{\"FutureOption\":{\"explicitDisabled\":true}}")!;
     Check(JsonSerializer.Serialize(extension).Contains("FutureOption"),"Unknown future profile fields must roundtrip");
     await worker.StopLocal();

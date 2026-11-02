@@ -113,17 +113,31 @@ public sealed partial class ControlWorker : BackgroundService
             }
         });
     }
-    async Task End(CancellationToken token = default)
+    async Task End(CancellationToken token = default,Action<string>? progress=null)
     {
         if(uiPairClient is DirectPairHost)ResetUiPair("连接已停止，请重新生成配对码");
         uiDirectHost.Clear();
         runStop?.Cancel();measureStop?.Cancel();
         Task[] ending=new[]{running,measuring}.Where(t=>t!=null).Cast<Task>().ToArray();
-        try {await Task.WhenAll(ending.Select(ObserveShutdown)).WaitAsync(TimeSpan.FromSeconds(15),token);}
-        catch(TimeoutException) {
+        var completion=Task.WhenAll(ending.Select(ObserveShutdown));
+        var clock=System.Diagnostics.Stopwatch.StartNew();
+        try {
+            while(!completion.IsCompleted){
+                var remaining=TimeSpan.FromSeconds(60)-clock.Elapsed;
+                if(remaining<=TimeSpan.Zero)throw new TimeoutException();
+                try {await completion.WaitAsync(remaining<TimeSpan.FromSeconds(5)?remaining:TimeSpan.FromSeconds(5),token);}
+                catch(TimeoutException)when(!completion.IsCompleted&&clock.Elapsed<TimeSpan.FromSeconds(60)){
+                    string detail=$"正在等待旧网络安全退出（{(int)clock.Elapsed.TotalSeconds} 秒）"+(progress!=null?"，完成后自动应用设置":"");
+                    progress?.Invoke(detail);
+                    Log(detail+"；退出阶段："+JsonSerializer.Serialize(meshRunner?.ExitDiagnostics));
+                }
+            }
+            await completion;
+        }
+        catch(TimeoutException)when(!completion.IsCompleted) {
             string resource=running?.IsCompleted==false?"网络 worker/捕获/租约":"测速";
             lock(sync){status=new("停止未完成","","","faketcp",false,null,$"{resource} 尚未退出；所有权仍保留，拒绝启动第二实例");PublishReply();}
-            throw new IOException(resource+" 退出超过15秒，未提前释放仍被使用的资源");
+            throw new IOException(resource+" 退出超过60秒；已保留资源所有权，请查看退出阶段日志"+(progress!=null?"。设置尚未应用":""));
         }
         RequireResourceOwnership(); // completed task is not proof that its owners closed
         running = null; runner = null; meshRunner = null;runningProfile=null;
@@ -239,9 +253,10 @@ public sealed partial class ControlWorker : BackgroundService
                     // Admission failure must precede End; never tear down a
                     // healthy official adapter to discover an unsigned backend.
                     if(updated.AdapterBackend!=profile.AdapterBackend)await PersonalPacketAdapters.Preflight(updated,operation.Stop.Token);
-                    if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token);}
-                    try {lock (sync) {PreserveLatestDirectory(updated);store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.EntryRefreshSeconds=updated.EntryRefreshSeconds;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();}}}
+                    if(restart){SetOperation(operation,"重建受影响网络资源",false);await End(operation.Stop.Token,phase=>SetOperation(operation,phase,false));}
+                    try {lock (sync) {PreserveLatestDirectory(updated);store.Save(updated);profile=updated; if(!restart&&runningProfile is {} active){active.DeviceName=updated.DeviceName;active.LogLevel=updated.LogLevel;active.LogDirectory=updated.LogDirectory;active.AllowManualQualityRequests=updated.AllowManualQualityRequests;active.EntryRefreshSeconds=updated.EntryRefreshSeconds;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();active.ConnectionSource=updated.ConnectionSource;active.ManualEndpoint=updated.ManualEndpoint;active.ExistingEntries=updated.ExistingEntries.ToArray();}}}
                     catch{if(restart&&resume)Begin();throw;}
+                    if(!restart)meshRunner?.UpdateEntries(updated);
                     if(restart&&resume)Begin();break;
                 case "start":
                     RequireResourceOwnership();

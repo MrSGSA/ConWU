@@ -160,6 +160,10 @@ static class Program
     }
     [STAThread] static void Main(string[] args)
     {
+        if(args is ["--wintun-reopen",var components,var evidence]) {
+            try { WintunReopenHarness.Run(Path.GetFullPath(components),evidence).GetAwaiter().GetResult(); }
+            catch(Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode=1; } return;
+        }
         if(args is ["--wintun-installer",var instance,var operation,var output]) {
             try { WintunInstallerHarness.Run(instance,operation,output).GetAwaiter().GetResult(); }
             catch(Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode=1; } return;

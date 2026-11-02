@@ -11,6 +11,7 @@ static partial class Program
 {
     static async Task ExistingEntries()
     {
+        await EntryResilience();
         static void Reject(Action action){try{action();}catch(Exception ex)when(ex is FormatException or CryptographicException){return;}throw new Exception("unexpected acceptance");}
         foreach(string invalid in new[]{"127.0.0.1:80","169.254.169.254:80","0.0.0.0:1","224.0.0.1:8","https://127.0.0.1/key","http://10.0.0.1/","file:///x","https://a:b@example.com/","[::1]:80","example.com:0"})Reject(()=>ExistingEntryResolver.Validate([new(0,invalid)]));
         Check(true,"existing sources reject local-service fetches, invalid ports, credentials, multicast and unsupported formats");
@@ -102,6 +103,10 @@ static partial class Program
             Check(!refresh||resolutions>=2,"configured one-second subscription refresh adopts a changed endpoint without user retry");
             Check(!fallback||logs.Any(l=>l.Contains("开始自主打洞")),"fallback reason is observable without claiming parsed address is connected");
             int count=transports.Count;runner.RequestRetry();await Task.Delay(600);Check(transports.Count==count&&!adapter.Disposed,"manual retry preserves healthy existing transport and adapter");
+            int previousResolutions=resolutions;
+            runner.UpdateEntries(new DeviceProfile{ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.9:44680")]});
+            await Until(()=>resolutions>previousResolutions,"edited source is resolved immediately by the live runner");
+            await Task.Delay(300);Check(transports.Count==count&&!adapter.Disposed&&status?.Connected==true,"editing subscription source preserves authenticated transport and Wintun owner");
             adapter.Outgoing.Add(Packet(owner.LocalIp,guest.LocalIp));await Until(()=>endpoint.DataPackets>0,"actual encrypted payload crosses selected supplied/fallback transport");
             if(refresh){
                 int reads=discovery.Reads;discovery.ExpiresOverride=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+8;

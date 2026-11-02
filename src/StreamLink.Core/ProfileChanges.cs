@@ -27,8 +27,10 @@ public static class ProfileChanges
         comparable.LastEntry=before.LastEntry;comparable.LastStun=before.LastStun;
         comparable.Enabled=before.Enabled;comparable.AdditionalData=before.AdditionalData;
         comparable.CapabilityIntents=before.CapabilityIntents;
-        bool nextAttempt=!before.TcpStun.SequenceEqual(after.TcpStun)||!before.UdpStun.SequenceEqual(after.UdpStun);
+        bool nextAttempt=!before.TcpStun.SequenceEqual(after.TcpStun)||!before.UdpStun.SequenceEqual(after.UdpStun)||
+            before.ConnectionSource!=after.ConnectionSource||before.ManualEndpoint!=after.ManualEndpoint||!before.ExistingEntries.SequenceEqual(after.ExistingEntries);
         comparable.TcpStun=before.TcpStun;comparable.UdpStun=before.UdpStun;
+        if(before.Mesh!=null||before.Pair==null){comparable.ConnectionSource=before.ConnectionSource;comparable.ManualEndpoint=before.ManualEndpoint;comparable.ExistingEntries=before.ExistingEntries;}
         if(JsonSerializer.Serialize(comparable)!=JsonSerializer.Serialize(before))return ProfileChangeImpact.RestartNetwork;
         if(nextAttempt)return ProfileChangeImpact.NextAttempt;
         return before.AllowManualQualityRequests==after.AllowManualQualityRequests&&before.DeviceName==after.DeviceName&&before.LogLevel==after.LogLevel&&before.LogDirectory==after.LogDirectory&&

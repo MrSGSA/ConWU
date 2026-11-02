@@ -73,7 +73,7 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
         }
         if (pending != null && router.UsesPath(slot, pending.Value.Transport.ClientEndpoint) && !pending.Value.Transport.Exited) {
             Close(active); active = pending; pending = null; failures = 0; nextAttempt = 0;
-            log($"设备 {slot} 已通过双向验证，使用新的直连路径");
+            log($"设备 {slot} 已通过双向验证，实际直连入口 {active.Value.Endpoint}");
         }
         if ((!keepPending || endpoint.Length == 0) && pending != null) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; }
         if (pending != null && (pending.Value.Transport.Exited || now - started >= 15000)) {

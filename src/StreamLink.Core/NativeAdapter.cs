@@ -67,7 +67,7 @@ public sealed class NativeAdapter : IPacketAdapter
         try {
         // Let an existing owner acquire the close gate while we wait for its
         // identity to disappear. Do not hold lifecycle across this poll.
-        WaitForVacantIdentity(guid, name, cancellationToken);
+        WaitForVacantIdentity(identity, components, cancellationToken);
         Trace("lifecycle-wait"); lifecycle.Wait(cancellationToken);
         try {
         cancellationToken.ThrowIfCancellationRequested();
@@ -113,16 +113,28 @@ public sealed class NativeAdapter : IPacketAdapter
         } finally { lifecycle.Release(); }
         } catch { identityLease.Dispose(); throw; }
     }
-    void WaitForVacantIdentity(Guid guid, string name, CancellationToken token)
+    static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid,byte> closedIdentities=new();
+    Guid ownedIdentity;
+    void WaitForVacantIdentity(WintunIdentity identity,string components,CancellationToken token)
     {
+        ownedIdentity=identity.Guid;
         long began = Environment.TickCount64;
-        while (NetworkInterface.GetAllNetworkInterfaces().Any(n => string.Equals(n.Name, name, StringComparison.OrdinalIgnoreCase) || Guid.TryParse(n.Id, out var existing) && existing == guid)) {
-            if (Environment.TickCount64 - began >= 3000)
+        bool recovered=false;
+        while (NetworkInterface.GetAllNetworkInterfaces().Any(n => string.Equals(n.Name, identity.Name, StringComparison.OrdinalIgnoreCase) || Guid.TryParse(n.Id, out var existing) && existing == identity.Guid)) {
+            if(!recovered&&Environment.TickCount64-began>=1000&&closedIdentities.ContainsKey(identity.Guid)){
+                // Same-process completed close + exclusive identity lease + no
+                // PnP node. Never adopt/remove a live device or shared driver.
+                token.ThrowIfCancellationRequested();Trace("previous-interface-recover");
+                recovered=WintunMaintenance.RecoverClosedInterface(components,identity);
+                if(recovered)began=Environment.TickCount64;
+            }
+            if (Environment.TickCount64 - began >= (closedIdentities.ContainsKey(identity.Guid)?15000:3000))
                 throw new IOException("相同 Wintun 网卡身份仍存在，未接管或删除；请等待旧实例完成退出后重连");
             Trace("previous-interface-wait");
             if (token.WaitHandle.WaitOne(100)) token.ThrowIfCancellationRequested();
         }
         token.ThrowIfCancellationRequested();
+        closedIdentities.TryRemove(identity.Guid,out _);
     }
     public int Read(byte[] buffer)
     {
@@ -179,6 +191,7 @@ public sealed class NativeAdapter : IPacketAdapter
             // recorded separately. Do not block all statistics/cancel callers
             // behind unbounded interface enumeration or alter foreign drivers.
             Trace("bridge-library-free-begin");NativeLibrary.Free(library);Trace("library-free-complete");
+            closedIdentities[ownedIdentity]=0;
             identityLease.Dispose();
         }finally{io.ExitWriteLock();}
         // Do not dispose the guard: late calls must deterministically observe
