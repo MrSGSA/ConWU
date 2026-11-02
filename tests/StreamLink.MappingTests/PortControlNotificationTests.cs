@@ -114,8 +114,10 @@ static partial class PortControlTests
             mapping.Changed += _ => Interlocked.Increment(ref changes);
             server.AssignedPorts[key] = 46007;
             await server.Notify(PcpReply(server.LastMaps[key], server.Epoch, 180, 46007, IPAddress.Parse("1.1.1.1")), server.Clients[key]);
-            await Wait(() => mapping.IsValid && mapping.PublicEndpoint.Port == 46007, token);
-            check(changes == 1 && lease.Snapshot.Id == identity && mapping.HelperObservation!.Local.Port == source && helper.Active == 1 && !maintaining.IsCompleted,
+            // PublicEndpoint is assigned before Changed is invoked. Await both
+            // observable outcomes before requiring exactly one completed event.
+            await Wait(() => mapping.IsValid && mapping.PublicEndpoint.Port == 46007 && Volatile.Read(ref changes) > 0, token);
+            check(Volatile.Read(ref changes) == 1 && lease.Snapshot.Id == identity && mapping.HelperObservation!.Local.Port == source && helper.Active == 1 && !maintaining.IsCompleted,
                 "production TcpMapping publishes a notification-driven port update while retaining the real TCP helper and lease");
             server.ExternalAddress = IPAddress.Parse("100.64.0.9");
             await server.Notify(PcpReply(server.LastMaps[key], server.Epoch, 180, 46007, server.ExternalAddress), server.Clients[key]);
