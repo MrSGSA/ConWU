@@ -105,6 +105,22 @@ public static class MeshIdentity
         owner.Validate(); if (!owner.IsOwner || owner.Directory == null || slot == 1 || !owner.Directory.Members.Any(m => m.Slot == slot)) throw new IOException("无法移除此成员");
         owner.Directory = SignDirectory(owner, owner.Directory.Members.Where(m => m.Slot != slot).ToArray(), owner.Directory.NextSlot);
     }
+    // The caller must verify a fresh proof made with the old member's key and
+    // obtain owner approval. Slots and keys are never recycled. Only this proven
+    // device may retain its previous IP while its old credential is revoked.
+    public static MeshEnrollment Replace(MeshProfile owner, MeshMember previous, string requestedIp = "")
+    {
+        owner.Validate();
+        if (!owner.IsOwner || owner.Directory == null || previous.Slot == 1 || !owner.Directory.Members.Contains(previous))
+            throw new IOException("原成员已改变，请刷新后重新核对申请");
+        if (owner.Directory.NextSlot > 254) throw new IOException("本网络的成员身份额度已用完，请创建新网络");
+        string priorIp = MeshAddressing.Address(owner.Pair.Network, previous);
+        string ip = requestedIp.Length == 0 || requestedIp == priorIp ? priorIp : MeshAddressing.Next(owner, requestedIp);
+        var keys = NewMember(owner.Pair.Network, owner.OwnerPrivate, owner.Directory.NextSlot, ip);
+        var members = owner.Directory.Members.Where(m => m.Slot != previous.Slot).Append(keys.member).ToArray();
+        owner.Directory = SignDirectory(owner, members, owner.Directory.NextSlot + 1);
+        return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds());
+    }
     public static string Export(MeshEnrollment enrollment) => "SL4." + Convert.ToBase64String(Data(enrollment));
     public static MeshProfile Import(string invitation)
     {

@@ -12,6 +12,7 @@ public sealed record OverlayConflict(string Severity,string Reason,string Interf
 public static class OverlayRouteConflicts
 {
     [DllImport("iphlpapi.dll")]static extern uint GetIpForwardTable2(ushort family,out IntPtr table);
+    [DllImport("iphlpapi.dll")]static extern uint GetUnicastIpAddressTable(ushort family,out IntPtr table);
     [DllImport("iphlpapi.dll")]static extern void FreeMibTable(IntPtr table);
     static uint Value(IPAddress address)=>BinaryPrimitives.ReadUInt32BigEndian(address.GetAddressBytes());
     static uint Mask(int bits)=>bits==0?0:uint.MaxValue<<(32-bits);
@@ -30,11 +31,25 @@ public static class OverlayRouteConflicts
         }
         return result.Distinct().ToArray();
     }
-    public static OverlayConflict[] Inspect(IPAddress overlay)
+    public static OverlayConflict[] Inspect(IPAddress overlay,IReadOnlySet<string>? verifiedOwnedInterfaces=null)
     {
-        var addresses=NetworkInterface.GetAllNetworkInterfaces().SelectMany(n=>n.GetIPProperties().UnicastAddresses.Select(a=>new OverlayAddressPrefix(n.Id,a.Address,a.PrefixLength))).ToArray();
+        OverlayAddressPrefix[] addresses;
         var routes=new List<OverlayRoutePrefix>();
         if(OperatingSystem.IsWindows()){
+            if(IntPtr.Size!=8)throw new IOException("网络地址表 ABI 不匹配");
+            var found=new List<OverlayAddressPrefix>();
+            uint addressError=GetUnicastIpAddressTable(2,out var addressTable);
+            if(addressError!=0)throw new IOException("无法核实虚拟网段地址："+addressError);
+            try{
+                int count=Marshal.ReadInt32(addressTable);if(count is<0 or>65536)throw new IOException("地址表大小异常");
+                byte[] row=new byte[80];
+                for(int i=0;i<count;i++){
+                    Marshal.Copy(IntPtr.Add(addressTable,8+i*80),row,0,row.Length);
+                    if(BinaryPrimitives.ReadUInt16LittleEndian(row)!=2)continue;
+                    found.Add(new("WindowsInterface:"+BinaryPrimitives.ReadUInt64LittleEndian(row.AsSpan(32)).ToString("X16"),new IPAddress(row.AsSpan(4,4)),row[60]));
+                }
+            }finally{FreeMibTable(addressTable);}
+            addresses=found.ToArray();
             uint error=GetIpForwardTable2(2,out IntPtr table);if(error!=0)throw new IOException("无法核实虚拟网段路由："+error);
             try{
                 int count=Marshal.ReadInt32(table);if(count is<0 or>65536)throw new IOException("路由表大小异常");
@@ -46,6 +61,7 @@ public static class OverlayRouteConflicts
                 }
             }finally{FreeMibTable(table);}
         }
-        return Evaluate(overlay,addresses,routes);
+        else addresses=NetworkInterface.GetAllNetworkInterfaces().SelectMany(n=>n.GetIPProperties().UnicastAddresses.Select(a=>new OverlayAddressPrefix(n.Id,a.Address,a.PrefixLength))).ToArray();
+        return Evaluate(overlay,addresses,routes,verifiedOwnedInterfaces);
     }
 }

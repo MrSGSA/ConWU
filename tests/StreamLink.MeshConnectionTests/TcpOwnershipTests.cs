@@ -18,6 +18,19 @@ static partial class TcpTests
     }
     static async Task Ownership()
     {
+        await using(var fallbackServer=new StunServer()){
+            using var occupied=new Socket(AddressFamily.InterNetwork,SocketType.Stream,ProtocolType.Tcp){ExclusiveAddressUse=true};
+            occupied.Bind(new IPEndPoint(IPAddress.Loopback,0));occupied.Listen(1);
+            int occupiedPort=((IPEndPoint)occupied.LocalEndPoint!).Port,receiverPort=Port();
+            using var fallbackStop=new CancellationTokenSource(10000);var notes=new List<string>();
+            var available=await TcpBinding.ConnectAvailable(occupiedPort,receiverPort,IPAddress.Loopback,notes.Add,fallbackStop.Token,[fallbackServer.Address]);
+            using(available.Binding){
+                Program.Check(available.Result.Local.Port!=occupiedPort&&available.Result.Local.Port!=receiverPort&&available.Binding.Snapshot.Local==available.Result.Local.ToString(),"new mapping uses a real ephemeral STUN source when the preferred port is occupied");
+                Program.Check(notes.Any(x=>x.Contains("被占用"))&&fallbackServer.Accepted==1,"port recovery is reported and never connects through the foreign port owner");
+                var pulse=await available.Binding.Pulse(fallbackStop.Token);
+                Program.Check(pulse.Local.Equals(available.Result.Local)&&pulse.Public.Equals(available.Result.Public),"fallback keeps the same observed socket for subsequent keepalive");
+            }
+        }
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(40)); var token = deadline.Token;
         await using (var server = new StunServer()) {
             int port = Port(); var (binding, result) = await TcpBinding.Connect(port, IPAddress.Loopback, _ => { }, token, [server.Address]);

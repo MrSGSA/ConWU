@@ -40,6 +40,12 @@ Check(Routes(("10.217.142.0",24)).Length==0,"sibling subnet must not conflict");
 var address=OverlayRouteConflicts.Evaluate(overlay,[new("other",Ip("10.217.141.8"),24)],[]);
 Check(address.Single().Severity=="Block","existing host in overlay is blocked");
 Check(OverlayRouteConflicts.Evaluate(overlay,[new("owned",Ip("10.217.141.8"),24)],[new("owned",overlay,24)],new HashSet<string>{"owned"}).Length==0,"explicit verified ownership is required for exclusion");
+if(OperatingSystem.IsWindows()){
+    var witness=System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces().SelectMany(n=>n.GetIPProperties().UnicastAddresses)
+        .First(a=>a.Address.AddressFamily==System.Net.Sockets.AddressFamily.InterNetwork&&a.PrefixLength is >0 and <32&&!IPAddress.IsLoopback(a.Address));
+    var nativeConflicts=OverlayRouteConflicts.Inspect(witness.Address);
+    Check(nativeConflicts.Any(c=>c.Reason=="LocalAddressPrefixOverlap"&&c.Severity=="Block"&&c.Prefix==$"{witness.Address}/{witness.PrefixLength}"),"native IP Helper layout detects an actual existing interface address and prefix");
+}
 PacketAdapterProviders.RequireProduction(new(PacketAdapterProviders.OfficialWintun,2,1280,true,true,false));
 bool rejected=false;try{PacketAdapterProviders.RequireProduction(new(PacketAdapterProviders.NativeExperimental,1,1280,true,true,true));}catch(IOException){rejected=true;}
 Check(rejected,"unsigned/unpromoted driver cannot replace official default provider");

@@ -65,7 +65,8 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
         var timeline = new ConnectionTimeline(log);
-        var (binding, result) = await TcpBinding.Connect(sourcePort, null, log, token, servers);
+        var (binding, result) = await TcpBinding.ConnectAvailable(sourcePort,targetPort,null,log,token,servers);
+        sourcePort=result.Local.Port;
         timeline.Mark("TCP STUN 建连与查询完成");
         try
         {

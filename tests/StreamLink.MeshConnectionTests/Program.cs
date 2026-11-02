@@ -28,6 +28,8 @@ static partial class Program
         if(args is ["--approval-guest-service"]){await ApprovalGuestService();return;}
         if(args is ["--approval-invitation-only"]){await ApprovalInvitations();return;}
         if(args is ["--direct-only"]){await DirectNetworks();return;}
+        if(args is ["--rejoin-only"]){RejoinIdentity();Console.WriteLine($"PASS {checks} membership rejoin checks");return;}
+        if(args is ["--coordination-faults"]){await CoordinationFaults();return;}
         if(args is ["--direct-short-only"]){await ApprovalInvitations();await DirectShortPairing();return;}
         if(args is ["--direct-short-service"]){await DirectPairingService();return;}
         if(args is ["--direct-short-native",var pairingBinary,var pairingOutput]){foreach(var pairingMode in new[]{"faketcp","udp"})await DirectPairingNative(Path.GetFullPath(pairingBinary),Path.Combine(Path.GetFullPath(pairingOutput),pairingMode),pairingMode);return;}
@@ -68,6 +70,7 @@ static partial class Program
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AccessDenied or SocketError.AddressAlreadyInUse) { Console.WriteLine(ex.SocketErrorCode); }
             return;
         }
+        RejoinIdentity();
         ConnectionFeedback();
         await TcpTests.Run();
         await ExistingEntries();

@@ -12,6 +12,8 @@ namespace StreamLink.Core;
 [SupportedOSPlatform("windows")]
 public sealed record WintunIdentity(Guid Guid, string Name)
 {
+    internal static string StorageRoot=>Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),"StreamLink-Wintun");
+    internal WintunIdentity Generation(Guid value)=>new(value,Name+"-"+value.ToString("N"));
     public string DeviceId => @"SWD\WINTUN\" + Guid.ToString("B").ToUpperInvariant();
     public static WintunIdentity For(string network, int slot)
     {
@@ -23,7 +25,7 @@ public sealed record WintunIdentity(Guid Guid, string Name)
     public FileStream Acquire()
     {
         if (!WindowsHost.IsAdmin) throw new UnauthorizedAccessException("管理 Wintun 需要管理员权限");
-        string root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "StreamLink-Wintun");
+        string root = StorageRoot;
         if (Directory.Exists(root) && (File.GetAttributes(root) & FileAttributes.ReparsePoint) != 0)
             throw new IOException("Wintun 所有权目录不能是链接");
         var acl = new DirectorySecurity(); acl.SetAccessRuleProtection(true, false);

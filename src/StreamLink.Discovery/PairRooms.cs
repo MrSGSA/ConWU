@@ -12,7 +12,8 @@ public sealed class PairRooms(TimeProvider? time = null)
         public bool Approved;
         public string Outcome="", RequestedIp="";
         public int Addressing;
-        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires) {Outcome=Outcome,RequestedIp=RequestedIp,Addressing=Addressing};
+        public MeshRejoinProof? Rejoin;
+        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires) {Outcome=Outcome,RequestedIp=RequestedIp,Addressing=Addressing,Rejoin=Rejoin};
     }
     readonly Dictionary<string, Room> rooms = new();
     readonly object gate = new();
@@ -40,12 +41,15 @@ public sealed class PairRooms(TimeProvider? time = null)
     {
         try { if(input.RequestedIp.Length>0)MeshAddressing.ValidateAddress(input.RequestedIp);if(input.Addressing is <0 or >1)return Results.BadRequest(); }catch{return Results.BadRequest();}
         if (!PairKeyExchange.ValidCommitment(input.Commitment) || !NameOk(input.Name) || input.Code is null || input.Code.Length != 6 || input.Code.Any(c => c is < '0' or > '9')) return Results.BadRequest();
+        if(input.Rejoin is {} proof && !MeshRejoin.WellFormed(proof))return Results.BadRequest();
         lock (gate) {
             Prune(); var room = rooms.Values.FirstOrDefault(r => r.Code == input.Code && !r.Approved && r.Outcome.Length==0);
             if (room == null) return Results.NotFound();
-            if (room.Candidate.Length > 0) return Results.Conflict();
+            if (room.Candidate.Length > 0) return room.GuestCommit==input.Commitment&&room.GuestName==input.Name&&room.RequestedIp==input.RequestedIp&&room.Addressing==input.Addressing&&room.Rejoin==input.Rejoin
+                ? Results.Json(new PairRoomTicket(room.Id,"",room.Guest,room.HostCommit,room.HostName,room.Expires,room.Candidate)) : Results.Conflict();
             room.Candidate = Guid.NewGuid().ToString("N"); room.Guest = NewToken(); room.GuestCommit = input.Commitment; room.GuestName = input.Name;
             room.RequestedIp=input.RequestedIp;room.Addressing=input.Addressing;
+            room.Rejoin=input.Rejoin;
             return Results.Json(new PairRoomTicket(room.Id, "", room.Guest, room.HostCommit, room.HostName, room.Expires, room.Candidate));
         }
     }
@@ -63,7 +67,8 @@ public sealed class PairRooms(TimeProvider? time = null)
                 if (owner) room.HostPublic = reveal.PublicKey; else room.GuestPublic = reveal.PublicKey;
             }
             if (approve != null) {
-                if (!owner || room.Approved || room.HostPublic.Length == 0 || room.GuestPublic.Length == 0 || approve.Candidate != room.Candidate || approve.Ciphertext is null || approve.Ciphertext.Length is < 40 or > 6000) return Results.Conflict();
+                if (!owner || room.HostPublic.Length == 0 || room.GuestPublic.Length == 0 || approve.Candidate != room.Candidate || approve.Ciphertext is null || approve.Ciphertext.Length is < 40 or > 6000) return Results.Conflict();
+                if(room.Approved)return approve.Ciphertext==room.Cipher?Results.Json(room.State()):Results.Conflict();
                 try { Convert.FromBase64String(approve.Ciphertext); } catch { return Results.BadRequest(); }
                 room.Approved = true; room.Code = ""; room.Cipher = approve.Ciphertext;
             }

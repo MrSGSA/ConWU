@@ -1,0 +1,55 @@
+{
+  "version": "1.0.3",
+  "review": "正确性与安全检查；与产品检查分开执行，同一执行者，不是外部独立审计",
+  "status": "SourceReviewComplete",
+  "areas": [
+    {
+      "area": "成员身份与权限",
+      "finding": "退出重入原来会新增授权并留下旧成员。",
+      "resolution": "旧成员签名证明绑定网络、此次公钥承诺和配对凭据；主机核对校验码后批准，原子替换旧成员，轮换槽位/密钥并保留原 IP。不同名称/IP 不作为身份依据。历史凭据最多 32 条；显式移出清除关联。"
+    },
+    {
+      "area": "协调和直连审批",
+      "finding": "提交响应丢失、审批重试可能造成误报或重复授权。",
+      "resolution": "UI 按原 operation ID 查进度；配对申请和相同授权可幂等查询，差异请求拒绝；重试复用已保存的授权密文。直连保持 1200 字节上限，来宾只接收重入证明摘要。"
+    },
+    {
+      "area": "创建事务和错误来源",
+      "finding": "配对码生成失败可留下半创建网络。",
+      "resolution": "HTTPS 能力和配对码先成功，再保存启用新网络。域名/TLS/HTTP/响应超时分别说明；不把服务错误归因于对端离线。"
+    },
+    {
+      "area": "Wintun 所有权和重开",
+      "finding": "关闭后 Windows 缓存接口，复用 GUID 和立即重建均出现 4319/设备问题 0x38。官方 API 单独复现；系统安装队列闲置信号也不足以判断就绪。",
+      "resolution": "稳定本机 Device 所有权锁加当前网络槽位兼容锁；每次实际适配器使用受保护记录中的新 generation GUID。只有无 PnP 节点、精确 GUID/名称/类型一致的接口可跳过路由冲突检查。有缓存时按关闭时间最多等待 30 秒并复核，支持取消和 UI 倒计时。有限一次回滚后重试；保持官方模块进程生命周期。更新只清理本实例，保留其他适配器和必要共享驱动。"
+    },
+    {
+      "area": "端口与链路资源",
+      "resolution": "新映射内部 STUN 源端口忙时分配临时端口，并用真实绑定值创建/公告映射。固定接收端口不静默改变。获胜映射保持单一所有权，取消和旧连接清理仍按既有生命周期。"
+    },
+    {
+      "area": "Web/IPC/入口安全",
+      "resolution": "核对回环 Host/Origin、CSRF、一次性授权、SID IPC、响应/报文长度、签名目录与重放边界；未放宽校验解决 403。入口订阅与解析仍使用既有上限和协议校验。"
+    },
+    {
+      "area": "传输、队列、多机和恢复",
+      "resolution": "默认 FakeTCP＋HTTP 和内层 MeshLink 加密保持；不引入 TLS/QUIC 业务或 UDP 自动回退。检查有界队列、送达/本机丢弃计数区分、MTU、成员公平、离线退避及退出所有权；冻结核心回归覆盖这些共用代码。"
+    },
+    {
+      "area": "日志/依赖/交付",
+      "resolution": "新增重入私钥参与凭据脱敏；生产日志和私有配置不进入发布附件。只使用固定哈希 Wintun 与签名 WinDivert；源码/清单/二进制验证须对应冻结提交。"
+    }
+  ],
+  "validation": "已完成定向身份、服务审批、HTTPS 故障、Web 与实际浏览器检查。Wintun 方案及最终冻结后的核心/包/安装结果另附，不能拼接为同次全部通过。",
+  "limitations": [
+    "旧版重复成员没有可靠身份关联，需主机移出多余记录。",
+    "网络成员槽位累计最多 254，耗尽需重新创建网络；有效成员最多 8。",
+    "应用尚未发布者签名。八台 Windows、跨账户和公网长期串流矩阵未全部完成。"
+  ],
+  "formalValidationGate": "NotPassed",
+  "targetedWintunValidation": {
+    "reopenTransitions": "Pass: three local rounds, settling cancellation, member-slot rotation, two fresh processes, last round recreates network at same IP",
+    "upgradeProtection": "Pass: 14 checks including live/foreign identity refusal, dormant own PnP removal, shared-driver preservation and three close/maintenance/reopen cycles",
+    "scope": "Isolated official Wintun on this Windows host; final package repeats lifecycle validation. No public WAN streaming claim."
+  }
+}

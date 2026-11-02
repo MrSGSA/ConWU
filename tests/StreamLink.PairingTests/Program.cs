@@ -37,7 +37,14 @@ var created = await Execute(rooms.Create(new(host.Commitment, "Host"))); var tic
 Check(created.Status == 200 && ticket.Code.Length == 6, "Create failed");
 Check((await Execute(rooms.Exchange(Auth(new string('0',64)), ticket.Room, true))).Status == 401, "Owner token not checked");
 Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, new(host.PublicKey)))).Status == 409, "Host reveals before guest commitment");
-var joined = await Execute(rooms.Join(new(ticket.Code, guest.Commitment, "Guest"))); var join = Value<PairRoomTicket>(joined.Body); Check(joined.Status == 200 && join.Candidate.Length == 32, "Join failed");
+var rejoinOwner=MeshIdentity.Create("https://example.com/","","faketcp");
+var former=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(rejoinOwner)));
+var rejoinProof=MeshRejoin.Create(MeshRejoin.Retain(former),ticket.Code,guest);
+var joinBody=new PairRoomJoin(ticket.Code,guest.Commitment,"Guest"){Rejoin=rejoinProof};
+var joined = await Execute(rooms.Join(joinBody)); var join = Value<PairRoomTicket>(joined.Body); Check(joined.Status == 200 && join.Candidate.Length == 32, "Join failed");
+var duplicate=await Execute(rooms.Join(joinBody));Check(duplicate.Status==200&&Value<PairRoomTicket>(duplicate.Body)==join,"lost join reply can be observed with the same committed request without allocating another candidate");
+var ownerView=Value<PairRoomState>((await Execute(rooms.Exchange(Auth(ticket.Token),ticket.Room,true))).Body);
+Check(ownerView.Rejoin==rejoinProof&&MeshRejoin.Resolve(rejoinOwner,ownerView.Rejoin,ticket.Code,ownerView.GuestCommitment)==former.Self,"coordination preserves the old-key proof for owner verification without granting membership");
 Check((await Execute(rooms.Join(new(ticket.Code, attacker.Commitment, "Attacker")))).Status == 409, "Second guest accepted");
 Check((await Execute(rooms.Exchange(Auth(join.Token), ticket.Room, true))).Status == 401, "Guest acquired owner access");
 Check((await Execute(rooms.Exchange(Auth(join.Token), ticket.Room, false, new(guest.PublicKey)))).Status == 409, "Guest reveals before host");
@@ -48,7 +55,8 @@ first = host.Derive(guest.PublicKey, guest.Commitment, ticket.Room, join.Candida
 cipher = PairKeyExchange.Encrypt(first, pair, ticket.Room, join.Candidate);
 Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, approve: new(Guid.NewGuid().ToString("N"), cipher)))).Status == 409, "Wrong candidate approved");
 Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, approve: new(join.Candidate, cipher)))).Status == 200, "Approval failed");
-Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, approve: new(join.Candidate, cipher)))).Status == 409, "Approval replay accepted");
+Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, approve: new(join.Candidate, cipher)))).Status == 200, "Identical approval retry recovers its original result");
+Check((await Execute(rooms.Exchange(Auth(ticket.Token), ticket.Room, true, approve: new(join.Candidate, PairKeyExchange.Encrypt(first,pair,roomId,candidate))))).Status == 409, "Approved authorization cannot be replaced by a different ciphertext");
 Check((await Execute(rooms.Join(new(ticket.Code, attacker.Commitment, "Attacker")))).Status == 404, "Consumed code reused");
 var state = Value<PairRoomState>((await Execute(rooms.Exchange(Auth(join.Token), ticket.Room, false))).Body);
 PairKeyExchange.ValidateState(join, null, state, guest, false); count++;
@@ -100,7 +108,7 @@ if (args.Length >= 2 && args[0] == "--server") {
         }
         Check(limited == System.Net.HttpStatusCode.TooManyRequests, "Live join rate limit failed");
         using var badPin = new ShortPairClient(args[1], new string('0',64)); bool rejected = false;
-        try { await badPin.Create(host, "Pin-Test", timeout.Token); } catch (HttpRequestException) { rejected = true; }
+        try { await badPin.Create(host, "Pin-Test", timeout.Token); } catch (IOException ex) when (ex.InnerException is HttpRequestException) { rejected = true; }
         Check(rejected, "TLS pin mismatch accepted");
         Console.WriteLine($"PASS {count}: HTTPS role checks, no-store, join rate limit and TLS pin mismatch");
     }

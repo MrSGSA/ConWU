@@ -4,7 +4,7 @@
 
 两台电脑装好后，通过虚拟 IP 连接。平时放在托盘里，需要操作时打开 WebUI。
 
-[下载最新版](https://github.com/MrSGSA/StreamLink/releases/latest) · [使用说明](docs/使用指南.md) · [1.0.2 更新说明](docs/releases/v1.0.2.md)
+[下载最新版](https://github.com/MrSGSA/StreamLink/releases/latest) · [使用说明](docs/使用指南.md) · [1.0.3 更新说明](docs/releases/v1.0.3.md)
 
 ## 能做什么
 
@@ -29,7 +29,7 @@
 
 业务流量在设备之间直传，协调服务不转发串流。FakeTCP＋HTTP 的外层没有 TLS，内层数据由 StreamLink 认证加密；HTTPS 用于协调和地址订阅。
 
-此前版本已在作者的两台 Windows 设备上使用。这次主要更新 WebUI、全局设置与邀请审批，已完成隔离实例和本地链路验证，公网串流效果仍需实际确认。多设备功能保留，八台 Windows 同时运行、跨账户及更长时间的稳定性仍需要继续验证。完整记录随 Release 提供。
+此前版本已在作者的两台 Windows 设备上使用。1.0.3 重点修复退出后重新加入、操作超时和界面反馈；验证范围与结果随 Release 提供。八台 Windows 同时运行、跨账户及长时间公网串流仍需要继续验证。新的抗 QoS 方法先做独立实机实验，尚未加入软件。
 
 ## 开发
 

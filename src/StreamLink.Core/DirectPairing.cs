@@ -6,7 +6,12 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed record DirectPairRequest(string Id,string Method,string Room="",string Token="",string Code="",string Commitment="",string Name="",string PublicKey="",int Offset=0);
+public sealed record DirectPairRequest(string Id,string Method,string Room="",string Token="",string Code="",string Commitment="",string Name="",string PublicKey="",int Offset=0)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public MeshRejoinProof? Rejoin {get;init;}
+    public string RequestedIp {get;init;}="";
+}
 public sealed record DirectPairReply(string Id,string Error="",PairRoomTicket? Ticket=null,PairRoomState? State=null,string Part="",int Total=0);
 public static class DirectPairWire
 {
@@ -16,6 +21,9 @@ public static class DirectPairWire
     // business packet with independently derived per-member keys.
     public const string CarriageKey="streamlink-direct-rendezvous-v1";
     public const int MaximumDatagram=1200, MaximumCipher=44000, Chunk=800;
+    // The owner reads the full proof locally. Guests only need its digest as
+    // an acknowledgement, keeping replies bounded even for escaped Unicode.
+    public static PairRoomState ForGuest(PairRoomState state)=>state with{Ciphertext="",Rejoin=null,RejoinDigest=state.Rejoin==null?null:MeshRejoin.Fingerprint(state.Rejoin)};
     public static bool IsFrame(ReadOnlySpan<byte> packet)=>packet.Length>=4&&packet[..4].SequenceEqual("SLP1"u8);
     public static byte[] Encode<T>(T value){var body=JsonSerializer.SerializeToUtf8Bytes(value,new JsonSerializerOptions{Encoder=System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping});if(body.Length>MaximumDatagram-4)throw new IOException("直连配对消息过大");return "SLP1"u8.ToArray().Concat(body).ToArray();}
     public static T Decode<T>(ReadOnlySpan<byte> packet)=>IsFrame(packet)&&packet.Length<=MaximumDatagram?JsonSerializer.Deserialize<T>(packet[4..],new JsonSerializerOptions{MaxDepth=8})??throw new FormatException("配对消息为空"):throw new FormatException("配对消息无效");
@@ -42,7 +50,7 @@ public sealed class DirectPairHost : IShortPairClient
         lock(gate){var room=Create(key,name,cancel).GetAwaiter().GetResult();invitationCapability=Token();return Task.FromResult((room,invitationCapability));}
     }
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel){lock(gate){cancel.ThrowIfCancellationRequested();if(state?.Approved==true&&!delivered&&ticket!.Expires>clock.GetUtcNow().ToUnixTimeSeconds())throw new IOException("上一台设备正在接收授权，请稍后再生成配对码");Clear();ticket=new(Guid.NewGuid().ToString("N"),RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"),Token(),key.Commitment,name,clock.GetUtcNow().AddMinutes(5).ToUnixTimeSeconds());state=new("","","","","","",false,ticket.Expires){Addressing=1};return Task.FromResult(ticket);}}
-    public Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="")=>throw new NotSupportedException();
+    public Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)=>throw new NotSupportedException();
     void Owner(PairRoomTicket value){Live();if(value.Room!=ticket!.Room||!Equal(value.Token,ticket.Token))throw new IOException("配对会话已改变");}
     public Task<PairRoomState> Poll(PairRoomTicket value,bool owner,CancellationToken cancel){lock(gate){cancel.ThrowIfCancellationRequested();if(!owner)throw new InvalidOperationException();Owner(value);return Task.FromResult(state!);}}
     public Task<PairRoomState> Reveal(PairRoomTicket value,bool owner,PairKeyExchange key,CancellationToken cancel){lock(gate){Owner(value);if(!owner||guest==null||state!.Outcome.Length>0||state.Approved)throw new IOException("配对状态已改变");PairKeyExchange.ValidatePublic(key.PublicKey,ticket!.HostCommitment);state=state with{HostPublic=key.PublicKey};return Task.FromResult(state);}}
@@ -66,9 +74,11 @@ public sealed class DirectPairHost : IShortPairClient
         if(r.Method=="join"){
             if(!Equal(r.Code,invitationCapability??ticket!.Code)){if(++badCodes>=20)Clear();throw new IOException();}
             if(!PairKeyExchange.ValidCommitment(r.Commitment)||r.Name is not {Length:>0 and <=64}||r.Name.Any(char.IsControl)||state!.Approved||state.Outcome.Length>0)throw new IOException();
-            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name)throw new IOException();return new(r.Id,Ticket:guest);}
+            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name||state.RequestedIp!=r.RequestedIp||state.Rejoin!=r.Rejoin)throw new IOException();return new(r.Id,Ticket:guest);}
+            if(r.Rejoin is {} proof && !MeshRejoin.WellFormed(proof))throw new IOException("重新加入证明格式无效");
+            if(r.RequestedIp is null)throw new IOException();if(r.RequestedIp.Length>0)MeshAddressing.ValidateAddress(r.RequestedIp);
             guest=new(ticket!.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N"));
-            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name};return new(r.Id,Ticket:guest);
+            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name,Rejoin=r.Rejoin,RequestedIp=r.RequestedIp};return new(r.Id,Ticket:guest);
         }
         if(guest==null||r.Room!=guest.Room||!Equal(r.Token,guest.Token))throw new IOException();
         switch(r.Method){
@@ -83,7 +93,7 @@ public sealed class DirectPairHost : IShortPairClient
                 return new(r.Id,Part:state.Ciphertext.Substring(r.Offset,Math.Min(DirectPairWire.Chunk,state.Ciphertext.Length-r.Offset)),Total:state.Ciphertext.Length);
             default:throw new IOException();
         }
-        return new(r.Id,State:state! with{Ciphertext=""},Total:state!.Approved?state.Ciphertext.Length:0);
+        return new(r.Id,State:DirectPairWire.ForGuest(state!),Total:state!.Approved?state.Ciphertext.Length:0);
     }
     // UI releases its local handle after approving; the encrypted reply remains
     // available until expiry or a new explicit invitation. Worker owns Clear.
@@ -121,16 +131,17 @@ public sealed class DirectPairClient : IShortPairClient
                     DirectPairReply reply;try{reply=DirectPairWire.Decode<DirectPairReply>(received.Buffer);}catch{continue;}
                     if(reply.Id!=request.Id)continue;if(reply.Error.Length>0)throw new IOException(reply.Error);return reply;
                 }
-            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new IOException("主机入口未回应配对。请确认主机已生成短码、入口指向 StreamLink，且双方协议相同");}
+            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new IOException("主机入口未回应配对。请确认主机在线、配对凭据有效，且入口指向 StreamLink、双方协议相同");}
             finally{deadline.Cancel();if(pending!=null)try{await pending;}catch(OperationCanceledException){}catch(SocketException){}}
         }finally{gate.Release();}
     }
     static DirectPairRequest Request(string method,PairRoomTicket? ticket=null)=>new(Guid.NewGuid().ToString("N"),method,ticket?.Room??"",ticket?.Token??"");
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel)=>throw new NotSupportedException();
-    public async Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="")
+    public async Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)
     {
         if(!(code.Length==6&&code.All(char.IsAsciiDigit))&&!(code.Length==64&&code.All(char.IsAsciiHexDigit)))throw new FormatException("直连配对凭据无效");
-        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
+        if(requestedIp.Length>0)MeshAddressing.ValidateAddress(requestedIp);
+        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name,Rejoin=rejoin,RequestedIp=requestedIp},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
         if(!Guid.TryParseExact(ticket.Room,"N",out _)||!Guid.TryParseExact(ticket.Candidate,"N",out _)||ticket.Token.Length!=64||!PairKeyExchange.ValidCommitment(ticket.HostCommitment)||ticket.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||ticket.Expires>DateTimeOffset.UtcNow.AddMinutes(6).ToUnixTimeSeconds()||ticket.HostName.Length>64)throw new IOException("主机配对响应无效");return ticket;
     }
     async Task<PairRoomState> State(DirectPairRequest request,CancellationToken cancel)

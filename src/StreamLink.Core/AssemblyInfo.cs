@@ -13,3 +13,5 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.Tests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.QualityTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.AdapterContractTests")]
+
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.WindowsTests")]

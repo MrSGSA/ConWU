@@ -35,6 +35,22 @@ static partial class Program
             Check(approved.Ok&&approved.Status!.NetworkId==owner.Pair.Network&&!approved.Status.IsOwner&&store.Load().Mesh!.OwnerKey==owner.OwnerKey,"guest worker imports only the approved invitation identity and starts its memory adapter");
             Check(store.Load().ExistingEntries.Any(e=>e.PeerSlot==1)&&store.Load().DirectMode,"approved host entries persist for serverless reconnect");
             CryptographicOperations.ZeroMemory(shared);
+            var beforeLeave=store.Load().Mesh!;
+            var left=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("leave",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)),sid,default);
+            Check(left.Ok&&store.Load().Mesh==null&&store.Load().RejoinCredential?.Member==beforeLeave.Self,"real guest departure removes network credentials and retains only a protected membership proof");
+            var fresh=await host.CreateInvitation(key,"Guest-Service-Host",default);
+            string freshCode=DirectPairInvitation.Issue(owner,[new(0,"203.0.113.42:44680")],fresh.Ticket,fresh.Capability);
+            var reapplied=await Ui("join-invitation",freshCode);
+            Check(reapplied.Ok&&store.Load().Mesh==null,"guest service still requires approval when rejoining the same host");
+            await host.Reveal(fresh.Ticket,true,key,default);await Ui("pair-poll");
+            var rejoinState=await host.Poll(fresh.Ticket,true,default);
+            var prior=MeshRejoin.Resolve(owner,rejoinState.Rejoin,fresh.Capability,rejoinState.GuestCommitment);
+            Check(prior==beforeLeave.Self,"real guest service sends its old-key proof through the bounded direct-pair protocol");
+            string replacement=DirectInvitation.Issue(owner,[new(0,"203.0.113.42:44680")],replacing:prior);
+            var rejoinShared=key.Derive(rejoinState.GuestPublic,rejoinState.GuestCommitment,fresh.Ticket.Room,rejoinState.Candidate,true);
+            await host.Approve(fresh.Ticket,rejoinState.Candidate,PairKeyExchange.EncryptInvitation(rejoinShared,replacement,fresh.Ticket.Room,rejoinState.Candidate),default);
+            var rejoined=await Ui("pair-poll");CryptographicOperations.ZeroMemory(rejoinShared);
+            Check(rejoined.Ok&&store.Load().Mesh!.LocalIp==beforeLeave.LocalIp&&store.Load().RejoinCredential==null,"approved guest rejoin restores its IP and discards the retired proof credential");
         }finally{await worker.StopLocal();}
     }
 }

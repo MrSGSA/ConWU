@@ -9,13 +9,13 @@ public sealed record DirectInvitation(MeshEnrollment Enrollment, MeshDirectory D
 {
     public const int MaximumCode = 32768;
     static byte[] Signed(DirectInvitation value) => JsonSerializer.SerializeToUtf8Bytes(new {domain="streamlink-direct-invitation-v1",value.Enrollment,value.Directory,value.Entries});
-    public static string Issue(MeshProfile owner, ExistingEntry[] entries,string requestedIp="")
+    public static string Issue(MeshProfile owner, ExistingEntry[] entries,string requestedIp="", MeshMember? replacing=null)
     {
         if(!owner.Pair.Direct)throw new IOException("当前网络使用服务器配对，请使用六位配对码");
         entries=entries.Where(e=>e.PeerSlot==0).Select(e=>e with{PeerSlot=1}).ToArray();
         ExistingEntryResolver.Validate(entries);
         if(entries.Length==0)throw new IOException("请先在设置中填写本机可供其他设备连接的入口");
-        var enrollment=MeshIdentity.Issue(owner,requestedIp);
+        var enrollment=replacing == null ? MeshIdentity.Issue(owner,requestedIp) : MeshIdentity.Replace(owner,replacing,requestedIp);
         var invite=new DirectInvitation(enrollment,owner.Directory!,entries,"");
         var code="SL5."+Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(invite with {Signature=MeshIdentity.Sign(owner.OwnerPrivate,Signed(invite))}));
         if(code.Length>MaximumCode)throw new FormatException("直连邀请过长，请减少入口来源");

@@ -50,6 +50,7 @@ public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Veri
 {
     public string ProposedIp {get;init;}="";
     public bool Direct {get;init;}
+    public int ReplacingSlot {get;init;}
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)

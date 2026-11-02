@@ -33,6 +33,26 @@ static partial class Program
             var delivered=await guest.Poll(joined,false,default);var enrolled=DirectInvitation.Import(PairKeyExchange.DecryptInvitation(shared,delivered.Ciphertext,joined.Room,joined.Candidate,DirectPairWire.MaximumCipher));
             Check(enrolled.Mesh.LocalIp==p.ProposedIp&&!enrolled.Mesh.IsOwner,"remote client receives its approved IP and never administrator credentials");CryptographicOperations.ZeroMemory(shared);
             var again=await Action("approve",p.Candidate,p.Verification,p.ProposedIp);Check(!again.Ok&&store.Load().Mesh!.Directory!.Members.Length==2,"duplicate approval after completion cannot allocate another member");
+            for(int round=0;round<2;round++){
+                var previous=enrolled.Mesh;
+                var fresh=await Action("invite");var invitation=DirectPairInvitation.Import(fresh.Status!.Pairing!.Code);
+                using var rejoinKey=new PairKeyExchange();using var rejoinClient=new DirectPairClient(_=>new PairTransport(listener!));
+                var proof=MeshRejoin.Create(MeshRejoin.Retain(previous),invitation.Capability,rejoinKey);
+                var rejoining=await rejoinClient.Join(invitation.Capability,rejoinKey,"service guest",default,rejoin:proof);
+                await Action("pair-poll");var hostPublic=await rejoinClient.Poll(rejoining,false,default);
+                await rejoinClient.Reveal(rejoining,false,rejoinKey,default);
+                var pending=await Action("pair-poll");var request=pending.Status!.Pairing!;
+                Check(request.ReplacingSlot==previous.Self.Slot&&request.ProposedIp==previous.LocalIp,"actual owner service recognizes signed rejoin and proposes the original address");
+                Check(store.Load().Mesh!.Directory!.Members.Contains(previous.Self),"old authorization remains intact until the owner approves replacement");
+                var accepted=await Action("approve",request.Candidate,request.Verification,request.ProposedIp);
+                var directory=store.Load().Mesh!.Directory!;
+                Check(accepted.Ok&&directory.Members.Length==2&&!directory.Members.Contains(previous.Self),"owner service approval atomically replaces the old member without a duplicate");
+                var exchange=rejoinKey.Derive(hostPublic.HostPublic,rejoining.HostCommitment,rejoining.Room,rejoining.Candidate,false);
+                var result=await rejoinClient.Poll(rejoining,false,default);
+                enrolled=DirectInvitation.Import(PairKeyExchange.DecryptInvitation(exchange,result.Ciphertext,rejoining.Room,rejoining.Candidate,DirectPairWire.MaximumCipher));
+                CryptographicOperations.ZeroMemory(exchange);
+                Check(enrolled.Mesh.LocalIp==previous.LocalIp&&enrolled.Mesh.Self.Slot!=previous.Self.Slot,"rejoining guest receives fresh credentials for its retained virtual address");
+            }
         }finally{await worker.StopLocal();}
     }
 }

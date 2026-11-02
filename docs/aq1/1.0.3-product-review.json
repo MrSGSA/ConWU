@@ -1,0 +1,39 @@
+{
+  "version": "1.0.3",
+  "msiVersion": "1.0.23",
+  "review": "产品、质量与安装检查；在正确性检查之外单独复核，同一执行者",
+  "status": "SourceReviewComplete",
+  "changes": [
+    "后台恢复清除超过 10 秒提示；动作和字段错误按生命周期清理，授权失效保持提示。",
+    "同意在左为绿色，拒绝在右为红色；同意确认弹窗采用绿色，同等视觉权重。",
+    "侧栏设备总数和与其余 n 台设备直连分行，直连数排除本机和已移出的旧状态。",
+    "保留已验收的 Tokyo Night、统一倾斜标志、五个页面和全局设置草稿/保存。",
+    "Wintun 缓存等待明确显示阶段与秒数，接受取消；无旧接口缓存时不增加等待。",
+    "MSI 保留网络/设置，更新证明旧进程退出；失败回滚、修复、卸载及正式包 Wintun 另做隔离实机验证。",
+    "保留 1.0.2 发布和回退；日用两端不在构建发布过程中自动替换。"
+  ],
+  "compatibility": "正常退出后重新申请仍需主机批准；两端和服务器协调服务一起更新以支持重入关联。已有网络与设置保留。无服务器邀请继续由主机审批。",
+  "checks": [
+    "实际 Edge/HTTP/SID IPC 的状态恢复、操作响应丢失、错误消失、审批语义和统计；合成设备状态只用于对应 UI 断言。",
+    "最终冻结源码执行 CandidateCore；Windows 包预检/完整性/MSI 检查；本机隔离安装、升级和 Wintun 生命周期。"
+  ],
+  "delivery": [
+    "Windows MSI",
+    "Windows ZIP",
+    "Linux x64 协调服务",
+    "源码",
+    "验证记录",
+    "SBOM",
+    "README",
+    "SHA256"
+  ],
+  "qualityScope": "本机和隔离/原生链路回归；不冒充新一轮公网 Moonlight 长期串流全部通过。",
+  "newAntiQosTransports": "不加入 1.0.3。发布后独立实机比较，50/100/150/200 Mbps 高动态串流；物理带宽、延迟尾部、冻结、开销和 CPU 分别记录。",
+  "repositoryVisibility": "保留私有仓库",
+  "formalValidationGate": "NotPassed",
+  "targetedWintunValidation": {
+    "reopenTransitions": "Pass: three local rounds, settling cancellation, member-slot rotation, two fresh processes, last round recreates network at same IP",
+    "upgradeProtection": "Pass: 14 checks including live/foreign identity refusal, dormant own PnP removal, shared-driver preservation and three close/maintenance/reopen cycles",
+    "scope": "Isolated official Wintun on this Windows host; final package repeats lifecycle validation. No public WAN streaming claim."
+  }
+}

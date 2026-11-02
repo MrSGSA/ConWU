@@ -48,7 +48,7 @@ public sealed partial class ControlWorker
                 duplicate=true;return prior; // Read progress, never repeat mutation.
             }
             if(operations.Values.Count(o=>!o.Completed)>=8)throw new IOException("已有太多控制操作，稍后重试");
-            if(operations.Count>=64){var old=operations.Values.FirstOrDefault(o=>o.Completed);if(old!=null)operations.Remove(old.Id);}
+            if(operations.Count>=64){var old=operations.Values.FirstOrDefault(o=>o.Completed);if(old!=null)operations.Remove(old.Id);else throw new IOException("后台操作队列已满，请等待当前操作完成");}
             // An authenticated UI request hands ownership to the service. Closing
             // a tab or expiring a pipe must not cancel an accepted mutation.
             // ServeUi passes the service lifetime here, never its response timer.

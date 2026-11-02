@@ -16,12 +16,29 @@ public sealed class TcpBinding : IDisposable
     TcpBinding(TcpEndpointLease lease, string server) { this.lease = lease; this.server = server; }
     public TcpBindingSnapshot Snapshot => new(lease.Id, lease.NetworkGeneration, lease.Local.ToString(), lease.Reflector.ToString(), server, lease.QueryUsable, lease.Closed);
     public static Task<(TcpBinding Binding, StunResult Result)> Connect(int port, IPAddress? local, Action<string> log, CancellationToken token, IEnumerable<string>? servers = null)
-        => ConnectCore(port, local, log, token, servers,
+    {
+        if(port is <1 or >65535)throw new ArgumentOutOfRangeException(nameof(port));
+        return ConnectCore(port, local, log, token, servers,
             (server, ct) => Stun.Query(true, server, 0, ct, local, TcpHelperPurpose.ServerScreening));
+    }
+    // Only for a NEW mapping. Existing mappings retain their exact source tuple
+    // for the entire lease; changing that tuple also requires a new router lease.
+    public static async Task<(TcpBinding Binding, StunResult Result)> ConnectAvailable(int preferredPort,int receiverPort,
+        IPAddress? local,Action<string> log,CancellationToken token,IEnumerable<string>? servers=null)
+    {
+        try{return await Connect(preferredPort,local,log,token,servers);}
+        catch(TcpEndpointBusyException){log($"内部 TCP STUN 源端口 {preferredPort} 被占用，正在分配可用源端口；接收端口 {receiverPort} 保持不变");}
+        for(int attempt=0;attempt<3;attempt++){
+            var result=await ConnectCore(0,local,log,token,servers,(server,ct)=>Stun.Query(true,server,0,ct,local,TcpHelperPurpose.ServerScreening));
+            if(result.Result.Local.Port!=receiverPort){log($"内部 TCP STUN 已分配源端口 {result.Result.Local.Port}，将公告真实映射端点");return result;}
+            result.Binding.Dispose();
+        }
+        throw new IOException("未能分配与接收端口不同的 TCP STUN 源端口，请稍后重试");
+    }
     internal static async Task<(TcpBinding Binding, StunResult Result)> ConnectCore(int port, IPAddress? local, Action<string> log,
         CancellationToken token, IEnumerable<string>? servers, Func<string, CancellationToken, Task> screen)
     {
-        if (port is < 1 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
+        if (port is < 0 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         string[] choices = (servers ?? Stun.TcpServers).Distinct(StringComparer.OrdinalIgnoreCase).Take(256).ToArray();
         if (choices.Length == 0) throw new IOException("TCP STUN 列表为空");
         using var round = CancellationTokenSource.CreateLinkedTokenSource(token); round.CancelAfter(TimeSpan.FromSeconds(12));

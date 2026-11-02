@@ -373,6 +373,9 @@ public sealed class MeshRunner
                         string detail = phase switch {
                             "lifecycle-wait" => "正在申请网卡资源，等待当前设备操作完成。",
                             "previous-interface-wait" or "identity-vacant-wait" => "正在等待旧网卡退出；完成回收后继续连接。",
+                            _ when phase.StartsWith("previous-adapter-settle-wait/",StringComparison.Ordinal) => "Windows 仍缓存旧网卡，正在等待网络设备配置稳定，约剩 "+phase[(phase.LastIndexOf('/')+1)..]+" 秒；完成后继续连接。",
+                            "previous-device-wait" => "正在等待旧 Wintun 设备退出，尚未创建第二个实例。",
+                            "adapter-class-setup-retry" => "Windows 网卡配置未完成，正在回收后进行一次有限重试。",
                             "adapter-create-retry-1" or "adapter-create-retry-2" => "Windows 尚未准备好网卡，正在进行有限重试。",
                             "ipv4-interface-wait" => "网卡已创建，正在等待 Windows 网络接口就绪。",
                             _ when phase.StartsWith("open-rollback/",StringComparison.Ordinal) => "创建未完成，正在安全回收本轮网卡资源。",

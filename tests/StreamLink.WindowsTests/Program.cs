@@ -92,7 +92,7 @@ static class Program
             var rollback=ProfileChanges.Copy(reply.Profile!);bool rollbackRejected=false;
             try{new ProfileStore().Save(rollback);}catch(CryptographicException){rollbackRejected=true;}catch(IOException){rollbackRejected=true;}
             Check(rollbackRejected&&new ProfileStore().Load().Mesh!.Directory!.Revision==revoked.Mesh!.Directory!.Revision,"same-network save cannot lower the persistent revocation revision");
-            string[] credentials=[revoked.Mesh.Pair.Secret,revoked.Mesh.OwnerPrivate,revoked.Mesh.SigningPrivate,revoked.Mesh.ExchangePrivate,new Invitation(1,revoked.Mesh.Pair.Network,revoked.Mesh.Pair.Secret,"","faketcp","",0).RawKey];
+            string[] credentials=[revoked.Mesh!.Pair.Secret,revoked.Mesh.OwnerPrivate,revoked.Mesh.SigningPrivate,revoked.Mesh.ExchangePrivate,new Invitation(1,revoked.Mesh.Pair.Network,revoked.Mesh.Pair.Secret,"","faketcp","",0).RawKey];
             int logsBefore=(await worker.Handle(new("status"))).Logs.Length;
             typeof(ControlWorker).GetMethod("Log",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(worker,["security log negative while recording is off"]);
             Check((await worker.Handle(new("status"))).Logs.Length==logsBefore,"off suppresses new in-memory logs as well as file output");
@@ -106,7 +106,7 @@ static class Program
             Check(!(await worker.Handle(new("save", changed))).Ok, "Settings replaced the native identity");
             reply = await worker.Handle(new("mesh-join", Invite: reply.Invite));
             Check(reply.Ok && !reply.Profile!.Mesh!.IsOwner, "Native member import failed");
-            Check(reply.Profile!.Mesh!.Directory!.Revision==revoked.Mesh.Directory!.Revision&&!reply.Profile.Mesh.Directory.Members.Any(m=>m.Slot==2),"same-network re-import cannot erase already known member revocation");
+            Check(reply.Profile!.Mesh!.Directory!.Revision==revoked.Mesh!.Directory!.Revision&&!reply.Profile.Mesh.Directory.Members.Any(m=>m.Slot==2),"same-network re-import cannot erase already known member revocation");
             Check(!(await worker.Handle(new("mesh-invite"))).Ok, "Guest issued a new member credential");
             await worker.StopLocal();
         }
@@ -160,6 +160,20 @@ static class Program
     }
     [STAThread] static void Main(string[] args)
     {
+        if(args is ["--wintun-reopen-owned-node",var ownedComponents,var ownerNetwork,var ownedNetwork,var ownedIp,var ownedEvidence]){
+            try{WintunReopenHarness.Node(Path.GetFullPath(ownedComponents),ownedNetwork,ownedIp,Path.GetFullPath(ownedEvidence),ownerNetwork);}catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args is ["--wintun-reopen-node",var nodeComponents,var network,var ip,var nodeEvidence]){
+            WintunReopenHarness.Node(Path.GetFullPath(nodeComponents),network,ip,nodeEvidence);return;
+        }
+        if(args is ["--wintun-diagnostic",var diagnosticComponents,var diagnosticEvidence]){
+            try{WintunReopenHarness.Run(Path.GetFullPath(diagnosticComponents),diagnosticEvidence,true).GetAwaiter().GetResult();}
+            catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
+        if(args is ["--wintun-fresh-identities",var freshComponents,var freshEvidence]){
+            try{WintunReopenHarness.Run(Path.GetFullPath(freshComponents),freshEvidence,false,true).GetAwaiter().GetResult();}
+            catch(Exception ex){Console.Error.WriteLine(ex);Environment.ExitCode=1;}return;
+        }
         if(args is ["--wintun-reopen",var components,var evidence]) {
             try { WintunReopenHarness.Run(Path.GetFullPath(components),evidence).GetAwaiter().GetResult(); }
             catch(Exception ex) { Console.Error.WriteLine(ex); Environment.ExitCode=1; } return;

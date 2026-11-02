@@ -11,7 +11,8 @@ public sealed partial class ControlWorker
     {
         if(Volatile.Read(ref uiPairSnapshot) is {Direct:true,Active:true} direct && direct.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds())
             Volatile.Write(ref uiPairSnapshot,direct with{Active=false,Code="",State="直连邀请已过期；未使用的设备授权可从概况中移除"});
-        var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;var peers=state?.Peers??[];
+        var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;
+        var peers=(state?.Peers??[]).Where(x=>p.Mesh is {} m&&x.Slot!=m.Self.Slot&&m.Directory?.Members.Any(member=>member.Slot==x.Slot)==true).ToArray();
         return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",PublicText(state?.State??"网络未启动",p,256),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
             peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,PublicText(x.Detail,p,256)){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,LocalDrops=x.LocalDrops,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
             {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,

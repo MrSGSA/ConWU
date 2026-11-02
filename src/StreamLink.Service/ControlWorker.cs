@@ -199,7 +199,7 @@ public sealed partial class ControlWorker : BackgroundService
                 case "mesh-create":
                 case "mesh-join":
                     var mesh = request.Command == "mesh-create" ? MeshIdentity.Create(request.Service, request.Pin, request.Mode) : MeshIdentity.Import(request.Invite);
-                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.Slot = 1; profile.LastEntry = 0;
+                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { store.BackupLegacy(profile); profile.Enabled = false; profile.Pair = null; profile.Mesh = mesh; profile.RejoinHistory=[];profile.Slot = 1; profile.LastEntry = 0;
                         profile.SelectTransport(mesh.Pair.Mode=="udp"?"udp-only":"faketcp-only");
                         if(PersonalFeature.Enabled)profile=PersonalFeature.EnhancedPreset(profile);
                         store.Save(profile); } break;
@@ -222,12 +222,12 @@ public sealed partial class ControlWorker : BackgroundService
                 case "mesh-revoke":
                     lock (sync) {
                         var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
-                        MeshIdentity.Revoke(network, request.PeerSlot); store.Save(profile); meshRunner?.UpdateDirectory(network.Directory!);
+                        MeshIdentity.Revoke(network, request.PeerSlot);profile.RejoinHistory=profile.RejoinHistory.Where(h=>h.CurrentSlot!=request.PeerSlot).ToArray();store.Save(profile); meshRunner?.UpdateDirectory(network.Directory!);
                     } break;
                 case "create":
                 case "join":
                     var pair = request.Command == "create" ? Pairing.Create(request.Service, request.Pin, request.Mode) : Pairing.Import(request.Invite);
-                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Mesh = null; profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; profile.SelectTransport(pair.Mode=="udp"?"udp-only":"faketcp-only"); store.Save(profile); } break;
+                    SetOperation(operation,"停止旧网络",false);await End(operation.Stop.Token); lock (sync) { profile.Enabled = false; profile.Pair = pair; profile.Mesh = null;profile.RejoinHistory=[];profile.Slot = request.Command == "create" ? 1 : 2; profile.LastEntry = 0; profile.SelectTransport(pair.Mode=="udp"?"udp-only":"faketcp-only"); store.Save(profile); } break;
                 case "ui-patch":
                     if(ui?.Patch==null)throw new FormatException("此命令需要已认证的UI补丁");
                     lock(sync) {

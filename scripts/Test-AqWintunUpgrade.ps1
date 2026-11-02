@@ -57,7 +57,7 @@ try {
  }
  if(-not $UseInstalledPrevious){Msi '/i' $PreviousMsi 'install-previous'}
  $before=Ready 'previous-ready'
- $interfacesBefore=@($interfacesBefore|Where-Object {[guid]$_ -ne [guid]$before.identity.Guid})
+ $interfacesBefore=@($interfacesBefore|Where-Object {[guid]$_ -notin @($before.actualInterfaces|ForEach-Object {[guid]$_})})
  $interfacesBefore|ConvertTo-Json|Set-Content (Join-Path $OutputDirectory 'foreign-interfaces-before.json')
  Check ($before.sourceCommit -eq $old.sourceCommit -and $before.release -eq $old.version) 'baseline is the supplied old binary, not a newer service'
  # The previous release does not have the new identity lease. Retain that
@@ -74,11 +74,11 @@ try {
  $held.Dispose();$held=$null
  Msi '/i' $CandidateMsi 'upgrade'
  $updated=Ready 'candidate-ready'
- Check ($updated.release -eq $new.version -and $updated.sourceCommit -eq $new.sourceCommit -and $updated.profileHash -eq $before.profileHash -and $updated.identity.Guid -eq $before.identity.Guid) 'upgrade retains profile and actual adapter identity'
+ Check ($updated.release -eq $new.version -and $updated.sourceCommit -eq $new.sourceCommit -and $updated.profileHash -eq $before.profileHash -and $updated.identity.Guid -eq $before.identity.Guid) 'upgrade retains profile and exclusive adapter ownership scope'
  foreach($round in 1..2){
   Msi '/famus' $CandidateMsi ('repair-'+$round)
   $state=Ready ('repair-'+$round+'-ready')
-  Check ($state.profileHash -eq $before.profileHash -and $state.identity.Guid -eq $before.identity.Guid) ('repair '+$round+' retains enabled network identity')
+  Check ($state.profileHash -eq $before.profileHash -and $state.identity.Guid -eq $before.identity.Guid) ('repair '+$round+' retains enabled network ownership')
  }
  $journal=Join-Path $data 'wintun-upgrade.jsonl'
  Check (Test-Path $journal) 'installed cleanup produced protected journal'

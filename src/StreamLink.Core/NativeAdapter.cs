@@ -37,9 +37,23 @@ public sealed class NativeAdapter : IPacketAdapter
     // Native create and close cannot overlap in this process. The owner still
     // joins all I/O before close; a new runner cannot overtake its cleanup.
     static readonly SemaphoreSlim lifecycle = new(1, 1);
+    // Keep the verified official module loaded for this process. PnP create /
+    // close and DLL teardown must not repeatedly race network-class setup.
+    // The OS releases these modules at process exit; no adapter/session is kept.
+    static readonly Dictionary<string,IntPtr> officialModules=new(StringComparer.OrdinalIgnoreCase);
+    static void PinOfficialModule(string path)
+    {
+        lock(officialModules){
+            if(officialModules.ContainsKey(path))return;
+            if(officialModules.Count>=16)throw new IOException("本进程加载的 Wintun 组件路径过多，请重新启动应用");
+            officialModules.Add(path,NativeLibrary.Load(path,typeof(NativeAdapter).Assembly,DllImportSearchPath.UseDllDirectoryForDependencies|DllImportSearchPath.System32));
+        }
+    }
     readonly TracedClose? tracedClose;
     readonly IntPtr library;
     readonly FileStream identityLease;
+    readonly FileStream? meshIdentityLease;
+    readonly WintunIdentity ownershipScope;
     IntPtr adapter;
     readonly Close close;
     readonly ReadPacket read;
@@ -55,30 +69,31 @@ public sealed class NativeAdapter : IPacketAdapter
     public ulong? InterfaceLuid {get;}
     public PacketAdapterStatistics Statistics{get{io.EnterReadLock();try{ObjectDisposedException.ThrowIf(disposed,this);var c=new ulong[7];uint error=stats(adapter,c);if(error!=0)throw new Win32Exception((int)error);return new((long)c[0],(long)c[1],(long)c[2],(long)c[3],(long)c[4],(long)c[5],(long)c[6],Volatile.Read(ref stopping)!=0);}finally{io.ExitReadLock();}}}
     bool disposed;
-    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null, CancellationToken cancellationToken=default, string? virtualIp=null)
+    public NativeAdapter(string components, string network, int slot, Action<string>? lifecycleTrace=null, CancellationToken cancellationToken=default, string? virtualIp=null,string? ownerNetwork=null)
     {
         LifecycleTrace=lifecycleTrace;
         cancellationToken.ThrowIfCancellationRequested();
         if (!WindowsHost.IsAdmin) throw new IOException("创建虚拟网卡需要管理员权限");
-        var identity = WintunIdentity.For(network, slot);
-        var guid = identity.Guid;
-        string name = identity.Name;
-        identityLease = identity.Acquire();
+        var scope = WintunIdentity.For(ownerNetwork??network, ownerNetwork==null?slot:1);
+        ownershipScope=scope;
+        identityLease = scope.Acquire();
         try {
-        // Let an existing owner acquire the close gate while we wait for its
-        // identity to disappear. Do not hold lifecycle across this poll.
-        WaitForVacantIdentity(identity, components, cancellationToken);
+        var legacyIdentity=WintunIdentity.For(network,slot);
+        if(legacyIdentity.Guid!=scope.Guid)meshIdentityLease=legacyIdentity.Acquire();
+        var preparation=WintunAdapterJournal.Prepare(scope,cancellationToken,Trace,ownerNetwork==null?null:new(network,slot));
+        var identity=preparation.Identity;var guid=identity.Guid;string name=identity.Name;
         Trace("lifecycle-wait"); lifecycle.Wait(cancellationToken);
         try {
         cancellationToken.ThrowIfCancellationRequested();
         string address=virtualIp??MeshIdentity.Address(network,slot);
         MeshAddressing.ValidateAddress(address);
         string prefix = MeshAddressing.Prefix(address) + ".";
-        var conflicts=OverlayRouteConflicts.Inspect(IPAddress.Parse(prefix+"0"));
+        var conflicts=OverlayRouteConflicts.Inspect(IPAddress.Parse(prefix+"0"),preparation.VerifiedOrphans);
         RouteWarnings=Array.AsReadOnly(conflicts.Where(c=>c.Severity=="Warning").ToArray());
         if(conflicts.Any(c=>c.Severity=="Block"))throw new IOException($"虚拟网段 {prefix}0/24 与现有地址/路由冲突，请新建网络；不会单机改网段或删除其他路由");
         string driver = Path.GetFullPath(Path.Combine(components, "wintun.dll"));
         if (Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(driver))) != "E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE") throw new IOException("Wintun 组件校验失败");
+        PinOfficialModule(driver);
         library = NativeLibrary.Load(Path.GetFullPath(Path.Combine(components, "streamlink-tun.dll")));
         try {
             T Load<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
@@ -91,12 +106,23 @@ public sealed class NativeAdapter : IPacketAdapter
             NativeCloseTrace callback=phase=>{if(phase>=100)openStage=OpenStage(phase);Trace(phase>=100?openStage:"open-rollback/"+CloseStage(phase));};
             byte[] ip = IPAddress.Parse(address).GetAddressBytes();
             cancellationToken.ThrowIfCancellationRequested();
-            if(NativeLibrary.TryGetExport(library,"sltun_open_cancellable",out var cancellableOpen))
-                error=Marshal.GetDelegateForFunctionPointer<CancellableOpen>(cancellableOpen)(driver,name,ref guid,ip,out adapter,callback,cancellationToken.WaitHandle.SafeWaitHandle);
-            else if(NativeLibrary.TryGetExport(library,"sltun_open_with_trace",out var diagnosticOpen))
-                error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,name,ref guid,ip,out adapter,callback);
-            else error=Load<Open>("sltun_open")(driver,name,ref guid,ip,out adapter);
-            GC.KeepAlive(callback);
+            for(int attempt=0;;attempt++){
+                if(NativeLibrary.TryGetExport(library,"sltun_open_cancellable",out var cancellableOpen))
+                    error=Marshal.GetDelegateForFunctionPointer<CancellableOpen>(cancellableOpen)(driver,name,ref guid,ip,out adapter,callback,cancellationToken.WaitHandle.SafeWaitHandle);
+                else if(NativeLibrary.TryGetExport(library,"sltun_open_with_trace",out var diagnosticOpen))
+                    error=Marshal.GetDelegateForFunctionPointer<TracedOpen>(diagnosticOpen)(driver,name,ref guid,ip,out adapter,callback);
+                else error=Load<Open>("sltun_open")(driver,name,ref guid,ip,out adapter);
+                GC.KeepAlive(callback);cancellationToken.ThrowIfCancellationRequested();
+                if(error!=4319||adapter!=IntPtr.Zero||attempt>=1)break;
+                // The synchronous official create has finished its rollback.
+                // Never adopt its failed GUID or overlap a pending PnP call.
+                // One bounded fresh-generation retry handles class setup lag.
+                Trace("adapter-class-setup-retry");
+                WintunAdapterJournal.MarkClosed(scope,failedCreate:true);
+                if(cancellationToken.WaitHandle.WaitOne(1000))cancellationToken.ThrowIfCancellationRequested();
+                preparation=WintunAdapterJournal.Prepare(scope,cancellationToken,Trace,ownerNetwork==null?null:new(network,slot));
+                guid=preparation.Identity.Guid;name=preparation.Identity.Name;
+            }
             // An older ABI-2 bridge may finish after cancellation. The catch
             // below closes that late result before this task may complete.
             cancellationToken.ThrowIfCancellationRequested();
@@ -111,30 +137,7 @@ public sealed class NativeAdapter : IPacketAdapter
             }
         } catch { if(adapter!=IntPtr.Zero){close!(adapter);adapter=IntPtr.Zero;}NativeLibrary.Free(library); throw; }
         } finally { lifecycle.Release(); }
-        } catch { identityLease.Dispose(); throw; }
-    }
-    static readonly System.Collections.Concurrent.ConcurrentDictionary<Guid,byte> closedIdentities=new();
-    Guid ownedIdentity;
-    void WaitForVacantIdentity(WintunIdentity identity,string components,CancellationToken token)
-    {
-        ownedIdentity=identity.Guid;
-        long began = Environment.TickCount64;
-        bool recovered=false;
-        while (NetworkInterface.GetAllNetworkInterfaces().Any(n => string.Equals(n.Name, identity.Name, StringComparison.OrdinalIgnoreCase) || Guid.TryParse(n.Id, out var existing) && existing == identity.Guid)) {
-            if(!recovered&&Environment.TickCount64-began>=1000&&closedIdentities.ContainsKey(identity.Guid)){
-                // Same-process completed close + exclusive identity lease + no
-                // PnP node. Never adopt/remove a live device or shared driver.
-                token.ThrowIfCancellationRequested();Trace("previous-interface-recover");
-                recovered=WintunMaintenance.RecoverClosedInterface(components,identity);
-                if(recovered)began=Environment.TickCount64;
-            }
-            if (Environment.TickCount64 - began >= (closedIdentities.ContainsKey(identity.Guid)?15000:3000))
-                throw new IOException("相同 Wintun 网卡身份仍存在，未接管或删除；请等待旧实例完成退出后重连");
-            Trace("previous-interface-wait");
-            if (token.WaitHandle.WaitOne(100)) token.ThrowIfCancellationRequested();
-        }
-        token.ThrowIfCancellationRequested();
-        closedIdentities.TryRemove(identity.Guid,out _);
+        } catch { meshIdentityLease?.Dispose();identityLease.Dispose(); throw; }
     }
     public int Read(byte[] buffer)
     {
@@ -191,8 +194,8 @@ public sealed class NativeAdapter : IPacketAdapter
             // recorded separately. Do not block all statistics/cancel callers
             // behind unbounded interface enumeration or alter foreign drivers.
             Trace("bridge-library-free-begin");NativeLibrary.Free(library);Trace("library-free-complete");
-            closedIdentities[ownedIdentity]=0;
-            identityLease.Dispose();
+            try{WintunAdapterJournal.MarkClosed(ownershipScope);}
+            finally{meshIdentityLease?.Dispose();identityLease.Dispose();}
         }finally{io.ExitWriteLock();}
         // Do not dispose the guard: late calls must deterministically observe
         // the adapter's disposed state rather than touch a closed native handle.
