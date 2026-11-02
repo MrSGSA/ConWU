@@ -5,7 +5,7 @@ const {spawn}=require('child_process'),{createInterface}=require('readline');
 const fs=require('fs'),path=require('path');
 const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'artifacts/webui-v2'));
 fs.mkdirSync(out,{recursive:true});
-const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot')],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot'),'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
 let stderr='',browser;child.stderr.on('data',d=>stderr+=d);let waiting;const lines=[];createInterface({input:child.stdout}).on('line',l=>waiting?(waiting(l),waiting=null):lines.push(l));
 function nextLine(){if(lines.length)return Promise.resolve(lines.shift());return new Promise((resolve,reject)=>{const t=setTimeout(()=>reject(Error('fixture startup timeout '+stderr)),20000);waiting=l=>{clearTimeout(t);resolve(l);};});}
 let checks=0;const findings=[];function check(ok,message){if(!ok)throw Error(message);checks++;findings.push(message);}
@@ -14,12 +14,29 @@ let checks=0;const findings=[];function check(ok,message){if(!ok)throw Error(mes
  browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
  const context=await browser.newContext({viewport:{width:1440,height:1050}}),page=await context.newPage(),errors=[],csp=[];
  page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|violates.*directive/i.test(m.text()))csp.push(m.text());});
+ const accepted=[],progressResponses=[],responseReads=[];let transientProgressFailure=0;
+ page.on('response',r=>{
+  if(new URL(r.url()).pathname==='/api/command')responseReads.push(r.json().then(body=>{if(body.operation&&!body.operation.completed)accepted.push({id:body.operation.id,request:r.request().postDataJSON()});}).catch(()=>{}));
+  if(new URL(r.url()).searchParams.has('operation'))progressResponses.push({id:new URL(r.url()).searchParams.get('operation'),status:r.status()});
+ });
+ await page.route('**/api/status?operation=*',route=>{
+  if(!transientProgressFailure++){return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,error:'受控临时读进度失败'})});}
+  return route.continue();
+ });
  await page.goto(link);await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();
+ const faviconPath=await page.locator('link[rel=icon]').getAttribute('href'),favicon=await page.request.get(new URL(faviconPath,link).href);
+ const faviconSvg=await favicon.text(),brandSvg=await (await page.request.get(new URL('/icon.svg',link).href)).text();
+ check(faviconPath==='/streamlink-tokyo-45.svg'&&favicon.ok()&&faviconSvg===brandSvg&&faviconSvg.includes('rotate(45 128 128)')&&faviconSvg.includes('#7aa2f7'),'tab icon uses a fresh URL and the same Tokyo Night 45-degree logo as the app');
+ check(favicon.headers()['cache-control']==='no-store'&&favicon.headers()['content-type']==='image/svg+xml','favicon is served with correct MIME type and no persistent HTTP cache');
  check(!page.url().includes('#'),'one-use launch ticket is removed');check(await page.locator('.nav').count()===5,'five separate product pages');
  check(!(await page.locator('body').innerText()).includes('交互预览'),'production page has no simulation controls');
  await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=identity]').click();await page.locator('#settings-name').fill('浏览器 <test>');await page.waitForTimeout(2200);check(await page.locator('#settings-name').inputValue()==='浏览器 <test>','status polling retains metadata draft');
  await page.locator('#identity-form button[type=submit]').click();await page.locator('#toast').filter({hasText:'本机设置已保存'}).waitFor();await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();
  check(await page.locator('#overview-device-name').innerText()==='浏览器 <test>','real restricted backend saves device name across reload');
+ check(await page.locator('#notice').isHidden(),'confirmed success clears progress notice after a transient HTTP failure');
+ await page.evaluate(async()=>{try{await network('create-direct',{expectedNetwork:'stale-network'});}catch(error){notice(error.message,true);}});
+ const actualFailure=await page.locator('#notice').innerText();await page.waitForTimeout(2200);
+ check(actualFailure.length>0&&await page.locator('#notice').innerText()===actualFailure,'actual failed operation remains visible after unrelated status refresh');
  await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=network]').click();
  check(await page.locator('#entry-owner option[value="-1"]').count()===1,'unpaired client can configure target host ingress before membership');
  await page.locator('input[name=connection-mode][value=existing]').check();await page.locator('#entry-owner').selectOption('-1');
@@ -33,7 +50,15 @@ let checks=0;const findings=[];function check(ok,message){if(!ok)throw Error(mes
  await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();check(await page.locator('#protocol').inputValue()==='udp','protocol choice persists through real backend');check(await page.locator('#coordination-url').inputValue()==='https://example.com/','bare server domain normalizes to HTTPS');check((await page.locator('#stun-servers').inputValue()).length>0,'blank STUN list restores built-in list');check(await page.locator('#udp-stun-servers').inputValue()==='stun.example.com:3478','UDP STUN list is saved separately');check(await page.locator('#entry-refresh-value').inputValue()==='90','subscription refresh period survives real backend save and reload');check(await page.locator('#entry-sources').getAttribute('wrap')==='off','entry subscription URLs never soft-wrap');
  await page.locator('[data-page=settings]').click();await page.locator('[data-setting-section=network]').click();await page.locator('#protocol').selectOption('faketcp');await page.locator('input[name=connection-mode][value=existing]').check();await page.locator('#entry-owner').selectOption('-1');await page.locator('#entry-sources').fill('203.0.113.9:99');await page.locator('#entry-owner').selectOption('0');await page.locator('#direct-mode').selectOption('server');await page.locator('#entry-sources').fill('203.0.113.1:44680\n203.0.113.2:44681');await page.locator('#resolve-entries').click();await page.locator('#resolve-summary').filter({hasText:'2/2'}).waitFor();check((await page.locator('#resolver-results').innerText()).includes('仍需对端验证'),'resolver success does not imply authenticated business connectivity');check(await page.locator('.resolved-row').count()===2,'only the visible owner sources are resolved and counted');await page.locator('#entry-owner').selectOption('-1');check(await page.locator('#resolver-results').isHidden(),'changing entry owner clears stale resolution results');await page.locator('#entry-sources').fill('');await page.locator('#entry-owner').selectOption('0');await page.locator('#direct-mode').selectOption('server');
  await page.locator('#network-form button[type=submit]').click();await page.locator('#toast').filter({hasText:'连接设置已保存'}).waitFor();
+ child.stdin.write('seed-network\n');check(await nextLine()==='seeded','isolated disabled mesh prepared without starting a real adapter');
+ await page.locator('[data-page=create]').click();await page.locator('#delete-network').waitFor();await page.locator('#delete-network').click();await page.locator('#modal-confirm').click();await page.locator('#toast').filter({hasText:'当前网络已删除'}).waitFor();
+ check(await page.locator('#delete-network').isHidden()&&await page.locator('#create-submit').isEnabled()&&await page.locator('#notice').isHidden(),'actual deferred deletion completes, clears its notice and enables creating a new network');
  const base=(await (await page.request.get(new URL('/api/status',link).href)).json()).status;
+ await Promise.all(responseReads);
+ check(['resolve-entries','leave','create-direct'].every(action=>accepted.some(x=>x.request.network?.action===action))&&accepted.some(x=>x.request.method==='patch'),'resolver, deletion, rejected creation and metadata mutations really cross the 700ms service acknowledgement over the named pipe');
+ check(accepted.every(x=>progressResponses.some(p=>p.id===x.id&&p.status===200))&&!progressResponses.some(p=>p.status===403),'all accepted operations complete through the real HTTP progress route without 403');
+ check(progressResponses.filter(p=>p.status===503).length===1&&accepted.filter(x=>x.request.patch?.deviceName==='浏览器 <test>').length===1,'temporary progress failure retries observation without repeating the accepted mutation');
+ check(await page.locator('#notice').isHidden(),'a later confirmed successful operation clears the preceding operation error');
  check(base.settings.existingEntries.length===2&&base.settings.connectionSource==='existing','multiple source entries persist in restricted service settings');
  const peer={slot:2,name:'Akane',virtualIp:'10.171.139.2',connected:true,rttMs:18,phase:'P2P 直连',actualTransport:'FakeTCP+HTTP',sentBytes:1000000,receivedBytes:100000000,outerTarget:'203.0.113.1:44680',connection:{phase:'Connected',detail:'已验证直连',elapsedMs:10000},liveness:{reason:'Healthy'}};
  let mock={...base,deviceName:'Thinkbook',networkId:'browser-fixture',virtualIp:'10.171.139.1',isOwner:true,networkEnabled:true,state:'已直连',directPeers:1,totalPeers:2,networkEstablishedAt:Math.floor(Date.now()/1000)-3600,networkCreatedHere:true,desktop:{serviceRegistered:true,autoStart:true},peers:[peer,{...peer,slot:3,name:'离线设备',virtualIp:'10.171.139.3',connected:false,rttMs:null,actualTransport:'None',connection:{phase:'Offline',detail:'设备未在线'}}],connection:{phase:'Connected',detail:'已直连 1 台设备',elapsedMs:10000},pairing:{active:true,owner:true,code:'684219',candidate:'candidate-1',peerName:'Natsu <unsafe>',verification:'123456',proposedIp:'10.171.139.4',expires:Math.floor(Date.now()/1000)+300,state:'请核对校验码'},logs:['12:00:00 [INFO] 已直连','12:00:01 [WARN] 暂未找到入口','12:00:02 [ERROR] 测试错误','12:00:03 [DEBUG] <script>unsafe</script>']};
@@ -66,6 +91,6 @@ let checks=0;const findings=[];function check(ok,message){if(!ok)throw Error(mes
  failure=503;await page.locator('#backend-state').filter({hasText:'后台状态未更新'}).waitFor();check(await page.locator('#network-toggle').isDisabled(),'stale backend disables mutations');check(await page.locator('#metric-up').innerText()==='—','stale data never displays a current speed');
  failure=0;await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();check(true,'existing panel session recovers after backend outage');
  check(errors.length===0,'zero browser JavaScript errors');check(csp.length===0,'strict CSP without inline script or style violations');
- fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Pass',checks,findings,jsErrors:errors,cspErrors:csp,scope:'Real local restricted handlers and browser rendering; mocked peer snapshots do not prove physical NAT/streaming'},null,2));console.log('PASS '+checks+' browser checks');
+ fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Pass',checks,findings,progressResponses,accepted:accepted.map(x=>({id:x.id,method:x.request.method,action:x.request.network?.action})),jsErrors:errors,cspErrors:csp,scope:'Real local HTTP + restricted named pipe with queued operations and browser rendering; mocked peer snapshots do not prove physical NAT/streaming'},null,2));console.log('PASS '+checks+' browser checks');
  }catch(e){fs.writeFileSync(path.join(out,'failure.txt'),e.stack+'\n'+stderr);console.error(e);process.exitCode=1;}finally{if(browser)await browser.close();child.stdin.write('quit\n');setTimeout(()=>child.kill(),1500).unref();}
 })();

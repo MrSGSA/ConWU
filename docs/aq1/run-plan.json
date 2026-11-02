@@ -2,11 +2,11 @@
   "schemaVersion": 1,
   "specVersion": "AQ-1",
   "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-11-02: fix frequent UI cancellation; offline reconnection; six underlined code digits; merge duplicate host-entry role; configurable subscription refresh and horizontal scrolling; real TXT and source counting.",
-  "reportedDefectVersion": "1.0.0",
-  "candidateVersion": "1.0.1-rc.11",
-  "msiVersion": "1.0.17",
-  "startCommit": "ca9c3d9ec20d60e06a9d608685e50631ee76ae06",
+  "userConfirmedScope": "2026-11-02: fix both clients' local HTTP 403 on accepted operation progress, reconcile success/error notices, replace the browser tab's cached old logo. Preserve rc.11 transport and entry resolution behavior.",
+  "reportedDefectVersion": "1.0.1-rc.11",
+  "candidateVersion": "1.0.1-rc.12",
+  "msiVersion": "1.0.18",
+  "startCommit": "8d096f190a6e52ba794491c2f47d8db7931cde47",
   "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
   "primaryProfile": "FakeTcpHttpDatagram",
   "control": "HTTPS for server networks; authenticated MeshLink synchronization for explicit serverless networks",
@@ -41,7 +41,10 @@
     "Windows system TXT lookup verified against the same rc.10 lookup on the real user domain",
     "configurable 1s-24h subscription refresh, last-known endpoint retention and changed-source retry window",
     "offline presence gates, serverless bounded attempt and low-rate checks, idle optional STUN/gateway probes",
-    "six underlined short-code slots, one owner role, scoped source counts and nonwrapping subscription URLs"
+    "six underlined short-code slots, one owner role, scoped source counts and nonwrapping subscription URLs",
+    "narrow GET /api/status operation-ID query allowlist, canonical nonempty GUID, session and origin boundaries preserved",
+    "bounded retries of progress reads only; actual failure remains visible and confirmed success clears obsolete notice",
+    "fresh favicon URL backed by the exact same Tokyo Night 45-degree SVG"
   ],
   "baselineOrder": [
     "Q2 final application physical route first when second endpoint is available",
@@ -74,7 +77,7 @@
     "status": "PendingUserTrial"
   },
   "regression": {
-    "orchestration": "Target affected control/entry/presence/browser cases, separate security and product reviews, freeze rc.11 and run Full core; package and validate isolated MSI without changing daily clients.",
+    "orchestration": "Reproduce HTTP rejection before fixing; real HTTP security tests and browser -> HTTP -> actual SID pipe deferred operations; separate correctness/security and product/quality self-reviews; freeze rc.12 and run InstallerRefresh (every core case once, no new 30-round claim); package and validate isolated MSI without changing daily clients.",
     "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
     "affectedTestsAfterChanges": true,
     "finalFrozenCoreRun": true,

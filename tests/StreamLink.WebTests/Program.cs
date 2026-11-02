@@ -7,14 +7,22 @@ using StreamLink.Core;
 using StreamLink.Service;
 using StreamLink.Web;
 
-if(args is ["--browser-fixture",var assetRoot]) {
+if(args is ["--browser-fixture",var assetRoot,..var fixtureOptions]) {
  WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
  using var fixture=new ControlWorker();fixture.StartLocal();
  string sid=WindowsIdentity.GetCurrent().User!.Value;new ProfileStore().AuthorizeUiUser(sid);
- var handler=typeof(ControlWorker).GetMethod("HandleUi",BindingFlags.Instance|BindingFlags.NonPublic)!;
- Task<UiControlReply> Call(UiControlRequest command,CancellationToken token)=>(Task<UiControlReply>)handler.Invoke(fixture,[command,sid,token])!;
- await using var panel=await WebPanel.Start(Call,Path.GetFullPath(assetRoot));
- while(await Console.In.ReadLineAsync() is {} input){if(input=="open"){Console.WriteLine(panel.OpenLink());await Console.Out.FlushAsync();}else if(input=="quit")break;}
+ await using var pipe=new UiPipeFixture(fixture,fixtureOptions.Contains("--deferred"));
+ await using var panel=await WebPanel.Start(pipe.Call,Path.GetFullPath(assetRoot));
+ while(await Console.In.ReadLineAsync() is {} input){
+  if(input=="open")Console.WriteLine(panel.OpenLink());
+  else if(input=="seed-network"){
+   // One-member, disabled mesh: exercises UI deletion without opening Wintun
+   // or contacting a public coordinator. Never applied to the daily instance.
+   var seeded=await fixture.Handle(new("mesh-create",Service:"https://example.com/"));
+   Console.WriteLine(seeded.Ok?"seeded":"seed-failed");
+  }else if(input=="quit")break;
+  await Console.Out.FlushAsync();
+ }
  await fixture.StopLocal();return 0;
 }
 var root=Path.GetFullPath(args.FirstOrDefault()??"src/StreamLink.Web/wwwroot");
@@ -23,6 +31,7 @@ string? backendFailure=null;
 var clock=new PanelClock();
 void Check(bool ok,string name){checks++;if(!ok){failures++;Console.Error.WriteLine("FAIL "+name);}}
 ReplyBudgetTests.Run(Check);
+await ProgressQueryTests.Run(root,Check);
 Task<UiControlReply> Backend(UiControlRequest request,CancellationToken token){Interlocked.Increment(ref calls);if(backendFailure!=null)throw backendFailure=="Stopped"?new UiBackendException("Stopped","个人后台已停止"):new IOException("private backend details");return Task.FromResult(new UiControlReply(true,"",null));}
 await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  using var client=new HttpClient(new HttpClientHandler{UseCookies=true,AllowAutoRedirect=false}){BaseAddress=new(panel.Origin)};

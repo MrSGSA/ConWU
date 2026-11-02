@@ -83,7 +83,16 @@ public sealed class WebPanel : IAsyncDisposable
         response.Headers["Referrer-Policy"] = "no-referrer";
         response.Headers["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
         if (origin.Length == 0 || context.Connection.RemoteIpAddress is not {} ip || !IPAddress.IsLoopback(ip) || request.Host.Value != new Uri(origin).Authority) { response.StatusCode = 403; return; }
-        if (request.QueryString.HasValue || request.Headers.Origin.Count > 1 || request.Headers.Origin.Count == 1 && request.Headers.Origin.ToString() != origin || request.Headers["Sec-Fetch-Site"] is var site && site.Count > 0 && site.ToString() is not ("same-origin" or "none")) { response.StatusCode = 403; return; }
+        if (request.Headers.Origin.Count > 1 || request.Headers.Origin.Count == 1 && request.Headers.Origin.ToString() != origin || request.Headers["Sec-Fetch-Site"] is var site && site.Count > 0 && site.ToString() is not ("same-origin" or "none")) { response.StatusCode = 403; return; }
+        // Progress is the only route that accepts a query. An operation ID is
+        // just a selector; the session/Origin/CSRF boundaries below still apply.
+        Guid operation = Guid.Empty;
+        if (request.QueryString.HasValue) {
+            if (request.Method != "GET" || request.Path != "/api/status" || request.Query.Count != 1 ||
+                request.Query.Single().Key != "operation" || request.Query["operation"].Count != 1) { response.StatusCode = 403; return; }
+            string selector = request.Query["operation"].ToString();
+            if (selector.Length != 36 || !Guid.TryParseExact(selector, "D", out operation) || operation == Guid.Empty) { response.StatusCode = 400; return; }
+        }
         lock (gate) {
             long now = Now;
             if (now - rateStart >= 10000) { rateStart = now; rateCount = 0; }
@@ -92,9 +101,10 @@ public sealed class WebPanel : IAsyncDisposable
         if (!await slots.WaitAsync(0)) { response.StatusCode = 429; return; }
         try {
             string path = request.Path.Value ?? "/";
-            if (request.Method == "GET" && path is "/" or "/app.js" or "/style.css" or "/icon.svg") {
-                response.ContentType = path switch { "/app.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
-                await response.SendFileAsync(Path.Combine(assets,path == "/" ? "index.html" : path[1..]),context.RequestAborted); return;
+            if (request.Method == "GET" && path is "/" or "/app.js" or "/style.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
+                response.ContentType = path switch { "/app.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
+                string file = path switch { "/" => "index.html", "/streamlink-tokyo-45.svg" => "icon.svg", _ => path[1..] };
+                await response.SendFileAsync(Path.Combine(assets,file),context.RequestAborted); return;
             }
             bool post = request.Method == "POST";
             if (post && (request.Headers.Origin.ToString() != origin || request.ContentType?.Split(';')[0].Trim() != "application/json" || request.ContentLength is > 65536)) { response.StatusCode = 403; return; }
@@ -126,8 +136,6 @@ public sealed class WebPanel : IAsyncDisposable
             if (request.Method == "GET" && path == "/api/session") { Touch();await response.WriteAsJsonAsync(new {csrf=current.Csrf},context.RequestAborted); return; }
             UiControlRequest command;
             if (request.Method == "GET" && path == "/api/status") {
-                Guid operation=Guid.Empty;
-                if(request.Query.TryGetValue("operation",out var value)&&!Guid.TryParse(value,out operation)){response.StatusCode=400;return;}
                 command = new("status",OperationId:operation);
             }
             else if (post && path == "/api/command") {

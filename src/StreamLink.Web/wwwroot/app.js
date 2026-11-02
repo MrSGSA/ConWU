@@ -49,15 +49,36 @@ async function api(path,body,valid=()=>true){
   const result=await fetch(path,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json','X-StreamLink-CSRF':csrf}:{},body:body?JSON.stringify(body):undefined,signal:abort.signal});
   if(!result.ok){let problem;try{problem=await result.json();}catch{}
    if(result.status===401){if(valid()){expired=true;csrf='';unavailable('请从 StreamLink 托盘重新打开 WebUI，后台连接继续运行。');}throw Error('面板授权已过期，请从托盘重新打开 WebUI。');}
-   throw Error(problem?.error||'请求未完成（HTTP '+result.status+'），请刷新状态后再操作。');
+   const error=Error(problem?.error||'请求未完成（HTTP '+result.status+'），请刷新状态后再操作。');error.retryable=[429,502,503,504].includes(result.status)&&problem?.code!=='AccessDenied';throw error;
   }
   return await result.json();
- }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const message='本机后台暂未响应，操作结果尚待确认；正在自动刷新。';if(valid())unavailable(message);throw Error(message);}throw error;}finally{clearTimeout(timer);}
+ }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const message='本机后台暂未响应，操作结果尚待确认；正在自动刷新。';if(valid())unavailable(message);const pending=Error(message);pending.retryable=true;throw pending;}throw error;}finally{clearTimeout(timer);}
 }
 async function command(method,extra={},quiet=false){
  if(busy)throw Error('上一项操作仍在进行，请稍候。');if(!online)throw Error('请先恢复面板与后台的连接。');
  busy=true;generation++;controls();if(!quiet)notice(method==='register-service'?'请在 Windows 授权窗口确认服务操作…':'正在处理，请稍候…');
- try{let reply=await api('/api/command',{method,operationId:crypto.randomUUID(),...extra});const operation=reply.operation;if(operation&&!operation.completed){if(!quiet)notice('后台正在'+(operation.phase||'处理')+'，请稍候…');const until=Date.now()+100000;while(Date.now()<until){await new Promise(r=>setTimeout(r,700));const progress=await api('/api/status?operation='+encodeURIComponent(operation.id));if(progress.status)render(progress.status);if(progress.operation?.id===operation.id&&progress.operation.completed){reply={...progress,ok:!progress.operation.error,error:progress.operation.error};break;}}if(!reply.operation?.completed)throw Error('后台仍在处理，请刷新状态确认结果后再操作。');}generation++;if(reply.status)render(reply.status);else if(reply.statusNotice)unavailable(reply.statusNotice);if(!reply.ok)throw Error(reply.error||'操作未完成');if(!quiet)notice('');return reply;}
+ try{
+  let reply=await api('/api/command',{method,operationId:crypto.randomUUID(),...extra});const operation=reply.operation;
+  if(operation&&!operation.completed){
+   if(!quiet)notice('后台正在'+(operation.phase||'处理')+'，请稍候…');
+   const until=Date.now()+100000;
+   while(Date.now()<until){
+    await new Promise(r=>setTimeout(r,700));let progress;
+    try{progress=await api('/api/status?operation='+encodeURIComponent(operation.id));}
+    catch(error){
+     if(!error.retryable)throw error;
+     // Retry observation only. An accepted mutation must never be resubmitted.
+     if(!quiet)notice('后台已受理，暂时无法读取进度，正在重试…');continue;
+    }
+    if(!progress.ok)throw Error(progress.error||'无法读取操作结果');
+    if(progress.status)render(progress.status);
+    if(progress.operation?.id===operation.id&&progress.operation.completed){reply={...progress,ok:!progress.operation.error,error:progress.operation.error};break;}
+   }
+   if(!reply.operation?.completed)throw Error('后台结果尚未确认，请刷新状态确认结果后再操作。');
+  }
+  generation++;if(reply.status)render(reply.status);else if(reply.statusNotice)unavailable(reply.statusNotice);
+  if(!reply.ok)throw Error(reply.error||'操作未完成');if(!quiet)notice('');return reply;
+ }
  finally{busy=false;controls();}
 }
 const network=(action,fields={},quiet=false)=>command('network',{network:{action,...fields}},quiet);

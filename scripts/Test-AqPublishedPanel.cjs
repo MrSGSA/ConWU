@@ -17,6 +17,10 @@ function check(ok,label){if(!ok)throw Error(label);checks.push(label);}
  const context=await browser.newContext({viewport:{width:1440,height:1050}});page=await context.newPage();page.setDefaultTimeout(12000);
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(link);await page.getByText('后台运行中',{exact:true}).waitFor();
+ const operationId=require('crypto').randomUUID(),progress=await page.request.get(new URL('/api/status?operation='+operationId,link).href);
+ check(progress.ok()&&(await progress.json()).ok,'installed Web host permits authenticated operation-ID queries');
+ const faviconPath=await page.locator('link[rel=icon]').getAttribute('href'),favicon=await page.request.get(new URL(faviconPath,link).href);
+ check(faviconPath==='/streamlink-tokyo-45.svg'&&favicon.ok()&&(await favicon.text()).includes('rotate(45 128 128)'),'installed tab icon uses the new 45-degree logo URL');
  check(!page.url().includes('#'),'ticket removed');
  await page.screenshot({path:path.join(out,'published-overview.png'),fullPage:true});
  if(!readOnly){const deviceName='AQ installed '+Date.now().toString(36);

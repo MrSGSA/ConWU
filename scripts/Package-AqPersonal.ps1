@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.0.1-rc.11',[string]$MsiVersion='1.0.17')
+      [string]$Version='1.0.1-rc.12',[string]$MsiVersion='1.0.18')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
