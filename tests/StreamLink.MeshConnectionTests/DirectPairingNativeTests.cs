@@ -26,8 +26,15 @@ static partial class Program
         static int Port(){using var socket=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));return ((IPEndPoint)socket.Client.LocalEndPoint!).Port;}
         var owner=MeshIdentity.Create("","",mode,direct:true);using var host=new DirectPairHost();using var hostKey=new PairKeyExchange();using var guestKey=new PairKeyExchange();
         var ownerAdapter=new MemoryAdapter();await using var router=new MeshRouter(owner,ownerAdapter){DirectPairing=host.Handle};
-        int listener=Port(),serverWire=Port();await using var proxy=new PairNativeProxy(listener,new(IPAddress.Loopback,serverWire));proxy.Start();
+        // The real FakeTCP child reserves an exclusive TCP port on Any. A free
+        // UDP ephemeral port says nothing about TCP occupancy/TIME_WAIT. Hold
+        // the matching reservation while preparing the fixture; use a port
+        // below the dynamic range to avoid competing ephemeral allocations in
+        // the short release-to-child-bind interval. Do not change the protocol.
+        using var reservation=ReserveNativeListener(mode);
+        int listener=((IPEndPoint)reservation.LocalEndPoint!).Port,serverWire=Port();await using var proxy=new PairNativeProxy(listener,new(IPAddress.Loopback,serverWire));proxy.Start();
         Dictionary<string,string> Env(int port)=>new(){["STREAMLINK_TEST_BIND"]=port.ToString(),["STREAMLINK_TEST_PEER"]=proxy.Port.ToString()};
+        reservation.Dispose();
         using var nativeServer=new MeshTransport(components,folder,owner,router.LocalEndpoint,true,listener,null,"info",Env(serverWire));router.SetLegacyListenerControl(true);
         var ticket=await host.Create(hostKey,"native host",default);var temporary=MeshIdentity.Create("","",mode,direct:true);
         MeshProfile enrolled;
@@ -62,5 +69,14 @@ static partial class Program
         adapter.Outgoing.Add(Packet(enrolled.LocalIp,owner.LocalIp));await Until(()=>router.Status().Single().ReceivedBytes>=2560,"bounded pre-membership attempts do not evict an established business conversation");
         Check(!nativeServer.Exited&&!nativeClient.Exited,"pre-enrollment service and business reuse one persistent native server");
         Console.WriteLine("PASS "+mode+" native direct short pairing; actual C++ protocol and parent control, loopback raw carrier only");
+    }
+    static Socket ReserveNativeListener(string mode)
+    {
+        for(int attempt=0;attempt<32;attempt++){
+            var socket=new Socket(AddressFamily.InterNetwork,mode=="faketcp"?SocketType.Stream:SocketType.Dgram,mode=="faketcp"?ProtocolType.Tcp:ProtocolType.Udp){ExclusiveAddressUse=true};
+            try{socket.Bind(new IPEndPoint(IPAddress.Any,RandomNumberGenerator.GetInt32(20000,40000)));return socket;}
+            catch(SocketException){socket.Dispose();}
+        }
+        throw new IOException("No matching exclusive native listener port is available for the isolated fixture");
     }
 }
