@@ -46,8 +46,8 @@ function Digest($value){[Convert]::ToHexString([Security.Cryptography.SHA256]::H
 function Snapshot {
  $reply=Call @{Command='status'};$p=$reply.Profile;$cfg=$p.SavedNetworkSettings
  if($null -eq $cfg){
-  $service=$p.CoordinationService;$pin=$p.CoordinationPin;$direct=$p.DirectMode
-  if($p.Mesh){$direct=$p.Mesh.Pair.Direct;if(-not $direct){$service=$p.Mesh.Pair.Service;$pin=$p.Mesh.Pair.CertificatePin}}
+  $service=$p.CoordinationService;$pin=$p.CoordinationPin;$direct=[bool]$p.DirectMode
+  if($p.Mesh){$direct=[bool]$p.Mesh.Pair.Direct;if(-not $direct){$service=$p.Mesh.Pair.Service;$pin=$p.Mesh.Pair.CertificatePin}}
   $cfg=@{Service=$service;CertificatePin=$pin;ManualEndpoint=$p.ManualEndpoint;PathSelection=$p.PathSelection;ConnectionSource=$p.ConnectionSource;DirectMode=$direct;ExistingEntries=$p.ExistingEntries;EntryRefreshSeconds=$p.EntryRefreshSeconds;RequestedVirtualIp=$p.RequestedVirtualIp;TcpStun=$p.TcpStun;UdpStun=$p.UdpStun;ListenPort=$p.ListenPort;SourcePort=$p.SourcePort;AllowManualQualityRequests=$p.AllowManualQualityRequests}
  }
  $settings=[ordered]@{deviceName=$p.DeviceName;logLevel=$p.LogLevel;autoStart=$p.AutoStart;service=$cfg.Service;pin=$cfg.CertificatePin;manual=$cfg.ManualEndpoint;protocol=$cfg.PathSelection;source=$cfg.ConnectionSource;direct=$cfg.DirectMode;
