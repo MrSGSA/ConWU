@@ -469,7 +469,8 @@ public sealed class MeshRunner
                         new("Offline",mesh.Pair.Direct?"设备暂无响应，已暂停密集重连；定时复核、入口变化或手动重试后恢复。":"设备未在线，等待新的上线信息后自动连接。");
                     ConnectionProgress? unavailable=!legacyAllowed && gatheringFactory==null && factory==null
                         ? new("Blocked","当前传输模式的连接组件不可用，请检查安装或在设置中选择可用模式；不会自动切换协议。") {ReasonCode="SelectedTransportUnavailable"} : null;
-                    statuses = router.Status().Select(peer=>feedback.Observe(peer,
+                    MeshPeerStatus EntryEvidence(MeshPeerStatus peer)=>peer.Connected&&peer.EntryDirection=="Outbound"&&clients.GetValueOrDefault(peer.Slot)?.AuthenticatedEndpoint(peer.Slot) is {} endpoint?peer with{OuterTarget=endpoint}:peer;
+                    statuses = router.Status().Select(peer=>feedback.Observe(EntryEvidence(peer),
                         quietPeers.Contains(peer.Slot)?QuietProgress(peer.Slot):EntryProgress(peer.Slot)??(priorityPeers.Contains(peer.Slot) ? new ConnectionProgress("Verifying",mesh.Pair.Direct?"正在验证已有入口 "+selectedEntries.GetValueOrDefault(peer.Slot)+"；请确认主机在线，映射转发到 StreamLink 且协议一致。":existingPlans[peer.Slot].Detail+"；失败后自主打洞，保持所选协议。",CanRetry:true) : traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable),
                         announcements.TryGetValue(peer.Slot,out var remote) && remote.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),now)).ToArray();
                     foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);

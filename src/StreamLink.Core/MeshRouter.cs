@@ -22,6 +22,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public PathQualityAssessment? Quality { get; init; }
     public string OuterSource {get;init;}="Unknown";
     public string OuterTarget {get;init;}="Unknown";
+    public string EntryDirection {get;init;}="Unknown";
     public NativePathDiagnostics? NativeEvidence {get;init;}
     public RouterPeerDrops? LocalDrops { get; init; }
 }
@@ -224,6 +225,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : "FakeTCP+HTTP",
                     OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
                     OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
+                    EntryDirection=!healthy?"Unknown":p.Managed!=null?"Managed":p.Active!=null&&p.LegacyListenerSources.Contains(p.Active)?"Inbound":"Outbound",
                     NativeEvidence=OperatingSystem.IsWindows()?(p.Managed?.Active?.Transport as NativeDatagramPath)?.Diagnostics:null,
                     LocalDrops = new(p.NoHealthyPathDrops, p.SendRejectedDrops, p.AuthenticationDrops, p.ReceivePolicyDrops, p.AdapterWriteDrops),
                     Recovery = p.Recovery.Snapshot(Environment.TickCount64),

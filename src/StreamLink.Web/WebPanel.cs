@@ -139,7 +139,11 @@ public sealed class WebPanel : IAsyncDisposable
                 command = new("status",OperationId:operation);
             }
             else if (post && path == "/api/command") {
-                if (!Equal(request.Headers["X-StreamLink-CSRF"].ToString(),current.Csrf)) { response.StatusCode = 403; return; }
+                if (!Equal(request.Headers["X-StreamLink-CSRF"].ToString(),current.Csrf)) {
+                    response.StatusCode = 403;
+                    await response.WriteAsJsonAsync(new {ok=false,code="SessionChanged",error="面板会话已更新，需要重新读取当前会话。"},context.RequestAborted);
+                    return;
+                }
                 command = await JsonSerializer.DeserializeAsync<UiControlRequest>(request.Body,Json,context.RequestAborted) ?? throw new JsonException();
                 lock (gate) {
                     if (command.OperationId == Guid.Empty || current.Requests.Count >= 512 || !current.Requests.Add(command.OperationId)) { response.StatusCode = 409; return; }

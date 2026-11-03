@@ -25,6 +25,12 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
     string requested = "";
     public bool HasPending => pending != null || preparing != null;
     public bool HasFailedAttempts => failures>0;
+    public string? AuthenticatedEndpoint(int slot)
+    {
+        if(disposed||!router.HasHealthyPath(slot))return null;
+        foreach(var path in new[]{active,pending})if(path is {} ready&&!ready.Transport.Exited&&router.UsesPath(slot,ready.Transport.ClientEndpoint))return ready.Endpoint;
+        return null;
+    }
     public ConnectionProgress Progress(long now) => nextAttempt > now
         ? new("Retrying","上次直连验证未通过，后台将重新尝试。",Attempt:attempts,RetryInSeconds:(int)((nextAttempt-now+999)/1000),CanRetry:true)
         : new(preparing != null ? "Preparing" : pending != null ? "Verifying" : "Connecting",

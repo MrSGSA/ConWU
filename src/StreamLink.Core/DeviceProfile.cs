@@ -32,6 +32,11 @@ public sealed class DeviceProfile
     public string CoordinationService { get; set; } = "";
     public string CoordinationPin { get; set; } = "";
     public ExistingEntry[] ExistingEntries { get; set; } = [];
+    // User configuration is independent of enrollment and runtime entry bindings.
+    // Invitations and directory changes may update ExistingEntries, never this copy.
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public UiNetworkSettings? SavedNetworkSettings { get; set; }
+    public string SavedPeerEntryNetwork { get; set; } = "";
     public int EntryRefreshSeconds {get;set;}=60;
     public string RequestedVirtualIp { get; set; } = "";
     public long NetworkEstablishedAt { get; set; }

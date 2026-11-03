@@ -101,6 +101,7 @@ static partial class Program
         var runner=new MeshRunner(new DeviceProfile{Mesh=owner,EntryRefreshSeconds=refresh?1:60,TransportMode="faketcp",PathSelection="faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
         using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
         try{await Until(()=>status?.Connected==true,"real Runner tries supplied endpoints and authenticates a working one",25000);
+            Check(status!.Peers!.Single().OuterTarget==endpoint.Endpoint.ToString()&&status.Peers!.Single().EntryDirection=="Outbound","actual endpoint display comes from the authenticated carrying client rather than an unverified entry or local bridge");
             Check(!refresh||resolutions>=2,"configured one-second subscription refresh adopts a changed endpoint without user retry");
             int count=transports.Count;runner.RequestRetry();await Task.Delay(600);Check(transports.Count==count&&!adapter.Disposed,"manual retry preserves healthy existing transport and adapter");
             int previousResolutions=resolutions;

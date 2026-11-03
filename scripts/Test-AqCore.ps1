@@ -54,6 +54,10 @@ try {
  Run 'approval-guest-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-guest-service')
  Run 'coordination-faults' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--coordination-faults')
  Run 'leave-timeouts' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--leave-timeout-only')
+ Run 'saved-settings' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')
+ Run 'control-lifecycle' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--control-lifecycle-only')
+ Run 'connection-view' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--connection-view-only')
+ Run 'ui-responsiveness' 'dotnet' @('run','--project','tests/StreamLink.WebTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--ui-responsiveness')
  Run 'direct-short-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-service')
  # Enabled personal paths: 30 SO/UDP deterministic rounds plus real factory
  # source-learning, resource cancellation, stale-network and failure cleanup.
@@ -61,7 +65,7 @@ try {
   $rounds=if($mode -eq 'baseline'){$repeatRounds}else{'1'}
   Run "runner-$mode" 'dotnet' @('run','--project','tests/StreamLink.MeshRunnerTraversalTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--native',$native,'--rounds',$rounds,'--output',(Join-Path $OutputDirectory "runner-$mode.json"),"--$mode-only") 1500
  }
- Run 'browser' 'node' @('scripts/Test-AqBrowser.cjs',(Join-Path $OutputDirectory 'browser')) 120
+ Run 'browser' 'node' @('scripts/Test-AqBrowser.cjs',(Join-Path $OutputDirectory 'browser')) 180
  Run 'https-coordination' 'pwsh' @('-NoProfile','-File','scripts/Test-Coordination.ps1') 180 @{StreamLinkPersonalFeature='true';StreamLinkReleaseVersion=$Version}
  $dirty=@(& git status --porcelain).Count -gt 0 -or (& git rev-parse HEAD).Trim() -ne $commit
  $pass=@($rows|Where-Object status -eq 'Fail').Count -eq 0 -and -not $dirty

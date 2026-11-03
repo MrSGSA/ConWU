@@ -14,6 +14,7 @@ public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connec
     public string Quality {get;init;}="Unknown";
     public string OuterSource {get;init;}="Unknown";
     public string OuterTarget {get;init;}="Unknown";
+    public string EntryDirection {get;init;}="Unknown";
 }
 public sealed record UiStatusDto(string Version,string DeviceName,string VirtualIp,string State,bool ServiceReady,bool NetworkEnabled,int DirectPeers,int TotalPeers,UiPeerDto[] Peers,string LogLevel,int SettingsPatchVersion=1)
 {
@@ -35,6 +36,7 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public long NetworkEstablishedAt {get;init;}
     public bool NetworkCreatedHere {get;init;}
     public EntryResolution[] EntryResolutions {get;init;}=[];
+    public int[] InactiveEntrySlots {get;init;}=[];
     public UiDesktopStatus? Desktop {get;init;}
 }
 public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);

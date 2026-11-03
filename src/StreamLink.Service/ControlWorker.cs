@@ -22,6 +22,7 @@ public sealed partial class ControlWorker : BackgroundService
     QualityResult? lastQuality;
     UiStageLedger? stageLedger;
     bool initialized;
+    bool stoppingNetwork;
     bool resourceShutdownUnproven;
     TaskCompletionSource? retryWake;
     long lastManualRetry;
@@ -34,13 +35,23 @@ public sealed partial class ControlWorker : BackgroundService
         lease = new FileStream(Path.Combine(ProfileStore.Root, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try {
             profile = store.Load();
+            bool changed=false;
             if (profile.AdapterBackend != PacketAdapterBackend.OfficialWintun) {
                 store.BackupResearchProfile();
                 profile.AdapterBackend = PacketAdapterBackend.OfficialWintun;
                 profile.Enabled = false;
                 profile.MigrationNotice = "原自研网卡配置已在本机备份并迁移到官方 Wintun；网络保持停止，请核对后连接。";
-                store.Save(profile);
+                changed=true;
             }
+            if(profile.SavedNetworkSettings==null){
+                var existingSettings=LegacyPublicSettings(profile);
+                profile.SavedNetworkSettings=existingSettings with {
+                    ExistingEntries=SavedEntries(existingSettings.ExistingEntries,profile.Mesh?.IsOwner==false)
+                };
+                profile.SavedPeerEntryNetwork=profile.Mesh?.Pair.Network??"";
+                changed=true;
+            }
+            if(changed)store.Save(profile);
             PublishReply();
         } catch { lease.Dispose(); throw; }
     }
@@ -73,6 +84,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         RequireResourceOwnership();
         if (running != null && !running.IsCompleted) return;
+        Volatile.Write(ref stoppingNetwork,false);
         if (profile.Mesh == null && profile.Pair != null && !File.Exists(Path.Combine(AppContext.BaseDirectory, "components", "easytier-core.exe"))) {
             lock (sync) status = new("旧网络需要迁移", "", "", profile.Pair.Mode, false, null, "此轻量包仅包含原生组网。原配对已保留；请在双方新版上创建并加入多机网络，或使用旧版恢复连接。");
             return;
@@ -87,13 +99,14 @@ public sealed partial class ControlWorker : BackgroundService
             {
                 TaskCompletionSource wake;
                 lock(sync){
+                    if(token.IsCancellationRequested||Volatile.Read(ref stoppingNetwork))break;
                     retryWake=wake=new(TaskCreationOptions.RunContinuationsAsynchronously);
                     status=new(attempt++==0?"正在启动":"正在恢复网络",copy.Mesh?.LocalIp??"","","faketcp",false,null,"正在启动连接组件") {
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
-                else runner = new(copy, Log, s => { lock (sync) {status = s;PublishReply();} }, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
+                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
+                else runner = new(copy, Log, ReportRuntimeStatus, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
                 catch (MeshRevokedException ex) { lock (sync) { profile.Enabled = false; store.Save(profile); status = new("已移出网络", "", "", "faketcp", false, null, ex.Message); } Log(ex.Message); break; }
@@ -113,8 +126,14 @@ public sealed partial class ControlWorker : BackgroundService
             }
         });
     }
+    void ReportRuntimeStatus(SessionStatus next){lock(sync){if(Volatile.Read(ref stoppingNetwork))return;status=next;PublishReply();}}
     async Task End(CancellationToken token = default,Action<string>? progress=null)
     {
+        Volatile.Write(ref stoppingNetwork,true);
+        if(running?.IsCompleted==false){
+            const string detail="正在停止本机网络并回收资源，后台服务仍在运行。";
+            lock(sync){if(status is {} current){status=current with{State="正在停止网络",Connected=false,Connection=new("Releasing",detail),Peers=current.Peers?.Select(p=>p with{Connected=false,Connection=new("Releasing",detail)}).ToArray()};PublishReply();}}
+        }
         if(uiPairClient is DirectPairHost)ResetUiPair("连接已停止，请重新生成配对码");
         uiDirectHost.Clear();
         runStop?.Cancel();measureStop?.Cancel();
@@ -234,6 +253,7 @@ public sealed partial class ControlWorker : BackgroundService
                         // Background directory/STUN updates also use sync. Never
                         // reconstitute a stale whole profile outside this lock.
                         var patched=ui.Patch.ApplyTo(profile);
+                        if(ui.Patch.RequestedVirtualIp!=null)patched.SavedNetworkSettings=PublicSettings(patched) with{RequestedVirtualIp=patched.RequestedVirtualIp};
                         store.Save(patched);profile=patched;
                         if(runningProfile is {} activeUi) {
                             activeUi.DeviceName=patched.DeviceName;
@@ -247,6 +267,9 @@ public sealed partial class ControlWorker : BackgroundService
                     if (updated.Device != profile.Device || updated.Pair != profile.Pair || updated.Slot != profile.Slot || JsonSerializer.Serialize(updated.Mesh) != JsonSerializer.Serialize(profile.Mesh)) throw new FormatException("不能通过设置修改配对身份");
                     bool resume = profile.Enabled;
                     updated=ProfileChanges.Copy(updated);
+                    var userSettings=LegacyPublicSettings(updated);
+                    updated.SavedNetworkSettings=userSettings with{ExistingEntries=SavedEntries(userSettings.ExistingEntries,updated.Mesh?.IsOwner==false)};
+                    updated.SavedPeerEntryNetwork=updated.Mesh?.Pair.Network??"";
                     updated.Enabled=resume;updated.LastEntry=profile.LastEntry;updated.LastStun=profile.LastStun;
                     if(profile.AdditionalData!=null){updated.AdditionalData??=new();foreach(var extra in profile.AdditionalData)updated.AdditionalData.TryAdd(extra.Key,extra.Value.Clone());}
                     bool restart=ProfileChanges.Impact(profile,updated)==ProfileChangeImpact.RestartNetwork;

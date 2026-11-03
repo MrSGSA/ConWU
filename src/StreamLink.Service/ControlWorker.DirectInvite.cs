@@ -11,6 +11,7 @@ public sealed partial class ControlWorker
         RequireUiNetwork(action.ExpectedNetwork);
         if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("需要退出当前网络后才能申请加入");
         var invitation=DirectPairInvitation.Import(action.Code);
+        RequireSavedProtocol(invitation.Mode);
         if(action.Mode!=invitation.Mode)throw new IOException("邀请的连接协议与本机设置不同，请在连接设置中选择与主机相同的协议");
         var token=operation.Stop.Token;
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(18000);

@@ -14,9 +14,10 @@ public sealed partial class ControlWorker
         var full=Volatile.Read(ref snapshot)!;var p=full.Profile!;var state=full.Status;
         var peers=(state?.Peers??[]).Where(x=>p.Mesh is {} m&&x.Slot!=m.Self.Slot&&m.Directory?.Members.Any(member=>member.Slot==x.Slot)==true).ToArray();
         return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",PublicText(state?.State??"网络未启动",p,256),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),peers.Length,
-            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,PublicText(x.Detail,p,256)){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,LocalDrops=x.LocalDrops,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
+            peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,PublicText(x.Detail,p,256)){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,LocalDrops=x.LocalDrops,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget,EntryDirection=x.EntryDirection}).ToArray(),p.LogLevel,SettingsPatchVersion:2)
             {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),
+             InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
              NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),Desktop=StartupSettings.Read(),
              QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
     }
@@ -40,14 +41,18 @@ public sealed partial class ControlWorker
     async Task ServeUi(NamedPipeServerStream pipe,string allowed,CancellationToken token)
     {
         using(pipe)using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
-            string stage="client-identity";bool authorized=false;
+            string stage="client-identity",method="unknown";bool authorized=false;
             deadline.CancelAfter(20000);try{
                 string caller=LocalControlPipe.ClientSid(pipe);
                 if(caller!=allowed)return;
                 authorized=true;stage="read-request";
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
+                method=request.Method is "status" or "network" or "patch" or "start" or "stop" or "retry" or "cancel" or "check" or "quality"?request.Method:"unknown";
                 stage="handle-request";
-                var handling=HandleUi(request,caller,token);
+                // Cancellation callbacks, DPAPI and Windows resource operations
+                // can block synchronously before an async method first yields.
+                // Never run a mutation inline on the pipe acceptance loop.
+                var handling=request.Method=="status"?HandleUi(request,caller,token):Task.Run(()=>HandleUi(request,caller,token),CancellationToken.None);
                 UiControlReply reply;
                 if(request.OperationId!=Guid.Empty && request.Method!="status" && await Task.WhenAny(handling,Task.Delay(700,deadline.Token))!=handling){
                     var operation=PublicOperation(OperationState(request.OperationId),Volatile.Read(ref snapshot)!.Profile!);
@@ -56,7 +61,7 @@ public sealed partial class ControlWorker
                 }else reply=await handling;
                 stage="write-reply";
                 await ServiceProtocol.Write(pipe,FitUiReply(reply),deadline.Token);
-            }catch(Exception)when(deadline.IsCancellationRequested){}catch(Exception ex){
+            }catch(Exception)when(deadline.IsCancellationRequested){if(authorized&&!token.IsCancellationRequested)Log("受限UI请求超时：method="+method+" stage="+stage);}catch(Exception ex){
                 string missing=ex is FileNotFoundException file?" assembly="+Path.GetFileName(file.FileName??"unknown"):"";
                 Log("受限UI请求失败：stage="+stage+" "+ex.GetType().Name+missing);
                 if(authorized&&stage=="handle-request")try{await ServiceProtocol.Write(pipe,new UiControlReply(false,"个人服务处理请求时发生内部错误，请修复安装并查看诊断日志。",null),deadline.Token);}catch(IOException){}
@@ -73,5 +78,5 @@ public sealed partial class ControlWorker
         }}catch(OperationCanceledException)when(token.IsCancellationRequested){}
         finally{await Task.WhenAll(clients);}
     }
-    async Task ServeUiAndRelease(NamedPipeServerStream pipe,string allowed,SemaphoreSlim limit,CancellationToken token){try{await ServeUi(pipe,allowed,token);}finally{limit.Release();}}
+    async Task ServeUiAndRelease(NamedPipeServerStream pipe,string allowed,SemaphoreSlim limit,CancellationToken token){await Task.CompletedTask.ConfigureAwait(ConfigureAwaitOptions.ForceYielding);try{await ServeUi(pipe,allowed,token);}finally{limit.Release();}}
 }

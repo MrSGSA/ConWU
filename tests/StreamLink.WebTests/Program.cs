@@ -7,6 +7,7 @@ using StreamLink.Core;
 using StreamLink.Service;
 using StreamLink.Web;
 
+if(args is ["--ui-responsiveness"])return await UiResponsivenessTests.Run();
 if(args is ["--browser-fixture",var assetRoot,..var fixtureOptions]) {
  WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
  using var fixture=new ControlWorker();fixture.StartLocal();
@@ -19,6 +20,11 @@ if(args is ["--browser-fixture",var assetRoot,..var fixtureOptions]) {
    // One-member, disabled mesh: exercises UI deletion without opening Wintun
    // or contacting a public coordinator. Never applied to the daily instance.
    var seeded=await fixture.Handle(new("mesh-create",Service:"https://example.com/"));
+   Console.WriteLine(seeded.Ok?"seeded":"seed-failed");
+  }else if(input=="seed-guest-network"){
+   var owner=MeshIdentity.Create("https://example.com/","","faketcp");
+   var invite=MeshIdentity.Export(MeshIdentity.Issue(owner));
+   var seeded=await fixture.Handle(new("mesh-join",Invite:invite));
    Console.WriteLine(seeded.Ok?"seeded":"seed-failed");
   }else if(input=="quit")break;
   await Console.Out.FlushAsync();
@@ -55,6 +61,18 @@ await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  Check((await Send("POST","/api/command",request,"https://attacker.example",csrf)).StatusCode==HttpStatusCode.Forbidden,"cross-site mutation rejected");
  Check((await Send("POST","/api/command",request,panel.Origin,csrf)).IsSuccessStatusCode&&calls==2,"authenticated command forwarded once");
  Check((await Send("POST","/api/command",request,panel.Origin,csrf)).StatusCode==HttpStatusCode.Conflict&&calls==2,"operation replay never forwarded");
+ var priorCsrf=csrf;
+ var secondTicket=new Uri(panel.OpenLink()).Fragment[1..];
+ using(var secondSession=await Send("POST","/api/session",new{ticket=secondTicket},panel.Origin))csrf=(await secondSession.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("csrf").GetString()!;
+ var currentRequest=new UiControlRequest("stop",OperationId:Guid.NewGuid());int beforeSessionChange=calls;
+ using(var oldSessionReply=await Send("POST","/api/command",currentRequest,panel.Origin,priorCsrf)){
+  var body=await oldSessionReply.Content.ReadFromJsonAsync<JsonElement>();
+  Check(oldSessionReply.StatusCode==HttpStatusCode.Forbidden&&body.GetProperty("code").GetString()=="SessionChanged"&&calls==beforeSessionChange,"another tab's session rotation rejects stale CSRF before recording or dispatching a mutation");
+ }
+ using(var currentSession=await Send("GET","/api/session"))Check((await currentSession.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("csrf").GetString()==csrf,"an authenticated old tab can read the current session token");
+ Check((await Send("POST","/api/command",currentRequest,panel.Origin,csrf)).IsSuccessStatusCode&&calls==beforeSessionChange+1,"the same unsubmitted operation ID can be sent once after explicit session resynchronization");
+ Check((await Send("POST","/api/command",currentRequest,panel.Origin,csrf)).StatusCode==HttpStatusCode.Conflict&&calls==beforeSessionChange+1,"session recovery never permits a second dispatch of an accepted operation");
+ request=currentRequest;
  Check((await Send("POST","/api/command",new{method="save",operationId=Guid.NewGuid(),profile=new{Enabled=true}},panel.Origin,csrf)).StatusCode==HttpStatusCode.BadRequest,"arbitrary whole-profile payload denied by schema");
  Check((await Send("GET","/api/status?token=secret")).StatusCode==HttpStatusCode.Forbidden,"URL token parameters disallowed");
  Check((await Send("GET","/StreamLink.Core.dll")).StatusCode==HttpStatusCode.NotFound,"non-whitelisted filesystem resource inaccessible");

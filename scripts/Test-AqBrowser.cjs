@@ -6,13 +6,13 @@ const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.j
 fs.mkdirSync(out,{recursive:true});
 const assets=process.argv[3]?path.resolve(process.argv[3]):path.join(root,'src/StreamLink.Web/wwwroot');
 const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',assets,'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
-let waiting,stderr='',browser;const lines=[];child.stderr.on('data',d=>stderr+=d);createInterface({input:child.stdout}).on('line',l=>waiting?(waiting(l),waiting=null):lines.push(l));
+let waiting,stderr='',browser,browserServer,page;const lines=[];child.stderr.on('data',d=>stderr+=d);createInterface({input:child.stdout}).on('line',l=>waiting?(waiting(l),waiting=null):lines.push(l));
 function nextLine(){if(lines.length)return Promise.resolve(lines.shift());return new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('fixture timeout '+stderr)),20000);waiting=l=>{clearTimeout(timer);resolve(l);};});}
-const findings=[];function check(ok,reason){if(!ok)throw Error(reason);findings.push(reason);}
+const findings=[];function check(ok,reason){if(!ok)throw Error(reason);findings.push(reason);console.log('CHECK '+findings.length+' '+reason);}
 (async()=>{try{
  child.stdin.write('open\n');const link=await nextLine();
- browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
- const context=await browser.newContext({viewport:{width:1440,height:1000}}),page=await context.newPage(),errors=[],csp=[],accepted=[],progress=[];
+ browserServer=await chromium.launchServer({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});browser=await chromium.connect(browserServer.wsEndpoint());
+ const context=await browser.newContext({viewport:{width:1440,height:1000}});page=await context.newPage();const errors=[],csp=[],accepted=[],progress=[];
  page.on('pageerror',e=>errors.push(e.message));page.on('console',m=>{if(m.type()==='error'&&/Content Security Policy|violates.*directive/i.test(m.text()))csp.push(m.text());});
  page.on('response',r=>{const u=new URL(r.url());if(u.pathname==='/api/command')r.json().then(v=>{if(v.operation&&!v.operation.completed)accepted.push(v.operation.id);}).catch(()=>{});if(u.searchParams.has('operation'))progress.push(r.status());});
  let failProgress=true;await page.route('**/api/status?operation=*',route=>{if(failProgress){failProgress=false;return route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({error:'受控进度读取失败'})});}return route.continue();});
@@ -24,10 +24,18 @@ const findings=[];function check(ok,reason){if(!ok)throw Error(reason);findings.
  const shot=async name=>{await page.evaluate(()=>{scrollTo(0,0);document.activeElement?.blur();});await page.screenshot({path:path.join(out,name+'.png'),fullPage:true});};
  await page.goto(link);await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();check(!page.url().includes('#'),'bootstrap credential removed');
  for(const target of ['overview','join','settings']){
-  await nav(target);await page.evaluate(()=>unavailable('超过 10 秒未收到后台状态，正在自动重试。'));
-  check(await page.locator('#notice').isVisible(),'stale status warning is visible on '+target);
+  await nav(target);const shown=await page.evaluate(()=>{unavailable('超过 10 秒未收到后台状态，正在自动重试。');return !document.getElementById('notice').hidden;});
+  check(shown,'stale status warning is visible on '+target);
   await page.evaluate(()=>refresh());check(await page.locator('#notice').isHidden(),'successful backend refresh clears stale warning on '+target);
  }
+ const failStatus=route=>route.fulfill({status:503,contentType:'application/json',body:JSON.stringify({ok:false,error:'受控短暂状态读取失败'})});
+ await page.route('**/api/status',failStatus);await page.evaluate(()=>refresh());
+ check((await page.locator('#backend-state').innerText())==='后台运行中'&&await page.locator('#notice').isHidden(),'one transient status failure cannot override a recent successful backend snapshot');
+ await page.unroute('**/api/status',failStatus);await page.evaluate(()=>refresh());
+ await page.evaluate(()=>{lastStatusAt=performance.now()-11000;resumeGraceUntil=performance.now()+10000;checkStatusFreshness();});
+ check(await page.locator('#notice').isHidden(),'resuming a throttled page allows a bounded fresh status request before warning');
+ await page.evaluate(()=>{resumeGraceUntil=0;checkStatusFreshness();});
+ check(await page.locator('#notice').isVisible(),'a genuinely stale backend still produces a visible warning');await page.evaluate(()=>refresh());
  await nav('create');check(!(await page.locator('#create-help').evaluate(e=>e.open)),'create guidance collapsed');await nav('join');check(await page.locator('#join-method-invite').isDisabled(),'server mode disables invitation');
  await page.locator('#join-help > summary').click();check(!(await page.locator('#join-help .disclosure-content').innerText()).includes('直连邀请'),'guidance only describes selected mode');
  await nav('settings');check(await page.locator('[data-section]').count()===8,'eight settings sections');await section('identity');await page.locator('#device-name').fill('Live-Browser-Device');await section('port');await page.locator('#listen-port').fill('45002');await section('logging');
@@ -43,15 +51,36 @@ const findings=[];function check(ok,reason){if(!ok)throw Error(reason);findings.
  await nav('join');check(await page.locator('#join-method-code').isDisabled()&&await page.locator('#join-invite').count()===1,'serverless invitation has separate input');await page.locator('#join-help > summary').click();check(!(await page.locator('#join-help .disclosure-content').innerText()).includes('配对码'),'direct guidance excludes alternate mode');await page.locator('#join-invite').fill('SL5.old-invitation');await page.locator('#join-submit').click();await page.locator('#join-error').filter({hasText:'SL6.'}).waitFor();check(true,'old preauthorization never presented as approval');await page.waitForTimeout(12500);check(await page.locator('#notice').isHidden()&&(await page.locator('#join-error').innerText())==='','transient action and field errors expire together');await shot('join-invitation');
  await nav('settings');await page.locator('[data-key=useServer]').check();await action('save');await page.locator('#toast').filter({hasText:'全部设置已保存'}).waitFor();child.stdin.write('seed-network\n');check(await nextLine()==='seeded','isolated disabled mesh seeded');await nav('overview');await page.locator('tbody').waitFor();check(await page.locator('tbody tr').count()===1&&(await page.locator('tbody').innerText()).includes('本机'),'directory displays local row');
  // Synthetic UI state only: transport correctness is covered by service tests.
- const incomingModel=async route=>{const response=await route.fetch();const value=await response.json();value.status.pairing={active:true,owner:true,direct:true,code:'123456',candidate:'12345678901234567890123456789012',verification:'123456',peerName:'审批配色检查',expires:Math.floor(Date.now()/1000)+120,state:'等待批准',proposedIp:'10.171.139.2',replacingSlot:2};value.status.peers=[{slot:2,name:'已连接设备',virtualIp:'10.171.139.2',connected:true,sentBytes:0,receivedBytes:0},{slot:3,name:'离线设备',virtualIp:'10.171.139.3',connected:false,sentBytes:0,receivedBytes:0}];return route.fulfill({response,json:value});};
+ let viewConnected=true,viewElapsed=90061000,viewInbound=false;
+ const incomingModel=async route=>{const response=await route.fetch();const value=await response.json();value.status.pairing={active:true,owner:true,direct:true,code:'123456',candidate:'12345678901234567890123456789012',verification:'123456',peerName:'审批配色检查',expires:Math.floor(Date.now()/1000)+120,state:'等待批准',proposedIp:'10.171.139.2',replacingSlot:2};value.status.peers=[{slot:2,name:'已连接设备',virtualIp:'10.171.139.2',connected:viewConnected,sentBytes:0,receivedBytes:0,outerTarget:viewInbound?'Unknown':'203.0.113.42:44680',entryDirection:viewInbound?'Inbound':'Outbound',connection:{phase:viewConnected?'Connected':'Offline',elapsedMs:viewElapsed,detail:'测试连接状态'}},{slot:3,name:'离线设备',virtualIp:'10.171.139.3',connected:false,sentBytes:0,receivedBytes:0}];return route.fulfill({response,json:value});};
  await page.route('**/api/status',incomingModel);await page.evaluate(()=>refresh());
  const sidebar=await page.locator('#sidebar-state').innerText();check(sidebar.includes('3 台设备')&&sidebar.includes('与其余 1 台设备直连')&&!sidebar.includes('FakeTCP'),'sidebar separates total devices and healthy peer-only direct count');
+ await page.locator('[data-peer-details="2"]').click();
+ check((await page.locator('.peer-detail').innerText()).includes('203.0.113.42:44680')&&await page.evaluate(()=>connectedDuration(90061000))==='1 天 01 时 01 分 01 秒','authenticated endpoint detail and day/hour/minute/second connection duration are displayed');
+ const tick=await page.evaluate(()=>{const item=document.querySelector('[data-connected-slot="2"]');const before=item.textContent;lastStatusAt-=1500;updateConnectedTimes();return {before,after:item.textContent};});
+ check(tick.before!==tick.after,'seconds advance without rebuilding the page or waiting for a new backend snapshot');
+ viewConnected=false;await page.evaluate(()=>refresh());check((await page.locator('[data-connected-slot="2"]').innerText())==='—','disconnected peer does not keep accumulating a displayed connected duration');
+ viewConnected=true;viewElapsed=0;viewInbound=true;await page.evaluate(()=>refresh());
+ check((await page.locator('[data-connected-slot="2"]').innerText()).startsWith('0 天 00 时 00 分')&&(await page.locator('.peer-detail').innerText()).includes('入站直连'),'reconnection resets displayed duration and inbound paths are described without inventing a remote endpoint');
  await nav('join');await page.locator('[data-join-tab=incoming]').click();const approve=page.locator('[data-action=approve]'),reject=page.locator('[data-action=reject]');
  check((await approve.boundingBox()).x<(await reject.boundingBox()).x,'approval is left of rejection');
  check(await approve.evaluate(e=>getComputedStyle(e).color==='rgb(158, 206, 106)')&&await reject.evaluate(e=>getComputedStyle(e).color==='rgb(247, 118, 142)'),'approval is green and rejection is red');
  await approve.click();check(await page.locator('#dialog-confirm').evaluate(e=>e.classList.contains('positive')&&!e.classList.contains('danger')),'approval confirmation uses positive semantics');await page.locator('#dialog-cancel').click();
  await page.unroute('**/api/status',incomingModel);await page.evaluate(()=>refresh());
+ const settingsBeforeLeave=await page.evaluate(()=>JSON.stringify(state.settings));
+ await page.evaluate(()=>{joinCodeValue='123456';submittedJoin={code:'123456',direct:false};});
  await nav('create');await action('delete');await page.locator('#dialog-confirm').click();await page.locator('#toast').filter({hasText:'当前网络已删除'}).waitFor();check(await page.locator('[data-action=create]').isEnabled(),'confirmed deletion enables creating again');
+ check(await page.evaluate(()=>JSON.stringify(state.settings))===settingsBeforeLeave,'actual network deletion preserves independent saved settings exactly');
+ await nav('join');check(await page.locator('#join-code').inputValue()==='','network departure clears the previous pairing code');
+ await page.locator('#join-code').fill('45 67xx890');check(await page.locator('#join-code').inputValue()==='456789'&&(await page.locator('.digits-input .digit').allTextContents()).join('')==='456789','pairing input normalizes to six visible digits instead of becoming blank after overflow');
+ await page.evaluate(()=>submittedJoin={code:joinCodeValue,direct:false});child.stdin.write('seed-guest-network\n');check(await nextLine()==='seeded','isolated guest network seeded');await page.evaluate(()=>refresh());
+ check(await page.locator('#join-code').inputValue()==='','successful enrollment clears only its submitted pairing credential');
+ await page.locator('#join-code').fill('234567');
+ await page.locator('.nav[data-action=leave]').click();await page.locator('#dialog-confirm').click();await page.locator('#toast').filter({hasText:'已退出当前网络'}).waitFor();
+ check(await page.locator('#join-code').inputValue()==='234567'&&await page.locator('#join-submit').isEnabled(),'actual guest leave preserves a newly typed pairing draft and restores editable controls without reload');
+ await page.locator('#join-code').fill('');await page.locator('#join-code').click();await page.keyboard.type('654321');await page.evaluate(()=>refresh());
+ check(await page.locator('#join-code').inputValue()==='654321'&&(await page.locator('.digits-input .digit').allTextContents()).join('')==='654321','fresh pairing input remains bound and survives the next automatic status refresh');
+ await require('./Test-AqBrowserMatrix.cjs')({page,context,browser,child,nextLine,nav,section,action,check,errors});
  await page.setViewportSize({width:390,height:844});await nav('settings');await section('network');check(await page.evaluate(()=>document.documentElement.scrollWidth<=391),'narrow layout has no overflow');await shot('settings-mobile');
  check(errors.length===0,'no browser JavaScript errors');check(csp.length===0,'strict CSP remains enforced');fs.writeFileSync(path.join(out,'result.json'),JSON.stringify({status:'Pass',checks:findings.length,findings,acceptedOperations:accepted,progressResponses:progress,jsErrors:errors,cspErrors:csp,scope:'Actual HTTP and restricted IPC; disabled isolated network, no physical WAN claim'},null,2));console.log('PASS '+findings.length+' actual browser checks');
-}catch(e){if(browser){const failed=browser.contexts()[0]?.pages()[0];if(failed){fs.writeFileSync(path.join(out,'page-at-failure.txt'),await failed.locator('body').innerText());await failed.screenshot({path:path.join(out,'failure.png'),fullPage:true});}}fs.writeFileSync(path.join(out,'failure.txt'),e.stack+'\n'+stderr);console.error(e);process.exitCode=1;}finally{if(browser)await browser.close();child.stdin.write('quit\n');setTimeout(()=>child.kill(),2000).unref();}})();
+}catch(e){fs.writeFileSync(path.join(out,'failure.txt'),e.stack+'\n'+stderr);console.error(e);process.exitCode=1;try{if(page&&!page.isClosed()){fs.writeFileSync(path.join(out,'page-at-failure.txt'),await page.locator('body').innerText({timeout:3000}));await page.screenshot({path:path.join(out,'failure.png'),fullPage:true,timeout:3000});}}catch(capture){fs.writeFileSync(path.join(out,'capture-failure.txt'),capture.message);}}finally{let timer;const closed=await Promise.race([(async()=>{if(browser)await browser.close();if(browserServer)await browserServer.close();return true;})(),new Promise(resolve=>{timer=setTimeout(()=>resolve(false),10000);})]);clearTimeout(timer);if(!closed){process.exitCode=1;fs.writeFileSync(path.join(out,'cleanup-failure.txt'),'Owned Edge did not close within 10 seconds; only this test browser was terminated.');if(browserServer)await browserServer.kill();}if(!child.killed&&!child.stdin.destroyed)child.stdin.write('quit\n');setTimeout(()=>child.kill(),2000).unref();}})();

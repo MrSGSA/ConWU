@@ -28,6 +28,8 @@ public static class ProfileChanges
         comparable.LastEntry=before.LastEntry;comparable.LastStun=before.LastStun;
         comparable.Enabled=before.Enabled;comparable.AdditionalData=before.AdditionalData;
         comparable.CapabilityIntents=before.CapabilityIntents;
+        comparable.SavedNetworkSettings=before.SavedNetworkSettings;
+        comparable.SavedPeerEntryNetwork=before.SavedPeerEntryNetwork;
         bool nextAttempt=!before.TcpStun.SequenceEqual(after.TcpStun)||!before.UdpStun.SequenceEqual(after.UdpStun)||
             before.ConnectionSource!=after.ConnectionSource||before.ManualEndpoint!=after.ManualEndpoint||!before.ExistingEntries.SequenceEqual(after.ExistingEntries);
         comparable.TcpStun=before.TcpStun;comparable.UdpStun=before.UdpStun;
