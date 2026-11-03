@@ -2,8 +2,8 @@ namespace StreamLink.Core;
 
 public sealed partial class MeshRouter
 {
-    // A runner must stop its obsolete legacy client when taking this reservation.
-    // A healthy legacy path is never displaced to make room for an experiment.
+    // Reserve preparation, not the data plane. The peer can prepare SO before
+    // our explicit-entry handshake arrives through its independent socket.
     public bool ReserveTraversal(int slot, TraversalProfile? replacement = null, bool standby = false)
     {
         lock (gate) {
@@ -17,8 +17,7 @@ public sealed partial class MeshRouter
                 managed.Paths.Count == 1 && managed.Active is { Identity.Profile: TraversalProfile.UdpDirect } active &&
                 active.Nomination.Stage == NominationStage.Selected;
             if (peer.Managed != null) return peer.Managed.Paths.Count == 0;
-            peer.Active = null; peer.Candidate = null; peer.Probes.Clear(); peer.Retired.Clear();
-            peer.Managed = new(); return true;
+            peer.TraversalReserved = true; return true;
         }
     }
     public bool ReleaseTraversalReservation(int slot)
@@ -26,8 +25,14 @@ public sealed partial class MeshRouter
         lock (gate) {
             if (!peers.TryGetValue(slot, out var peer)) return true;
             if (peer.Managed?.Paths.Count > 0) return false;
+            peer.TraversalReserved = false;
             peer.Managed = null; return true;
         }
+    }
+    // Only a fully qualified resource transfers the data plane to managed paths.
+    public bool UsesManagedTransport(int slot)
+    {
+        lock(gate) return peers.TryGetValue(slot,out var peer)&&peer.Managed!=null;
     }
     public void DescribeTraversal(int slot, string name, string detail)
     {

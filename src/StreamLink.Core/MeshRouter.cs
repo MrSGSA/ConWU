@@ -46,6 +46,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public long Sent, Received, Dropped;
         public long NoHealthyPathDrops, SendRejectedDrops, AuthenticationDrops, ReceivePolicyDrops, AdapterWriteDrops;
         public ManagedPeer? Managed;
+        public bool TraversalReserved;
         public readonly PathRecovery Recovery = new(Environment.TickCount64);
         public Guid LegacyPathId;
         public long NextLegacyControl;

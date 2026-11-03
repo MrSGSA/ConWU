@@ -26,6 +26,8 @@ public sealed class DeviceProfile
     public int SourcePort { get; set; } = PersonalFeature.Enabled ? 44691 : 42691;
     public string ManualEndpoint { get; set; } = "";
     public string ConnectionSource { get; set; } = "custom";
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool UsesExistingEntriesOnly => ConnectionSource=="existing"||ManualEndpoint.Length>0||Mesh?.Pair.Direct==true;
     public bool DirectMode { get; set; }
     public string CoordinationService { get; set; } = "";
     public string CoordinationPin { get; set; } = "";

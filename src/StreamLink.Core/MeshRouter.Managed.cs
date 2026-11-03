@@ -76,7 +76,8 @@ public sealed partial class MeshRouter
                 p.Identity.Profile != TraversalProfile.UdpDirect && identity.Profile != TraversalProfile.UdpDirect &&
                 p.Identity.ActualLocal.Equals(identity.ActualLocal) && p.Identity.ActualRemote.Equals(identity.ActualRemote)))
                 throw new IOException("先前路径的资源退出尚未证实，不能重新占用");
-            if (peer.Managed == null && (peer.Active != null || peer.Candidate != null)) throw new IOException("旧路径尚未转交给受管资源所有者");
+            if (peer.Managed == null && (peer.Active != null || peer.Candidate != null) &&
+                (!peer.TraversalReserved || Healthy(peer))) throw new IOException("已有入口仍在使用，保留已验证路径");
             var managed = peer.Managed ?? new();
             if (managed.Candidate != null || managed.Paths.Count >= 2) throw new IOException("等待上一候选及退役引用收敛");
             if (nominationRevision <= managed.LastRevision || managed.Paths.ContainsKey(identity.PathId)) throw new IOException("候选提名版本已过期");
@@ -99,6 +100,7 @@ public sealed partial class MeshRouter
             state.DiagnosticTiming=negotiatedDiagnosticTiming;
             state.DiagnosticMbps=negotiatedDiagnosticMbps;state.Context=context;state.AutoQuality=negotiatedAutoQualityVersion==1;
             if (negotiatedQualityFeedbackVersion == 1) state.Delivery = new(context);
+            if(peer.Managed==null){peer.Active=null;peer.Candidate=null;peer.Probes.Clear();peer.Retired.Clear();}
             peer.Managed = managed; managed.Paths.Add(identity.PathId, state); managed.Candidate = state; managed.LastRevision = nominationRevision;
             peer.Detail = "正在验证并协商直连路径";
             managedPumps.RemoveWhere(t => t.IsCompletedSuccessfully);

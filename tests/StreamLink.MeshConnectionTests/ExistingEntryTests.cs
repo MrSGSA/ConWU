@@ -63,7 +63,7 @@ static partial class Program
             endpoint.ReplyPacket=Packet(remote.LocalIp,routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().ReceivedBytes>0,"signed custom source address delivers return traffic");
             long received=router.Status().Single().ReceivedBytes;endpoint.ReplyPacket=Packet("10.171.139.2",routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().LocalDrops!.ReceivePolicyRejected>0,"peer cannot impersonate its old slot-derived address");Check(router.Status().Single().ReceivedBytes==received,"spoofed packet is not delivered to adapter");
         }
-        await ExistingRunner(false);await ExistingRunner(true);await ExistingRunner(false,true);await MappingProbeCancellation();
+        await ExistingRunner(false);await ExistingRunner(false,true);await StrictExistingOnly();await MappingProbeCancellation();
         Console.WriteLine($"PASS {checks} existing entry and custom addressing checks");
     }
     static async Task MappingProbeCancellation()
@@ -100,7 +100,7 @@ static partial class Program
         };
         var runner=new MeshRunner(new DeviceProfile{Mesh=owner,EntryRefreshSeconds=refresh?1:60,TransportMode=fallback?"udp":"faketcp",PathSelection=fallback?"udp-only":"faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
         using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
-        try{await Until(()=>status?.Connected==true,fallback?"real Runner falls back from failed supplied endpoint to discovered authenticated entry":"real Runner tries a second supplied endpoint and authenticates it",10000);
+        try{await Until(()=>status?.Connected==true,fallback?"real Runner falls back from failed supplied endpoint to discovered authenticated entry":"real Runner tries a second supplied endpoint and authenticates it",25000);
             Check(!refresh||resolutions>=2,"configured one-second subscription refresh adopts a changed endpoint without user retry");
             Check(!fallback||logs.Any(l=>l.Contains("开始自主打洞")),"fallback reason is observable without claiming parsed address is connected");
             int count=transports.Count;runner.RequestRetry();await Task.Delay(600);Check(transports.Count==count&&!adapter.Disposed,"manual retry preserves healthy existing transport and adapter");

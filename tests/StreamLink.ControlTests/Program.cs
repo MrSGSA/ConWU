@@ -50,8 +50,10 @@ try {
     Check(ProfileChanges.Impact(saved.Profile,servers)==ProfileChangeImpact.NextAttempt,"STUN edits classify as next-attempt input rather than a whole-network rebuild");
     var serversSaved=await worker.Handle(new("save",servers)).WaitAsync(TimeSpan.FromSeconds(1));
     Check(serversSaved.Ok&&!nextStop.IsCancellationRequested&&!nextHeld.Task.IsCompleted&&activeProfile.TcpStun.SequenceEqual(servers.TcpStun)&&activeProfile.UdpStun.SequenceEqual(servers.UdpStun),"saving STUN lists preserves live owner/Active and passes immutable array replacements to subsequent collection");
-    var entrySettings=ProfileChanges.Copy(serversSaved.Profile!);entrySettings.ConnectionSource="existing";entrySettings.ExistingEntries=[new(0,"203.0.113.1:44680")];
-    Check(ProfileChanges.Impact(serversSaved.Profile!,entrySettings)==ProfileChangeImpact.NextAttempt,"entry changes do not require Wintun reconstruction");
+    var entrySettings=ProfileChanges.Copy(serversSaved.Profile!);entrySettings.ExistingEntries=[new(0,"203.0.113.1:44680")];
+    Check(ProfileChanges.Impact(serversSaved.Profile!,entrySettings)==ProfileChangeImpact.NextAttempt,"stored address edits within the same mode do not require Wintun reconstruction");
+    var strictSettings=ProfileChanges.Copy(entrySettings);strictSettings.ConnectionSource="existing";
+    Check(ProfileChanges.Impact(entrySettings,strictSettings)==ProfileChangeImpact.RestartNetwork,"switching to supplied-only policy requires explicit resource reconstruction");
     var entriesSaved=await worker.Handle(new("save",entrySettings)).WaitAsync(TimeSpan.FromSeconds(1));
     Check(entriesSaved.Ok&&!nextStop.IsCancellationRequested&&!nextHeld.Task.IsCompleted,"saving a source retains the live network owner");
     var portSettings=ProfileChanges.Copy(entriesSaved.Profile!);portSettings.ListenPort++;

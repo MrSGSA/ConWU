@@ -24,6 +24,8 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--explicit-reservation-only"]){await ExplicitReservationRecovery();return;}
+        if(args is ["--strict-entry-only"]){await StrictExistingOnly();return;}
         if(args is ["--resolve-entry",var source]){using var resolver=new ExistingEntryResolver();Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await resolver.Resolve([new(-1,source)],"faketcp",default)));return;}
         if(args is ["--approval-guest-service"]){await ApprovalGuestService();return;}
         if(args is ["--approval-invitation-only"]){await ApprovalInvitations();return;}
@@ -72,6 +74,7 @@ static partial class Program
         }
         RejoinIdentity();
         ConnectionFeedback();
+        await ExplicitReservationRecovery();
         await TcpTests.Run();
         await ExistingEntries();
         await DirectNetworks();

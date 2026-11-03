@@ -11,6 +11,8 @@ public sealed record MeshAnnouncement(int Slot, string Device, long Revision, lo
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string[]? ExistingEndpoints {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool ExistingEntryOnly {get;init;}
 }
 public sealed record MeshEnvelope(int Slot, string Device, long Revision, string Data, string Signature);
 public sealed record MeshSnapshot(MeshDirectory Directory, MeshEnvelope[] Nodes,

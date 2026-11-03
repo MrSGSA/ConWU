@@ -267,7 +267,7 @@ public sealed partial class ControlWorker
                 bool previousStartup=changeStartup?StartupSettings.Read().AutoStart:false;
                 bool restart = ProfileChanges.Impact(profile, updated) == ProfileChangeImpact.RestartNetwork;
                 bool resume = profile.Enabled;
-                if (restart && resume && !action.ConfirmReplace) throw new IOException("端口或承载设置需要重建连接，请确认后保存");
+                if (restart && resume && !action.ConfirmReplace) throw new IOException("连接方式、端口或承载设置需要重建连接，请确认后保存");
                 if (restart) { SetOperation(operation, "重建受影响资源", false); await End(token,phase=>SetOperation(operation,phase,false)); }
                 try { if(changeStartup){StartupSettings.Set(updated.AutoStart);startupApplied=true;}lock (sync) { PreserveLatestDirectory(updated);store.Save(updated); profile = updated; if (!restart && runningProfile is {} active) {active.AllowManualQualityRequests = updated.AllowManualQualityRequests;active.EntryRefreshSeconds=updated.EntryRefreshSeconds;active.TcpStun=updated.TcpStun.ToArray();active.UdpStun=updated.UdpStun.ToArray();active.ConnectionSource=updated.ConnectionSource;active.ManualEndpoint=updated.ManualEndpoint;active.ExistingEntries=updated.ExistingEntries.ToArray();} } }
                 catch { if(startupApplied)StartupSettings.Set(previousStartup);if (restart && resume) Begin(); throw; }
