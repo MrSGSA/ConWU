@@ -60,9 +60,18 @@ public sealed partial class ControlWorker
         // Keep an already issued member if an approval reply was lost. Revoking
         // that credential is a separate, explicit owner action.
         try {
-            if (uiPairOwner && uiRoom != null && uiPairClient != null)
-                try { await uiPairClient.Close(uiRoom, token); } catch (IOException) { }
+            if (uiPairOwner && uiRoom != null && uiPairClient != null){
+                using var cleanup=CancellationTokenSource.CreateLinkedTokenSource(token);cleanup.CancelAfter(3000);
+                Task? closing=null;
+                try { closing=uiPairClient.Close(uiRoom,cleanup.Token);await closing.WaitAsync(cleanup.Token); }
+                catch (IOException) { }
+                catch (OperationCanceledException) when(!token.IsCancellationRequested){
+                    Log("配对码服务器清理暂未确认，已结束本机配对等待；服务器房间将自动过期");
+                    if(closing!=null)_=closing.ContinueWith(t=>{_=t.Exception;},CancellationToken.None,TaskContinuationOptions.OnlyOnFaulted|TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
+                }
+            }
         } finally { ResetUiPair("已取消配对"); }
+        token.ThrowIfCancellationRequested();
     }
     async Task OpenUiRoom(string service, string pin, CancellationToken token,bool verified=false,string? expectedNetwork=null)
     {
@@ -296,17 +305,37 @@ public sealed partial class ControlWorker
                     var retired=ProfileChanges.Copy(profile);
                     foreach(var member in currentDirectory.Members.Where(m=>m.Slot!=owner.Self.Slot))MeshIdentity.Revoke(retired.Mesh!,member.Slot);
                     retired.RejoinHistory=[];
-                    if(!owner.Pair.Direct){using var client=new MeshDiscoveryClient(owner);await client.SaveDirectory(retired.Mesh!.Directory!,token);}
+                    if(!owner.Pair.Direct){
+                        SetOperation(operation,"向协调服务器提交成员撤销",true);
+                        using var client=new MeshDiscoveryClient(owner);
+                        try{await SaveRevocation(client,retired.Mesh!.Directory!,token);}
+                        catch(OperationCanceledException)when(!token.IsCancellationRequested){throw new IOException("协调服务器未及时确认成员撤销，当前网络仍保留。请检查 HTTPS 协调服务后重试删除。");}
+                    }
                     else if(meshRunner!=null)await meshRunner.NotifyDirectClosure(retired.Mesh!.Directory!,token);
                     lock(sync){store.Save(retired);profile=retired;meshRunner?.UpdateDirectory(retired.Mesh!.Directory!);}
                 }
-                await End(token);
+                SetOperation(operation,"停止本机网络并回收资源",false);
+                await End(token,phase=>SetOperation(operation,phase,false));
                 lock(sync){var left=ProfileChanges.Copy(profile);left.CoordinationService=PublicSettings(profile).Service;left.CoordinationPin=PublicSettings(profile).CertificatePin;left.RejoinCredential=MeshRejoin.Retain(profile.Mesh);left.RejoinHistory=[];left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;left.ExistingEntries=left.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray();store.Save(left);profile=left;}
                 break;
             default: throw new FormatException("不支持的网络操作");
         }
     }
 
+    async Task SaveRevocation(MeshDiscoveryClient client,MeshDirectory directory,CancellationToken token)
+    {
+        // The server accepts the same revision/signature idempotently. Reuse
+        // this exact table if a transient error loses its acknowledgement.
+        for(int attempt=0;;attempt++){
+            try{await client.SaveDirectory(directory,token);return;}
+            catch(OperationCanceledException)when(attempt==0&&!token.IsCancellationRequested){ }
+            catch(HttpRequestException ex)when(attempt==0&&!token.IsCancellationRequested&&
+                (ex.StatusCode is System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.BadGateway or System.Net.HttpStatusCode.ServiceUnavailable or System.Net.HttpStatusCode.GatewayTimeout||
+                ex.StatusCode==null&&ex.HttpRequestError is HttpRequestError.ConnectionError or HttpRequestError.ResponseEnded)){ }
+            Log("协调服务器成员撤销请求暂未完成，复用同一签名成员表重试（1/1）");
+            await Task.Delay(250,token);
+        }
+    }
     async Task PollUiPair(Operation operation)
     {
         if (uiRoom == null) return;

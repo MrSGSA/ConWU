@@ -63,7 +63,7 @@ static partial class Program
             endpoint.ReplyPacket=Packet(remote.LocalIp,routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().ReceivedBytes>0,"signed custom source address delivers return traffic");
             long received=router.Status().Single().ReceivedBytes;endpoint.ReplyPacket=Packet("10.171.139.2",routed.LocalIp);adapter.Outgoing.Add(Packet(routed.LocalIp,remote.LocalIp));await Until(()=>router.Status().Single().LocalDrops!.ReceivePolicyRejected>0,"peer cannot impersonate its old slot-derived address");Check(router.Status().Single().ReceivedBytes==received,"spoofed packet is not delivered to adapter");
         }
-        await ExistingRunner(false);await ExistingRunner(false,true);await StrictExistingOnly();await MappingProbeCancellation();
+        await ExistingRunner();await ExistingRunner(true);await StrictExistingOnly();await MappingProbeCancellation();
         Console.WriteLine($"PASS {checks} existing entry and custom addressing checks");
     }
     static async Task MappingProbeCancellation()
@@ -87,22 +87,21 @@ static partial class Program
         public string Body="{\"endpoints\":[\"203.0.113.1:44680\",\"edge.example.com:44681\"]}";
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken cancellationToken)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK){Content=new StringContent(Body,Encoding.UTF8)});
     }
-    static async Task ExistingRunner(bool fallback,bool refresh=false)
+    static async Task ExistingRunner(bool refresh=false)
     {
         var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
         byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var link=new MeshLink(2,1,key);CryptographicOperations.ZeroMemory(key);
         await using var endpoint=new PeerEndpoint(link);using var sink=new System.Net.Sockets.UdpClient(new IPEndPoint(IPAddress.Loopback,0));string dead=sink.Client.LocalEndPoint!.ToString()!;
         var discovery=new Discovery(owner,guest,endpoint.Endpoint.ToString());var adapter=new MemoryAdapter();var logs=new ConcurrentQueue<string>();var transports=new ConcurrentBag<ForwardingTransport>();
         int probes=0,resolutions=0;SessionStatus? status=null;string folder=Path.Combine(Path.GetTempPath(),"streamlink-existing-"+Guid.NewGuid().ToString("N"));
-        var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{Interlocked.Increment(ref probes);return Task.FromException<IMapping>(new IOException("no local mapping"));},request=>{if(request.Mesh.Pair.Mode!=(fallback?"udp":"faketcp"))throw new Exception("wrong fixed wire mode");var t=new ForwardingTransport(request.Target);transports.Add(t);return t;},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
+        var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{Interlocked.Increment(ref probes);return Task.FromException<IMapping>(new IOException("no local mapping"));},request=>{if(request.Mesh.Pair.Mode!="faketcp")throw new Exception("wrong fixed wire mode");var t=new ForwardingTransport(request.Target);transports.Add(t);return t;},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
             NetworkWake=()=>new MeshNetworkWake(false),Candidates=(_,_,_,_)=>Task.FromResult<IMeshCandidateFactory?>(null),
-            ResolveEntries=(_,_,_)=>{int count=Interlocked.Increment(ref resolutions);return Task.FromResult(new EntryResolution[]{new(2,0,refresh?"TXT":"地址",refresh?(count==1?[dead]:[endpoint.Endpoint.ToString()]):fallback?[dead]:[dead,endpoint.Endpoint.ToString()],"")});}
+            ResolveEntries=(_,_,_)=>{int count=Interlocked.Increment(ref resolutions);return Task.FromResult(new EntryResolution[]{new(2,0,refresh?"TXT":"地址",refresh?(count==1?[dead]:[endpoint.Endpoint.ToString()]):[dead,endpoint.Endpoint.ToString()],"")});}
         };
-        var runner=new MeshRunner(new DeviceProfile{Mesh=owner,EntryRefreshSeconds=refresh?1:60,TransportMode=fallback?"udp":"faketcp",PathSelection=fallback?"udp-only":"faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
+        var runner=new MeshRunner(new DeviceProfile{Mesh=owner,EntryRefreshSeconds=refresh?1:60,TransportMode="faketcp",PathSelection="faketcp-only",TraversalMode="tcp-udp",ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.1:44680")]},logs.Enqueue,s=>status=s,_=>{},_=>{},services);
         using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
-        try{await Until(()=>status?.Connected==true,fallback?"real Runner falls back from failed supplied endpoint to discovered authenticated entry":"real Runner tries a second supplied endpoint and authenticates it",25000);
+        try{await Until(()=>status?.Connected==true,"real Runner tries supplied endpoints and authenticates a working one",25000);
             Check(!refresh||resolutions>=2,"configured one-second subscription refresh adopts a changed endpoint without user retry");
-            Check(!fallback||logs.Any(l=>l.Contains("开始自主打洞")),"fallback reason is observable without claiming parsed address is connected");
             int count=transports.Count;runner.RequestRetry();await Task.Delay(600);Check(transports.Count==count&&!adapter.Disposed,"manual retry preserves healthy existing transport and adapter");
             int previousResolutions=resolutions;
             runner.UpdateEntries(new DeviceProfile{ConnectionSource="existing",ExistingEntries=[new(2,"203.0.113.9:44680")]});
