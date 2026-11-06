@@ -8,7 +8,10 @@ root=pathlib.Path(tempfile.mkdtemp(prefix='sl-mesh-'))
 names=['sltest-'+uuid.uuid4().hex[:10] for _ in range(2)]
 hosts=[];logs=[];checks=[]
 def run(*args,**kw):
-    return subprocess.run(args,check=True,text=True,capture_output=True,timeout=80,**kw).stdout
+    result=subprocess.run(args,text=True,capture_output=True,timeout=80,**kw)
+    if result.returncode:
+        raise AssertionError(f'Command failed ({result.returncode}): {args!r}\n{result.stdout}\n{result.stderr}')
+    return result.stdout
 def cmd(i,*args):return ['ip','netns','exec',names[i],*args]
 def cli(i,*args):
     return json.loads(run(*cmd(i,binary,*args),env=dict(os.environ,STREAMLINK_PROFILE_ROOT=str(root/str(i)))))
@@ -31,6 +34,7 @@ try:
     run('ip','link','add','slv0','type','veth','peer','name','slv1')
     for i in range(2):
         run('ip','link','set',f'slv{i}','netns',names[i])
+        run(*cmd(i,'ip','link','set','lo','up'))
         run(*cmd(i,'ip','addr','add',f'203.0.113.{i+1}/24','dev',f'slv{i}'))
         run(*cmd(i,'ip','link','set',f'slv{i}','up'))
         (root/str(i)).mkdir(mode=0o700)

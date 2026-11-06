@@ -23,9 +23,10 @@ $xml=[xml]@'
   <Property Id="ARPPRODUCTICON" Value="AppIcon" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
   <Property Id="REBOOT" Value="ReallySuppress" />
-  <!-- Preserve identical versioned components, especially a loaded official
-       WinDivert driver. Product FileVersion increases with every MSI release. -->
-  <Property Id="REINSTALLMODE" Value="omus" />
+  <!-- Self-contained framework/ASP.NET components can have the same PE version
+       with different contents. Install the exact manifest, including those
+       files; the pinned official driver components below keep their originals. -->
+  <Property Id="REINSTALLMODE" Value="amus" />
   <Property Id="STREAMLINK_TRANSACTION" Secure="yes" />
   <Property Id="STREAMLINK_DISPLAY_VERSION" Value="DISPLAYVERSION" />
   <Property Id="WIXUI_EXITDIALOGOPTIONALCHECKBOX" Value="1" />
@@ -88,6 +89,11 @@ foreach($item in $all){
  $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($relative))).Substring(0,24);$componentId='C'+$hash;$fileId='F'+$hash
  if($relative -eq 'StreamLink.exe'){$fileId='LauncherExe'}elseif($relative -eq 'ConWU.exe'){$fileId='ConwuLauncherExe'}elseif($relative -eq 'app/ConWU.exe'){$fileId='ServiceUiExe'}elseif($relative -eq 'app/StreamLink.Service.exe'){$fileId='ServiceExe'}
  $component=Node 'Component' @{Id=$componentId;Guid='*';Bitness='always64'};$fileNode=Node 'File' @{Id=$fileId;Source=$item.FullName;KeyPath='yes'};$component.AppendChild($fileNode)|Out-Null
+ # These official components are pinned to the same release across upgrades.
+ # Never schedule an identical in-use driver for replacement/reboot. The app's
+ # manifest verification still rejects a different or damaged existing file;
+ # changing the pinned driver release requires an explicit migration policy.
+ if($relative -in @('app/components/WinDivert64.sys','app/components/WinDivert.dll','app/components/wintun.dll')){$component.SetAttribute('NeverOverwrite','yes')}
  if($fileId -eq 'ServiceExe'){
   $serviceNode=Node 'ServiceInstall' @{Id='InstallNetworkService';Name=$service;DisplayName='ConWU Network';Type='ownProcess';Start='auto';ErrorControl='normal';Account='LocalSystem';Vital='yes';Arguments=$validationArgs.Trim()};$component.AppendChild($serviceNode)|Out-Null
   $component.AppendChild((Node 'ServiceControl' @{Id='ControlNetworkService';Name=$service;Start='install';Stop='both';Remove='uninstall';Wait='yes'}))|Out-Null

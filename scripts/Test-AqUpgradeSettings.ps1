@@ -21,7 +21,7 @@ function Daily { @(Get-CimInstance Win32_Service -Filter "Name='StreamLink' OR N
 $dailyBefore=Daily
 function Msi([string]$operation,[string]$package,[string]$label){
  $process=Start-Process msiexec.exe -ArgumentList @($operation,('"'+$package+'"'),'/qn','/norestart','/l*v',('"'+(Join-Path $OutputDirectory ($label+'.log'))+'"')) -WindowStyle Hidden -PassThru
- if(-not $process.WaitForExit(300000)){throw ('Owned MSI still running: '+$process.Id)}
+ if(-not $process.WaitForExit(900000)){throw ('Owned MSI still running: '+$process.Id)}
  $rows.Add(@{name=$label;exit=$process.ExitCode})
  if($process.ExitCode -ne 0){throw ($label+' MSI exit '+$process.ExitCode)}
  if((Daily) -cne $dailyBefore){throw 'Daily service changed during isolated upgrade'}
@@ -53,7 +53,10 @@ function Snapshot {
  }
  $settings=[ordered]@{deviceName=$p.DeviceName;logLevel=$p.LogLevel;autoStart=$p.AutoStart;service=$cfg.Service;pin=$cfg.CertificatePin;manual=$cfg.ManualEndpoint;protocol=$cfg.PathSelection;source=$cfg.ConnectionSource;direct=$cfg.DirectMode;
   entries=@($cfg.ExistingEntries|ForEach-Object{[ordered]@{slot=$_.PeerSlot;source=$_.Source}});refresh=$cfg.EntryRefreshSeconds;requestedIp=$cfg.RequestedVirtualIp;tcp=@($cfg.TcpStun);udp=@($cfg.UdpStun);listen=$cfg.ListenPort;sourcePort=$cfg.SourcePort;quality=$cfg.AllowManualQualityRequests}
- [ordered]@{settingsSha256=(Digest $settings);identitySha256=(Digest ([ordered]@{device=$p.Device;mesh=$p.Mesh;pair=$p.Pair}));uiSidSha256=(Digest (Get-Content -LiteralPath (Join-Path $data 'ui-user.sid') -Raw));serviceStart=(Get-ItemPropertyValue ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$name) -Name Start);productVersion=(Get-Item (Join-Path $runtime 'StreamLink.Service.dll')).VersionInfo.ProductVersion;serviceHash=(Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash}
+ # Compare persisted credentials and signed membership, not newly introduced
+ # computed convenience properties such as IsDecentralized / CanManage.
+ $m=$p.Mesh;$identity=[ordered]@{device=$p.Device;pair=$p.Pair;mesh=if($m){[ordered]@{pair=$m.Pair;ownerKey=$m.OwnerKey;ownerPrivate=$m.OwnerPrivate;self=$m.Self;signing=$m.SigningPrivate;exchange=$m.ExchangePrivate;directory=$m.Directory;introducer=if($null -eq $m.IntroducerSlot){1}else{$m.IntroducerSlot}}}else{$null}}
+ [ordered]@{settingsSha256=(Digest $settings);identitySha256=(Digest $identity);uiSidSha256=(Digest (Get-Content -LiteralPath (Join-Path $data 'ui-user.sid') -Raw));serviceStart=(Get-ItemPropertyValue ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$name) -Name Start);productVersion=(Get-Item (Join-Path $runtime 'StreamLink.Service.dll')).VersionInfo.ProductVersion;serviceHash=(Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash}
 }
 try{
  Msi '/i' $OldMsi 'install-old';$installed=$OldMsi

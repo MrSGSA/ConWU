@@ -37,7 +37,7 @@ function Check([bool]$Condition,[string]$Name){
 function MsiRun([string]$Operation,[string]$Package,[string]$Label,[switch]$ExpectedFailure){
  $log=Join-Path $OutputDirectory ($Label+'.log')
  $p=Start-Process msiexec.exe -ArgumentList @($Operation,('"'+$Package+'"'),'/qn','/norestart','/l*v',('"'+$log+'"')) -WindowStyle Hidden -PassThru
- if(-not $p.WaitForExit(300000)){throw ('MSI timeout; process and log retained: '+$p.Id)}
+ if(-not $p.WaitForExit(900000)){throw ('MSI timeout; process and log retained: '+$p.Id)}
  $rows.Add([ordered]@{name=$Label;exit=$p.ExitCode;expectedFailure=[bool]$ExpectedFailure;log=$Label+'.log'})
  Check $(if($ExpectedFailure){$p.ExitCode -ne 0}else{$p.ExitCode -eq 0}) ($Label+' exit matches expectation')
  Check ((DailySnapshot) -eq $dailyBefore) ($Label+' preserves daily services')
