@@ -18,6 +18,10 @@ public sealed record EntryResolution(int PeerSlot, int Index, string Kind, strin
 {
     public long ElapsedMs {get;init;}
     public int Attempts {get;init;}
+    // Zero is legacy unbounded hint data. Signed DDNS records carry
+    // an absolute deadline which remains binding through cached failures.
+    public long ExpiresAt {get;init;}
+    public bool AllowCached {get;init;}=true;
 }
 
 // These are hints, never membership credentials or proof of connectivity.
@@ -28,14 +32,17 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly HttpClient http;
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
+    readonly Func<long> utcNow;
+    readonly Dictionary<string,DdnsAddressRecord> seenDdns = [];
     internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
     internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; public IPAddress? LastConnected; }
     readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
     public ExistingEntryResolver() : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query) { }
     internal ExistingEntryResolver(Func<string,CancellationToken,Task<IPAddress[]>> addresses,
         Func<string,CancellationToken,Task<string[]>> txt, HttpMessageHandler? handler = null,
-        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null)
+        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null, Func<long>? utcNow = null)
     {
+        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         this.addresses = addresses; this.txt = txt; this.connect = connect ?? ConnectSocket;
         http = new(handler ?? new SocketsHttpHandler {
             UseProxy=false, AllowAutoRedirect=false, UseCookies=false, MaxConnectionsPerServer=2,
@@ -142,7 +149,8 @@ public sealed class ExistingEntryResolver : IDisposable
         }catch(OperationCanceledException)when(!token.IsCancellationRequested){return failure;}
         catch(Exception ex)when(ex is IOException or JsonException){return failure;}
     }
-    public static string Kind(string source) => source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
+    public static string Kind(string source) => source.StartsWith(DdnsEntryLink.Scheme, StringComparison.OrdinalIgnoreCase) ? "DDNS" :
+        source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";
     static bool RequiresTag(string source)=>source.EndsWith("#streamlink",StringComparison.OrdinalIgnoreCase);
     static string WithoutSelector(string source)=>RequiresTag(source)?source[..^11]:source;
@@ -152,7 +160,8 @@ public sealed class ExistingEntryResolver : IDisposable
         foreach (var entry in entries) {
             if (entry == null || entry.PeerSlot is < ExistingEntry.Network or > 254 || entry.Source is not {Length: >0 and <=2048} s || s.Any(char.IsControl) || s != s.Trim())
                 throw new FormatException("入口归属或地址无效");
-            if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink 限定标签"); }
+            if (Kind(s) == "DDNS") { _ = DdnsEntryLink.Parse(s); }
+            else if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink 限定标签"); }
             else if (Kind(s) is "HTTP" or "HTTPS") {
                 if (!Uri.TryCreate(WithoutSelector(s), UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !Host(uri.Host) || uri.IsLoopback)
                     throw new FormatException("更新页面需为不含用户名的 HTTP(S) 公网地址，仅支持 #streamlink 标签选择");
@@ -203,8 +212,30 @@ public sealed class ExistingEntryResolver : IDisposable
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(14000);
         long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
-        string kind=Kind(entry.Source);
+        string kind=Kind(entry.Source);bool allowCached=true;
         try {
+            if(kind=="DDNS") {
+                var link=DdnsEntryLink.Parse(entry.Source);
+                var documents=await txt(link.RecordName,deadline.Token);
+                allowCached=false; // A completed but invalid answer is not a transient DNS failure.
+                DdnsAddressRecord? latest=null;
+                foreach(var document in documents.Take(8)) {
+                    try {
+                        var record=DdnsAddressRecords.Decode(document);
+                        if(DdnsAddressRecords.Verify(record,link.Domain,link.Network,link.Member,mode,utcNow()) &&
+                            (latest==null||record.IssuedAt>latest.IssuedAt)) latest=record;
+                    } catch(Exception ex)when(ex is FormatException or JsonException) { }
+                }
+                if(latest==null)throw new FormatException("DDNS 没有有效签名入口，可能已过期、协议不同或发布尚未完成");
+                string identity=link.RecordName+"/"+link.Key+"/"+mode;
+                lock(seenDdns) {
+                    if(seenDdns.TryGetValue(identity,out var prior) && (latest.IssuedAt<prior.IssuedAt || latest.IssuedAt==prior.IssuedAt&&latest.Signature!=prior.Signature))
+                        throw new FormatException("DDNS 返回旧版本或冲突记录，等待来源更新");
+                    if(seenDdns.Count>=256&&!seenDdns.ContainsKey(identity))throw new FormatException("本轮 DDNS 来源数量超过限制");
+                    seenDdns[identity]=latest;
+                }
+                return new(entry.PeerSlot,index,kind,latest.Endpoints,""){ExpiresAt=latest.ExpiresAt,AllowCached=false,ElapsedMs=Environment.TickCount64-began,Attempts=1};
+            }
             string[] values;
             if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
@@ -222,11 +253,11 @@ public sealed class ExistingEntryResolver : IDisposable
             }
             if(endpoints.Count==0)throw new IOException("没有可用的 IPv4 入口");
             return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt};
-        } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
+        } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or UnauthorizedAccessException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
             string reason=FetchFailure(ex)?.Message??(ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>progress.Stage+"超时",HttpRequestException {HttpRequestError:HttpRequestError.SecureConnectionError}=>"TLS 安全连接失败",HttpRequestException=>progress.Stage+"失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" });
             long elapsed=Environment.TickCount64-began;
-            return new(entry.PeerSlot,index,kind,[],reason+$"（{elapsed/1000d:F1} 秒，{progress.Attempt} 次）"){ElapsedMs=elapsed,Attempts=progress.Attempt};
+            return new(entry.PeerSlot,index,kind,[],reason+$"（{elapsed/1000d:F1} 秒，{progress.Attempt} 次）"){ElapsedMs=elapsed,Attempts=progress.Attempt,AllowCached=allowCached};
         }
     }
     // Select across the entire TXT answer / HTTP document, before parsing any

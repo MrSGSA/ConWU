@@ -113,7 +113,9 @@ internal sealed class MeshDdnsSession : IAsyncDisposable
             publishState = publishable.Length > 0 ? "正在发布本机入口" : "正在发布空入口：尚无已映射或已配置的公网接收地址";
         }
         string state = settings.Publish && publishable.Length == 0 ? "等待本机公网接收入口；DDNS 不会自动打开 NAT" : "已启用";
-        Status = new(state, publishState, readState, recordName, publishedAt, checkedAt, cache.Values.Count(r => r.Record.Endpoints.Length > 0));
+        Status = new(state, publishState, readState, recordName, publishedAt, checkedAt, cache.Values.Count(r => r.Record.Endpoints.Length > 0)) {
+            EntryLink = settings.Publish ? DdnsEntryLink.Create(settings.Domain, mesh) : ""
+        };
     }
 
     async Task<(MeshMember Member, DdnsAddressRecord? Record, string Error)[]> ReadMembers(string domain, string network, MeshMember[] members, string mode, CancellationToken token) {

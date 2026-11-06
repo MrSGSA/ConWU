@@ -7,7 +7,9 @@ module.exports=async({page,context,browser,child,nextLine,nav,section,action,che
  check(await page.evaluate(()=>window.matrixOption===document.querySelector('#protocol option')),'unchanged backend refresh keeps select-option DOM stable instead of interrupting an open dropdown');
  await section('network');await page.locator('[data-entry-index="0"]').fill('203.0.113.99:44680');
  await section('publish');await page.locator('[data-entry-index="0"]').fill('203.0.113.88:44680');
+ await page.locator('[data-source-refresh]').fill('123');
  await section('network');
+ check(await page.locator('[data-key=refresh]').inputValue()==='123'&&await page.locator('[data-key=unit]').inputValue()==='1','publication sources edit the same global refresh setting without creating a second saved value');
  check(await page.locator('[data-entry-index="0"]').inputValue()==='203.0.113.99:44680','network and published entry sections preserve independent drafts');
  await page.locator('[data-key=useServer]').uncheck();await page.locator('[name=mode][value=custom]').check();await page.locator('[name=mode][value=existing]').check();
  check(!(await page.locator('[data-key=useServer]').isChecked()),'switching connection modes restores the previous existing-entry pairing choice');

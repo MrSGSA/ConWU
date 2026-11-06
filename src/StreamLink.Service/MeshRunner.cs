@@ -52,6 +52,16 @@ public sealed class MeshRunner
         Func<int, bool> healthy, long now)
         => members.Any(m => !healthy(m.Slot) &&
             announcements.TryGetValue(m.Slot, out var node) && node.Device == m.Device && node.Expires > now);
+    internal static ExistingEntry[] EntrySources(DeviceProfile profile, MeshProfile mesh) {
+        // Local ingress publication is independent of how peers are discovered.
+        var sources=profile.ExistingEntries.Where(e=>e.PeerSlot==0||profile.ConnectionSource=="existing"||mesh.Pair.Direct)
+            .Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray();
+        return sources.Length==0&&profile.ManualEndpoint.Length>0?[new(0,profile.ManualEndpoint)]:sources;
+    }
+    internal static string[] DdnsPublishable(IMapping? mapping, EntryResolution[] resolved, long utc) =>
+        (mapping is {IsValid:true} ? new[]{mapping.PublicEndpoint.ToString()} : Array.Empty<string>())
+        .Concat(resolved.Where(r=>r.PeerSlot==0&&r.Error.Length==0&&(r.ExpiresAt==0||r.ExpiresAt>utc)).SelectMany(r=>r.Endpoints))
+        .Where(DdnsAddressRecords.PublicEndpoint).Distinct().Take(4).ToArray();
     MeshRouter? router;
     internal object? ExitDiagnostics { get; private set; }
     internal bool CleanupComplete {get;private set;}
@@ -102,7 +112,7 @@ public sealed class MeshRunner
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
-        await using var ddns = new MeshDdnsSession(stop);
+        await using var ddns = services.Ddns?.Invoke(stop) ?? new MeshDdnsSession(stop);
         using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
         using var peerSynchronization = discovery is DirectMeshDiscovery ? null : new MeshPeerSynchronization(mesh);
@@ -139,8 +149,7 @@ public sealed class MeshRunner
         var reconnectPlans=new Dictionary<int,PeerReconnectPolicy>();
         int refreshSeconds=profile.EntryRefreshSeconds;
         string resolutionState="";
-        var externalSources=profile.ConnectionSource=="existing" || mesh.Pair.Direct ? profile.ExistingEntries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray() : [];
-        if(externalSources.Length==0 && profile.ManualEndpoint.Length>0)externalSources=[new(0,profile.ManualEndpoint)];
+        var externalSources=EntrySources(profile,mesh);
         Task<EntryResolution[]>? resolving=null;
         ExistingEntry[] resolvingSources=[];
         EntryResolution[] resolved=[];
@@ -219,8 +228,7 @@ public sealed class MeshRunner
                     if((edited.Source=="existing"||edited.Manual.Length>0||mesh.Pair.Direct)!=existingOnly)throw new IOException("连接方式已改变，需要重新建立连接以应用入口策略");
                     profile.ConnectionSource=edited.Source;profile.ManualEndpoint=edited.Manual;profile.ExistingEntries=edited.Entries;
                     profile.Ddns=edited.Ddns;profile.CloudflareDdnsToken=edited.Token;
-                    var nextSources=edited.Source=="existing"||mesh.Pair.Direct?edited.Entries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray():[];
-                    if(nextSources.Length==0&&edited.Manual.Length>0)nextSources=[new(0,edited.Manual)];
+                    var nextSources=EntrySources(profile,mesh);
                     if(!nextSources.SequenceEqual(externalSources)){
                         // Cache by the exact source AND owner, never the reused row index.
                         resolved=nextSources.Select((source,index)=>{
@@ -233,14 +241,28 @@ public sealed class MeshRunner
                     }
                 }
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
-                if(externalSources.Length>0 && resolving==null && now>=nextResolve){resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);nextResolve=now+refreshSeconds*1000L;}
+                if(externalSources.Length>0 && resolving==null && now>=nextResolve){
+                    resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);
+                    // Long user intervals for ordinary subscriptions must not
+                    // leave a short-lived signed locator dormant for hours.
+                    int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="DDNS")?Math.Min(refreshSeconds,60):refreshSeconds;
+                    nextResolve=now+interval*1000L;
+                }
                 if(resolving?.IsCompleted==true){
                     if(!resolvingSources.SequenceEqual(externalSources)){try{await resolving;}catch(Exception)when(!stop.IsCancellationRequested){}resolving=null;nextResolve=0;continue;}
-                    try {var previous=resolved;resolved=(await resolving).Select(item=>item.Error.Length>0&&previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index&&p.Endpoints.Length>0) is {} cached?item with{Endpoints=cached.Endpoints}:item).ToArray();localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
+                    try {var previous=resolved;resolved=(await resolving).Select(item=>EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds())).ToArray();localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
                         string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}"));
                         if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址，仍需验证直连"));}
                     }catch(Exception ex)when(!stop.IsCancellationRequested){log("已有入口解析失败，保留上次可用地址："+ex.GetType().Name);}
                     resolving=null;
+                }
+                // Source polling intervals may exceed a signed record's life.
+                // Expiration/withdrawal must stop new dials and publication now,
+                // without tearing down an independently authenticated live path.
+                long sourceUtc=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                if(resolved.Any(r=>r.Endpoints.Length>0&&r.ExpiresAt>0&&r.ExpiresAt<=sourceUtc)) {
+                    resolved=resolved.Select(r=>EntryResolutionCache.Current(r,sourceUtc)).ToArray();
+                    localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
                 }
                 if(Interlocked.Exchange(ref retryRequested,0)!=0) {
                     entryProbeRequested = mapping == null && probe == null;
@@ -308,10 +330,10 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
-                if (!existingOnly && legacyAllowed && probe == null && mapping == null && releasing == null && now >= nextProbe &&
+                if (!existingOnly && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
                     (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
-                    bool needed = restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
+                    bool needed = profile.Ddns is {Enabled:true,Publish:true} || restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     if (needed) {
                         entryProbeRequested = entryProbeDeferred = false;
@@ -406,7 +428,7 @@ public sealed class MeshRunner
                 }
                 string candidate = Candidate();
                 ddns.Tick(profile.Ddns,profile.CloudflareDdnsToken,mesh,profile.TransportMode,
-                    server!=null&&!server.Exited?new[]{candidate}.Concat(localExisting).Where(e=>e.Length>0).ToArray():[],now);
+                    profile.Ddns is {Enabled:true,Publish:true}&&server!=null&&!server.Exited?DdnsPublishable(mapping,resolved,DateTimeOffset.UtcNow.ToUnixTimeSeconds()):[],now);
                 Volatile.Write(ref ddnsStatus,ddns.Status);
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
@@ -457,15 +479,18 @@ public sealed class MeshRunner
                     announcements.TryGetValue(member.Slot,out var remote);
                     bool fresh=remote?.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                     string[] ddnsHints=ddns.ForMember(mesh,member,profile.TransportMode);
+                    var networkHints=networkEntries?.ForMember(member)??[];
+                    bool signedEntry=ddnsHints.Length>0||resolved.Any(r=>r.Kind=="DDNS"&&r.ExpiresAt>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&r.Endpoints.Length>0&&
+                        (r.PeerSlot==member.Slot||r.PeerSlot==ExistingEntry.Network&&r.Endpoints.Intersect(networkHints).Any()));
                     // DNS is a reconnect hint, never a reason to tear down an
                     // authenticated healthy native path when coordination ages.
-                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&ddnsHints.Length>0&&!router.HasHealthyPath(member.Slot);
+                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&signedEntry&&!router.HasHealthyPath(member.Slot);
                     if(strictEntry){onlyEntryPeers.Add(member.Slot);selectedEntries[member.Slot]="";}
                     string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
                         .Concat(ddnsHints)
-                        .Concat(networkEntries?.ForMember(member)??[]).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
+                        .Concat(networkHints).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
                     if(!reconnectPlans.TryGetValue(member.Slot,out var reconnect))reconnectPlans[member.Slot]=reconnect=new();
-                    if(!reconnect.Allow(mesh.Pair.Direct||ddnsHints.Length>0,router.HasHealthyPath(member.Slot),fresh,hints,now)){
+                    if(!reconnect.Allow(mesh.Pair.Direct||signedEntry,router.HasHealthyPath(member.Slot),fresh,hints,now)){
                         quietPeers.Add(member.Slot);selectedEntries[member.Slot]="";traversal?.PauseOffline(member.Slot);continue;
                     }
                     if(hints.Length==0&&localExisting.Length==0&&!strictEntry)continue;
