@@ -15,11 +15,10 @@ public sealed partial class ControlWorker
         if(action.Mode!=invitation.Mode)throw new IOException("邀请的连接协议与本机设置不同，请在连接设置中选择与主机相同的协议");
         var token=operation.Stop.Token;
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(18000);
-        using var resolver=new ExistingEntryResolver();
         SetOperation(operation,"解析邀请中的主机入口",false);
-        var resolutions=await resolver.Resolve(invitation.Entries,invitation.Mode,deadline.Token);
+        var resolutions=await uiEntryResolver.Value.Resolve(invitation.Entries,invitation.Mode,deadline.Token);
         var endpoints=resolutions.SelectMany(e=>e.Endpoints).Distinct().Take(8).ToArray();
-        if(endpoints.Length==0)throw new IOException("邀请中的主机入口未解析成功，请检查订阅或让主机重新生成邀请");
+        if(endpoints.Length==0)throw new IOException("邀请中的主机入口未解析成功，请检查订阅或让主机重新生成邀请。"+string.Join("；",resolutions.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
         await CloseUiPair(token);
         uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new();
         var temporary=MeshIdentity.Create("","",invitation.Mode,direct:true);

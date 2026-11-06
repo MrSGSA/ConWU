@@ -102,11 +102,11 @@ public sealed partial class ControlWorker
                 RequireSavedProtocol(action.Mode);
                 var entries=PublicSettings(profile).ExistingEntries.Where(e=>e.PeerSlot==ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
                 if(entries.Length==0)throw new IOException("短配对码需要目标主机入口，请先在设置中填写；长邀请可以自动带入入口");
-                using(var resolver=new ExistingEntryResolver())using(var connectionDeadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
+                using(var connectionDeadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
                     connectionDeadline.CancelAfter(18000);
-                    var resolved=await resolver.Resolve(entries,action.Mode,connectionDeadline.Token);
+                    var resolved=await uiEntryResolver.Value.Resolve(entries,action.Mode,connectionDeadline.Token);
                     var endpoints=resolved.SelectMany(e=>e.Endpoints).Distinct().Take(8).ToArray();
-                    if(endpoints.Length==0)throw new IOException("目标主机入口未解析成功，请在设置中检查地址");
+                    if(endpoints.Length==0)throw new IOException("目标主机入口未解析成功，请在设置中检查地址。"+string.Join("；",resolved.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
                     await CloseUiPair(token);uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new();
                     var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
                     var folder=Path.Combine(ProfileStore.Root,"sessions","pair-"+Guid.NewGuid().ToString("N"));

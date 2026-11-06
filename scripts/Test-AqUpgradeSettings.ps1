@@ -75,7 +75,16 @@ try{
  if($before.serviceHash -eq $after.serviceHash -or $before.productVersion -eq $after.productVersion){throw 'Upgrade did not install the new frozen service payload'}
  $rows.Add(@{name='actual old-to-new payload changed while user settings and identity remained stable';status='Pass'})
 }catch{$failure=$_.Exception.Message}finally{
- if($installed){try{Msi '/x' $installed 'uninstall-owned'}catch{$failure=($_.Exception.Message)}}
+ # A 3010 result is a failed no-reboot acceptance check, but the new product
+ # may already be fully installed. Query both owned products rather than
+ # attempting to remove the superseded MSI and leaving the new instance behind.
+ $installer=New-Object -ComObject WindowsInstaller.Installer
+ foreach($owned in @($NewMsi,$OldMsi)|Select-Object -Unique){
+  try{
+   $database=$installer.OpenDatabase($owned,0);$view=$database.OpenView('SELECT `Value` FROM `Property` WHERE `Property` = ''ProductCode''');$view.Execute();$record=$view.Fetch();$product=$record.StringData(1);$view.Close()
+   if($installer.ProductState($product) -eq 5){Msi '/x' $owned 'uninstall-owned'}
+  }catch{$failure=if($failure){$failure+'; cleanup: '+$_.Exception.Message}else{$_.Exception.Message}}
+ }
  if((Daily) -cne $dailyBefore){$failure='Daily service changed during isolated upgrade test'}
 }
 $result=[ordered]@{status=if($null -eq $failure){'Pass'}else{'Fail'};error=$failure;validationInstance=$ValidationInstance;steps=$rows.ToArray();scope='Actual isolated 1.0.4-to-candidate Windows Installer upgrade; complete settings-page value fingerprint, network identity and UI account; no daily networking changed'}
