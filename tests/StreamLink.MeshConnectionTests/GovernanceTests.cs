@@ -70,6 +70,7 @@ static partial class Program
             Invalid(()=>MeshIdentity.ValidateSuccessor(codes[0]==200?branchB.Directory!:branchA.Directory!,winning),"clients reject divergent signed histories");
             var unauthorized=new DefaultHttpContext();unauthorized.Request.Headers.Authorization="Bearer "+new string('A',64);
             Check(Code(registry.Membership(unauthorized,a.Pair.Network,new(MeshGovernance.Head(winning),winning)))==401,"network secret still required for membership access");
+            Check(Code(registry.Directory(unauthorized,a.Pair.Network,winning with{Governance="not-a-proof"}))==401,"replication authenticates before attempting expensive governance parsing");
             b.Directory=winning;
             MeshIdentity.Revoke(b,1);
             Check(Code(Commit(b.Directory!,MeshGovernance.Head(winning)))==200,"ordinary member can remove the original creator");

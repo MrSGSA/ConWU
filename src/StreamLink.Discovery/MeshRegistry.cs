@@ -24,6 +24,14 @@ public sealed partial class MeshRegistry
     public IResult Directory(HttpContext context, string network, MeshDirectory directory)
     {
         string auth = Auth(context); if (auth.Length == 0) return Results.Unauthorized();
+        if(directory==null)return Results.BadRequest();
+        // The replication route cannot create a governed network. Reject
+        // unknown/unauthorized requests before decompressing signed history.
+        lock(gate){
+            if(networks.TryGetValue(network,out var registered)){
+                if(!Equal(auth,registered.AuthHash))return Results.Unauthorized();
+            }else if(directory.Governance!=null)return Results.Conflict();
+        }
         try { MeshIdentity.ValidateDirectory(directory, network, directory.OwnerKey); } catch { return Results.BadRequest(); }
         lock (gate) {
             networks.TryGetValue(network,out var known);
