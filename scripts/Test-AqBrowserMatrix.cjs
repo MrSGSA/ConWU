@@ -75,4 +75,22 @@ module.exports=async({page,context,browser,child,nextLine,nav,section,action,che
  await fault.evaluate(()=>render(window.matrixLateStatus));
  check((await fault.locator('#backend-state').innerText())==='面板授权已过期'&&await fault.locator('#join-submit').isDisabled(),'authorization expiry cannot be overwritten by a late successful status or mislabeled as missing backend');
  await faultContext.close();
+
+ // Disabled DDNS exercises credential/settings persistence without any DNS
+ // publication, Cloudflare request or live network change in this fixture.
+ await nav('settings');await section('ddns');
+ const credential='fixture-token-0123456789-secret';
+ await page.locator('[data-key=domain]').fill('conwu.example.test');
+ await page.locator('[data-key=newToken]').fill(credential);
+ await section('logging');check(await page.locator('#save-section').isEnabled(),'DDNS draft participates in global save outside its section');
+ await section('ddns');check(await page.locator('[data-key=newToken]').inputValue()===credential,'unsaved credential survives section navigation');
+ await action('save');await idle();await section('ddns');
+ check(await page.locator('[data-key=newToken]').inputValue()===''&&await page.evaluate(()=>state.ddnsCredentialConfigured),'saved DDNS credential is write-only');
+ check(!(await persisted()).includes(credential)&&await page.evaluate(()=>!JSON.stringify({saved,history,storage:{...localStorage}}).includes('fixture-token-0123456789-secret')),'credential is absent from exported settings, undo history and browser storage');
+ await page.evaluate(()=>network('settings',{settings:{...state.settings,ddns:null},expectedRevision:state.settingsRevision}));await idle();
+ check(await page.evaluate(()=>state.settings.ddns.domain==='conwu.example.test'&&state.ddnsCredentialConfigured),'older settings client omitting DDNS preserves domain and credential');
+ await section('ddns');await page.locator('[data-key=domain]').fill('draft.example.test');await page.evaluate(()=>refresh());
+ check(await page.locator('[data-key=domain]').inputValue()==='draft.example.test','DDNS status refresh does not erase an active settings draft');await action('revert');
+ await page.locator('[data-key=clearToken]').check();await action('save');await idle();
+ check(await page.evaluate(()=>!state.ddnsCredentialConfigured),'only explicit credential clearing removes the DDNS token');
 };

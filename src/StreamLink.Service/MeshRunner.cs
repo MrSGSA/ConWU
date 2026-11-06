@@ -21,9 +21,13 @@ public sealed class MeshRunner
     { this.profile = profile; mesh = profile.Mesh!; this.log = log; this.report = report; this.remember = remember; this.rememberStun = rememberStun; this.services = services; }
     readonly object gate = new();
     int retryRequested, runStarted;
-    sealed record EntrySettings(string Source,string Manual,ExistingEntry[] Entries);
+    sealed record EntrySettings(string Source,string Manual,ExistingEntry[] Entries,CloudflareDdnsSettings Ddns,string Token) {
+        public override string ToString()=>"EntrySettings (credentials hidden)";
+    }
     EntrySettings? pendingEntries;
-    public void UpdateEntries(DeviceProfile updated)=>Volatile.Write(ref pendingEntries,new(updated.ConnectionSource,updated.ManualEndpoint,updated.ExistingEntries.ToArray()));
+    CloudflareDdnsStatus ddnsStatus = new("等待启动", "", "");
+    public CloudflareDdnsStatus DdnsStatus=>Volatile.Read(ref ddnsStatus);
+    public void UpdateEntries(DeviceProfile updated)=>Volatile.Write(ref pendingEntries,new(updated.ConnectionSource,updated.ManualEndpoint,updated.ExistingEntries.ToArray(),updated.Ddns,updated.CloudflareDdnsToken));
     bool stopping;
     public void RequestRetry() => Interlocked.Exchange(ref retryRequested,1);
     public async Task NotifyDirectClosure(MeshDirectory closed,CancellationToken token)
@@ -98,6 +102,7 @@ public sealed class MeshRunner
         string rule = "StreamLink-" + Guid.NewGuid().ToString("N");
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(token);
         CancellationToken stop = cancellation.Token;
+        await using var ddns = new MeshDdnsSession(stop);
         using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
         using var peerSynchronization = discovery is DirectMeshDiscovery ? null : new MeshPeerSynchronization(mesh);
@@ -213,6 +218,7 @@ public sealed class MeshRunner
                 if(Interlocked.Exchange(ref pendingEntries,null) is {} edited){
                     if((edited.Source=="existing"||edited.Manual.Length>0||mesh.Pair.Direct)!=existingOnly)throw new IOException("连接方式已改变，需要重新建立连接以应用入口策略");
                     profile.ConnectionSource=edited.Source;profile.ManualEndpoint=edited.Manual;profile.ExistingEntries=edited.Entries;
+                    profile.Ddns=edited.Ddns;profile.CloudflareDdnsToken=edited.Token;
                     var nextSources=edited.Source=="existing"||mesh.Pair.Direct?edited.Entries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray():[];
                     if(nextSources.Length==0&&edited.Manual.Length>0)nextSources=[new(0,edited.Manual)];
                     if(!nextSources.SequenceEqual(externalSources)){
@@ -399,6 +405,9 @@ public sealed class MeshRunner
                     nextRead = now + (watching && traversal != null ? 100 : watching ? 2500 : allConnected ? 5000 : 2500);
                 }
                 string candidate = Candidate();
+                ddns.Tick(profile.Ddns,profile.CloudflareDdnsToken,mesh,profile.TransportMode,
+                    server!=null&&!server.Exited?new[]{candidate}.Concat(localExisting).Where(e=>e.Length>0).ToArray():[],now);
+                Volatile.Write(ref ddnsStatus,ddns.Status);
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
                     var announcement = new MeshAnnouncement(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
@@ -447,12 +456,16 @@ public sealed class MeshRunner
                 foreach(var member in members){
                     announcements.TryGetValue(member.Slot,out var remote);
                     bool fresh=remote?.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly;
+                    string[] ddnsHints=ddns.ForMember(mesh,member,profile.TransportMode);
+                    // DNS is a reconnect hint, never a reason to tear down an
+                    // authenticated healthy native path when coordination ages.
+                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&ddnsHints.Length>0&&!router.HasHealthyPath(member.Slot);
                     if(strictEntry){onlyEntryPeers.Add(member.Slot);selectedEntries[member.Slot]="";}
                     string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
+                        .Concat(ddnsHints)
                         .Concat(networkEntries?.ForMember(member)??[]).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
                     if(!reconnectPlans.TryGetValue(member.Slot,out var reconnect))reconnectPlans[member.Slot]=reconnect=new();
-                    if(!reconnect.Allow(mesh.Pair.Direct,router.HasHealthyPath(member.Slot),fresh,hints,now)){
+                    if(!reconnect.Allow(mesh.Pair.Direct||ddnsHints.Length>0,router.HasHealthyPath(member.Slot),fresh,hints,now)){
                         quietPeers.Add(member.Slot);selectedEntries[member.Slot]="";traversal?.PauseOffline(member.Slot);continue;
                     }
                     if(hints.Length==0&&localExisting.Length==0&&!strictEntry)continue;
@@ -466,11 +479,11 @@ public sealed class MeshRunner
                     }
                     selectedEntries[member.Slot]=plan.Select(hints,fallback,localExisting.Length>0,router.HasHealthyPath(member.Slot),now,strictEntry);
                     if(plan.Priority)priorityPeers.Add(member.Slot);
-                    if(!fellBack && plan.FellBack)log($"设备 {member.Slot} 已有入口 {string.Join(", ",hints)} 未完成 StreamLink 双向认证，请确认映射通向 StreamLink {profile.ListenPort} 且协议一致；开始自主打洞，保持 {profile.TransportMode} 协议"+(fallback.Length>0?$"；自主发现入口 {fallback}":""));
+                    if(!fellBack && plan.FellBack)log($"设备 {member.Slot} 已有入口 {string.Join(", ",hints)} 未完成 ConWU 双向认证，请确认映射通向 ConWU {profile.ListenPort} 且协议一致；开始自主打洞，保持 {profile.TransportMode} 协议"+(fallback.Length>0?$"；自主发现入口 {fallback}":""));
                 }
                 // Locally configured peer entries also count as explicit hints to the scheduler.
                 var scheduling=announcements.ToDictionary(p=>p.Key,p=>selectedEntries.TryGetValue(p.Key,out var chosen)&&chosen.Length>0?p.Value with {Endpoint=chosen}:p.Value);
-                traversal?.Tick(scheduling, candidate,priorityPeers);
+                traversal?.Tick(scheduling, candidate,priorityPeers,onlyEntryPeers);
                 foreach (var member in members) {
                     if(quietPeers.Contains(member.Slot)){
                         if(clients.TryGetValue(member.Slot,out var quiet))quiet.Suspend(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"");
@@ -512,7 +525,7 @@ public sealed class MeshRunner
                         ? new("Blocked","当前传输模式的连接组件不可用，请检查安装或在设置中选择可用模式；不会自动切换协议。") {ReasonCode="SelectedTransportUnavailable"} : null;
                     MeshPeerStatus EntryEvidence(MeshPeerStatus peer)=>peer.Connected&&peer.EntryDirection=="Outbound"&&clients.GetValueOrDefault(peer.Slot)?.AuthenticatedEndpoint(peer.Slot) is {} endpoint?peer with{OuterTarget=endpoint}:peer;
                     statuses = router.Status().Select(peer=>feedback.Observe(EntryEvidence(peer),
-                        quietPeers.Contains(peer.Slot)?QuietProgress(peer.Slot):EntryProgress(peer.Slot)??(priorityPeers.Contains(peer.Slot) ? new ConnectionProgress("Verifying",mesh.Pair.Direct?"正在验证已有入口 "+selectedEntries.GetValueOrDefault(peer.Slot)+"；请确认主机在线，映射转发到 StreamLink 且协议一致。":existingPlans[peer.Slot].Detail+"；失败后自主打洞，保持所选协议。",CanRetry:true) : traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable),
+                        quietPeers.Contains(peer.Slot)?QuietProgress(peer.Slot):EntryProgress(peer.Slot)??(priorityPeers.Contains(peer.Slot) ? new ConnectionProgress("Verifying",mesh.Pair.Direct?"正在验证已有入口 "+selectedEntries.GetValueOrDefault(peer.Slot)+"；请确认主机在线，映射转发到 ConWU 且协议一致。":existingPlans[peer.Slot].Detail+"；失败后自主打洞，保持所选协议。",CanRetry:true) : traversal?.Progress(peer.Slot,now) ?? clients.GetValueOrDefault(peer.Slot)?.Progress(now) ?? unavailable),
                         announcements.TryGetValue(peer.Slot,out var remote) && remote.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds(),now)).ToArray();
                     foreach(int slot in qualityReports.Keys.Where(slot=>!statuses.Any(p=>p.Slot==slot)).ToArray())qualityReports.Remove(slot);
                     foreach(var peer in statuses)if(peer.Quality is{}assessment){

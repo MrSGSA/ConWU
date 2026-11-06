@@ -16,7 +16,7 @@ try
         await File.WriteAllTextAsync(args[2],JsonSerializer.Serialize(reply,options),cancel.Token);
         Console.WriteLine(reply.Ok ? "Control OK" : "Control failed: " + reply.Error); if(!reply.Ok) Environment.ExitCode=1; return;
     }
-    if (args.Length == 0) { Console.WriteLine("StreamLink: probe [源端口] | mapping [源端口] [目标端口] [秒数] | session 配置.json 状态.json [秒数]"); return; }
+    if (args.Length == 0) { Console.WriteLine("ConWU: probe [源端口] | mapping [源端口] [目标端口] [秒数] | session 配置.json 状态.json [秒数]"); return; }
     if (args[0] == "session")
     {
         if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException();

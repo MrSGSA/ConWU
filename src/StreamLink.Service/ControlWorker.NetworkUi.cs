@@ -23,15 +23,15 @@ public sealed partial class ControlWorker
     MeshRejoinProof? uiExpectedRejoin;
     DirectPairInvitation? uiApprovalExpected;
 
-    static UiNetworkSettings PublicSettings(DeviceProfile p) => p.SavedNetworkSettings??LegacyPublicSettings(p);
+    static UiNetworkSettings PublicSettings(DeviceProfile p) => (p.SavedNetworkSettings??LegacyPublicSettings(p)) with{Ddns=p.Ddns};
     static ExistingEntry[] SavedEntries(ExistingEntry[] entries,bool guest,int introducer=1) => entries.Select(e=>guest&&e.PeerSlot==introducer?e with{PeerSlot=ExistingEntry.NetworkOwner}:e).Distinct().ToArray();
     static UiNetworkSettings LegacyPublicSettings(DeviceProfile p) => new(p.Mesh is {Pair.Direct:false} m?m.Pair.Service:p.CoordinationService, p.Mesh is {Pair.Direct:false} n?n.Pair.CertificatePin:p.CoordinationPin, p.ManualEndpoint, p.PathSelection, p.AllowManualQualityRequests, p.ListenPort, p.SourcePort) {
         ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
         DirectMode=p.Mesh?.Pair.Direct??p.DirectMode,
         ExistingEntries=p.ExistingEntries.Length>0?p.ExistingEntries:p.ManualEndpoint.Length>0?[new(0,p.ManualEndpoint)]:[],
-        Coordinator=p.Coordinator,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
+        Coordinator=p.Coordinator,Ddns=p.Ddns,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
     };
-    static string SettingsRevision(DeviceProfile p) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(PublicSettings(p))));
+    static string SettingsRevision(DeviceProfile p) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{Settings=PublicSettings(p),DdnsCredential=p.CloudflareDdnsToken})));
     void RequireUiNetwork(string expected)
     {
         if ((profile.Mesh?.Pair.Network ?? "") != expected) throw new IOException("网络已改变，请刷新后重新确认操作");
@@ -91,6 +91,8 @@ public sealed partial class ControlWorker
         if (action.Service is null || action.Service.Length > 2048 || action.CertificatePin is null || action.CertificatePin.Length > 128 || action.Code is null || action.Code.Length > (action.Action is "join-direct" or "join-invitation"?DirectInvitation.MaximumCode:6) || action.Verification is null || action.Verification.Length > 6 || action.Candidate is null || action.Candidate.Length > 32)
             throw new FormatException("网络操作参数无效");
         if(action.Action!="settings"&&(action.Patch!=null||action.AutoStart!=null||action.ExpectedAutoStart!=null))throw new FormatException("全局设置字段只能用于保存设置");
+        if(action.Action!="settings"&&(action.DdnsToken!=null||action.ClearDdnsToken))throw new FormatException("DDNS 凭据只能通过保存设置修改");
+        if(action.DdnsToken!=null){CloudflareDdnsSettings.ValidateToken(action.DdnsToken);if(action.DdnsToken.Length==0||action.ClearDdnsToken)throw new FormatException("请填写新的 DDNS 令牌，或单独选择清除凭据");}
         if(profile.PendingMembership!=null && action.Action is not ("membership-resume" or "settings" or "resolve-entries" or "startup-enable" or "startup-disable" or "pause-network"))
             throw new IOException("前一次网络变更尚待确认，请先点击“继续确认”；已有设置和直连均保留");
         switch (action.Action)
@@ -285,6 +287,9 @@ public sealed partial class ControlWorker
                 updated.ConnectionSource=settings.ConnectionSource;updated.ExistingEntries=settings.ExistingEntries;
                 updated.EntryRefreshSeconds=settings.EntryRefreshSeconds;
                 updated.Coordinator=settings.Coordinator;
+                updated.Ddns=settings.Ddns??profile.Ddns;
+                if(action.ClearDdnsToken)updated.CloudflareDdnsToken="";
+                else if(action.DdnsToken!=null)updated.CloudflareDdnsToken=action.DdnsToken;
                 updated.DirectMode=settings.DirectMode;
                 if(settings.DirectMode&&settings.ConnectionSource!="existing")throw new FormatException("无服务器组网需要选择已有入口");
                 ExistingEntryResolver.Validate(settings.ExistingEntries);
@@ -300,7 +305,7 @@ public sealed partial class ControlWorker
                 updated.Validate();
                 var savedEntries=SavedEntries(settings.ExistingEntries,updated.Mesh!=null&&updated.Mesh.IntroducerSlot!=updated.Mesh.Self.Slot,updated.Mesh?.IntroducerSlot??1);
                 if(!savedEntries.Where(e=>e.PeerSlot>0).SequenceEqual(PublicSettings(profile).ExistingEntries.Where(e=>e.PeerSlot>0)))updated.SavedPeerEntryNetwork=updated.Mesh?.Pair.Network??"";
-                updated.SavedNetworkSettings=settings with {ExistingEntries=savedEntries,TcpStun=updated.TcpStun.ToArray(),UdpStun=updated.UdpStun.ToArray()};
+                updated.SavedNetworkSettings=settings with {Ddns=updated.Ddns,ExistingEntries=savedEntries,TcpStun=updated.TcpStun.ToArray(),UdpStun=updated.UdpStun.ToArray()};
                 updated.ExistingEntries=RuntimeEntries(updated);
                 bool changeStartup=action.AutoStart!=null&&updated.AutoStart!=StartupSettings.Read().AutoStart;
                 bool startupApplied=false;

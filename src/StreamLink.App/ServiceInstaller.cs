@@ -40,7 +40,7 @@ public static partial class ServiceInstaller
         await Task.Run(() => CopyBundle(source, destination, parent, manifest));
         bool existed = Installed;
         string? previous = null;
-        bool wasRunning=false;int previousStart=2;string previousDisplay="StreamLink P2P Network";object? previousFailure=null,previousDescription=null;
+        bool wasRunning=false;int previousStart=2;string previousDisplay="ConWU Network";object? previousFailure=null,previousDescription=null;
         if (existed) {
             using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name); previous = key?.GetValue("ImagePath") as string;
             if(string.IsNullOrEmpty(previous))throw new IOException("原服务的 ImagePath 无效，未修改原服务");
@@ -57,7 +57,7 @@ public static partial class ServiceInstaller
                 profileStore.AuditUiAuthorization("install-explicit-grant",previousUi,selectedUi);
             }
             string command="\""+Path.Combine(destination,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
-            await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", new StreamLink.Service.ProfileStore().Load().AutoStart?"auto":"demand", "DisplayName=", "StreamLink P2P Network");
+            await Sc(existed ? "config" : "create", WindowsInstance.Name, "binPath=",command, "start=", new StreamLink.Service.ProfileStore().Load().AutoStart?"auto":"demand", "DisplayName=", "ConWU Network");
             await Sc("description", WindowsInstance.Name, "原生 udp2raw P2P 组网；协调服务只交换元数据，业务始终直连。");
             await Sc("failure", WindowsInstance.Name, "reset=", "86400", "actions=", "restart/5000/restart/15000/restart/60000");
             await Sc("start", WindowsInstance.Name);
@@ -136,7 +136,7 @@ public static partial class ServiceInstaller
         source=Path.GetFullPath(source);byte[] bytes=ReadManifest(Path.Combine(source,"manifest.json"));var files=ValidateBundle(source,bytes);
         ReadOnlyMemory<byte> json=bytes;if(bytes.AsSpan().StartsWith(new byte[]{0xef,0xbb,0xbf}))json=json[3..];using var doc=JsonDocument.Parse(json);var manifest=doc.RootElement;
         if(!manifest.TryGetProperty("schemaVersion",out var schema)||schema.GetInt32()!=2||manifest.GetProperty("architecture").GetString()!="win-x64"||manifest.GetProperty("tunAbi").GetInt32()!=2||manifest.GetProperty("meshProtocol").GetInt32()!=4)throw new IOException("发布格式、架构或协议ABI不匹配");
-        string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
+        string[] required=["ConWU.exe","ConWU.dll","ConWU.runtimeconfig.json","ConWU.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
         var paths=files.Select(f=>f.Path.Replace('\\','/')).ToHashSet(StringComparer.OrdinalIgnoreCase);
         if(required.Any(p=>!paths.Contains(p)))throw new IOException("发布包缺少必需运行文件");
         string[] webRequired=["web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
@@ -145,7 +145,7 @@ public static partial class ServiceInstaller
             if(!manifest.TryGetProperty("personalContract",out var contract)||contract.GetString()!=PersonalFeature.Contract)throw new IOException("个人包契约不匹配");
             if(paths.Any(p=>p.Contains("self-tun",StringComparison.OrdinalIgnoreCase)||p.EndsWith("StreamLink.ResearchAdapters.dll",StringComparison.OrdinalIgnoreCase)||p.Contains("easytier",StringComparison.OrdinalIgnoreCase)))throw new IOException("AQ-1 产品包不能包含自研驱动或旧组网组件");
         }
-        foreach(string path in new[]{"StreamLink.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
+        foreach(string path in new[]{"ConWU.exe","StreamLink.Service.exe","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"}){
             using var input=File.OpenRead(Path.Combine(source,path));var head=new byte[64];input.ReadExactly(head);
             int offset=System.Buffers.Binary.BinaryPrimitives.ReadInt32LittleEndian(head.AsSpan(60));if(head[0]!='M'||head[1]!='Z'||offset<64||offset>input.Length-6)throw new IOException("运行组件PE头无效："+path);
             input.Position=offset;var pe=new byte[6];input.ReadExactly(pe);if(!pe.AsSpan(0,4).SequenceEqual(new byte[]{0x50,0x45,0,0})||System.Buffers.Binary.BinaryPrimitives.ReadUInt16LittleEndian(pe.AsSpan(4))!=0x8664)throw new IOException("运行组件非x64："+path);

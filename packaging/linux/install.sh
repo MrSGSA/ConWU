@@ -3,14 +3,14 @@ set -euo pipefail
 [[ $EUID == 0 ]] || { echo '请使用 sudo ./install.sh'; exit 1; }
 [[ ${1:-} == '' || ${1:-} == '--no-start' ]] || { echo '用法：install.sh [--no-start]'; exit 1; }
 for cmd in systemctl sha256sum flock; do command -v "$cmd" >/dev/null || { echo "缺少安装依赖：$cmd"; exit 1; }; done
-[[ -d /run/systemd/system ]] || { echo '此安装方式需要 systemd；非 systemd 系统可直接运行 runtime/streamlink run。'; exit 1; }
+[[ -d /run/systemd/system ]] || { echo '此安装方式需要 systemd；非 systemd 系统可直接运行 runtime/conwu run。'; exit 1; }
 [[ -c /dev/net/tun ]] || echo '系统未提供 TUN，仍可提供协调；参与网络前请启用 /dev/net/tun。'
 for cmd in ip nft iptables; do command -v "$cmd" >/dev/null || echo "缺少 $cmd，仍可提供协调；参与网络前请补齐网络工具。"; done
 source_dir=$(cd -- "$(dirname -- "$0")" && pwd -P)
 cd -- "$source_dir"
 sha256sum -c SHA256SUMS >/dev/null
 [[ $(uname -m) == x86_64 ]] || { echo '此包只适用于 Linux x86_64。'; exit 1; }
-./runtime/streamlink help >/dev/null
+./runtime/conwu help >/dev/null
 ./runtime/components/udp2raw-native --native-info >/dev/null
 for path in /opt/streamlink /opt/streamlink/releases /var/lib/streamlink; do
     [[ ! -L $path ]] || { echo "拒绝通过符号链接安装：$path"; exit 1; }
@@ -23,6 +23,9 @@ if [[ -e $unit ]] && ! grep -q '^# StreamLink managed unit$' "$unit"; then echo 
 if [[ -e /usr/local/bin/streamlink || -L /usr/local/bin/streamlink ]]; then
     [[ $(readlink /usr/local/bin/streamlink) == /opt/streamlink/current/streamlink ]] || { echo '/usr/local/bin/streamlink 已被其他程序占用'; exit 1; }
 fi
+if [[ -e /usr/local/bin/conwu || -L /usr/local/bin/conwu ]]; then
+    [[ $(readlink /usr/local/bin/conwu) == /opt/streamlink/current/streamlink ]] || { echo '/usr/local/bin/conwu 已被其他程序占用'; exit 1; }
+fi
 install -d -m 0700 /var/lib/streamlink
 build=$(sha256sum SHA256SUMS | cut -c1-16)
 release=/opt/streamlink/releases/$build
@@ -30,7 +33,7 @@ stage=$(mktemp -d /opt/streamlink/releases/.install-XXXXXXXX)
 trap '[[ -z ${stage:-} ]] || rm -rf -- "$stage"' EXIT
 cp -a -- runtime/. "$stage/"
 chown -R root:root "$stage"
-chmod 0755 "$stage/streamlink" "$stage/components/udp2raw-native"
+chmod 0755 "$stage/conwu" "$stage/streamlink" "$stage/components/udp2raw-native"
 if [[ ! -d $release ]]; then mv -- "$stage" "$release"; stage=''; fi
 old=$(readlink /opt/streamlink/current || true)
 was_active=false;systemctl is-active --quiet streamlink.service && was_active=true
@@ -41,6 +44,9 @@ systemctl stop streamlink.service 2>/dev/null || { [[ $first == true ]] || exit 
 link=/opt/streamlink/.current-$$
 ln -s -- "$release" "$link";mv -Tf -- "$link" /opt/streamlink/current
 ln -sfn -- /opt/streamlink/current/streamlink /usr/local/bin/streamlink
+# Both commands follow the same atomic current link, including rollback to a
+# pre-rename release. Keep the service/data identity to inherit saved settings.
+ln -sfn -- /opt/streamlink/current/streamlink /usr/local/bin/conwu
 install -m 0644 streamlink.service "$unit"
 systemctl daemon-reload
 if [[ $first == true ]]; then systemctl enable streamlink.service; fi
@@ -56,5 +62,5 @@ if [[ ${1:-} != '--no-start' && ( $was_active == true || $first == true ) ]]; th
 fi
 rm -f -- "$backup"
 echo '已安装。原有设置、成员身份及协调数据均保留在 /var/lib/streamlink。'
-echo '查看状态：sudo streamlink status；打开面板：sudo streamlink web'
+echo '查看状态：sudo conwu status；打开面板：sudo conwu web'
 echo '卸载程序请运行包内 sudo ./uninstall.sh；卸载同样保留设置。'

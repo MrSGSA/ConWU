@@ -151,7 +151,7 @@ try {
     }
     $nativeInfo = (& $nativePath --native-info | ConvertFrom-Json)
     if($LASTEXITCODE -ne 0 -or $nativeInfo.backend -ne 'windivert' -or $nativeInfo.wireProtocol -ne 'udp2raw-http-c4995ea') {throw 'Not a production WinDivert FakeTCP/HTTP backend'}
-    foreach($dll in @("out/app-$releaseVersion/StreamLink.dll","out/service-$releaseVersion/StreamLink.Service.dll")) {
+    foreach($dll in @("out/app-$releaseVersion/ConWU.dll","out/service-$releaseVersion/StreamLink.Service.dll")) {
         if([Reflection.AssemblyName]::GetAssemblyName((Join-Path $root $dll)).Version.ToString(3) -ne $releaseVersion) {throw "Published assembly version mismatch: $dll"}
     }
     $downloads=Join-Path $root 'out\downloads'
@@ -233,7 +233,7 @@ try {
     Copy-Item .\docs\StreamLink-Codex-Execution-Plan-20261011.md $stage\开发验收规格.md
     Copy-Item -LiteralPath $receipt -Destination $stage\构建来源.json
     if(Test-Path $verification) {Copy-Item $verification $stage\验证摘要.json}
-    $preview=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--tray-preview',(Join-Path $root 'artifacts\tray-preview.png')) -WindowStyle Hidden -PassThru -Wait
+    $preview=Start-Process -FilePath (Join-Path $stage 'ConWU.exe') -ArgumentList @('--tray-preview',(Join-Path $root 'artifacts\tray-preview.png')) -WindowStyle Hidden -PassThru -Wait
     if($preview.ExitCode -ne 0) {throw 'Tray preview failed'}
     Copy-Item .\artifacts\tray-preview.png $stage\界面预览.png
     $files=@(Get-ChildItem -LiteralPath $stage -File -Recurse | ForEach-Object {
@@ -241,7 +241,7 @@ try {
     })
     [ordered]@{version="$releaseVersion-preview";built=(Get-Date -Format o);sourceCommit=$commit;sourceDirty=$false;releaseLevel='development-candidate';releaseGate='NotPassed';architecture='win-x64';networkBackend='native-wintun';meshProtocol=4;easytier=$version;native=$nativeInfo;files=$files} | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $stage 'manifest.json') -Encoding UTF8
     $preflight=Join-Path $root "artifacts/bundle-preflight-$releaseVersion.json"
-    $verify=Start-Process -FilePath (Join-Path $stage 'StreamLink.exe') -ArgumentList @('--verify-bundle',('"'+$preflight+'"')) -WindowStyle Hidden -PassThru -Wait
+    $verify=Start-Process -FilePath (Join-Path $stage 'ConWU.exe') -ArgumentList @('--verify-bundle',('"'+$preflight+'"')) -WindowStyle Hidden -PassThru -Wait
     if($verify.ExitCode -ne 0 -or (Get-Content -LiteralPath $preflight -Raw | ConvertFrom-Json).status -ne 'Pass') {throw 'Packaged executable rejected the actual bundle'}
     $release=Join-Path $root 'artifacts\releases'
     New-Item -ItemType Directory -Path $release -Force | Out-Null

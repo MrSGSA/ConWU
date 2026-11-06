@@ -58,7 +58,7 @@ if($Preview){
   $ink=[Drawing.SolidBrush]::new((Color '#565f89'))
   try{
    Fill $g '#ffffff' 32 24 920 700;$g.DrawRectangle($framePen,32,24,920,700)
-   $g.DrawString('StreamLink 安装',$small,$ink,48,36);$g.DrawString('×',$small,$ink,925,36)
+   $g.DrawString('ConWU 安装',$small,$ink,48,36);$g.DrawString('×',$small,$ink,925,36)
    $g.TranslateTransform(32,64);$g.ScaleTransform(2,2);Background $g 460 330 154
    $dialog=$ui.SelectSingleNode('//*[local-name()="Dialog" and @Id="'+$page.Id+'"]')
    $controls=@($sidebar.DocumentElement.ChildNodes | Where-Object NodeType -eq Element)+@($dialog.ChildNodes | Where-Object NodeType -eq Element)

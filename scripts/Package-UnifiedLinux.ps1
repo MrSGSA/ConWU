@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.6-rc.6',[string]$Distro='ArchLinux')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.6-rc.7',[string]$Distro='ArchLinux')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -8,11 +8,17 @@ try {
  $commit=(& git rev-parse HEAD).Trim()
  $out=[IO.Path]::GetFullPath($OutputDirectory)
  if(Test-Path -LiteralPath $out){throw 'Use a fresh package directory'}
- $bundle=Join-Path $out "StreamLink-$Version-linux-x64"
+ $bundle=Join-Path $out "ConWU-$Version-linux-x64"
  $runtime=Join-Path $bundle 'runtime'
  New-Item -ItemType Directory -Path $runtime -Force|Out-Null
  & dotnet publish src/StreamLink.Host -c Release -r linux-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.12 -p:StreamLinkPersonalFeature=true "-p:StreamLinkReleaseVersion=$Version" -o $runtime *> (Join-Path $out 'publish.log')
  if($LASTEXITCODE){throw 'Linux managed publish failed'}
+ # Preserve the old service ExecStart and rollback target without a second host.
+ $compatCommand=@'
+#!/bin/sh
+exec "$(dirname -- "$(readlink -f -- "$0")")/conwu" "$@"
+'@
+ [IO.File]::WriteAllText((Join-Path $runtime 'streamlink'),$compatCommand.Replace("`r`n","`n")+"`n",[Text.UTF8Encoding]::new($false))
  $linuxRepo=(& wsl -d $Distro -- wslpath -a $repo.Replace('\','/')).Trim()
  if($LASTEXITCODE -or -not $linuxRepo.StartsWith('/')){throw 'Cannot resolve repository path in WSL'}
  & wsl -d $Distro -- cmake -S $linuxRepo -B "$linuxRepo/out/linux-native" -G Ninja -DCMAKE_BUILD_TYPE=Release -DSTREAMLINK_LINUX_STATIC=ON *> (Join-Path $out 'native-configure.log')
@@ -22,6 +28,11 @@ try {
  New-Item -ItemType Directory -Path (Join-Path $runtime 'components')|Out-Null
  Copy-Item -LiteralPath out/linux-native/udp2raw-native -Destination (Join-Path $runtime 'components/udp2raw-native')
  Copy-Item -Path packaging/linux/* -Destination $bundle
+ Copy-Item -LiteralPath docs/aq1/ConWU与Cloudflare-DDNS-20261106.md -Destination (Join-Path $bundle 'ConWU与Cloudflare-DDNS.md')
+ Copy-Item -LiteralPath docs/aq1/协调服务可靠性与迁移-20261106.md -Destination (Join-Path $bundle '协调服务可靠性与迁移.md')
+ $readme=Join-Path $bundle 'README.md'
+ $readmeText=[IO.File]::ReadAllText($readme).Replace('../../docs/aq1/ConWU与Cloudflare-DDNS-20261106.md','ConWU与Cloudflare-DDNS.md').Replace('../../docs/aq1/协调服务可靠性与迁移-20261106.md','协调服务可靠性与迁移.md')
+ [IO.File]::WriteAllText($readme,$readmeText,[Text.UTF8Encoding]::new($false))
  Copy-Item -LiteralPath LICENSE -Destination $bundle
  Copy-Item -LiteralPath transport/udp2raw/LICENSE.md -Destination (Join-Path $bundle 'udp2raw-LICENSE.md')
  New-Item -ItemType Directory -Path (Join-Path $bundle 'licenses')|Out-Null
@@ -34,7 +45,7 @@ try {
  [IO.File]::WriteAllText((Join-Path $bundle 'SHA256SUMS'),($checks -join "`n")+"`n")
  $linuxBundle=(& wsl -d $Distro -- wslpath -a $bundle.Replace('\','/')).Trim()
  if($LASTEXITCODE -or -not $linuxBundle.StartsWith('/')){throw 'Cannot resolve package path in WSL'}
- & wsl -d $Distro -- chmod 755 "$linuxBundle/install.sh" "$linuxBundle/uninstall.sh" "$linuxBundle/runtime/streamlink" "$linuxBundle/runtime/components/udp2raw-native"
+ & wsl -d $Distro -- chmod 755 "$linuxBundle/install.sh" "$linuxBundle/uninstall.sh" "$linuxBundle/runtime/conwu" "$linuxBundle/runtime/streamlink" "$linuxBundle/runtime/components/udp2raw-native"
  & wsl -d $Distro -- tar -czf "$linuxBundle.tar.gz" -C ([IO.Path]::GetDirectoryName($linuxBundle).Replace('\','/')) ([IO.Path]::GetFileName($bundle))
  if($LASTEXITCODE){throw 'Linux archive failed'}
  Get-FileHash -LiteralPath "$bundle.tar.gz" | Format-List

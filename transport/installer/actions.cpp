@@ -14,7 +14,7 @@ struct handle { HANDLE value=nullptr; ~handle(){if(value&&value!=INVALID_HANDLE_
 struct service_handle { SC_HANDLE value=nullptr; ~service_handle(){if(value)CloseServiceHandle(value);} };
 struct registry { HKEY value=nullptr; ~registry(){if(value)RegCloseKey(value);} };
 struct context { std::wstring folder,service,attempt,transaction; bool validation=false; };
-void log(MSIHANDLE install,const std::wstring &message,bool error=false){MSIHANDLE record=MsiCreateRecord(0);MsiRecordSetStringW(record,0,(L"StreamLink: "+message).c_str());MsiProcessMessage(install,error?INSTALLMESSAGE_ERROR:INSTALLMESSAGE_INFO,record);MsiCloseHandle(record);}
+void log(MSIHANDLE install,const std::wstring &message,bool error=false){MSIHANDLE record=MsiCreateRecord(0);MsiRecordSetStringW(record,0,(L"ConWU: "+message).c_str());MsiProcessMessage(install,error?INSTALLMESSAGE_ERROR:INSTALLMESSAGE_INFO,record);MsiCloseHandle(record);}
 std::wstring property(MSIHANDLE h,const wchar_t *name){DWORD size=0;wchar_t empty=0;MsiGetPropertyW(h,name,&empty,&size);std::vector<wchar_t> text(size+1);++size;if(MsiGetPropertyW(h,name,text.data(),&size)!=ERROR_SUCCESS)return {};return text.data();}
 bool under(std::wstring file,std::wstring root){std::transform(file.begin(),file.end(),file.begin(),towlower);std::transform(root.begin(),root.end(),root.begin(),towlower);while(!root.empty()&&(root.back()==L'\\'||root.back()==L'/'))root.pop_back();return file.size()>root.size()&&file.compare(0,root.size(),root)==0&&(file[root.size()]==L'\\'||file[root.size()]==L'/');}
 context parameters(MSIHANDLE h){
@@ -30,7 +30,7 @@ context parameters(MSIHANDLE h){
     c.transaction=L"Software\\StreamLink\\InstallerTransactions\\"+c.attempt;
     PWSTR programs=nullptr;if(FAILED(SHGetKnownFolderPath(FOLDERID_ProgramFiles,0,nullptr,&programs)))throw std::wstring(L"无法定位程序目录。");
     std::wstring root=std::wstring(programs)+(c.validation?L"\\StreamLink-Validation":L"\\StreamLink");CoTaskMemFree(programs);
-    if(!under(c.folder,root))throw std::wstring(L"安装目录不在 StreamLink 的受管位置内。");
+    if(!under(c.folder,root))throw std::wstring(L"安装目录不在 ConWU 的受管位置内。");
     std::wstring ancestor=c.folder;while(ancestor.size()>3){while(ancestor.size()>3&&(ancestor.back()==L'\\'||ancestor.back()==L'/'))ancestor.pop_back();DWORD attributes=GetFileAttributesW(ancestor.c_str());if(attributes!=INVALID_FILE_ATTRIBUTES&&(attributes&FILE_ATTRIBUTE_REPARSE_POINT))throw std::wstring(L"安装目录不能经过链接或重解析点。");auto slash=ancestor.find_last_of(L"\\/");if(slash==std::wstring::npos)break;ancestor.resize(slash);}
     return c;
 }
@@ -91,12 +91,12 @@ void close_clients(MSIHANDLE h,const context &c,bool includeLegacy){
     UINT message=RegisterWindowMessageW(L"StreamLink.ExitUi.AQ1.v1");handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};if(snapshot.value==INVALID_HANDLE_VALUE)throw std::wstring(L"无法查询现有界面。");
     PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.value,&entry))return;
     do {
-        bool web=_wcsicmp(entry.szExeFile,L"StreamLink.Web.exe")==0,desktop=_wcsicmp(entry.szExeFile,L"StreamLink.exe")==0;
+        bool web=_wcsicmp(entry.szExeFile,L"StreamLink.Web.exe")==0,desktop=_wcsicmp(entry.szExeFile,L"StreamLink.exe")==0||_wcsicmp(entry.szExeFile,L"ConWU.exe")==0;
         if(!web&&!desktop)continue;
         handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE|PROCESS_TERMINATE,FALSE,entry.th32ProcessID)};if(!process.value)continue;
         std::vector<wchar_t> path(32768);DWORD length=static_cast<DWORD>(path.size());if(!QueryFullProcessImageNameW(process.value,0,path.data(),&length))continue;std::wstring file(path.data(),length);
         auto current=c.folder;while(!current.empty()&&(current.back()==L'\\'||current.back()==L'/'))current.pop_back();
-        bool managed=under(file,current+L"\\app")||_wcsicmp(file.c_str(),(current+L"\\StreamLink.exe").c_str())==0;
+        bool managed=under(file,current+L"\\app")||_wcsicmp(file.c_str(),(current+L"\\StreamLink.exe").c_str())==0||_wcsicmp(file.c_str(),(current+L"\\ConWU.exe").c_str())==0;
         if(includeLegacy&&!c.validation)managed=managed||under(file,legacy)||under(file,personal);
         // Validation packages are confined to this instance, including its
         // earlier manual installer folder. They cannot close the daily UI.

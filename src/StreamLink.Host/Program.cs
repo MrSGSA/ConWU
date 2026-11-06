@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using StreamLink.Core;
+using StreamLink.Discovery;
 using StreamLink.Service;
 using StreamLink.Web;
 
@@ -29,12 +30,21 @@ try {
     if(!OperatingSystem.IsLinux())throw new PlatformNotSupportedException("此统一 CLI 适用于 Linux；Windows 请使用已安装的服务和 WebUI");
     if(args.Length==0||args[0] is "help" or "--help") {
         Console.WriteLine("""
-StreamLink · Linux
+ConWU · Linux
   run [--no-web]               运行后台；默认提供仅本机可访问的 WebUI
   status                      查看本机、成员、连接及协调状态
   web                         获取本机 WebUI 的一次性登录链接
   config show                 导出可编辑设置，不含成员密钥
   config apply <文件.json>    合并并保存设置，不填写的字段保持原值
+  ddns status                 查看域名发布和成员入口读取状态
+  ddns token                  从标准输入读取 API Token 并保存，不回显
+  ddns clear-token            清除已保存的令牌（需先关闭发布）
+  coordinator status          查看协调监听、证书与外部 HTTPS 诊断
+  coordinator backup <文件>  离线备份协调数据（先关闭协调角色）
+  coordinator inspect <文件> 校验备份格式、校验和及成员签名
+  coordinator restore <文件> --confirm-rollback
+                              离线恢复；显式确认可能回滚审批和撤销
+  上述 backup/restore 可加 --data <目录> 迁移旧独立协调数据
   network create              按已保存的连接设置创建网络
   network join <配对码/邀请>  申请加入网络
   network invite              生成配对码或直连邀请
@@ -59,7 +69,7 @@ StreamLink · Linux
                 worker.OpenLocalPanel=panel.OpenLink;
             }
             await worker.StartAsync(stop.Token);
-            Console.WriteLine("StreamLink 已启动。使用 streamlink web 获取登录链接；使用 streamlink status 查看状态。");
+            Console.WriteLine("ConWU 已启动。使用 conwu web 获取登录链接；使用 conwu status 查看状态。");
             try{await await Task.WhenAny(worker.ExecuteTask!,Task.Delay(Timeout.Infinite,stop.Token));}catch(OperationCanceledException)when(stop.IsCancellationRequested){}
         }finally {
             using var shutdown=new CancellationTokenSource(TimeSpan.FromSeconds(65));
@@ -68,7 +78,28 @@ StreamLink · Linux
         return;
     }
     if(args[0]=="web") {var result=await UnixControlProtocol.Call(new(OpenPanel:true),stop.Token);if(result.Error.Length>0)throw new IOException(result.Error);Console.WriteLine(result.Panel);return;}
+    if(args[0]=="coordinator" && args.Length>=2 && args[1]!="status") {
+        Print(CoordinationMaintenance.Execute(args[1..],Path.Combine(ProfileStore.Root,"coordination")));return;
+    }
     var state=(await Call(new("status"))).Status??throw new IOException("后台状态尚未就绪");
+    if(args is ["ddns","status"]){Print(new{Settings=state.Settings?.Ddns,CredentialConfigured=state.DdnsCredentialConfigured,Status=state.Ddns});return;}
+    if(args is ["ddns","token"] or ["ddns","clear-token"]){
+        bool clear=args[1]=="clear-token";
+        string? credential=null;
+        if(!clear){
+            if(!Console.IsInputRedirected)throw new IOException("请从私有文件或安全输入管道传入令牌，例如 conwu ddns token < 私有令牌文件；不要把令牌写入命令参数");
+            var chars=new char[514];int length=0;
+            try {
+                while(length<chars.Length){int read=await Console.In.ReadAsync(chars.AsMemory(length),stop.Token);if(read==0)break;length+=read;}
+                if(length>=chars.Length)throw new IOException("DDNS 令牌输入过长");
+                credential=new string(chars,0,length).Trim();CloudflareDdnsSettings.ValidateToken(credential);
+            } finally { Array.Clear(chars); }
+            if(credential.Length==0)throw new IOException("DDNS 令牌为空");
+        }
+        var action=new UiNetworkAction("settings",Settings:state.Settings,ExpectedRevision:state.SettingsRevision){DdnsToken=credential,ClearDdnsToken=clear};
+        await Mutate(new("network",Network:action));Console.WriteLine(clear?"DDNS 令牌已清除":"DDNS 令牌已保存；状态与设置导出不会回显令牌");return;
+    }
+    if(args is ["coordinator","status"]){Print(state.Coordinator??throw new IOException("协调状态尚未就绪"));return;}
     if(args[0]=="status"){Print(state);return;}
     if(args[0] is "start" or "stop" or "retry"){Print(await Mutate(new(args[0])));return;}
     if(args[0]=="config") {
@@ -103,6 +134,6 @@ StreamLink · Linux
             Verification:args[1]=="approve"?value:"",Candidate:state.Pairing?.Candidate??"",PeerSlot:slot,Mode:settings.PathSelection=="udp-only"?"udp":"faketcp",ProposedIp:state.Pairing?.ProposedIp??"");
         Print(await Mutate(new("network",Network:action)));return;
     }
-    throw new ArgumentException("未知命令，请运行 streamlink help");
+    throw new ArgumentException("未知命令，请运行 conwu help");
 }catch(OperationCanceledException)when(stop.IsCancellationRequested){}
 catch(Exception ex){Console.Error.WriteLine(ex.Message);Environment.ExitCode=1;}

@@ -9,7 +9,7 @@ public static class LinuxPlatform
     public static string UserIdentity=>"uid:"+geteuid();
     public static void PrivateDirectory(string path) {
         string full=Path.GetFullPath(path);
-        if(full=="/")throw new IOException("不能将系统根目录用作 StreamLink 数据目录");
+        if(full=="/")throw new IOException("不能将系统根目录用作 ConWU 数据目录");
         for(var current=new DirectoryInfo(full);current!=null;current=current.Parent)
             if(current.Exists&&(current.Attributes&FileAttributes.ReparsePoint)!=0)throw new IOException("数据目录不能经过符号链接");
         Directory.CreateDirectory(full,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);

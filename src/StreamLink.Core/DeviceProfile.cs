@@ -22,6 +22,9 @@ public sealed class DeviceProfile
     public bool Enabled { get; set; }
     public bool AutoStart {get;set;}=true;
     public CoordinatorSettings Coordinator {get;set;}=new();
+    public CloudflareDdnsSettings Ddns {get;set;}=new();
+    // Protected by the profile store; never included in UiNetworkSettings.
+    public string CloudflareDdnsToken {get;set;}="";
     public string Preference { get; set; } = "auto";
     public int LastEntry { get; set; }
     public int ListenPort { get; set; } = PersonalFeature.Enabled ? 44680 : 42680;
@@ -124,6 +127,8 @@ public sealed class DeviceProfile
     public void Validate()
     {
         if(Coordinator==null)throw new FormatException("协调角色设置不能为空");Coordinator.Validate();
+        if(Ddns==null)throw new FormatException("DDNS 设置不能为空");Ddns.Validate();CloudflareDdnsSettings.ValidateToken(CloudflareDdnsToken);
+        if(Ddns.Enabled&&Ddns.Publish&&CloudflareDdnsToken.Length==0)throw new FormatException("发布 DDNS 需要先保存 Cloudflare API Token，或关闭“发布本机入口”");
         if (ConnectionSource is not ("custom" or "existing")) throw new FormatException("公共协调服务尚未提供，请选择自建服务或已有入口");
         if (CoordinationService is null || CoordinationPin is null || RequestedVirtualIp is null) throw new FormatException("本机连接设置无效");
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();

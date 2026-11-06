@@ -159,7 +159,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
             } catch (Exception ex) when (ex is FormatException or System.Security.Cryptography.CryptographicException) { log("已拒绝无效打洞控制消息"); }
         }
     }
-    public void Tick(IReadOnlyDictionary<int, MeshAnnouncement> announcements, string localExplicit,IReadOnlySet<int>? preferredEntries=null)
+    public void Tick(IReadOnlyDictionary<int, MeshAnnouncement> announcements, string localExplicit,IReadOnlySet<int>? preferredEntries=null,IReadOnlySet<int>? verifiedEntryOnly=null)
     {
         if (disposed) return;
         admissionWaiting.Clear();
@@ -178,7 +178,7 @@ internal sealed partial class MeshTraversalManager : IAsyncDisposable
         long now = Environment.TickCount64, utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).OrderBy(m => m.Slot).ToArray() ?? [];
         entryOnlyPeers.Clear();
-        foreach(var member in members)if(announcements.TryGetValue(member.Slot,out var declared)&&declared.Device==member.Device&&declared.ExistingEntryOnly)entryOnlyPeers.Add(member.Slot);
+        foreach(var member in members)if(verifiedEntryOnly?.Contains(member.Slot)==true||announcements.TryGetValue(member.Slot,out var declared)&&declared.Device==member.Device&&declared.ExistingEntryOnly)entryOnlyPeers.Add(member.Slot);
         var statuses = router.Status().ToDictionary(s => s.Slot);
         bool Healthy(int slot) => statuses.GetValueOrDefault(slot)?.Connected == true;
         MeshTraversalCapabilities? Remote(int slot) => !entryOnlyPeers.Contains(slot)&&announcements.TryGetValue(slot, out var a) && a.Expires > utc ? a.Traversal : null;

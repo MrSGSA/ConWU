@@ -13,8 +13,8 @@ internal static class DesktopBackend
             if(request.Patch!=null||request.Network!=null) return new(false,"服务请求参数无效",null);
             if(Interlocked.Exchange(ref registering,1)!=0)return new(false,"安装或启动仍在进行，请等待 Windows 确认窗口",null);
             try {
-                string exe=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","StreamLink.exe"));
-                if(!File.Exists(exe))return new(false,"请从完整运行包打开 StreamLink，或运行 MSI 安装包",null);
+                string exe=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"..","ConWU.exe"));
+                if(!File.Exists(exe))return new(false,"请从完整运行包打开 ConWU，或运行 MSI 安装包",null);
                 bool installed=StartupSettings.Read().ServiceRegistered;
                 var info=new ProcessStartInfo(exe){UseShellExecute=true,Verb="runas",WorkingDirectory=Path.GetDirectoryName(exe)!};
                 if(WindowsInstance.IsValidation)throw new IOException("隔离验证实例不通过 WebUI 注册服务");

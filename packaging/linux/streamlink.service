@@ -1,5 +1,5 @@
 [Unit]
-Description=StreamLink network device and optional coordinator
+Description=ConWU network device and optional coordinator
 After=network-online.target
 Wants=network-online.target
 

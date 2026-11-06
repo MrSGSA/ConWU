@@ -336,7 +336,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         Recovery.Recover(Log, Path.Combine(ProfileStore.Root, "sessions"));
         StartCoordinator();
-        Log("StreamLink 已启动"); if (profile.Enabled) Begin();
+        Log("ConWU 已启动"); if (profile.Enabled) Begin();
         initialized=true;
         PublishReply();
     }

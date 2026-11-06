@@ -7,18 +7,18 @@ $manifest=Get-Content -LiteralPath (Join-Path $BundleRoot 'app/manifest.json') -
 if(-not $MsiVersion){if($manifest.version -notmatch '^1\.0\.0-aq1-personal\.([1-9][0-9]*)$'){throw 'Personal version required'};$MsiVersion='1.0.'+$Matches[1]}
 if($MsiVersion -notmatch '^1\.0\.([1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 65535){throw 'Invalid MSI version'}
 $wix=Join-Path $repo 'out/wix-tools/wix.exe';if(-not(Test-Path -LiteralPath $wix)){throw 'Install pinned WiX 6.0.2 in out/wix-tools first (build dependency only)'}
-$service='StreamLink-PersonalFeature';$productName='StreamLink';$upgrade='AD076018-A9B8-47F5-B098-97479A363416';$directory='<Directory Id="INSTALLFOLDER" Name="StreamLink" />';$validationArgs='';$registryKey='Software\StreamLink\Installation'
+$service='StreamLink-PersonalFeature';$productName='ConWU';$upgrade='AD076018-A9B8-47F5-B098-97479A363416';$directory='<Directory Id="INSTALLFOLDER" Name="StreamLink" />';$validationArgs='';$registryKey='Software\StreamLink\Installation'
 if($ValidationInstance){
  $guid=[guid]::Empty;if(-not[guid]::TryParseExact($ValidationInstance,'N',[ref]$guid) -or $guid -eq [guid]::Empty){throw 'Canonical isolated validation GUID required'}
- $service='StreamLink-Validation-'+$ValidationInstance;$productName='StreamLink Validation '+$ValidationInstance.Substring(0,8);$upgrade=$guid.ToString('D');$validationArgs='--validation-instance '+$ValidationInstance+' ';$registryKey='Software\StreamLink\Validation\'+$ValidationInstance
+ $service='StreamLink-Validation-'+$ValidationInstance;$productName='ConWU Validation '+$ValidationInstance.Substring(0,8);$upgrade=$guid.ToString('D');$validationArgs='--validation-instance '+$ValidationInstance+' ';$registryKey='Software\StreamLink\Validation\'+$ValidationInstance
  $directory='<Directory Id="ValidationParent" Name="StreamLink-Validation"><Directory Id="ValidationId" Name="'+$ValidationInstance+'"><Directory Id="INSTALLFOLDER" Name="msi" /></Directory></Directory>'
 }
 $work=Join-Path (Split-Path -Parent $OutputPath) ('msi-build-'+[IO.Path]::GetFileNameWithoutExtension($OutputPath));New-Item -ItemType Directory -Path $work -Force|Out-Null
 $file=Join-Path $work 'Package.wxs'
 $xml=[xml]@'
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
- <Package Name="StreamLink" Manufacturer="StreamLink" Version="1.0.3" UpgradeCode="AD076018-A9B8-47F5-B098-97479A363416" Language="2052" Scope="perMachine" InstallerVersion="500">
-  <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="已安装较新的 StreamLink，请使用相同或更新版本的安装包。" />
+ <Package Name="ConWU" Manufacturer="ConWU" Version="1.0.3" UpgradeCode="AD076018-A9B8-47F5-B098-97479A363416" Language="2052" Scope="perMachine" InstallerVersion="500">
+  <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="已安装较新的 ConWU，请使用相同或更新版本的安装包。" />
   <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
   <Property Id="ARPPRODUCTICON" Value="AppIcon" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
@@ -32,9 +32,9 @@ $xml=[xml]@'
   <Icon Id="AppIcon" SourceFile="ICON" />
   <Binary Id="InstallerActions" SourceFile="ACTIONS" />
   <StandardDirectory Id="ProgramFiles64Folder" />
-  <StandardDirectory Id="ProgramMenuFolder"><Directory Id="ApplicationMenuFolder" Name="StreamLink" /></StandardDirectory>
+  <StandardDirectory Id="ProgramMenuFolder"><Directory Id="ApplicationMenuFolder" Name="ConWU" /><Directory Id="LegacyApplicationMenuFolder" Name="StreamLink" /></StandardDirectory>
   <StandardDirectory Id="DesktopFolder" />
-  <Feature Id="MainFeature" Title="StreamLink" Level="1" />
+  <Feature Id="MainFeature" Title="ConWU" Level="1" />
   <CustomAction Id="SetArpLocation" Property="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" />
   <CustomAction Id="NewTransaction" BinaryRef="InstallerActions" DllEntry="NewTransaction" Execute="immediate" Return="check" />
   <CustomAction Id="SetPrepare" Property="PrepareUpgrade" Value="CAD" />
@@ -86,18 +86,26 @@ foreach($item in $all){
   foreach($part in $parent.Split('/',[StringSplitOptions]::RemoveEmptyEntries)){$at=if($at){$at+'/'+$part}else{$part};if(-not $dirs.ContainsKey($at)){$id='D'+[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($at))).Substring(0,20);$child=Node 'Directory' @{Id=$id;Name=$part};$node.AppendChild($child)|Out-Null;$dirs[$at]=$child};$node=$dirs[$at]}
  }
  $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($relative))).Substring(0,24);$componentId='C'+$hash;$fileId='F'+$hash
- if($relative -eq 'StreamLink.exe'){$fileId='LauncherExe'}elseif($relative -eq 'app/StreamLink.exe'){$fileId='ServiceUiExe'}elseif($relative -eq 'app/StreamLink.Service.exe'){$fileId='ServiceExe'}
+ if($relative -eq 'StreamLink.exe'){$fileId='LauncherExe'}elseif($relative -eq 'ConWU.exe'){$fileId='ConwuLauncherExe'}elseif($relative -eq 'app/ConWU.exe'){$fileId='ServiceUiExe'}elseif($relative -eq 'app/StreamLink.Service.exe'){$fileId='ServiceExe'}
  $component=Node 'Component' @{Id=$componentId;Guid='*';Bitness='always64'};$fileNode=Node 'File' @{Id=$fileId;Source=$item.FullName;KeyPath='yes'};$component.AppendChild($fileNode)|Out-Null
  if($fileId -eq 'ServiceExe'){
-  $serviceNode=Node 'ServiceInstall' @{Id='InstallNetworkService';Name=$service;DisplayName='StreamLink Personal Network';Type='ownProcess';Start='auto';ErrorControl='normal';Account='LocalSystem';Vital='yes';Arguments=$validationArgs.Trim()};$component.AppendChild($serviceNode)|Out-Null
+  $serviceNode=Node 'ServiceInstall' @{Id='InstallNetworkService';Name=$service;DisplayName='ConWU Network';Type='ownProcess';Start='auto';ErrorControl='normal';Account='LocalSystem';Vital='yes';Arguments=$validationArgs.Trim()};$component.AppendChild($serviceNode)|Out-Null
   $component.AppendChild((Node 'ServiceControl' @{Id='ControlNetworkService';Name=$service;Start='install';Stop='both';Remove='uninstall';Wait='yes'}))|Out-Null
  }
  if($fileId -eq 'LauncherExe'){
   $startupName=if($ValidationInstance){$service}else{'StreamLink'}
   $component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key='Software\Microsoft\Windows\CurrentVersion\Run';Name=$startupName;Type='string';Value=('"[#LauncherExe]" '+$validationArgs+'--startup')}))|Out-Null
   foreach($value in @(@('ProductCode','[ProductCode]'),@('InstallLocation','[INSTALLFOLDER]'))){$component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key=$registryKey;Name=$value[0];Type='string';Value=$value[1]}))|Out-Null}
-  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
-  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+ }
+ if($fileId -eq 'ConwuLauncherExe'){
+  # Remove only the exact shortcuts previously installed for this instance.
+  $oldName=if($ValidationInstance){'StreamLink Validation '+$ValidationInstance.Substring(0,8)}else{'StreamLink'}
+  $component.AppendChild((Node 'RemoveFile' @{Id='OldDesktopShortcut';Directory='DesktopFolder';Name=($oldName+'.lnk');On='install'}))|Out-Null
+  $component.AppendChild((Node 'RemoveFile' @{Id='OldMenuShortcut';Directory='LegacyApplicationMenuFolder';Name=($oldName+'.lnk');On='install'}))|Out-Null
+  $component.AppendChild((Node 'RemoveFile' @{Id='OldUninstallShortcut';Directory='LegacyApplicationMenuFolder';Name=('卸载 '+$oldName+'.lnk');On='install'}))|Out-Null
+  $component.AppendChild((Node 'RemoveFolder' @{Id='OldMenuFolder';Directory='LegacyApplicationMenuFolder';On='install'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#ConwuLauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#ConwuLauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'Shortcut' @{Id='StartMenuUninstall';Directory='ApplicationMenuFolder';Name='卸载 '+$productName;Target='[SystemFolder]msiexec.exe';Arguments='/x [ProductCode]';Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'RemoveFolder' @{Id='RemoveApplicationMenu';Directory='ApplicationMenuFolder';On='uninstall'}))|Out-Null
  }
@@ -106,10 +114,10 @@ foreach($item in $all){
 foreach($node in $xml.SelectNodes('//*')){foreach($attr in @($node.Attributes)){
  if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/StreamLink.App/Assets/streamlink.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/streamlink-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
 }}
-$notice="StreamLink · 开源许可与第三方声明`n`nStreamLink 无需购买授权、激活或输入许可密钥。以下是软件及随包组件的开源使用条款。`n安装与更新会关闭当前版本的窗口并重启后台，保留配对和设备配置。卸载保留个人配置与共享驱动。`n`nStreamLink · MIT License`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
+$notice="ConWU · 开源许可与第三方声明`n`nConWU 无需购买授权、激活或输入许可密钥。以下是软件及随包组件的开源使用条款。`n安装与更新会关闭当前版本的窗口并重启后台，保留配对和设备配置。卸载保留个人配置与共享驱动。`n`nConWU · MIT License`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
 $thirdParty=Join-Path $BundleRoot 'app/licenses'
 if(Test-Path -LiteralPath $thirdParty){foreach($license in Get-ChildItem -LiteralPath $thirdParty -File|Sort-Object Name){
- if($license.Name -eq 'StreamLink-MIT.txt'){continue}
+ if($license.Name -in @('StreamLink-MIT.txt','ConWU-MIT.txt')){continue}
  $notice+="`n`n------------------------------`n"+$license.Name+"`n`n"+(Get-Content -LiteralPath $license.FullName -Raw)
 }}
 $notice+="`n`n第三方许可证原文同时保存在 app/licenses；相应源码及来源说明位于 app/sources。"

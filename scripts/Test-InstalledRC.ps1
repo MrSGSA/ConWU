@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Bundle,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
 $Bundle=[IO.Path]::GetFullPath($Bundle)
 if(Test-Path -LiteralPath (Join-Path $Bundle 'layout-manifest.json')){$Bundle=Join-Path $Bundle 'app'}
 $scope=[guid]::NewGuid().ToString('N');$service='StreamLink-Validation-'+$scope
@@ -17,7 +18,7 @@ function Invoke-App([string]$Folder,[string[]]$AppArgs,[switch]$ExpectedFailure)
     $arguments=@('--validation-instance',$scope)+$AppArgs
     if($arguments|Where-Object {$_.Contains('"')}){throw 'Invalid quoted argument'}
     $quoted=($arguments|ForEach-Object {'"'+$_+'"'}) -join ' '
-    $process=Start-Process -FilePath (Join-Path $Folder 'StreamLink.exe') -ArgumentList $quoted -WindowStyle Hidden -Wait -PassThru
+    $process=Start-Process -FilePath (ProductApp $Folder) -ArgumentList $quoted -WindowStyle Hidden -Wait -PassThru
     $rows.Add(@{operation=($AppArgs -join ' ');exit=$process.ExitCode;expectedFailure=[bool]$ExpectedFailure})
     if($ExpectedFailure){if($process.ExitCode -eq 0){throw 'Expected installer failure did not occur'}}elseif($process.ExitCode){throw 'Candidate app operation failed; inspect its exact installer log'}
 }

@@ -72,7 +72,7 @@ public static class WindowsHost
         dynamic rule = Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
         try
         {
-            rule.Name = name; rule.Description = "StreamLink 已配对的虚拟 IP，停止时移除";
+            rule.Name = name; rule.Description = "ConWU 已配对的虚拟 IP，停止时移除";
             rule.Protocol = 256; rule.Direction = 1; rule.Action = 1; rule.Enabled = true;
             rule.Profiles = int.MaxValue; rule.LocalAddresses = localIp; rule.RemoteAddresses = peerIp;
             policy.Rules.Add(rule);

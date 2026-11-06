@@ -131,7 +131,7 @@ public sealed class DirectPairClient : IShortPairClient
                     DirectPairReply reply;try{reply=DirectPairWire.Decode<DirectPairReply>(received.Buffer);}catch{continue;}
                     if(reply.Id!=request.Id)continue;if(reply.Error.Length>0)throw new IOException(reply.Error);return reply;
                 }
-            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new IOException("主机入口未回应配对。请确认主机在线、配对凭据有效，且入口指向 StreamLink、双方协议相同");}
+            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new IOException("主机入口未回应配对。请确认主机在线、配对凭据有效，且入口指向 ConWU、双方协议相同");}
             finally{deadline.Cancel();if(pending!=null)try{await pending;}catch(OperationCanceledException){}catch(SocketException){}}
         }finally{gate.Release();}
     }

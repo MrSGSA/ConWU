@@ -3,6 +3,7 @@
 param([Parameter(Mandatory)][string]$OldMsi,[Parameter(Mandatory)][string]$NewMsi,
       [Parameter(Mandatory)][string]$ValidationInstance,[Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
 $id=[guid]::Empty
 if(-not [guid]::TryParseExact($ValidationInstance,'N',[ref]$id) -or $id -eq [guid]::Empty){throw 'Isolated validation GUID required'}
 $OldMsi=[IO.Path]::GetFullPath($OldMsi);$NewMsi=[IO.Path]::GetFullPath($NewMsi)
@@ -26,7 +27,7 @@ function Msi([string]$operation,[string]$package,[string]$label){
  if((Daily) -cne $dailyBefore){throw 'Daily service changed during isolated upgrade'}
 }
 function App([string]$argument){
- $process=Start-Process (Join-Path $runtime 'StreamLink.exe') -ArgumentList @('--validation-instance',$ValidationInstance,$argument) -WindowStyle Hidden -PassThru
+ $process=Start-Process (ProductApp $runtime) -ArgumentList @('--validation-instance',$ValidationInstance,$argument) -WindowStyle Hidden -PassThru
  if(-not $process.WaitForExit(30000) -or $process.ExitCode){throw ('Owned acceptance operation failed: '+$argument)}
 }
 function Call([hashtable]$body){

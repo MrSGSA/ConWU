@@ -72,7 +72,7 @@ sealed class WebTrayContext : ApplicationContext
             if(!Uri.TryCreate(link,UriKind.Absolute,out var address)||address.Host!="127.0.0.1"||address.Scheme!="http"||address.Fragment.Length!=65)throw new IOException("本机面板未返回有效的临时会话");
             if(launchBrowser&&!closing)Process.Start(new ProcessStartInfo(link!){UseShellExecute=true});
         }catch(OperationCanceledException)when(closing){}
-        catch(Exception ex){if(!closing){if(launchBrowser)MessageBox.Show(ex.Message,"StreamLink",MessageBoxButtons.OK,MessageBoxIcon.Information);else tray.Text=TrayInformation.Format(null,"面板启动失败，请从托盘重试");}}
+        catch(Exception ex){if(!closing){if(launchBrowser)MessageBox.Show(ex.Message,"ConWU",MessageBoxButtons.OK,MessageBoxIcon.Information);else tray.Text=TrayInformation.Format(null,"面板启动失败，请从托盘重试");}}
         finally{gate.Release();}
     }
     protected override void ExitThreadCore()

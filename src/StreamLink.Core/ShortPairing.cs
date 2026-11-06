@@ -7,7 +7,7 @@ using System.Text.RegularExpressions;
 
 namespace StreamLink.Core;
 
-public sealed class PairRoomUnavailableException() : IOException("配对码无效、已使用或已过期，请让邀请端生成新码");
+public sealed class PairRoomUnavailableException() : IOException("配对码无效、已使用、已过期或协调服务已重启，请让邀请端生成新码；已确认的成员身份不受影响");
 public sealed record PairRoomCreate(string Commitment, string Name);
 public sealed record PairRoomJoin(string Code, string Commitment, string Name, string RequestedIp="", int Addressing=0)
 {
@@ -139,9 +139,11 @@ public sealed class ShortPairClient : IShortPairClient
         }
         using var response = received;
         if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new IOException("配对请求过于频繁，请稍后重试");
-        if(response.StatusCode==HttpStatusCode.NotFound&&path=="health")throw new IOException("该 HTTPS 地址未提供 StreamLink 协调服务，请检查协调地址与路径");
+        if(response.StatusCode==HttpStatusCode.NotFound&&path=="health")throw new IOException("该 HTTPS 地址未提供 ConWU 协调服务，请检查协调地址与路径");
         if (response.StatusCode == HttpStatusCode.NotFound) throw new PairRoomUnavailableException();
         if (response.StatusCode == HttpStatusCode.Conflict) throw new IOException("此配对码已有设备申请，请创建端确认或生成新码");
+        if ((int)response.StatusCode == 507) throw new IOException("协调存储已达上限，请联系该协调服务的管理员；本机设置及成员身份保持不变");
+        if ((int)response.StatusCode >= 500) throw new IOException($"协调代理或源站暂不可用（HTTP {(int)response.StatusCode}），请检查协调服务和 Tunnel；这不表示目标设备离线");
         if (!response.IsSuccessStatusCode) throw new IOException($"协调服务未完成配对请求（HTTP {(int)response.StatusCode}）");
         return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
     }

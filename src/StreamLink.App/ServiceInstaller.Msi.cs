@@ -34,8 +34,8 @@ public static partial class ServiceInstaller
         File.WriteAllText(state,JsonSerializer.Serialize(new MsiAuthorization(transaction,before,after)));
         if(before==null){store.AuthorizeUiUser(after);store.AuditUiAuthorization("msi-explicit-user-grant",before,after);}
         string command="\""+Path.Combine(AppContext.BaseDirectory,"StreamLink.Service.exe")+"\""+(WindowsInstance.IsValidation?" --validation-instance "+WindowsInstance.ValidationId:"");
-        await Sc("config",WindowsInstance.Name,"binPath=",command,"start=",store.Load().AutoStart?"auto":"demand","obj=","LocalSystem","DisplayName=","StreamLink Personal Network");
-        await Sc("description",WindowsInstance.Name,"StreamLink 原生直连网络；配置保留于受保护的 ProgramData 目录。");
+        await Sc("config",WindowsInstance.Name,"binPath=",command,"start=",store.Load().AutoStart?"auto":"demand","obj=","LocalSystem","DisplayName=","ConWU Network");
+        await Sc("description",WindowsInstance.Name,"ConWU 原生直连网络；配置保留于受保护的 ProgramData 目录。");
         await Sc("failure",WindowsInstance.Name,"reset=","86400","actions=","restart/5000/restart/15000/restart/60000");
     }
     public static void RollbackMsiAuthorization(string transaction)

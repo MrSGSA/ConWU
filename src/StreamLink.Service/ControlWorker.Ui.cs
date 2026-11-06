@@ -22,6 +22,7 @@ public sealed partial class ControlWorker
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
              NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),Desktop=StartupSettings.Read(),Coordinator=Volatile.Read(ref coordinatorStatus),
+             Ddns=p.Ddns.Enabled?meshRunner?.DdnsStatus??new("等待启动网络","网络运行后按已保存设置发布","网络运行后读取已授权成员入口"):new("未启用","",""),DdnsCredentialConfigured=p.CloudflareDdnsToken.Length>0,
              QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :

@@ -8,6 +8,7 @@ param(
  [string]$LegacyBundle
 )
 $ErrorActionPreference='Stop'
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
 $id=[guid]::Empty
 if(-not[guid]::TryParseExact($ValidationInstance,'N',[ref]$id) -or $id -eq [guid]::Empty){throw 'An isolated canonical validation GUID is required'}
 $Msi=[IO.Path]::GetFullPath($Msi)
@@ -43,7 +44,7 @@ function MsiRun([string]$Operation,[string]$Package,[string]$Label,[switch]$Expe
 }
 function App([string]$Folder,[string[]]$Arguments){
  $quoted=(@('--validation-instance',$ValidationInstance)+$Arguments|ForEach-Object{if($_.Contains('"')){throw 'Quote in test argument'};'"'+$_+'"'}) -join ' '
- $p=Start-Process (Join-Path $Folder 'StreamLink.exe') -ArgumentList $quoted -WindowStyle Hidden -PassThru
+ $p=Start-Process (ProductApp $Folder) -ArgumentList $quoted -WindowStyle Hidden -PassThru
  if(-not $p.WaitForExit(60000)){throw 'Owned app operation timed out'}
  if($p.ExitCode){throw ('Owned app failed: '+($Arguments -join ' '))}
 }
@@ -65,11 +66,11 @@ function StartTray([string]$Label,[switch]$Manual){
  Check ($launch.exit -eq 0 -and $launch.admin -eq $false -and -not $launch.error) ($Label+' ordinary launcher')
  $watch=[Diagnostics.Stopwatch]::StartNew()
  do {
-  $processes=@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)})
+  $processes=@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='ConWU.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)})
   if(@($processes|Where-Object Name -eq 'StreamLink.Web.exe').Count){break}
   Start-Sleep -Milliseconds 200
  }while($watch.Elapsed.TotalSeconds -lt 15)
- Check (@($processes|Where-Object Name -eq 'StreamLink.exe').Count -eq 1 -and @($processes|Where-Object Name -eq 'StreamLink.Web.exe').Count -eq 1) ($Label+' real tray and Web processes started')
+ Check (@($processes|Where-Object Name -in @('StreamLink.exe','ConWU.exe')).Count -eq 1 -and @($processes|Where-Object Name -eq 'StreamLink.Web.exe').Count -eq 1) ($Label+' real tray and Web processes started')
  return ,@($processes.ProcessId)
 }
 function Gone([uint32[]]$Pids,[string]$Label){
@@ -107,11 +108,11 @@ try {
  $startup=Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $service
  Check ($startup -eq ('"'+(Join-Path $install 'StreamLink.exe')+'" --validation-instance '+$ValidationInstance+' --startup')) 'MSI owns the exact quoted login startup command'
  $shell=New-Object -ComObject WScript.Shell
- foreach($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'StreamLink'))){
-  $link=Join-Path $folder ('StreamLink Validation '+$ValidationInstance.Substring(0,8)+'.lnk')
+ foreach($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'ConWU'))){
+  $link=Join-Path $folder ('ConWU Validation '+$ValidationInstance.Substring(0,8)+'.lnk')
   Check (Test-Path -LiteralPath $link) 'installed application shortcut exists'
   $shortcut=$shell.CreateShortcut($link)
-  Check ($shortcut.TargetPath -eq (Join-Path $install 'StreamLink.exe') -and $shortcut.Arguments.Trim() -eq ('--validation-instance '+$ValidationInstance) -and $shortcut.IconLocation.Length -gt 0) 'shortcut targets actual launcher with icon and isolated arguments'
+  Check ($shortcut.TargetPath -eq (Join-Path $install 'ConWU.exe') -and $shortcut.Arguments.Trim() -eq ('--validation-instance '+$ValidationInstance) -and $shortcut.IconLocation.Length -gt 0) 'shortcut targets actual launcher with icon and isolated arguments'
  }
  if($preUi.Count){Gone $preUi 'upgrade'}
  # Restart before any acceptance-status call: the first UI request is from an
@@ -144,7 +145,7 @@ try {
  Same $startupBefore (State $runtime 'startup-disabled-after-repair') 'disabled startup repair'
  Check ((Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$service)).Start -eq 3) 'repair preserves explicitly disabled automatic service startup'
  App $runtime @('--startup')
- Check (@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0) 'disabled login startup exits without tray or Web processes'
+ Check (@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='ConWU.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0) 'disabled login startup exits without tray or Web processes'
  Uninstall 'uninstall'
  if($LegacyBundle){
   App $LegacyBundle @('--install','--ui-user-account',[Security.Principal.WindowsIdentity]::GetCurrent().Name)

@@ -39,7 +39,7 @@ public sealed partial class ControlWorker
                     client.Dispose();if(deadline.IsCancellationRequested)throw;
                 }
             }
-            throw new IOException("主机入口未回应，请确认主机已连接网络、邀请有效且映射指向 StreamLink");
+            throw new IOException("主机入口未回应，请确认主机已连接网络、邀请有效且映射指向 ConWU");
         }catch(OperationCanceledException)when(!token.IsCancellationRequested){ResetUiPair("本轮邀请连接超时");throw new IOException("本轮主机入口检查已超时，请稍后重试；未授予成员权限");}
         catch{ResetUiPair("加入申请未完成，请检查主机入口后重试");throw;}
     }

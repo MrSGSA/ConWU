@@ -12,13 +12,13 @@ public sealed partial class MeshRegistry
     readonly string file;
     readonly Dictionary<string, Registration> networks;
     readonly Dictionary<string, (MeshEnvelope Envelope, DateTimeOffset Expires)> nodes = [];
-    public MeshRegistry(string root) { file = Path.Combine(root, "mesh-networks.json"); networks = File.Exists(file) ? JsonSerializer.Deserialize<Dictionary<string, Registration>>(File.ReadAllText(file)) ?? [] : []; }
-    void Save() {
-        using(var output=new FileStream(file+".tmp",FileMode.Create,FileAccess.Write,FileShare.None)){
-            JsonSerializer.Serialize(output,networks);output.Flush(true);
-        }
-        File.Move(file+".tmp",file,true);
+    public MeshRegistry(string root) { file = Path.Combine(root, "mesh-networks.json"); networks = CoordinationStorage.Load<Registration>(file, ValidateStored); }
+    internal static void ValidateStored(string network, Registration record) {
+        if(record == null || !Regex.IsMatch(record.AuthHash ?? "", "^[A-F0-9]{64}$") || record.Directory == null)
+            throw new IOException("协调成员记录无效");
+        MeshIdentity.ValidateDirectory(record.Directory, network, record.Directory.OwnerKey);
     }
+    void Save() => CoordinationStorage.Write(file, networks);
     static string Auth(HttpContext context) { string value = context.Request.Headers.Authorization.ToString(); return Regex.IsMatch(value, "^Bearer [A-F0-9]{64}$") ? Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(value))) : ""; }
     static bool Equal(string a, string b) => a.Length == 64 && b.Length == 64 && CryptographicOperations.FixedTimeEquals(Convert.FromHexString(a), Convert.FromHexString(b));
     public IResult Directory(HttpContext context, string network, MeshDirectory directory)
@@ -49,7 +49,7 @@ public sealed partial class MeshRegistry
                 if (directory.Revision == prior.Directory.Revision) return directory.Signature == prior.Directory.Signature ? Results.NoContent() : Results.Conflict();
                 if (directory.Members.Any(m => m.Slot < prior.Directory.NextSlot && !prior.Directory.Members.Contains(m))) return Results.Conflict();
                 try { MeshIdentity.ValidateSuccessor(directory, prior.Directory); } catch (CryptographicException) { return Results.Conflict(); }
-            } else if (networks.Count >= 2048) return Results.StatusCode(503);
+            } else if (networks.Count >= CoordinationStorage.MaximumNetworks) return Results.Json(new { error = "coordination-network-capacity" }, statusCode: 507);
             networks[network] = new(auth, directory);
             try { Save(); }
             catch {

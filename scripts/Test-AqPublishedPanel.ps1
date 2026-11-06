@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Bundle,[Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
 $Bundle=[IO.Path]::GetFullPath($Bundle);$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Fresh evidence required'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null
@@ -7,7 +8,7 @@ $scope=[guid]::NewGuid().ToString('N');$service='StreamLink-Validation-'+$scope;
 function Snapshot {Get-CimInstance Win32_Service -Filter "Name='StreamLink'"|Select-Object Name,State,ProcessId,PathName|ConvertTo-Json -Compress}
 function App([string[]]$Arguments){
  $argsText=(@('--validation-instance',$scope)+$Arguments|ForEach-Object{'"'+$_+'"'}) -join ' '
- $p=Start-Process -FilePath (Join-Path $Bundle 'StreamLink.exe') -ArgumentList $argsText -WindowStyle Hidden -PassThru
+ $p=Start-Process -FilePath (ProductApp $Bundle) -ArgumentList $argsText -WindowStyle Hidden -PassThru
  if(-not $p.WaitForExit(90000)){$p.Kill();throw 'Owned installer timeout'}
  if($p.ExitCode){throw "Installer/status exit $($p.ExitCode)"}
 }

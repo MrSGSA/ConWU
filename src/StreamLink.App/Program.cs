@@ -75,9 +75,9 @@ static class Program
         bool startup=args is ["--startup"];
         if(startup&&!StreamLink.Core.StartupSettings.Read().AutoStart)return;
         if(args.Length!=0 && args is not ["--desktop"] && !startup) {
-            Environment.ExitCode=2;MessageBox.Show("无法识别启动参数。请从桌面快捷方式或 StreamLink.exe 打开 WebUI。","StreamLink");return;
+            Environment.ExitCode=2;MessageBox.Show("无法识别启动参数。请从桌面快捷方式或 ConWU.exe 打开 WebUI。","ConWU");return;
         }
-        if(StreamLink.Core.WindowsHost.IsAdmin){if(!startup)MessageBox.Show("请使用日常账号、普通权限打开 StreamLink。安装与修复请运行 MSI 安装包。","StreamLink");return;}
+        if(StreamLink.Core.WindowsHost.IsAdmin){if(!startup)MessageBox.Show("请使用日常账号、普通权限打开 ConWU。安装与修复请运行 MSI 安装包。","ConWU");return;}
         using var panelSingle=new Mutex(true,"Local\\"+StreamLink.Core.WindowsInstance.Name+"-WebTray",out bool panelFirst);
         if(!panelFirst){if(!startup)AppExitWindow.OpenExisting();return;}
         Application.Run(new WebTrayContext(openBrowser:!startup));

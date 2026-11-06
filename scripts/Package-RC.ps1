@@ -51,7 +51,7 @@ try{
     Copy-Item docs/implementation-1.0/task-status.json -Destination "$($stage.FullName)/task-status.json"
     @"
 StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中继。
-普通权限启动 StreamLink.exe 读取指定SID受限接口；安装、配对与高级设置从管理员入口操作。
+普通权限启动 ConWU.exe 读取指定SID受限接口；安装、配对与高级设置从管理员入口操作。
 首次安装通过 Install-Service.ps1 明确选择日常登录账号；命令行使用 --install --ui-user-account 域\用户名。升级默认保留既有UI授权。
 公共协调服务器尚未预配置，请自行填写可信HTTPS协调地址。
 本包未获发布者签名；文件hash只证明完整性。必过Gate未全通过，不能当1.0正式发布。
@@ -61,7 +61,7 @@ StreamLink $Version 开发候选；业务仅P2P，不经过服务器或成员中
 "@ |Set-Content "$($stage.FullName)/使用说明.txt" -Encoding utf8
     @'
 $ErrorActionPreference='Stop'
-$exe=Join-Path $PSScriptRoot 'StreamLink.exe'
+$exe=Join-Path $PSScriptRoot 'ConWU.exe'
 $account=[Security.Principal.WindowsIdentity]::GetCurrent().Name
 $process=Start-Process -FilePath $exe -ArgumentList @('--install','--ui-user-account',('"'+$account+'"')) -Verb RunAs -PassThru -Wait
 if($process.ExitCode){throw 'Installation failed; inspect local installer error and rollback outcome'}
@@ -70,7 +70,7 @@ if($process.ExitCode){throw 'Installation failed; inspect local installer error 
     $files=@(Get-ChildItem -LiteralPath $stage.FullName -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($stage.FullName,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
     [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;releaseLevel='development-candidate';releaseGate='NotPassed';provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content "$($stage.FullName)/manifest.json" -Encoding utf8
     $preflight=Join-Path $artifacts.FullName 'bundle-preflight.json'
-    $process=Start-Process -FilePath "$($stage.FullName)/StreamLink.exe" -ArgumentList @('--verify-bundle',$preflight) -WindowStyle Hidden -Wait -PassThru
+    $process=Start-Process -FilePath "$($stage.FullName)/ConWU.exe" -ArgumentList @('--verify-bundle',$preflight) -WindowStyle Hidden -Wait -PassThru
     if($process.ExitCode){throw 'Actual published app rejected its complete bundle'}
     $coord=Join-Path $candidate 'coordination-linux-x64'
     & dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:PublishSingleFile=false "-p:StreamLinkReleaseVersion=$Version" -o $coord *> (Join-Path $artifacts.FullName 'coordination-publish.txt')

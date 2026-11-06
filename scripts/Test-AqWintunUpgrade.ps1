@@ -3,6 +3,7 @@
 param([Parameter(Mandatory)][string]$PreviousMsi,[Parameter(Mandatory)][string]$CandidateMsi,
       [Parameter(Mandatory)][string]$Harness,[Parameter(Mandatory)][string]$OutputDirectory,[switch]$UseInstalledPrevious)
 $ErrorActionPreference='Stop'
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
 $PreviousMsi=[IO.Path]::GetFullPath($PreviousMsi);$CandidateMsi=[IO.Path]::GetFullPath($CandidateMsi);$Harness=[IO.Path]::GetFullPath($Harness)
 $old=Get-Content ($PreviousMsi+'.json') -Raw|ConvertFrom-Json;$new=Get-Content ($CandidateMsi+'.json') -Raw|ConvertFrom-Json
 $instance=[string]$new.validationInstance;$guid=[guid]::Empty
@@ -31,7 +32,7 @@ function Ready([string]$Label,[switch]$ServiceOnly){
  $path=Join-Path $OutputDirectory ($Label+'.json')
  $runtime=Join-Path ([Environment]::GetFolderPath('ProgramFiles')) ('StreamLink-Validation/'+$instance+'/msi/app')
  if($ServiceOnly){
-  $p=Start-Process (Join-Path $runtime 'StreamLink.exe') -ArgumentList @('--validation-instance',$instance,'--acceptance-status',('"'+$path+'"')) -WindowStyle Hidden -PassThru
+  $p=Start-Process (ProductApp $runtime) -ArgumentList @('--validation-instance',$instance,'--acceptance-status',('"'+$path+'"')) -WindowStyle Hidden -PassThru
   if(-not $p.WaitForExit(30000) -or $p.ExitCode){throw 'Restored service status unavailable'}
  }else{
   & $Harness --wintun-installer $instance ready $path > (Join-Path $OutputDirectory ($Label+'-harness.log')) 2>&1

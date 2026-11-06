@@ -138,7 +138,7 @@ static class Program
         try { Copy(source, Path.Combine(root, "outside"), manifest); } catch (TargetInvocationException e) when (e.InnerException is IOException) { invalid = true; }
         Check(invalid && !Directory.Exists(Path.Combine(root, "outside")), "Unmanaged install destination was mutated");
         invalid=false;try{ServiceInstaller.VerifyBundle(source);}catch(IOException){invalid=true;}Check(invalid,"self-listed hash-only package cannot pass runtime/provenance preflight");
-        string[] required=["StreamLink.exe","StreamLink.dll","StreamLink.runtimeconfig.json","StreamLink.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
+        string[] required=["ConWU.exe","ConWU.dll","ConWU.runtimeconfig.json","ConWU.deps.json","StreamLink.Service.exe","StreamLink.Service.dll","StreamLink.Service.runtimeconfig.json","StreamLink.Service.deps.json","components/udp2raw-native.exe","components/streamlink-tun.dll","components/wintun.dll","components/WinDivert.dll","components/WinDivert64.sys"];
         required=[..required,"web/StreamLink.Web.exe","web/StreamLink.Web.dll","web/StreamLink.Web.runtimeconfig.json","web/wwwroot/index.html","web/wwwroot/app.js","web/wwwroot/style.css"];
         var pe=new byte[80];pe[0]=(byte)'M';pe[1]=(byte)'Z';pe[60]=64;pe[64]=(byte)'P';pe[65]=(byte)'E';pe[68]=0x64;pe[69]=0x86;
         foreach(string file in required){string path=Path.Combine(source,file);Directory.CreateDirectory(Path.GetDirectoryName(path)!);File.WriteAllBytes(path,pe);}

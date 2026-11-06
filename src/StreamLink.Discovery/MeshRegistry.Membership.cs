@@ -40,7 +40,7 @@ public sealed partial class MeshRegistry
                 }catch{return Results.Conflict(prior.Directory);}
             }else{
                 if(request.ExpectedHead.Length!=0)return Results.NotFound();
-                if(networks.Count>=2048)return Results.StatusCode(503);
+                if(networks.Count>=CoordinationStorage.MaximumNetworks)return Results.Json(new{error="coordination-network-capacity"},statusCode:507);
                 var history=MeshGovernance.Unpack(next.Governance);
                 if(history.Changes.Length!=0 || history.Genesis.Revision!=1 || history.Genesis.Members.Length!=1)return Results.BadRequest();
             }

@@ -52,6 +52,7 @@ def hashes():
 hashes()
 try:
     run('bash',str(bundle/'install.sh'),env=env)
+    check(json.loads(run('/usr/local/bin/conwu','config','show',env=env))==json.loads(run('/usr/local/bin/streamlink','config','show',env=env)), 'new and compatibility commands address the same daemon settings')
     p=root/'settings.json';p.write_text(json.dumps({'DeviceName':'retained-across-upgrade','Network':{'ExistingEntries':[{'PeerSlot':-2,'Source':'203.0.113.8:44680'}]}}))
     run('/usr/local/bin/streamlink','config','apply',str(p),env=env)
     original=json.loads(run('/usr/local/bin/streamlink','config','show',env=env));old=pathlib.Path('/opt/streamlink/current').resolve()
@@ -60,6 +61,7 @@ try:
     check(pathlib.Path('/opt/streamlink/current').resolve()!=old and old.is_dir(),'update switches program atomically and retains the previous release')
     check(json.loads(run('/usr/local/bin/streamlink','config','show',env=env))==original,'update preserves saved settings and startup choice')
     run('bash',str(bundle/'uninstall.sh'),env=env)
+    check(not pathlib.Path('/usr/local/bin/conwu').is_symlink() and not pathlib.Path('/usr/local/bin/streamlink').is_symlink(), 'uninstall removes both owned command aliases')
     check(not pathlib.Path('/opt/streamlink').exists() and pathlib.Path('/var/lib/streamlink/profile.json').exists(),'uninstall removes only the program and keeps settings')
     run('bash',str(bundle/'install.sh'),env=env)
     check(json.loads(run('/usr/local/bin/streamlink','config','show',env=env))==original,'reinstallation inherits retained settings')

@@ -44,6 +44,8 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public int[] InactiveEntrySlots {get;init;}=[];
     public UiDesktopStatus? Desktop {get;init;}
     public CoordinatorStatus? Coordinator {get;init;}
+    public CloudflareDdnsStatus? Ddns {get;init;}
+    public bool DdnsCredentialConfigured {get;init;}
     public string Platform {get;init;}=OperatingSystem.IsLinux()?"linux":"windows";
 }
 public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);
@@ -65,6 +67,8 @@ public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Veri
 public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)
 {
     public CoordinatorSettings Coordinator {get;init;}=new();
+    // Null means an older client omitted this new setting; preserve it.
+    public CloudflareDdnsSettings? Ddns {get;init;}
     public string ConnectionSource {get;init;}="custom";
     public bool DirectMode {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];
@@ -79,6 +83,10 @@ public sealed record UiNetworkAction(string Action,string Service="",string Cert
     public UiConfigPatch? Patch {get;init;}
     public bool? AutoStart {get;init;}
     public bool? ExpectedAutoStart {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? DdnsToken {get;init;}
+    public bool ClearDdnsToken {get;init;}
+    public override string ToString() => "UiNetworkAction (credentials hidden)";
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null,
@@ -134,7 +142,7 @@ public static class UiControlProtocol
             string state=OperatingSystem.IsWindows()?ControlServerIdentity.Availability():"Unavailable";
             throw state switch {
                 "NotInstalled"=>new UiBackendException(state,"尚未安装个人后台，请运行 MSI 安装包。",ex),
-                "Stopped"=>new UiBackendException(state,"个人后台已停止，请在 Windows 服务中启动 StreamLink 个人后台，或运行 MSI 修复安装。",ex),
+                "Stopped"=>new UiBackendException(state,"个人后台已停止，请在 Windows 服务中启动 ConWU 后台，或运行 MSI 修复安装。",ex),
                 "AccessDenied"=>new UiBackendException(state,"当前 Windows 账号无法查询个人后台，请修复安装并核对授权。",ex),
                 _=>new UiBackendException("ServiceError","个人服务正在运行，但本地控制连接未完成。请修复安装或查看诊断日志。",ex)
             };

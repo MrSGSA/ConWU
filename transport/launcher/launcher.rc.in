@@ -11,12 +11,12 @@ BEGIN
  BEGIN
   BLOCK "040904b0"
   BEGIN
-   VALUE "CompanyName", "StreamLink"
-   VALUE "FileDescription", "StreamLink Launcher"
+   VALUE "CompanyName", "ConWU"
+   VALUE "FileDescription", "ConWU Launcher"
    VALUE "FileVersion", "@STREAMLINK_PACKAGE_FILE_VERSION@"
-   VALUE "InternalName", "StreamLink.Launcher"
-   VALUE "OriginalFilename", "StreamLink.exe"
-   VALUE "ProductName", "StreamLink"
+   VALUE "InternalName", "ConWU.Launcher"
+   VALUE "OriginalFilename", "ConWU.exe"
+   VALUE "ProductName", "ConWU"
    VALUE "ProductVersion", "@STREAMLINK_PACKAGE_FILE_VERSION@"
   END
  END
