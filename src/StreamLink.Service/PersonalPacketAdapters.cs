@@ -7,7 +7,17 @@ internal static class PersonalPacketAdapters
     public static Task Preflight(DeviceProfile profile,CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
-        if(OperatingSystem.IsLinux()){if(profile.AdapterBackend!=PacketAdapterBackend.LinuxTun)throw new IOException("Linux 需要内核 TUN 后端");return Task.CompletedTask;}
+        if(OperatingSystem.IsLinux()){
+            if(profile.AdapterBackend!=PacketAdapterBackend.LinuxTun)throw new IOException("Linux 需要内核 TUN 后端");
+            if(!File.Exists("/dev/net/tun"))throw new IOException("参与网络需要 /dev/net/tun；仅提供协调服务不需要 TUN");
+            return Task.Run(()=>{
+                foreach(var command in new[]{"ip","nft","iptables"}){
+                    token.ThrowIfCancellationRequested();
+                    try{LinuxPlatform.Run(command,command=="ip"?"-Version":"--version");}
+                    catch(Exception ex)when(ex is IOException or System.ComponentModel.Win32Exception){throw new IOException("参与网络需要 Linux 网络工具 "+command+"；请安装 iproute2、nftables 和 iptables",ex);}
+                }
+            },token);
+        }
         if(profile.AdapterBackend!=PacketAdapterBackend.OfficialWintun)
             throw new IOException("AQ-1 使用官方 Wintun；自研驱动已退出产品范围，请迁移配置后连接");
         return Task.CompletedTask;

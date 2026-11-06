@@ -4,7 +4,7 @@
 
 本包为 x86_64 / glibc 自包含包，内含 .NET 10 运行库与静态链接原生传输。已在 Arch Linux / WSL 的隔离网络命名空间验证；其他发行版、真实 NAT、Windows/Linux 混合实机及长时间大码率串流需继续验证，不能把本包视为这些项目已经通过。Alpine/musl、ARM64 不适用此包。
 
-需要 Linux TUN、iproute2、nftables、iptables（可使用 nft 后端）以及 root 或相应的网络管理权限。桌面/WebUI 不依赖 Linux 图形环境。
+参与网络需要 Linux TUN、iproute2、nftables、iptables（可使用 nft 后端）以及 root 或相应的网络管理权限。仅提供协调服务不需要这些网络组件。WebUI 不依赖 Linux 图形环境。
 
 ## 安装和更新
 

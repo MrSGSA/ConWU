@@ -2,9 +2,10 @@
 set -euo pipefail
 [[ $EUID == 0 ]] || { echo '请使用 sudo ./install.sh'; exit 1; }
 [[ ${1:-} == '' || ${1:-} == '--no-start' ]] || { echo '用法：install.sh [--no-start]'; exit 1; }
-for cmd in systemctl ip nft iptables sha256sum flock; do command -v "$cmd" >/dev/null || { echo "缺少依赖：$cmd"; exit 1; }; done
+for cmd in systemctl sha256sum flock; do command -v "$cmd" >/dev/null || { echo "缺少安装依赖：$cmd"; exit 1; }; done
 [[ -d /run/systemd/system ]] || { echo '此安装方式需要 systemd；非 systemd 系统可直接运行 runtime/streamlink run。'; exit 1; }
-[[ -c /dev/net/tun ]] || { echo '系统未提供 /dev/net/tun，请启用内核 TUN。'; exit 1; }
+[[ -c /dev/net/tun ]] || echo '系统未提供 TUN，仍可提供协调；参与网络前请启用 /dev/net/tun。'
+for cmd in ip nft iptables; do command -v "$cmd" >/dev/null || echo "缺少 $cmd，仍可提供协调；参与网络前请补齐网络工具。"; done
 source_dir=$(cd -- "$(dirname -- "$0")" && pwd -P)
 cd -- "$source_dir"
 sha256sum -c SHA256SUMS >/dev/null

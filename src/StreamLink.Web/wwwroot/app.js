@@ -117,7 +117,7 @@ function networkFields() {
     <h3 id="entry-title">网络入口</h3>
 
     ${entryEditor(d, target)}
-    ${!(target && direct) ? `<div class="field"><span>订阅自动更新间隔</span><div class="refresh-grid"><input type="number" data-key="refresh" aria-label="自动更新间隔数值" min="1" max="86400" value="${d.refresh}"><select data-key="unit" aria-label="自动更新间隔单位"><option value="1" ${Number(d.unit) === 1 ? 'selected' : ''}>秒</option><option value="60" ${Number(d.unit) === 60 ? 'selected' : ''}>分钟</option><option value="3600" ${Number(d.unit) === 3600 ? 'selected' : ''}>小时</option></select></div><span class="hint">范围 1 秒至 24 小时。订阅和域名定时更新；地址变化时更新候选，保持健康连接。</span></div>` : ''}
+    ${`<div class="field"><span>订阅自动更新间隔</span><div class="refresh-grid"><input type="number" data-key="refresh" aria-label="自动更新间隔数值" min="1" max="86400" value="${d.refresh}"><select data-key="unit" aria-label="自动更新间隔单位"><option value="1" ${Number(d.unit) === 1 ? 'selected' : ''}>秒</option><option value="60" ${Number(d.unit) === 60 ? 'selected' : ''}>分钟</option><option value="3600" ${Number(d.unit) === 3600 ? 'selected' : ''}>小时</option></select></div><span class="hint">范围 1 秒至 24 小时。订阅和域名定时更新；地址变化时更新候选，保持健康连接。</span></div>`}
     ${formatHelp(d)}
   </section>`}`;
 }
@@ -125,7 +125,7 @@ function networkFields() {
 function entryCoordination(d, target) {
   const direct = d.route === 'direct';
   const description = direct
-    ? target ? '已关闭：通过已有入口接入；首次加入请使用直连邀请或入口对应的配对码。' : '已关闭：本机使用已有入口，生成直连邀请。'
+    ? target ? '已关闭：首次加入请使用直连邀请，加入后会核验并维护网络入口。' : '已关闭：本机使用已有入口，生成直连邀请。'
     : target ? '已开启：通过协调入口配对，再认证网络入口并发现成员。' : '已开启：本机通过服务器配对，已有入口负责直连。';
   return `<div class="entry-coordination" aria-label="此入口的协调方式">
     <div class="switch-row"><div><h3>使用 HTTPS 协调服务器</h3><p class="hint">${description}</p></div>${switchControl('useServer', !direct, '使用 HTTPS 协调服务器', networkActive)}</div>
