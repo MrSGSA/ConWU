@@ -33,7 +33,11 @@ try {
  Run 'native-parser' (Join-Path $repo 'out/native/udp2raw-parser-test.exe') @() 120 @{STREAMLINK_PARSER_CORPUS=(Join-Path $OutputDirectory 'parser-corpus.txt')}
  Run 'native-so-state' (Join-Path $repo 'out/native/native-so-state-test.exe') @()
  Managed 'NativeInputTests' @((Join-Path $OutputDirectory 'parser-corpus.txt'))
- foreach($name in @('Tests','PairingTests','WindowsTests','ConnectionTests','MappingTests','MeshTests','TraversalTests','MeshConnectionTests','MeshWatchTests','ControlTests','AdapterContractTests','Rc2PortableTests','QualityTests')){Managed $name}
+ foreach($name in @('Tests','PairingTests','WindowsTests','ConnectionTests','MappingTests','MeshTests','TraversalTests','MeshConnectionTests','MeshWatchTests','ControlTests','AdapterContractTests','Rc2PortableTests','QualityTests')){
+  # This suite now also runs membership governance and creator-offline recovery.
+  # Keep every case's own deadline; allow the sequential suite to finish.
+  if($name -eq 'MeshConnectionTests'){Managed $name @() 600}else{Managed $name}
+ }
  Run 'runner-retry-wake' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--network-wake-only',(Join-Path $OutputDirectory 'retry-wake.json'))
  Managed 'PersonalFeatureTests' @((Join-Path $OutputDirectory 'personal.json'))
  Managed 'RenderingTests' @((Join-Path $OutputDirectory 'tray/result.json'))

@@ -91,7 +91,7 @@ try{
  }
  if((Daily) -cne $dailyBefore){$failure='Daily service changed during isolated upgrade test'}
 }
-$result=[ordered]@{status=if($null -eq $failure){'Pass'}else{'Fail'};error=$failure;validationInstance=$ValidationInstance;steps=$rows.ToArray();scope='Actual isolated 1.0.4-to-candidate Windows Installer upgrade; complete settings-page value fingerprint, network identity and UI account; no daily networking changed'}
+$result=[ordered]@{status=if($null -eq $failure){'Pass'}else{'Fail'};error=$failure;validationInstance=$ValidationInstance;oldVersion=$before.productVersion;newVersion=$after.productVersion;steps=$rows.ToArray();scope='Actual isolated previous-release-to-candidate Windows Installer upgrade; complete settings-page value fingerprint, network identity and UI account; no daily networking changed'}
 $result|ConvertTo-Json -Depth 7|Set-Content (Join-Path $OutputDirectory 'result.json') -Encoding utf8NoBOM
 $result|ConvertTo-Json -Depth 7
 if($failure){throw $failure}

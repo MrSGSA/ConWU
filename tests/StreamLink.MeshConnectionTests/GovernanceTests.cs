@@ -28,9 +28,11 @@ static partial class Program
             Check(Code(Commit(a.Directory!,MeshGovernance.Head(anchor)))==200,"approval is committed against the expected membership head");
             var approved=a.Directory!;
             var failedSave=CopyMesh(a);_=Guest(failedSave);
-            string obstacle=Path.Combine(root,"mesh-networks.json.tmp");Directory.CreateDirectory(obstacle);
+            // Fail replacement at the destination, independently of the random
+            // temporary filename used by the production atomic writer.
+            string obstacle=Path.Combine(root,"mesh-networks.json");File.Move(obstacle,obstacle+".retained");Directory.CreateDirectory(obstacle);
             try{Commit(failedSave.Directory!,MeshGovernance.Head(approved));throw new Exception("failed storage was acknowledged");}catch(IOException){Check(true,"coordinator does not acknowledge a failed durable save");}catch(UnauthorizedAccessException){Check(true,"coordinator does not acknowledge a failed durable save");}
-            Directory.Delete(obstacle);
+            finally{Directory.Delete(obstacle);File.Move(obstacle+".retained",obstacle);}
             var retained=(MeshSnapshot)((IValueHttpResult)registry.Read(context,a.Pair.Network)).Value!;
             Check(MeshGovernance.Head(retained.Directory)==MeshGovernance.Head(approved),"failed coordinator save restores the previous visible membership");
             var c=Guest(b);

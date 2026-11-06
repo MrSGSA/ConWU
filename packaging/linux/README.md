@@ -42,6 +42,6 @@ WebUI 仅监听本机 `127.0.0.1:47821`。远程管理先执行 `ssh -L 47821:12
 
 协调数据位于 `/var/lib/streamlink/coordination`。从原独立协调服务迁移时，先停止旧写入者并备份数据，再迁入并启用新协调；不要同时运行两个互不同步的 Registry。本版本没有协调数据库复制或自动接管。
 
-源码已增加 `conwu coordinator status` 和离线 `coordinator backup|inspect|restore` 命令，以及本机协调设置中的外部 HTTPS 地址检查。本轮尚未编译，现有安装包不保证具有这些命令。备份恢复格式、迁移步骤及待验证范围见[协调服务可靠性与迁移](../../docs/aq1/协调服务可靠性与迁移-20261106.md)。
+提供 `conwu coordinator status` 和离线 `coordinator backup|inspect|restore` 命令，以及本机协调设置中的外部 HTTPS 地址检查。备份或恢复前先关闭协调角色，备份文件请私密保管。格式、迁移步骤及验证范围见[协调服务可靠性与迁移](../../docs/aq1/协调服务可靠性与迁移-20261106.md)。
 
 程序只回收自己登记的 TUN、子进程和防火墙规则，不改默认路由/DNS。若系统还有 firewalld 或其他独立 nft base chain，应按本机防火墙策略允许 ConWU 虚拟网段；本软件不会覆盖其他安全策略。异常退出后，下次启动根据本实例的私有记录回收遗留规则。

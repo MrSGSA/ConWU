@@ -102,11 +102,14 @@ static partial class Program
             var unauthorized = new DefaultHttpContext(); Check(Status(registry.Read(unauthorized, owner.Pair.Network)) == 401, "directory requires network authentication");
             long persistedRevision = owner.Directory!.Revision;
             Guest(owner);
-            Directory.CreateDirectory(Path.Combine(root, "mesh-networks.json.tmp"));
+            // Block the destination itself: atomic storage uses a fresh random
+            // temporary name, so occupying the historical .tmp path is no fault.
+            string stored = Path.Combine(root, "mesh-networks.json");
+            File.Move(stored, stored + ".retained"); Directory.CreateDirectory(stored);
             bool writeFailed = false;
             try { registry.Directory(context, owner.Pair.Network, owner.Directory!); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { writeFailed = true; }
-            finally { Directory.Delete(Path.Combine(root, "mesh-networks.json.tmp")); }
+            finally { Directory.Delete(stored); File.Move(stored + ".retained", stored); }
             var unchanged = (MeshSnapshot)((IValueHttpResult)registry.Read(context, owner.Pair.Network)).Value!;
             Check(writeFailed && unchanged.Directory.Revision == persistedRevision, "failed directory persistence leaves live authorization unchanged");
         } finally { File.Delete(Path.Combine(root, "mesh-networks.json")); Directory.Delete(root); }
