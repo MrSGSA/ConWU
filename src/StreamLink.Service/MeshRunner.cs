@@ -63,7 +63,7 @@ public sealed class MeshRunner
     {
         MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0);
         if (mesh.Directory is {} prior) MeshIdentity.ValidateSuccessor(directory, prior);
-        if (!directory.Members.Contains(mesh.Self)) throw new MeshRevokedException();
+        if (!directory.Members.Contains(mesh.Self)) throw new MeshRevokedException(directory.Closed);
         if (!stopping) router?.ApplyDirectory(directory);
         mesh.Directory = directory;
     }
@@ -86,7 +86,7 @@ public sealed class MeshRunner
     {
         if (Interlocked.CompareExchange(ref runStarted, 1, 0) != 0) throw new InvalidOperationException("同一网络运行器不能重复或并发启动");
         profile.Validate(); mesh.Validate();
-        if (mesh.Directory is {} known && !known.Members.Contains(mesh.Self)) { CleanupComplete = true; throw new MeshRevokedException(); }
+        if (mesh.Directory is {} known && !known.Members.Contains(mesh.Self)) { CleanupComplete = true; throw new MeshRevokedException(known.Closed); }
         // Explicit workers use the user's current fixed protocol, not the mode stored
         // in the original enrollment. This cannot enable an unselected protocol.
         var wireMesh=JsonSerializer.Deserialize<MeshProfile>(JsonSerializer.Serialize(mesh))!;
@@ -125,7 +125,7 @@ public sealed class MeshRunner
         var reconnectPlans=new Dictionary<int,PeerReconnectPolicy>();
         int refreshSeconds=profile.EntryRefreshSeconds;
         string resolutionState="";
-        var externalSources=profile.ConnectionSource=="existing" || mesh.Pair.Direct ? profile.ExistingEntries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=1}:e).Distinct().ToArray() : [];
+        var externalSources=profile.ConnectionSource=="existing" || mesh.Pair.Direct ? profile.ExistingEntries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray() : [];
         if(externalSources.Length==0 && profile.ManualEndpoint.Length>0)externalSources=[new(0,profile.ManualEndpoint)];
         Task<EntryResolution[]>? resolving=null;
         ExistingEntry[] resolvingSources=[];
@@ -174,7 +174,7 @@ public sealed class MeshRunner
                 try { remember(snapshot.Directory); rememberedDirectory = snapshot.Directory.Revision; }
                 catch (Exception) when (revoked) { log("成员撤销记录未能保存；立即停止本机连接，请检查本机存储"); }
             }
-            if (revoked) throw new MeshRevokedException();
+            if (revoked) throw new MeshRevokedException(snapshot.Directory.Closed);
             foreach (var envelope in snapshot.Nodes) {
                 var member = snapshot.Directory.Members.FirstOrDefault(m => m.Slot == envelope.Slot && m.Slot != mesh.Self.Slot);
                 if (member == null) continue;
@@ -204,7 +204,7 @@ public sealed class MeshRunner
                 if(Interlocked.Exchange(ref pendingEntries,null) is {} edited){
                     if((edited.Source=="existing"||edited.Manual.Length>0||mesh.Pair.Direct)!=existingOnly)throw new IOException("连接方式已改变，需要重新建立连接以应用入口策略");
                     profile.ConnectionSource=edited.Source;profile.ManualEndpoint=edited.Manual;profile.ExistingEntries=edited.Entries;
-                    var nextSources=edited.Source=="existing"||mesh.Pair.Direct?edited.Entries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=1}:e).Distinct().ToArray():[];
+                    var nextSources=edited.Source=="existing"||mesh.Pair.Direct?edited.Entries.Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray():[];
                     if(nextSources.Length==0&&edited.Manual.Length>0)nextSources=[new(0,edited.Manual)];
                     if(!nextSources.SequenceEqual(externalSources)){
                         // Cache by the exact source AND owner, never the reused row index.
@@ -364,7 +364,7 @@ public sealed class MeshRunner
                     try {
                         var snapshot = await reading; readFailures = 0; coordinatorUnavailable = false;
                         if (snapshot != null) {
-                            synchronization.Merge(snapshot);
+                            synchronization.Merge(snapshot,true);
                             AcceptSynchronizedState();
                             if (traversal != null) traversal.Receive(snapshot.Traversal); else pendingControl = snapshot.Traversal ?? [];
                         }

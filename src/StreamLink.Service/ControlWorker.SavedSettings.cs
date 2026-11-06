@@ -10,7 +10,11 @@ public sealed partial class ControlWorker
         if(profile.Mesh is not {} mesh)return saved.Where(e=>e.PeerSlot is 0 or ExistingEntry.NetworkOwner).ToArray();
         var bound=new List<ExistingEntry>();
         foreach(var entry in saved){
-            if(entry.PeerSlot==0||entry.PeerSlot==ExistingEntry.NetworkOwner&&!mesh.IsOwner)bound.Add(entry);
+            if(entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IsDecentralized){
+                int target=MeshGovernance.CurrentSlot(mesh.Directory!,mesh.IntroducerSlot);
+                if(target>0&&target!=mesh.Self.Slot)bound.Add(entry with{PeerSlot=target});
+            }
+            else if(entry.PeerSlot==0||entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IntroducerSlot!=mesh.Self.Slot)bound.Add(entry);
             else if(entry.PeerSlot>0&&ActiveSavedPeerSlot(profile,entry.PeerSlot) is >0 and var slot)bound.Add(entry with{PeerSlot=slot});
         }
         return bound.Distinct().ToArray();
@@ -20,6 +24,7 @@ public sealed partial class ControlWorker
     {
         if(profile.Mesh is not {} mesh||profile.SavedPeerEntryNetwork!=mesh.Pair.Network)return 0;
         if(mesh.Directory?.Members.Any(m=>m.Slot==slot&&m.Slot!=mesh.Self.Slot)==true)return slot;
+        if(mesh.IsDecentralized){int current=MeshGovernance.CurrentSlot(mesh.Directory!,slot);return current!=mesh.Self.Slot?current:0;}
         var rejoined=profile.RejoinHistory.LastOrDefault(h=>h.Network==mesh.Pair.Network&&h.Former.Slot==slot);
         return rejoined!=null&&mesh.Directory?.Members.Any(m=>m.Slot==rejoined.CurrentSlot&&m.Slot!=mesh.Self.Slot)==true?rejoined.CurrentSlot:0;
     }

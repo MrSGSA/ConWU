@@ -24,6 +24,7 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--governance-only"]){await Governance();return;}
         if(args is ["--decentralization-only"]){await Decentralization();return;}
         if(args is ["--peer-sync-only"]){SynchronizationValidation();await AsymmetricSynchronization();return;}
         if(args is ["--network-pause-only"]){await NetworkPause();return;}
@@ -80,6 +81,7 @@ static partial class Program
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AccessDenied or SocketError.AddressAlreadyInUse) { Console.WriteLine(ex.SocketErrorCode); }
             return;
         }
+        await Governance();
         RejoinIdentity();
         ConnectionFeedback();
         await ExplicitReservationRecovery();

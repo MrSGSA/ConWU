@@ -23,6 +23,11 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool PersonalFeatureEdition {get;init;}
     public string NetworkId {get;init;}="";
     public bool IsOwner {get;init;}
+    public bool IsDecentralized {get;init;}
+    public bool CanManageNetwork {get;init;}
+    public int EntryTargetSlot {get;init;}=1;
+    public bool PendingMembership {get;init;}
+    public bool NetworkClosed {get;init;}
     public UiNetworkSettings? Settings {get;init;}
     public string SettingsRevision {get;init;}="";
     public string MigrationNotice {get;init;}="";

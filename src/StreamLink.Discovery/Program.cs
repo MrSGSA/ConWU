@@ -21,6 +21,14 @@ builder.Services.AddRateLimiter(o => {
 static string ClientAddress(HttpContext c) => Environment.GetEnvironmentVariable("STREAMLINK_TRUST_CLOUDFLARE") == "1" && c.Connection.RemoteIpAddress is { } address && System.Net.IPAddress.IsLoopback(address) && System.Net.IPAddress.TryParse(c.Request.Headers["CF-Connecting-IP"].ToString(), out var forwarded) ? forwarded.ToString() : c.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 var app = builder.Build(); app.UseRateLimiter();
 app.Use(async (context, next) => { context.Response.Headers.CacheControl = "no-store"; await next(context); });
+app.Use(async (context,next) => {
+    string path=context.Request.Path.Value??"";
+    long limit=Regex.IsMatch(path,@"^/v[34]/mesh/[a-f0-9]{32}/(membership|directory)$")?MeshGovernance.MaximumDirectoryBytes+4096:
+        Regex.IsMatch(path,@"^/v2/pair/[a-f0-9]{32}/approve$")?MeshGovernance.MaximumCipher+4096:16384;
+    var size=context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+    if(size is {IsReadOnly:false})size.MaxRequestBodySize=limit;
+    await next(context);
+});
 string root = Environment.GetEnvironmentVariable("STREAMLINK_DISCOVERY_DATA") ?? Path.Combine(AppContext.BaseDirectory, "data"); Directory.CreateDirectory(root);
 string file = Path.Combine(root, "networks.json");
 var networks = File.Exists(file) ? JsonSerializer.Deserialize<Dictionary<string, Registration>>(File.ReadAllText(file))! : new();
@@ -75,7 +83,8 @@ app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatc
 app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch input) => meshRegistry.Traversal(c, network, input)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
-app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false }));
+app.MapPut("/v4/mesh/{network}/membership", (HttpContext c,string network,MeshMembershipRequest request)=>meshRegistry.Membership(c,network,request)).RequireRateLimiting("mesh");
+app.MapGet("/health", () => Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false }));
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
 app.MapGet("/v2/pair/{room}/owner", (HttpContext c, string room) => pairRooms.Exchange(c, room, true)).RequireRateLimiting("pair-room");

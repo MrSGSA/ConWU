@@ -119,7 +119,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { CloseManaged(peers[slot]); peers[slot].Link.Dispose(); peers.Remove(slot); }
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
-                byte[] shared = MeshIdentity.SharedKey(profile, member);
+                byte[] shared = MeshIdentity.SharedKey(profile, member,directory);
                 try { peers.Add(member.Slot, new(member, new(profile.Self.Slot, member.Slot, shared)) {Host=IPAddress.Parse(MeshAddressing.Address(profile.Pair.Network,member)).GetAddressBytes()[3]}); } finally { CryptographicOperations.ZeroMemory(shared); }
             }
             profile.Directory = directory;

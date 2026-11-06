@@ -36,7 +36,7 @@ public sealed record MeshTraversalBatch(MeshTraversalMessage[] Messages);
 public static class MeshTraversal
 {
     public const int Version = 1, MaxBatch = 7, MaxInbox = 14, MaxSeconds = 60, PublishSeconds = 55;
-    public const int MaxWatchBytes = 131072;
+    public const int MaxWatchBytes = MeshGovernance.MaximumDirectoryBytes + 131072;
     static byte[] Signed(string network, MeshTraversalMessage m) => JsonSerializer.SerializeToUtf8Bytes(new {
         domain = "streamlink-traversal-state-v1", network, m.Version, m.MessageId, m.FromSlot, m.FromDevice, m.FromBoot,
         m.ToSlot, m.ToDevice, m.ToBoot, m.Sequence, m.AttemptId, m.NominationRevision, m.ValidationNonce,

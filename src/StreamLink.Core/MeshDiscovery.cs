@@ -87,7 +87,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
         profile.Validate(); this.profile = profile;
         var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
         if (profile.Pair.CertificatePin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(profile.Pair.CertificatePin));
-        http = new(handler, disposeHandler: false) { BaseAddress = new(profile.Pair.Service), Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = 65536 };
+        http = new(handler, disposeHandler: false) { BaseAddress = new(profile.Pair.Service), Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = MeshGovernance.MaximumDirectoryBytes + 131072 };
         http.DefaultRequestHeaders.Authorization = new("Bearer", profile.Pair.Auth);
         watchHttp = new(handler) { BaseAddress = new(profile.Pair.Service), Timeout = TimeSpan.FromSeconds(TraversalLimits.LongPollTimeoutSeconds), MaxResponseContentBufferSize = MeshTraversal.MaxWatchBytes };
         watchHttp.DefaultRequestHeaders.Authorization = new("Bearer", profile.Pair.Auth);

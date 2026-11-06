@@ -9,16 +9,17 @@ public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile,
 public static class ServiceProtocol
 {
     public const int MaximumMessageBytes = 65536;
+    static int Limit<T>() => typeof(T)==typeof(ControlReply)||typeof(T)==typeof(ControlRequest)?6_000_000:MaximumMessageBytes;
     public static string PipeName => WindowsInstance.Name + "-Control-v2";
     public static async Task<T> Read<T>(Stream stream, CancellationToken token)
     {
         byte[] head = new byte[4]; await stream.ReadExactlyAsync(head, token); int length = BinaryPrimitives.ReadInt32LittleEndian(head);
-        if (length is < 1 or > MaximumMessageBytes) throw new IOException("控制消息大小无效");
+        if (length < 1 || length > Limit<T>()) throw new IOException("控制消息大小无效");
         byte[] bytes = new byte[length]; await stream.ReadExactlyAsync(bytes, token); return JsonSerializer.Deserialize<T>(bytes) ?? throw new IOException("控制消息为空");
     }
     public static async Task Write<T>(Stream stream, T message, CancellationToken token)
     {
-        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(message); if (bytes.Length > MaximumMessageBytes) throw new IOException("控制消息过大");
+        byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(message); if (bytes.Length > Limit<T>()) throw new IOException("控制消息过大");
         byte[] head = new byte[4]; BinaryPrimitives.WriteInt32LittleEndian(head, bytes.Length); await stream.WriteAsync(head, token); await stream.WriteAsync(bytes, token);
     }
     public static async Task<ControlReply> Call(ControlRequest request, CancellationToken token = default)

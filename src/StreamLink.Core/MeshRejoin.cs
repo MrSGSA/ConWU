@@ -8,11 +8,12 @@ namespace StreamLink.Core;
 // This is proof of the former membership, never an automatic admission grant.
 public sealed record MeshRejoinCredential(string Network, string OwnerKey, MeshMember Member, string SigningPrivate)
 {
+    public MeshDirectory? Directory {get;init;}
     public void Validate()
     {
-        if (Member is null || Member.Slot == 1 || SigningPrivate is not { Length: > 0 and <= 512 })
+        if (Member is null || Member.Slot == 1 && Directory?.Governance == null || SigningPrivate is not { Length: > 0 and <= 512 })
             throw new FormatException("重新加入凭据无效");
-        MeshIdentity.ValidateMember(Network, OwnerKey, Member);
+        MeshIdentity.ValidateMember(Network, OwnerKey, Member, Directory);
         if (MeshIdentity.PublicSigning(SigningPrivate) != Member.SigningKey)
             throw new CryptographicException("重新加入凭据不匹配");
     }
@@ -33,8 +34,8 @@ public static class MeshRejoin
     });
     static string Locator(string code) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(code)));
 
-    public static MeshRejoinCredential? Retain(MeshProfile? profile) => profile is { IsOwner: false }
-        ? new(profile.Pair.Network, profile.OwnerKey, profile.Self, profile.SigningPrivate) : null;
+    public static MeshRejoinCredential? Retain(MeshProfile? profile) => profile != null && (!profile.IsOwner || profile.IsDecentralized)
+        ? new(profile.Pair.Network, profile.OwnerKey, profile.Self, profile.SigningPrivate) {Directory=profile.IsDecentralized?profile.Directory:null} : null;
 
     public static MeshRejoinProof? Create(MeshRejoinCredential? credential, string code, PairKeyExchange key)
     {
@@ -46,23 +47,26 @@ public static class MeshRejoin
     }
 
     public static bool WellFormed(MeshRejoinProof proof) =>
-        Guid.TryParseExact(proof.Network, "N", out _) && proof.Slot is >= 2 and <= 254 &&
+        Guid.TryParseExact(proof.Network, "N", out _) && proof.Slot is >= 1 and <= 254 &&
         Guid.TryParseExact(proof.Device, "N", out _) && proof.Signature is { Length: > 0 and <= 128 };
 
     public static MeshMember? Resolve(MeshProfile owner, MeshRejoinProof? proof, string code, string commitment,IEnumerable<MeshRejoinHistory>? history=null)
     {
         if (proof == null || proof.Network != owner.Pair.Network) return null;
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-        if (!WellFormed(proof) || !PairKeyExchange.ValidCommitment(commitment) ||
+        if (!WellFormed(proof) || proof.Slot==owner.Self.Slot || proof.Slot==1&&!owner.IsDecentralized || !PairKeyExchange.ValidCommitment(commitment) ||
             proof.Expires <= now || proof.Expires > now + 360)
             throw new CryptographicException("重新加入证明无效，请重新申请");
         var member = owner.Directory?.Members.FirstOrDefault(m => m.Slot == proof.Slot && m.Device == proof.Device);
         var signingMember=member;
+        if(member==null&&owner.Directory?.Governance!=null&&MeshGovernance.RejoinLineage(owner.Directory,proof.Slot,proof.Device) is {} lineage){
+            member=lineage.Current;signingMember=lineage.Former;
+        }
         if(member==null&&history!=null){
             var retained=history.LastOrDefault(h=>h.Network==proof.Network&&h.Former.Slot==proof.Slot&&h.Former.Device==proof.Device);
             if(retained!=null){
-                MeshIdentity.ValidateMember(owner.Pair.Network,owner.OwnerKey,retained.Former);
-                member=owner.Directory?.Members.FirstOrDefault(m=>m.Slot==retained.CurrentSlot&&m.Slot!=1);
+                MeshIdentity.ValidateMember(owner.Pair.Network,owner.OwnerKey,retained.Former,owner.Directory);
+                member=owner.Directory?.Members.FirstOrDefault(m=>m.Slot==retained.CurrentSlot&&m.Slot!=owner.Self.Slot);
                 signingMember=retained.Former;
             }
         }

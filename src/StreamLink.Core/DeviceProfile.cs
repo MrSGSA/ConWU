@@ -16,6 +16,7 @@ public sealed class DeviceProfile
     public MeshProfile? Mesh { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public MeshRejoinCredential? RejoinCredential { get; set; }
+    public PendingMembershipChange? PendingMembership {get;set;}
     public MeshRejoinHistory[] RejoinHistory {get;set;}=[];
     public int Slot { get; set; } = 1;
     public bool Enabled { get; set; }
@@ -161,10 +162,14 @@ public sealed class DeviceProfile
         if (ManualEndpoint.Length > 0) Invitation.Create(ManualEndpoint, "faketcp", "").Validate();
         Mesh?.Validate();
         RejoinCredential?.Validate();
-        if(RejoinHistory is not {Length:<=32} || RejoinHistory.Length>0 && Mesh is not {IsOwner:true})throw new FormatException("重新加入历史无效");
+        if(PendingMembership is {} pending){
+            if(Mesh==null || pending.ExpectedHead.Length is not (0 or 64) || pending.Action is not ("enable" or "create" or "approve" or "revoke" or "leave" or "close") || pending.Ciphertext.Length>MeshGovernance.MaximumCipher || pending.Candidate.Length>32 || pending.RejoinHistory.Length>32)throw new FormatException("待确认网络变更无效");
+            MeshIdentity.ValidateDirectory(pending.Proposed,Mesh.Pair.Network,Mesh.OwnerKey);
+        }
+        if(RejoinHistory is not {Length:<=32} || RejoinHistory.Length>0 && Mesh is not {IsOwner:true} && Mesh?.IsDecentralized!=true)throw new FormatException("重新加入历史无效");
         foreach(var h in RejoinHistory){
-            if(h==null||h.Network!=Mesh!.Pair.Network||h.Former is null||h.Former.Slot==1||h.CurrentSlot<=h.Former.Slot||Mesh.Directory?.Members.Any(m=>m.Slot==h.CurrentSlot)!=true)throw new FormatException("重新加入历史成员已改变");
-            MeshIdentity.ValidateMember(h.Network,Mesh.OwnerKey,h.Former);
+            if(h==null||h.Network!=Mesh!.Pair.Network||h.Former is null||h.Former.Slot==1&&!Mesh.IsDecentralized||h.CurrentSlot<=h.Former.Slot||Mesh.Directory?.Members.Any(m=>m.Slot==h.CurrentSlot)!=true)throw new FormatException("重新加入历史成员已改变");
+            MeshIdentity.ValidateMember(h.Network,Mesh.OwnerKey,h.Former,Mesh.Directory);
         }
         if (Mesh != null && Pair != null) throw new FormatException("不能同时运行旧版配对和多机网络");
         if (Enabled && Pair == null && Mesh == null) throw new FormatException("请先创建或加入网络");

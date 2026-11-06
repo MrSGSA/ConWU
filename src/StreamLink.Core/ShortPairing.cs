@@ -7,9 +7,12 @@ using System.Text.RegularExpressions;
 
 namespace StreamLink.Core;
 
+public sealed class PairRoomUnavailableException() : IOException("配对码无效、已使用或已过期，请让邀请端生成新码");
 public sealed record PairRoomCreate(string Commitment, string Name);
 public sealed record PairRoomJoin(string Code, string Commitment, string Name, string RequestedIp="", int Addressing=0)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public int Governance {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public MeshRejoinProof? Rejoin {get;init;}
 }
@@ -19,6 +22,8 @@ public sealed record PairRoomState(string Candidate, string GuestCommitment, str
     public string Outcome {get;init;}="";
     public string RequestedIp {get;init;}="";
     public int Addressing {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public int Governance {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string? RejoinDigest {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -112,7 +117,7 @@ public sealed class ShortPairClient : IShortPairClient
         Pairing.Create(service, pin).Validate();
         var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
         if (pin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(pin));
-        http = new(handler) { BaseAddress = new(service), Timeout = TimeSpan.FromSeconds(12), MaxResponseContentBufferSize = 16384 };
+        http = new(handler) { BaseAddress = new(service), Timeout = TimeSpan.FromSeconds(12), MaxResponseContentBufferSize = MeshGovernance.MaximumCipher + 16384 };
     }
     async Task<T> Send<T>(HttpMethod method, string path, object? body, string? token, CancellationToken cancel)
     {
@@ -135,13 +140,13 @@ public sealed class ShortPairClient : IShortPairClient
         using var response = received;
         if (response.StatusCode == HttpStatusCode.TooManyRequests) throw new IOException("配对请求过于频繁，请稍后重试");
         if(response.StatusCode==HttpStatusCode.NotFound&&path=="health")throw new IOException("该 HTTPS 地址未提供 StreamLink 协调服务，请检查协调地址与路径");
-        if (response.StatusCode == HttpStatusCode.NotFound) throw new IOException("配对码无效、已使用或已过期，请让创建端生成新码");
+        if (response.StatusCode == HttpStatusCode.NotFound) throw new PairRoomUnavailableException();
         if (response.StatusCode == HttpStatusCode.Conflict) throw new IOException("此配对码已有设备申请，请创建端确认或生成新码");
         if (!response.IsSuccessStatusCode) throw new IOException($"协调服务未完成配对请求（HTTP {(int)response.StatusCode}）");
         return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
     }
     public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name), null, cancel);
-    public async Task RequireMeshSupport(CancellationToken cancel,bool requireDecisions=false,bool requireAddressing=false,bool requireRejoin=false)
+    public async Task RequireMeshSupport(CancellationToken cancel,bool requireDecisions=false,bool requireAddressing=false,bool requireRejoin=false,bool requireGovernance=false)
     {
         var document = await Send<JsonElement>(HttpMethod.Get,"health",null,null,cancel);
         if (!document.TryGetProperty("meshProtocol", out var version) || version.GetInt32() != 4)
@@ -150,6 +155,8 @@ public sealed class ShortPairClient : IShortPairClient
             throw new IOException("新版加入审批需要更新协调服务（拒绝与取消支持）。请部署本次附带的协调服务包；已有直连不受影响");
         if(requireAddressing && (!document.TryGetProperty("meshAddressing",out var addressing)||addressing.GetInt32()!=1))
             throw new IOException("自定义虚拟 IP 需要新版协调服务；请部署本次附带的协调服务包");
+        if(requireGovernance && (!document.TryGetProperty("meshGovernance",out var governance)||governance.GetInt32()!=1))
+            throw new IOException("成员平等网络需要更新协调服务；请先部署本版协调服务包，原网络仍保留");
         if(requireRejoin && (!document.TryGetProperty("memberRejoin",out var rejoin)||rejoin.GetInt32()!=1))
             throw new IOException("退出后重新加入需要 1.0.3 协调服务，请更新协调服务后重试，避免留下重复成员");
     }
@@ -162,7 +169,7 @@ public sealed class ShortPairClient : IShortPairClient
     public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)
     {
         if (!Regex.IsMatch(code, "^[0-9]{6}$")) throw new FormatException("请输入 6 位数字配对码");
-        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name,requestedIp,1){Rejoin=rejoin}, null, cancel);
+        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name,requestedIp,1){Rejoin=rejoin,Governance=1}, null, cancel);
     }
     public Task<PairRoomState> Poll(PairRoomTicket ticket, bool owner, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Get, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}", null, ticket.Token, cancel);
     public Task<PairRoomState> Reveal(PairRoomTicket ticket, bool owner, PairKeyExchange key, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}/reveal", new PairRoomReveal(key.PublicKey), ticket.Token, cancel);

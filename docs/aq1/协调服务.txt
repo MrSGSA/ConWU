@@ -1,7 +1,11 @@
-此目录是与 Windows 1.0.1-rc.8 对应的 Linux x64 自包含协调服务包。
+此目录是与 Windows 1.0.6 成员平等管理功能对应的 Linux x64 自包含协调服务包。
 本轮仅构建和隔离验证，未部署或检查公网服务当前版本。
 
-新增能力：/health 提供 pairingDecisions=1 与 meshAddressing=1。
+新增能力：/health 提供 meshGovernance=1；保留 pairingDecisions=1、meshAddressing=1 与 memberRejoin=1。
+成员平等网络使用 /v4/mesh/{network}/membership 原子提交成员变更，允许任意获准成员邀请、审批、移除和解散网络。
+所有设备必须先更新。旧网络不会自动扩大权限，由原创建者明确启用；网络 ID、IP 与设置保留。
+服务器仍负责发现、配对和并发变更确认，不充当串流业务中继。协调中断时已有直连继续，管理变更等待确认。
+必须保留并备份原 data 目录，尤其 mesh-networks.json；不要通过清空成员表解决升级问题。
 新版 WebUI 创建/加入/邀请先检查 pairingDecisions，保证“拒绝”和“取消”能通知另一端；旧协调服务需要先更新。
 自定义虚拟 IP 需要 meshAddressing=1；自定义地址网络的所有成员都应使用 rc.8 或更新版本。
 旧默认地址网络、既有配对及端点公告保持兼容，不需要因为界面更新而重新配对。

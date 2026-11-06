@@ -12,6 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using StreamLink.Core;
 using StreamLink.Service;
+using StreamLink.Discovery;
 
 namespace StreamLink.MeshConnectionTests;
 
@@ -27,7 +28,10 @@ static partial class Program
         var builder=WebApplication.CreateSlimBuilder();builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(o=>o.Listen(IPAddress.Loopback,0,l=>l.UseHttps(cert)));
         await using var app=builder.Build();bool unavailable=true,stall=false;int creates=0;
-        app.MapGet("/health",()=>unavailable?Results.StatusCode(503):Results.Json(new{meshProtocol=4,pairingDecisions=1,meshAddressing=1,memberRejoin=1}));
+        string registryRoot=Path.Combine(ProfileStore.Root,"coordinator");Directory.CreateDirectory(registryRoot);var registry=new MeshRegistry(registryRoot);
+        app.MapGet("/v3/mesh/{network}",(HttpContext c,string network)=>registry.Read(c,network));
+        app.MapPut("/v4/mesh/{network}/membership",(HttpContext c,string network,MeshMembershipRequest change)=>registry.Membership(c,network,change));
+        app.MapGet("/health",()=>unavailable?Results.StatusCode(503):Results.Json(new{meshProtocol=4,pairingDecisions=1,meshAddressing=1,memberRejoin=1,meshGovernance=1}));
         app.MapPost("/v2/pair",async(PairRoomCreate input,HttpContext context)=>{
             Interlocked.Increment(ref creates);
             if(stall)await Task.Delay(Timeout.Infinite,context.RequestAborted);
@@ -53,10 +57,10 @@ static partial class Program
             Check(JsonSerializer.Serialize(failedHealth.Status!.Settings)==savedSettings,"failed coordination health check preserves all saved settings");
             unavailable=false;stall=true;
             var timeout=await Create();
-            Check(!timeout.Ok&&timeout.Error.Contains("HTTPS")&&timeout.Error.Contains("超时")&&!timeout.Error.Contains("目标是否在线"),"real HTTPS request timeout names coordination instead of blaming a nonexistent peer: "+timeout.Error);
-            Check(store.Load().Mesh==null&&!store.Load().Enabled&&!timeout.Status!.Pairing!.Active,"lost invitation creation response leaves no half-created network or live pairing UI");
+            Check(timeout.Ok&&timeout.Status!.Logs.Any(l=>l.Contains("网络已创建")&&l.Contains("配对码")),"invitation timeout reports the already committed network accurately: "+timeout.Error+" | "+string.Join(" / ",timeout.Status!.Logs));
+            Check(store.Load().Mesh is {IsDecentralized:true}&&store.Load().Enabled&&!timeout.Status!.Pairing!.Active,"lost invitation response keeps the committed network with no live pairing UI");
             Check(JsonSerializer.Serialize(timeout.Status!.Settings)==savedSettings,"actual coordination request timeout preserves saved settings");
-            stall=false;var retry=await Create();
+            stall=false;var retry=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("invite",ExpectedNetwork:store.Load().Mesh!.Pair.Network)),sid,default);
             Check(retry.Ok&&store.Load().Mesh is {IsOwner:true}&&store.Load().Enabled,"retry creates and starts a complete network after coordination recovers");
             Check(creates==2&&retry.Status!.Pairing!.Active,"successful retry allocates one new invitation with no duplicate submit");
             Check(JsonSerializer.Serialize(retry.Status!.Settings)==savedSettings,"actual network creation preserves target entries and the complete saved settings");

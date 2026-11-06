@@ -46,7 +46,7 @@ public sealed partial class ControlWorker : BackgroundService
             if(profile.SavedNetworkSettings==null){
                 var existingSettings=LegacyPublicSettings(profile);
                 profile.SavedNetworkSettings=existingSettings with {
-                    ExistingEntries=SavedEntries(existingSettings.ExistingEntries,profile.Mesh?.IsOwner==false)
+                    ExistingEntries=SavedEntries(existingSettings.ExistingEntries,profile.Mesh!=null&&profile.Mesh.IntroducerSlot!=profile.Mesh.Self.Slot,profile.Mesh?.IntroducerSlot??1)
                 };
                 profile.SavedPeerEntryNetwork=profile.Mesh?.Pair.Network??"";
                 changed=true;
@@ -105,7 +105,7 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);remembered.Mesh!.Directory=directory;store.Save(remembered);profile=remembered;PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
+                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);if(remembered.Mesh!.Directory is {} priorDirectory)MeshIdentity.ValidateSuccessor(directory,priorDirectory);remembered.Mesh.Directory=directory;remembered.RejoinHistory=remembered.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();if(remembered.Mesh.IsDecentralized)remembered.ExistingEntries=RuntimeEntries(remembered);store.Save(remembered);profile=remembered;if(remembered.Mesh.IsDecentralized)meshRunner?.UpdateEntries(remembered);PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
                 else runner = new(copy, Log, ReportRuntimeStatus, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -118,7 +118,7 @@ public sealed partial class ControlWorker : BackgroundService
                             revoked.Network == current.Pair.Network && revoked.OwnerKey == current.OwnerKey &&
                             revoked.Revision > (current.Directory?.Revision ?? 0)) current.Directory = revoked;
                         profile.Enabled = false; store.Save(profile);
-                        status = new("已移出网络", "", "", "faketcp", false, null, ex.Message);
+                        status = new(profile.Mesh?.Directory?.Closed==true?"网络已解散":"已移出网络", "", "", "faketcp", false, null, ex.Message);
                     }
                     Log(ex.Message); break;
                 }
@@ -219,10 +219,12 @@ public sealed partial class ControlWorker : BackgroundService
             if(ui!=null && store.AuthorizedUiUser()!=ui.CallerSid)
                 throw new IOException("该本机用户的UI控制授权已改变");
             SetOperation(operation,"执行中",true);
+            if(profile.PendingMembership!=null && request.Command is not ("membership-resume" or "ui-network" or "ui-patch" or "stop" or "start" or "retry" or "personal-check"))throw new IOException("请先在 WebUI 继续确认待处理的网络变更");
             string issued = "";
             switch (request.Command)
             {
                 case "status": break;
+                case "membership-resume":await ResumeMembership(operation);break;
                 case "ui-network":
                     if(ui?.Network==null)throw new FormatException("网络操作需要已认证的UI请求");
                     await ApplyUiNetwork(ui.Network,operation);
@@ -245,12 +247,14 @@ public sealed partial class ControlWorker : BackgroundService
                     await MeshCoordinatorPreflight.Check(configured.Pair,operation.Stop.Token);
                     Log("个人新方法准备检查通过："+profile.TraversalMode+"；实际打洞、资格和承载状态在连接后报告，不以开关宣称成功");break;
                 case "mesh-invite":
+                    if(profile.Mesh?.IsDecentralized==true)throw new IOException("成员平等网络请通过 WebUI 生成配对码并审批");
                     lock (sync) {
                         var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
                         issued = MeshIdentity.Export(MeshIdentity.Issue(network)); store.Save(profile);
                         meshRunner?.UpdateDirectory(network.Directory!);
                     } break;
                 case "mesh-revoke":
+                    if(profile.Mesh?.IsDecentralized==true){await ApplyUiNetwork(new("revoke",ExpectedNetwork:profile.Mesh.Pair.Network,PeerSlot:request.PeerSlot),operation);break;}
                     lock (sync) {
                         var network = profile.Mesh ?? throw new IOException("请先创建多机网络");
                         MeshIdentity.Revoke(network, request.PeerSlot);profile.RejoinHistory=profile.RejoinHistory.Where(h=>h.CurrentSlot!=request.PeerSlot).ToArray();store.Save(profile); meshRunner?.UpdateDirectory(network.Directory!);
@@ -280,7 +284,7 @@ public sealed partial class ControlWorker : BackgroundService
                     bool resume = profile.Enabled;
                     updated=ProfileChanges.Copy(updated);
                     var userSettings=LegacyPublicSettings(updated);
-                    updated.SavedNetworkSettings=userSettings with{ExistingEntries=SavedEntries(userSettings.ExistingEntries,updated.Mesh?.IsOwner==false)};
+                    updated.SavedNetworkSettings=userSettings with{ExistingEntries=SavedEntries(userSettings.ExistingEntries,updated.Mesh!=null&&updated.Mesh.IntroducerSlot!=updated.Mesh.Self.Slot,updated.Mesh?.IntroducerSlot??1)};
                     updated.SavedPeerEntryNetwork=updated.Mesh?.Pair.Network??"";
                     updated.Enabled=resume;updated.LastEntry=profile.LastEntry;updated.LastStun=profile.LastStun;
                     if(profile.AdditionalData!=null){updated.AdditionalData??=new();foreach(var extra in profile.AdditionalData)updated.AdditionalData.TryAdd(extra.Key,extra.Value.Clone());}
@@ -339,6 +343,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         StartLocal();
         var uiServing=RunUiControl(stoppingToken);
+        var recovering=profile.PendingMembership==null?Task.CompletedTask:Task.Run(async()=>{var recovered=await HandleCore(new("membership-resume"),stoppingToken,null);if(!recovered.Ok)Log("待确认网络变更需要继续确认："+recovered.Error);},CancellationToken.None);
         using var clientsLimit=new SemaphoreSlim(8,8);var clients=new List<Task>();bool first=true;
         try
         {
@@ -354,6 +359,6 @@ public sealed partial class ControlWorker : BackgroundService
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-        finally {try{await Task.WhenAll(clients.Append(uiServing)).WaitAsync(TimeSpan.FromSeconds(21));}finally{await End();runStop?.Dispose();runStop=null;}}
+        finally {try{await Task.WhenAll(clients.Append(uiServing).Append(recovering)).WaitAsync(TimeSpan.FromSeconds(21));}finally{await End();runStop?.Dispose();runStop=null;}}
     }
 }

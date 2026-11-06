@@ -4,11 +4,11 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed class MeshRevokedException() : IOException("本设备已被移出网络，请重新申请加入");
+public sealed class MeshRevokedException(bool closed=false) : IOException(closed?"此网络已被成员解散，请退出后创建或加入其他网络":"本设备已被移出网络，请重新申请加入");
 
-// A network administrator signs membership; members have independent signing
-// and ECDH keys. The six-digit exchange delivers one device credential, never
-// the administrator key. Slots are never recycled within a network.
+// Legacy networks use creator-signed membership. Equal-member networks verify
+// the device-signed governance history. Pairing delivers one device credential,
+// never the root signing key. Slots are never recycled within a network.
 public sealed record MeshMember(int Slot, string Device, string SigningKey, string ExchangeKey, string Signature)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -17,9 +17,18 @@ public sealed record MeshMember(int Slot, string Device, string SigningKey, stri
 public sealed record MeshDirectory(string Network, string OwnerKey, long Revision, int NextSlot, MeshMember[] Members, string Signature)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Governance {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
+    public bool Closed {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string[]? ReservedAddresses {get;init;}
 }
-public sealed record MeshEnrollment(Pairing Pair, string OwnerKey, MeshMember Member, string SigningPrivate, string ExchangePrivate, long Expires);
+public sealed record MeshEnrollment(Pairing Pair, string OwnerKey, MeshMember Member, string SigningPrivate, string ExchangePrivate, long Expires)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public MeshDirectory? Directory {get;init;}
+    public int IntroducerSlot {get;init;}=1;
+}
 public sealed class MeshProfile
 {
     public Pairing Pair { get; set; } = null!;
@@ -29,11 +38,15 @@ public sealed class MeshProfile
     public string SigningPrivate { get; set; } = "";
     public string ExchangePrivate { get; set; } = "";
     public MeshDirectory? Directory { get; set; }
+    public int IntroducerSlot {get;set;}=1;
     public bool IsOwner => OwnerPrivate.Length > 0;
+    public bool IsDecentralized => Directory?.Governance != null;
+    public bool CanManage => Directory is {Closed:false} d && d.Members.Contains(Self) && (IsDecentralized || IsOwner);
     public string LocalIp => MeshAddressing.Address(Pair.Network, Self);
     public void Validate()
     {
-        Pair.Validate(); MeshIdentity.ValidateMember(Pair.Network, OwnerKey, Self);
+        Pair.Validate(); MeshIdentity.ValidateMember(Pair.Network, OwnerKey, Self, Directory);
+        if (IntroducerSlot is <1 or >254 || IsDecentralized && Pair.Direct) throw new CryptographicException("网络发现方式或引荐成员无效");
         if (MeshIdentity.PublicSigning(SigningPrivate) != Self.SigningKey || MeshIdentity.PublicExchange(ExchangePrivate) != Self.ExchangeKey)
             throw new CryptographicException("设备凭据不匹配");
         if (IsOwner && (MeshIdentity.PublicSigning(OwnerPrivate) != OwnerKey || Self.Slot != 1)) throw new CryptographicException("管理员凭据不匹配");
@@ -45,7 +58,7 @@ public static class MeshIdentity
 {
     public const int MaxMembers = 8;
     static byte[] Data(object value) => JsonSerializer.SerializeToUtf8Bytes(value);
-    static byte[] MemberData(string network, MeshMember member) => member.VirtualIp == null
+    internal static byte[] MemberData(string network, MeshMember member) => member.VirtualIp == null
         ? Data(new { domain = "streamlink-member-v4", network, member.Slot, member.Device, member.SigningKey, member.ExchangeKey })
         : Data(new { domain = "streamlink-member-address-v1", network, member.Slot, member.Device, member.SigningKey, member.ExchangeKey, member.VirtualIp });
     static byte[] DirectoryData(MeshDirectory directory) => directory.ReservedAddresses == null
@@ -92,18 +105,18 @@ public static class MeshIdentity
     }
     public static MeshEnrollment Issue(MeshProfile owner,string requestedIp="")
     {
-        owner.Validate(); if (!owner.IsOwner || owner.Directory == null) throw new IOException("仅创建者可以邀请成员");
+        owner.Validate(); if (!owner.CanManage || owner.Directory == null) throw new IOException("本机无权邀请成员");
         if (owner.Directory.Members.Length >= MaxMembers || owner.Directory.NextSlot > 254) throw new IOException("本网络的成员额度已用完");
         string ip=MeshAddressing.Next(owner,requestedIp);
-        var keys = NewMember(owner.Pair.Network, owner.OwnerPrivate, owner.Directory.NextSlot,
+        var keys = NewMember(owner.Pair.Network, owner.IsDecentralized ? owner.SigningPrivate : owner.OwnerPrivate, owner.Directory.NextSlot,
             owner.Directory.ReservedAddresses!=null || ip!=Address(owner.Pair.Network,owner.Directory.NextSlot)?ip:null);
-        owner.Directory = SignDirectory(owner, [.. owner.Directory.Members, keys.member], owner.Directory.NextSlot + 1);
-        return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds());
+        owner.Directory = owner.IsDecentralized ? MeshGovernance.Change(owner,"add",added:keys.member) : SignDirectory(owner, [.. owner.Directory.Members, keys.member], owner.Directory.NextSlot + 1);
+        return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds()) {Directory=owner.IsDecentralized?owner.Directory:null,IntroducerSlot=owner.Self.Slot};
     }
     public static void Revoke(MeshProfile owner, int slot)
     {
-        owner.Validate(); if (!owner.IsOwner || owner.Directory == null || slot == 1 || !owner.Directory.Members.Any(m => m.Slot == slot)) throw new IOException("无法移除此成员");
-        owner.Directory = SignDirectory(owner, owner.Directory.Members.Where(m => m.Slot != slot).ToArray(), owner.Directory.NextSlot);
+        owner.Validate(); if (!owner.CanManage || owner.Directory == null || slot == owner.Self.Slot || !owner.Directory.Members.Any(m => m.Slot == slot)) throw new IOException("无法移除此成员");
+        owner.Directory = owner.IsDecentralized ? MeshGovernance.Change(owner,"remove",slot) : SignDirectory(owner, owner.Directory.Members.Where(m => m.Slot != slot).ToArray(), owner.Directory.NextSlot);
     }
     // The caller must verify a fresh proof made with the old member's key and
     // obtain owner approval. Slots and keys are never recycled. Only this proven
@@ -111,35 +124,52 @@ public static class MeshIdentity
     public static MeshEnrollment Replace(MeshProfile owner, MeshMember previous, string requestedIp = "")
     {
         owner.Validate();
-        if (!owner.IsOwner || owner.Directory == null || previous.Slot == 1 || !owner.Directory.Members.Contains(previous))
+        bool readmit=owner.IsDecentralized&&owner.Directory!=null&&MeshGovernance.VoluntarilyLeft(owner.Directory,previous);
+        if (!owner.CanManage || owner.Directory == null || previous.Slot == owner.Self.Slot || !owner.Directory.Members.Contains(previous)&&!readmit)
             throw new IOException("原成员已改变，请刷新后重新核对申请");
         if (owner.Directory.NextSlot > 254) throw new IOException("本网络的成员身份额度已用完，请创建新网络");
         string priorIp = MeshAddressing.Address(owner.Pair.Network, previous);
         string ip = requestedIp.Length == 0 || requestedIp == priorIp ? priorIp : MeshAddressing.Next(owner, requestedIp);
-        var keys = NewMember(owner.Pair.Network, owner.OwnerPrivate, owner.Directory.NextSlot, ip);
+        var keys = NewMember(owner.Pair.Network, owner.IsDecentralized ? owner.SigningPrivate : owner.OwnerPrivate, owner.Directory.NextSlot, ip);
         var members = owner.Directory.Members.Where(m => m.Slot != previous.Slot).Append(keys.member).ToArray();
-        owner.Directory = SignDirectory(owner, members, owner.Directory.NextSlot + 1);
-        return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds());
+        owner.Directory = owner.IsDecentralized ? MeshGovernance.Change(owner,readmit?"readmit":"replace",previous.Slot,keys.member) : SignDirectory(owner, members, owner.Directory.NextSlot + 1);
+        return new(owner.Pair, owner.OwnerKey, keys.member, keys.signing, keys.exchange, DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds()) {Directory=owner.IsDecentralized?owner.Directory:null,IntroducerSlot=owner.Self.Slot};
     }
-    public static string Export(MeshEnrollment enrollment) => "SL4." + Convert.ToBase64String(Data(enrollment));
+    public static string Export(MeshEnrollment enrollment)
+    {
+        bool equal=enrollment.Directory?.Governance!=null;
+        string result=(equal?"SL7.":"SL4.")+Convert.ToBase64String(Data(enrollment));
+        if(result.Length>(equal?MeshGovernance.MaximumTicket:5500))throw new IOException("网络邀请超过容量限制，请新建网络");
+        return result;
+    }
     public static MeshProfile Import(string invitation)
     {
-        if (!invitation.StartsWith("SL4.") || invitation.Length > 5500) throw new FormatException("请使用新版多机配对邀请");
+        bool decentralized=invitation.StartsWith("SL7.");
+        if ((!decentralized&&!invitation.StartsWith("SL4.")) || invitation.Length > (decentralized?MeshGovernance.MaximumTicket:5500)) throw new FormatException("请使用新版多机配对邀请");
         var ticket = JsonSerializer.Deserialize<MeshEnrollment>(Convert.FromBase64String(invitation[4..])) ?? throw new FormatException("邀请为空");
         long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(); if (ticket.Expires <= now || ticket.Expires > now + 600) throw new FormatException("邀请已过期");
-        var profile = new MeshProfile { Pair = ticket.Pair, OwnerKey = ticket.OwnerKey, Self = ticket.Member, SigningPrivate = ticket.SigningPrivate, ExchangePrivate = ticket.ExchangePrivate };
+        if (decentralized != (ticket.Directory?.Governance != null) || decentralized && (ticket.Directory!.Closed || !ticket.Directory.Members.Contains(ticket.Member))) throw new CryptographicException("邀请缺少有效网络授权");
+        var profile = new MeshProfile { Pair = ticket.Pair, OwnerKey = ticket.OwnerKey, Self = ticket.Member, SigningPrivate = ticket.SigningPrivate, ExchangePrivate = ticket.ExchangePrivate, Directory=ticket.Directory, IntroducerSlot=ticket.IntroducerSlot };
         profile.Validate(); return profile;
     }
-    public static void ValidateMember(string network, string owner, MeshMember member)
+    public static void ValidateMember(string network, string owner, MeshMember member, MeshDirectory? evidence=null)
+    {
+        ValidateMemberKeys(member);
+        if (NetworkId(owner) != network || !Verify(owner, MemberData(network, member), member.Signature) &&
+            (evidence?.Governance==null || evidence.Network!=network || evidence.OwnerKey!=owner || !MeshGovernance.ContainsCredential(evidence,member))) throw new CryptographicException("成员签名无效");
+    }
+    internal static void ValidateMemberKeys(MeshMember member)
     {
         if(member?.VirtualIp is {} ip)MeshAddressing.ValidateAddress(ip);
-        if (member == null || member.Slot is < 1 or > 254 || !Guid.TryParseExact(member.Device, "N", out _) || NetworkId(owner) != network || !Verify(owner, MemberData(network, member), member.Signature)) throw new CryptographicException("成员签名无效");
+        if (member == null || member.Slot is <1 or >254 || !Guid.TryParseExact(member.Device,"N",out _)) throw new CryptographicException("成员身份无效");
         PairKeyExchange.ValidatePublic(member.ExchangeKey, Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(member.ExchangeKey))));
         using var sign = ECDsa.Create(); sign.ImportSubjectPublicKeyInfo(Convert.FromBase64String(member.SigningKey), out _);
         if (sign.KeySize != 256 || sign.ExportParameters(false).Curve.Oid.Value != "1.2.840.10045.3.1.7") throw new CryptographicException("成员曲线无效");
     }
     public static void ValidateDirectory(MeshDirectory directory, string network, string owner, long minimumRevision = 0)
     {
+        if (directory?.Governance != null) { MeshGovernance.Validate(directory,network,owner,minimumRevision); return; }
+        if (directory?.Closed == true) throw new CryptographicException("旧网络不支持无签名解散标记");
         if(directory==null||directory.Members is not {Length:>=1 and <=MaxMembers}||directory.Members.Any(m=>m==null))throw new CryptographicException("成员目录结构无效");
         if (directory.Network != network || directory.OwnerKey != owner || directory.Revision < Math.Max(1, minimumRevision) || directory.NextSlot is < 2 or > 255 || directory.Members is not { Length: >= 1 and <= MaxMembers } || directory.Members.Select(m => m.Slot).Distinct().Count() != directory.Members.Length || directory.Members.Select(m => m.Device).Distinct().Count() != directory.Members.Length || directory.Members.Count(m => m.Slot == 1) != 1 || directory.Members.Any(m => m.Slot >= directory.NextSlot) || !Verify(owner, DirectoryData(directory), directory.Signature)) throw new CryptographicException("成员目录无效或已回退");
         foreach (var member in directory.Members) ValidateMember(network, owner, member);
@@ -161,6 +191,7 @@ public static class MeshIdentity
     {
         if (next.Network != prior.Network || next.OwnerKey != prior.OwnerKey || next.Revision < prior.Revision)
             throw new CryptographicException("成员目录无效或已回退");
+        if (next.Governance != null || prior.Governance != null) { MeshGovernance.ValidateProgression(next,prior); return; }
         if (next.Revision == prior.Revision) {
             if (!DirectoryData(next).AsSpan().SequenceEqual(DirectoryData(prior)))
                 throw new CryptographicException("相同版本的成员目录发生冲突");
@@ -170,9 +201,9 @@ public static class MeshIdentity
             prior.ReservedAddresses is {} reserved && (next.ReservedAddresses == null || reserved.Any(ip => !next.ReservedAddresses.Contains(ip))))
             throw new CryptographicException("成员目录回退或重复使用已撤销身份");
     }
-    public static byte[] SharedKey(MeshProfile local, MeshMember peer)
+    public static byte[] SharedKey(MeshProfile local, MeshMember peer,MeshDirectory? evidence=null)
     {
-        ValidateMember(local.Pair.Network, local.OwnerKey, peer);
+        ValidateMember(local.Pair.Network, local.OwnerKey, peer,evidence??local.Directory);
         using var own = ECDiffieHellman.Create(); own.ImportPkcs8PrivateKey(Convert.FromBase64String(local.ExchangePrivate), out _);
         using var remote = ECDiffieHellman.Create(); remote.ImportSubjectPublicKeyInfo(Convert.FromBase64String(peer.ExchangeKey), out _);
         byte[] secret = own.DeriveKeyFromHash(remote.PublicKey, HashAlgorithmName.SHA256);

@@ -5,7 +5,8 @@ using System.Text.Json;
 namespace StreamLink.Core;
 
 // A bounded, authenticated metadata lane shared by coordinated and direct
-// networks. Only the original issuer can change membership or an announcement.
+// networks. Equal membership changes come from the HTTPS commit point;
+// peers can forward announcements without gaining another device's signing key.
 // All calls belong to the runner loop; no IO or callbacks occur under its lock.
 public sealed class MeshPeerSynchronization : IDisposable
 {
@@ -67,10 +68,14 @@ public sealed class MeshPeerSynchronization : IDisposable
                 catch (Exception ex) when (ex is FormatException or CryptographicException or JsonException) { }
         return result.ToArray();
     }
-    public void Merge(MeshSnapshot snapshot)
+    public void Merge(MeshSnapshot snapshot,bool fromCoordinator=false)
     {
         if (snapshot.Directory == null || snapshot.Nodes is not { Length: <= MeshIdentity.MaxMembers } || snapshot.Nodes.Any(n => n == null))
             throw new FormatException("同步成员无效");
+        // Equal-membership branches become authoritative only after HTTPS CAS.
+        // A peer signature alone cannot prove that a concurrent edit committed.
+        if(!fromCoordinator && (directory?.Governance!=null||snapshot.Directory.Governance!=null) &&
+            (directory?.Governance==null||snapshot.Directory.Governance==null||MeshGovernance.Head(directory)!=MeshGovernance.Head(snapshot.Directory)))return;
         // Install the signed high-water mark even if individual announcements
         // are invalid. Old snapshots can update only still-authorized members.
         SetDirectory(snapshot.Directory);
@@ -102,9 +107,11 @@ public sealed class MeshPeerSynchronization : IDisposable
             if (pending != null && router.SendSynchronization(slot, pending.Frames[pending.Index]) && ++pending.Index == pending.Frames.Length) outgoing.Remove(slot);
         }
     }
+    sealed record AnnouncementBatch(string Head,MeshEnvelope[] Nodes);
     static byte[][] Frames(MeshSnapshot snapshot)
     {
-        byte[] data = JsonSerializer.SerializeToUtf8Bytes(snapshot);
+        byte[] data = snapshot.Directory.Governance==null?JsonSerializer.SerializeToUtf8Bytes(snapshot):
+            "SLG1"u8.ToArray().Concat(JsonSerializer.SerializeToUtf8Bytes(new AnnouncementBatch(MeshGovernance.Head(snapshot.Directory),snapshot.Nodes))).ToArray();
         if (data.Length > Maximum) throw new FormatException("成员同步超过大小限制");
         var id = Guid.NewGuid(); int count = (data.Length + Chunk - 1) / Chunk; var result = new byte[count][];
         for (int i = 0; i < count; i++) {
@@ -127,7 +134,10 @@ public sealed class MeshPeerSynchronization : IDisposable
         bytes.AsSpan(Header).CopyTo(assembly.Data.AsSpan(index * Chunk)); assembly.Seen[index] = true;
         if (++assembly.Count != assembly.Seen.Length) return;
         incoming.Remove(frame.Slot);
-        Merge(JsonSerializer.Deserialize<MeshSnapshot>(assembly.Data) ?? throw new FormatException("同步内容为空"));
+        if(assembly.Data.AsSpan().StartsWith("SLG1"u8)){
+            var batch=JsonSerializer.Deserialize<AnnouncementBatch>(assembly.Data.AsSpan(4))??throw new FormatException("同步公告为空");
+            if(directory?.Governance!=null&&batch.Head==MeshGovernance.Head(directory))Merge(new(directory,batch.Nodes));
+        }else Merge(JsonSerializer.Deserialize<MeshSnapshot>(assembly.Data) ?? throw new FormatException("同步内容为空"));
     }
     public void Dispose() { incoming.Clear(); outgoing.Clear(); nodes.Clear(); nextSend.Clear(); router = null; }
 }

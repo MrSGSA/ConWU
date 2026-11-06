@@ -13,7 +13,12 @@ public sealed partial class MeshRegistry
     readonly Dictionary<string, Registration> networks;
     readonly Dictionary<string, (MeshEnvelope Envelope, DateTimeOffset Expires)> nodes = [];
     public MeshRegistry(string root) { file = Path.Combine(root, "mesh-networks.json"); networks = File.Exists(file) ? JsonSerializer.Deserialize<Dictionary<string, Registration>>(File.ReadAllText(file)) ?? [] : []; }
-    void Save() { File.WriteAllText(file + ".tmp", JsonSerializer.Serialize(networks)); File.Move(file + ".tmp", file, true); }
+    void Save() {
+        using(var output=new FileStream(file+".tmp",FileMode.Create,FileAccess.Write,FileShare.None)){
+            JsonSerializer.Serialize(output,networks);output.Flush(true);
+        }
+        File.Move(file+".tmp",file,true);
+    }
     static string Auth(HttpContext context) { string value = context.Request.Headers.Authorization.ToString(); return Regex.IsMatch(value, "^Bearer [A-F0-9]{64}$") ? Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(value))) : ""; }
     static bool Equal(string a, string b) => a.Length == 64 && b.Length == 64 && CryptographicOperations.FixedTimeEquals(Convert.FromHexString(a), Convert.FromHexString(b));
     public IResult Directory(HttpContext context, string network, MeshDirectory directory)
@@ -21,6 +26,14 @@ public sealed partial class MeshRegistry
         string auth = Auth(context); if (auth.Length == 0) return Results.Unauthorized();
         try { MeshIdentity.ValidateDirectory(directory, network, directory.OwnerKey); } catch { return Results.BadRequest(); }
         lock (gate) {
+            networks.TryGetValue(network,out var known);
+            if(directory.Governance!=null || known?.Directory.Governance!=null){
+                if(known==null)return Results.Conflict();
+                if(directory.Governance==null)return Results.Conflict();
+                if(!Equal(auth,known.AuthHash))return Results.Unauthorized();
+                try{MeshIdentity.ValidateSuccessor(known.Directory,directory);}catch{return Results.Conflict();}
+                return Results.NoContent(); // Governance edits use the atomic membership endpoint only.
+            }
             if (networks.TryGetValue(network, out var prior)) {
                 if (!Equal(auth, prior.AuthHash)) return Results.Unauthorized();
                 if (!TakeRequest(network, 1)) return Results.StatusCode(429);
