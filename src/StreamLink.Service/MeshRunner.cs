@@ -99,6 +99,8 @@ public sealed class MeshRunner
         using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
         using var networkWake = services.NetworkWake();
+        using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver() : null;
+        Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> resolveEntries = services.ResolveEntries ?? entryResolver!.Resolve;
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
         IMeshCandidateFactory? factory = null;
@@ -176,7 +178,7 @@ public sealed class MeshRunner
                     }
                 }
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
-                if(externalSources.Length>0 && resolving==null && now>=nextResolve){resolvingSources=externalSources;resolving=services.ResolveEntries(externalSources,profile.TransportMode,stop);nextResolve=now+refreshSeconds*1000L;}
+                if(externalSources.Length>0 && resolving==null && now>=nextResolve){resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);nextResolve=now+refreshSeconds*1000L;}
                 if(resolving?.IsCompleted==true){
                     if(!resolvingSources.SequenceEqual(externalSources)){try{await resolving;}catch(Exception)when(!stop.IsCancellationRequested){}resolving=null;nextResolve=0;continue;}
                     try {var previous=resolved;resolved=(await resolving).Select(item=>item.Error.Length>0&&previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index&&p.Endpoints.Length>0) is {} cached?item with{Endpoints=cached.Endpoints}:item).ToArray();localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();

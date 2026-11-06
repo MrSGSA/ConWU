@@ -16,6 +16,7 @@ public sealed partial class ControlWorker
     string uiPairService = "", uiPairPin = "", uiPendingInvite = "", uiExpectedNetwork = "";
     UiPairingDto? uiPairSnapshot;
     EntryResolution[] uiEntryResolutions=[];
+    readonly Lazy<ExistingEntryResolver> uiEntryResolver=new(()=>new());
     string uiApprovalCode="";
     string uiRejoinLocator="";
     string uiPendingCipher="";
@@ -295,7 +296,7 @@ public sealed partial class ControlWorker
                 break;
             case "resolve-entries":
                 var sources=action.Settings??throw new FormatException("请先填写入口");
-                using(var resolver=new ExistingEntryResolver())Volatile.Write(ref uiEntryResolutions,await resolver.Resolve(sources.ExistingEntries,sources.PathSelection=="udp-only"?"udp":"faketcp",token));
+                Volatile.Write(ref uiEntryResolutions,await uiEntryResolver.Value.Resolve(sources.ExistingEntries,sources.PathSelection=="udp-only"?"udp":"faketcp",token));
                 break;
             case "startup-enable":
             case "startup-disable":

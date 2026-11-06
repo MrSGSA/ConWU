@@ -28,7 +28,7 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
     internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
-    internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; }
+    internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; public IPAddress? LastConnected; }
     readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
     public ExistingEntryResolver() : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query) { }
     internal ExistingEntryResolver(Func<string,CancellationToken,Task<IPAddress[]>> addresses,
@@ -38,11 +38,13 @@ public sealed class ExistingEntryResolver : IDisposable
         this.addresses = addresses; this.txt = txt; this.connect = connect ?? ConnectSocket;
         http = new(handler ?? new SocketsHttpHandler {
             UseProxy=false, AllowAutoRedirect=false, UseCookies=false, MaxConnectionsPerServer=2,
+            PooledConnectionIdleTimeout=TimeSpan.FromMinutes(5),PooledConnectionLifetime=TimeSpan.FromMinutes(10),
             ConnectCallback=async (context, ct) => {
                 context.InitialRequestMessage.Options.TryGetValue(ProgressKey,out var progress);
                 return await ConnectPage(context.DnsEndPoint,progress??new(),ct);
             }
         }) { Timeout=Timeout.InfiniteTimeSpan, MaxResponseContentBufferSize=MaximumBody };
+        http.DefaultRequestHeaders.UserAgent.ParseAdd("StreamLink/"+(typeof(ExistingEntryResolver).Assembly.GetName().Version?.ToString(3)??"1.0"));
     }
     static async Task<Stream> ConnectSocket(IPEndPoint endpoint,CancellationToken token)
     {
@@ -60,13 +62,34 @@ public sealed class ExistingEntryResolver : IDisposable
         var v4=ips.Where(ip=>ip.AddressFamily==AddressFamily.InterNetwork).Distinct().ToArray();
         var v6=ips.Where(ip=>ip.AddressFamily==AddressFamily.InterNetworkV6).Distinct().ToArray();
         var ordered=Enumerable.Range(0,Math.Max(v4.Length,v6.Length)).SelectMany(i=>new[]{i<v4.Length?v4[i]:null,i<v6.Length?v6[i]:null}).OfType<IPAddress>().Take(3).ToArray();
-        for(int i=0;i<ordered.Length;i++) {
-            progress.Stage=$"TCP 建连（地址 {i+1}/{ordered.Length}）";
-            using var attempt=CancellationTokenSource.CreateLinkedTokenSource(token);attempt.CancelAfter(1800);
-            try {var stream=await connect(new(ordered[i],endpoint.Port),attempt.Token);progress.Stage="TLS／响应头";return stream;}
-            catch(Exception ex)when(!token.IsCancellationRequested&&ex is SocketException or IOException or OperationCanceledException){if(i==ordered.Length-1)throw new EntryFetchException("TCP 建连失败或超时",true);}
+        if(progress.LastConnected is {} previous)ordered=ordered.OrderBy(ip=>ip.Equals(previous)?1:0).ToArray();
+        if(ordered.Length==0)throw new EntryFetchException("无可用公网地址");
+        progress.Stage=$"TCP 建连（{ordered.Length} 个地址）";
+        using var race=CancellationTokenSource.CreateLinkedTokenSource(token);
+        async Task<Stream> Dial(IPAddress address,int index){
+            if(index>0)await Task.Delay(index*200,race.Token);
+            using var deadline=CancellationTokenSource.CreateLinkedTokenSource(race.Token);deadline.CancelAfter(4000);
+            return await connect(new(address,endpoint.Port),deadline.Token);
         }
-        throw new EntryFetchException("无可用公网地址");
+        // Stagger a bounded number of already-validated addresses. One blackholed
+        // address must not consume the whole TLS budget or prevent another family
+        // from connecting. Every losing socket is cancelled, joined and disposed.
+        var attempts=ordered.Select((ip,index)=>(Address:ip,Task:Dial(ip,index))).ToArray();
+        var pending=attempts.Select(a=>a.Task).ToList();Task<Stream>? winner=null;
+        try {
+            while(pending.Count>0){
+                var completed=await Task.WhenAny(pending);pending.Remove(completed);
+                try {
+                    var stream=await completed;winner=completed;
+                    progress.LastConnected=attempts.First(a=>ReferenceEquals(a.Task,winner)).Address;
+                    progress.Stage="TLS／响应头";return stream;
+                }catch(Exception ex)when(!token.IsCancellationRequested&&ex is SocketException or IOException or OperationCanceledException){}
+            }
+            token.ThrowIfCancellationRequested();throw new EntryFetchException("TCP 建连失败或超时",true);
+        }finally{
+            race.Cancel();
+            foreach(var attempt in attempts.Where(a=>!ReferenceEquals(a.Task,winner)))try{(await attempt.Task).Dispose();}catch{}
+        }
     }
     sealed class EntryFetchException(string message,bool transient=false):IOException(message) {public bool Transient {get;}=transient;}
     static EntryFetchException? FetchFailure(Exception ex)=>ex as EntryFetchException??(ex.InnerException==null?null:FetchFailure(ex.InnerException));
@@ -81,7 +104,7 @@ public sealed class ExistingEntryResolver : IDisposable
                 using var request=new HttpRequestMessage(HttpMethod.Get,WithoutSelector(source));
                 request.Options.Set(ProgressKey,progress);request.Headers.CacheControl=new(){NoCache=true,NoStore=true};
                 using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);
-                if(!response.IsSuccessStatusCode)throw new EntryFetchException($"更新页面返回 HTTP {(int)response.StatusCode}",response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout);
+                if(!response.IsSuccessStatusCode)throw await ResponseFailure(response,budget.Token);
                 progress.Stage="响应内容";
                 if(response.Content.Headers.ContentLength>MaximumBody)throw new EntryFetchException("更新内容超过 8 KiB");
                 using var stream=await response.Content.ReadAsStreamAsync(budget.Token);
@@ -91,6 +114,32 @@ public sealed class ExistingEntryResolver : IDisposable
                 progress.Stage="内容解析";return ParseDocuments([new UTF8Encoding(false,true).GetString(bytes,0,size)],RequiresTag(source));
             }catch(Exception ex)when(attempt==1&&!token.IsCancellationRequested&&Retryable(ex)) {await Task.Delay(200,token);}
         }
+    }
+    static async Task<EntryFetchException> ResponseFailure(HttpResponseMessage response,CancellationToken token)
+    {
+        int code=(int)response.StatusCode;
+        var failure=new EntryFetchException($"更新页面返回 HTTP {code}",response.StatusCode is HttpStatusCode.RequestTimeout or HttpStatusCode.BadGateway or HttpStatusCode.ServiceUnavailable or HttpStatusCode.GatewayTimeout);
+        if(response.StatusCode is not (HttpStatusCode.ServiceUnavailable or HttpStatusCode.NotFound) ||
+            !string.Equals(response.Content.Headers.ContentType?.MediaType,"application/json",StringComparison.OrdinalIgnoreCase) || response.Content.Headers.ContentLength>1024)return failure;
+        // Only recognize exact provider error codes. Never echo arbitrary error
+        // bodies: they may contain URLs, bearer tokens or private configuration.
+        using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(750);
+        try {
+            using var stream=await response.Content.ReadAsStreamAsync(budget.Token);
+            byte[] bytes=new byte[1025];int size=0,read;
+            while(size<bytes.Length&&(read=await stream.ReadAsync(bytes.AsMemory(size),budget.Token))>0)size+=read;
+            if(size>1024)return failure;
+            using var doc=JsonDocument.Parse(bytes.AsMemory(0,size),new(){MaxDepth=4});
+            if(doc.RootElement.ValueKind!=JsonValueKind.Object || !doc.RootElement.TryGetProperty("error",out var error) || error.ValueKind!=JsonValueKind.String)return failure;
+            return (response.StatusCode,error.GetString()) switch {
+                (HttpStatusCode.ServiceUnavailable,"entry report expired" or "节点 a 地址已过期" or "节点 b 地址已过期") => new("入口上报已过期，请检查主机的地址更新任务（HTTP 503）"),
+                (HttpStatusCode.NotFound,"awaiting Lucky report") => new("更新服务尚未收到入口上报（HTTP 404）"),
+                (HttpStatusCode.ServiceUnavailable,"registry not configured") => new("入口订阅服务尚未配置（HTTP 503）"),
+                (HttpStatusCode.ServiceUnavailable,"registry temporarily unavailable") => new("入口订阅服务暂时无法读取上报数据（HTTP 503）",true),
+                _ => failure
+            };
+        }catch(OperationCanceledException)when(!token.IsCancellationRequested){return failure;}
+        catch(Exception ex)when(ex is IOException or JsonException){return failure;}
     }
     public static string Kind(string source) => source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";

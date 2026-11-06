@@ -31,6 +31,7 @@ static partial class Program
         if(args is ["--connection-view-only"]){ConnectionView();await ExistingRunner();return;}
         if(args is ["--control-lifecycle-only"]){await ControlLifecycle();return;}
         if(args is ["--resolve-entry",var source]){using var resolver=new ExistingEntryResolver();Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await resolver.Resolve([new(-1,source)],"faketcp",default)));return;}
+        if(args is ["--entry-resilience-only"]){await EntryResilience();return;}
         if(args is ["--approval-guest-service"]){await ApprovalGuestService();return;}
         if(args is ["--approval-invitation-only"]){await ApprovalInvitations();return;}
         if(args is ["--direct-only"]){await DirectNetworks();return;}

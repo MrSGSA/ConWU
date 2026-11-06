@@ -27,6 +27,7 @@ public sealed partial class ControlWorker
     static readonly object quarantineGate=new();
     static readonly List<ControlWorker> quarantinedWorkers=[];
     void ReleaseControlOwnership(){
+        if(uiEntryResolver.IsValueCreated)uiEntryResolver.Value.Dispose();
         uiDirectHost.Clear();ResetUiPair("后台已退出");
         if(Volatile.Read(ref resourceShutdownUnproven)){
             // Strongly retain the worker, its failed owners and file lock.

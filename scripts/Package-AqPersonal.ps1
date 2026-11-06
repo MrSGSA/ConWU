@@ -7,7 +7,7 @@ $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
 try {
  $stable=$Version -match '^1\.0\.[1-9][0-9]*$'
- if(-not $stable -and $Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$' -and $Version -notmatch '^1\.0\.1-rc\.[1-9][0-9]*$'){throw 'Supported release or candidate version required'}
+ if(-not $stable -and $Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$' -and $Version -notmatch '^1\.0\.[1-9][0-9]*-rc\.[1-9][0-9]*$'){throw 'Supported release or candidate version required'}
  if($MsiVersion -notmatch '^1\.0\.([1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 65535){throw 'Explicit monotonic MSI version required'}
  $fileVersion=$MsiVersion+'.0'
  $commit=(& git rev-parse HEAD).Trim()

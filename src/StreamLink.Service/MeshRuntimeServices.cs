@@ -25,9 +25,9 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
-    public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> ResolveEntries {get;init;} = async (entries,mode,token)=>{
-        using var resolver=new ExistingEntryResolver();return await resolver.Resolve(entries,mode,token);
-    };
+    // A null override lets the runner own one resolver for its whole lifetime.
+    // Recreating it each refresh discards healthy HTTPS connections.
+    public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>>? ResolveEntries {get;init;}
 
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
     public Func<DeviceProfile,string,Action<string>,CancellationToken,EgressPacer?,Task<IMeshCandidateFactory?>>? CandidatesWithEgress{get;init;}
