@@ -105,11 +105,23 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { profile.Mesh.Directory = directory; store.Save(profile); PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
+                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);remembered.Mesh!.Directory=directory;store.Save(remembered);profile=remembered;PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
                 else runner = new(copy, Log, ReportRuntimeStatus, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
-                catch (MeshRevokedException ex) { lock (sync) { profile.Enabled = false; store.Save(profile); status = new("已移出网络", "", "", "faketcp", false, null, ex.Message); } Log(ex.Message); break; }
+                catch (MeshRevokedException ex) {
+                    lock (sync) {
+                        // Retry persistence with the disabled state if the
+                        // runner's first save failed. Never save an old table
+                        // over the verified revocation retained by the runner.
+                        if (profile.Mesh is {} current && copy.Mesh?.Directory is {} revoked &&
+                            revoked.Network == current.Pair.Network && revoked.OwnerKey == current.OwnerKey &&
+                            revoked.Revision > (current.Directory?.Revision ?? 0)) current.Directory = revoked;
+                        profile.Enabled = false; store.Save(profile);
+                        status = new("已移出网络", "", "", "faketcp", false, null, ex.Message);
+                    }
+                    Log(ex.Message); break;
+                }
                 catch (MeshShutdownException ex) { Volatile.Write(ref resourceShutdownUnproven,true);lock(sync){status=new("资源退出未完成","","","faketcp",false,null,ex.Message);PublishReply();}Log(ex.Message);break; }
                 catch (Exception ex) {
                     lock(sync){status=new("连接中断，等待重试",copy.Mesh?.LocalIp??"","","faketcp",false,null,ex.Message) {

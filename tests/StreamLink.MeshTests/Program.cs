@@ -92,8 +92,13 @@ static partial class Program
             Check(Status(registry.Directory(context, owner.Pair.Network, owner.Directory!)) == 204, "signed network registration accepted");
             Check(Status(registry.Publish(context, owner.Pair.Network, 1, envelope)) == 204, "member signed announcement accepted");
             Check(Status(registry.Publish(context, owner.Pair.Network, 1, envelope)) == 409, "metadata replay rejected by registry");
+            var retainedTable=owner.Directory!;
+            var replicaContext=new DefaultHttpContext();replicaContext.Request.Headers.Authorization="Bearer "+b.Pair.Auth;
+            Check(b.OwnerPrivate.Length==0 && Status(registry.Directory(replicaContext,owner.Pair.Network,retainedTable))==204,"ordinary member can resend the unchanged issuer-signed table");
             var bEnvelope = MeshMetadata.Seal(b, announcement with { Slot = 2, Device = b.Self.Device });
             MeshIdentity.Revoke(owner, 2); Check(Status(registry.Directory(context, owner.Pair.Network, owner.Directory!)) == 204 && Status(registry.Publish(context, owner.Pair.Network, 2, bEnvelope)) == 403, "revoked member cannot publish after roster update");
+            registry=new MeshRegistry(root);
+            Check(Status(registry.Directory(replicaContext,owner.Pair.Network,retainedTable))==409 && Status(registry.Publish(replicaContext,owner.Pair.Network,2,bEnvelope))==403,"coordination restart retains revocation and rejects an old replica");
             var unauthorized = new DefaultHttpContext(); Check(Status(registry.Read(unauthorized, owner.Pair.Network)) == 401, "directory requires network authentication");
             long persistedRevision = owner.Directory!.Revision;
             Guest(owner);

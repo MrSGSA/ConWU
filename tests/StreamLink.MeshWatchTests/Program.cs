@@ -162,8 +162,9 @@ try {
     Check(rollbackRejected, "signed older directory cannot revoke a subsequently enrolled member"); readOverride = null;
     await ForbiddenPoll();
     MeshIdentity.Revoke(fresh, friend.Self.Slot); await client.SaveDirectory(fresh.Directory!, all.Token);
-    bool revoked = false; try { await membership.WaitForChanges(all.Token); } catch (MeshRevokedException) { revoked = true; }
-    Check(revoked && membership.SupportsLongPolling, "owner-signed removal terminates revoked member even when its watch returns only 403");
+    var revocation = await membership.WaitForChanges(all.Token);
+    Check(revocation?.Directory.Signature == fresh.Directory!.Signature && !revocation.Directory.Members.Contains(friend.Self) && membership.SupportsLongPolling,
+        "403 recovery returns the verified revocation table for Runner persistence before shutdown");
     await app.StopAsync(all.Token);
     await File.WriteAllTextAsync(output, JsonSerializer.Serialize(new { checks, eightIsolatedMembers = true, realHttps = true,
         holdSeconds = 25, measuredHoldSeconds = clock.Elapsed.TotalSeconds, realWindowsEndpoints = 1, realEightDevices = false }, new JsonSerializerOptions { WriteIndented = true }));

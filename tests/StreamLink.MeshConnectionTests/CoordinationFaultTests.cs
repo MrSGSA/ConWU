@@ -61,7 +61,7 @@ static partial class Program
             Check(creates==2&&retry.Status!.Pairing!.Active,"successful retry allocates one new invitation with no duplicate submit");
             Check(JsonSerializer.Serialize(retry.Status!.Settings)==savedSettings,"actual network creation preserves target entries and the complete saved settings");
             string oldNetwork=retry.Status.NetworkId;
-            var removed=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("leave",ExpectedNetwork:oldNetwork,ConfirmReplace:true)),sid,default);
+            var removed=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("delete-network",ExpectedNetwork:oldNetwork,ConfirmReplace:true)),sid,default);
             Check(removed.Ok&&removed.Status!.NetworkId.Length==0&&JsonSerializer.Serialize(removed.Status.Settings)==savedSettings,"actual owner deletion preserves every saved setting");
             var recreated=await Create();
             Check(recreated.Ok&&recreated.Status!.NetworkId!=oldNetwork&&JsonSerializer.Serialize(recreated.Status.Settings)==savedSettings,"actual recreation creates a new network without resetting saved settings");

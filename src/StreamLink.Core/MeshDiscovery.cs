@@ -112,7 +112,8 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
                 var snapshot = await Read(token);
                 if (snapshot != null) {
                     MeshIdentity.ValidateDirectory(snapshot.Directory, profile.Pair.Network, profile.OwnerKey, profile.Directory?.Revision ?? 0);
-                    if (!snapshot.Directory.Members.Contains(profile.Self)) throw new MeshRevokedException();
+                    // Return signed revocation evidence to the runner so it is
+                    // persisted before stopping, including across restarts.
                 }
                 return snapshot;
             }

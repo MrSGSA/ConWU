@@ -184,7 +184,7 @@ public sealed partial class MeshRouter
                     if (message.Control != null && !QualityControl(peer,path,message.Control,Environment.TickCount64) && !DiagnosticControl(peer,path,message.Control,Environment.TickCount64) && !(ReferenceEquals(peer.Managed!.Active, path) && path.Nomination.PeerAdopted &&
                         path.Delivery?.Control(message.Control, new Guid(packet.Span.Slice(8, 16)), Environment.TickCount64) == true))
                         NominationReplies(peer, path, path.Nomination.Receive(path.Identity.PathId, message.Control));
-                    if(message.Synchronization!=null && ReferenceEquals(peer.Managed!.Active,path))ReceiveSynchronization(peer,message.Synchronization);
+                    if(message.Synchronization!=null)ReceiveSynchronization(peer,message.Synchronization);
                     if (message.Packet != null) {
                         bool allowed = ReferenceEquals(peer.Managed!.Active, path) && (!path.AutoQuality || path.ProofAt != 0 && path.Nomination.PeerAdopted) ||
                             path.Retired && Environment.TickCount64 <= path.ReceiveUntil;

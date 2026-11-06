@@ -29,7 +29,7 @@ public sealed class MeshRunner
     public async Task NotifyDirectClosure(MeshDirectory closed,CancellationToken token)
     {
         MeshIdentity.ValidateDirectory(closed,mesh.Pair.Network,mesh.OwnerKey,mesh.Directory?.Revision??0);
-        if(!mesh.Pair.Direct||router is not {} active)return;
+        if(router is not {} active)return;
         int[] peers=active.Status().Where(p=>p.Connected).Select(p=>p.Slot).ToArray();
         if(peers.Length==0)return;
         var frames=DirectMeshDiscovery.DirectoryFrames(closed);
@@ -62,6 +62,7 @@ public sealed class MeshRunner
     void ApplyDirectory(MeshDirectory directory)
     {
         MeshIdentity.ValidateDirectory(directory, mesh.Pair.Network, mesh.OwnerKey, mesh.Directory?.Revision ?? 0);
+        if (mesh.Directory is {} prior) MeshIdentity.ValidateSuccessor(directory, prior);
         if (!directory.Members.Contains(mesh.Self)) throw new MeshRevokedException();
         if (!stopping) router?.ApplyDirectory(directory);
         mesh.Directory = directory;
@@ -85,6 +86,7 @@ public sealed class MeshRunner
     {
         if (Interlocked.CompareExchange(ref runStarted, 1, 0) != 0) throw new InvalidOperationException("同一网络运行器不能重复或并发启动");
         profile.Validate(); mesh.Validate();
+        if (mesh.Directory is {} known && !known.Members.Contains(mesh.Self)) { CleanupComplete = true; throw new MeshRevokedException(); }
         // Explicit workers use the user's current fixed protocol, not the mode stored
         // in the original enrollment. This cannot enable an unselected protocol.
         var wireMesh=JsonSerializer.Deserialize<MeshProfile>(JsonSerializer.Serialize(mesh))!;
@@ -98,6 +100,10 @@ public sealed class MeshRunner
         CancellationToken stop = cancellation.Token;
         using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
+        using var peerSynchronization = discovery is DirectMeshDiscovery ? null : new MeshPeerSynchronization(mesh);
+        var synchronization = (discovery as DirectMeshDiscovery)?.Synchronization ?? peerSynchronization!;
+        long synchronizedVersion = -1;
+        long rememberedDirectory = 0;
         using var networkWake = services.NetworkWake();
         using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver() : null;
         Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> resolveEntries = services.ResolveEntries ?? entryResolver!.Resolve;
@@ -149,6 +155,37 @@ public sealed class MeshRunner
             coordinatorUnavailable = true;
             if (lastWarning == 0 || Environment.TickCount64 - lastWarning >= 30000) { log("协调服务暂不可用，已有直连继续运行：" + ex.Message); lastWarning = Environment.TickCount64; }
         }
+        void AcceptSynchronizedState()
+        {
+            if (synchronizedVersion == synchronization.Version || synchronization.Read() is not {} snapshot) return;
+            long previous; bool revoked;
+            lock (gate) {
+                previous = mesh.Directory?.Revision ?? 0;
+                // A UI approval may race an incoming snapshot. Never replace a
+                // newer local table; the next loop will publish it to peers.
+                if (snapshot.Directory.Revision < previous) return;
+                MeshIdentity.ValidateDirectory(snapshot.Directory, mesh.Pair.Network, mesh.OwnerKey, previous);
+                if (mesh.Directory is {} prior) MeshIdentity.ValidateSuccessor(snapshot.Directory, prior);
+                revoked = !snapshot.Directory.Members.Contains(mesh.Self);
+                if (revoked) mesh.Directory = snapshot.Directory;
+                else if (snapshot.Directory.Revision > previous) ApplyDirectory(snapshot.Directory);
+            }
+            if (snapshot.Directory.Revision > rememberedDirectory) {
+                try { remember(snapshot.Directory); rememberedDirectory = snapshot.Directory.Revision; }
+                catch (Exception) when (revoked) { log("成员撤销记录未能保存；立即停止本机连接，请检查本机存储"); }
+            }
+            if (revoked) throw new MeshRevokedException();
+            foreach (var envelope in snapshot.Nodes) {
+                var member = snapshot.Directory.Members.FirstOrDefault(m => m.Slot == envelope.Slot && m.Slot != mesh.Self.Slot);
+                if (member == null) continue;
+                MeshAnnouncement announcement;
+                try { announcement = MeshMetadata.Open(mesh, member, envelope); }
+                catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException) { continue; }
+                if (revisions.GetValueOrDefault(member.Slot) >= announcement.Revision) continue;
+                revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
+            }
+            synchronizedVersion = synchronization.Version;
+        }
         try {
             if(!existingOnly)gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
             else log("仅使用已有入口：不执行 STUN、自动映射或自主打洞；入口不可用时请检查入口，或手动切换到自选服务器模式");
@@ -160,7 +197,10 @@ public sealed class MeshRunner
                 throw new IOException("此运行环境未提供官方 Wintun 准入工厂");
             while (!stop.IsCancellationRequested) {
                 long now = Environment.TickCount64;
-                (discovery as DirectMeshDiscovery)?.Tick(now);
+                if (mesh.Directory is {} localDirectory && synchronization.DirectoryRevision < localDirectory.Revision)
+                    synchronization.SetDirectory(localDirectory);
+                synchronization.Tick(now);
+                AcceptSynchronizedState();
                 if(Interlocked.Exchange(ref pendingEntries,null) is {} edited){
                     if((edited.Source=="existing"||edited.Manual.Length>0||mesh.Pair.Direct)!=existingOnly)throw new IOException("连接方式已改变，需要重新建立连接以应用入口策略");
                     profile.ConnectionSource=edited.Source;profile.ManualEndpoint=edited.Manual;profile.ExistingEntries=edited.Entries;
@@ -226,9 +266,10 @@ public sealed class MeshRunner
                     // Keep startup ownership through descriptor/logging/router
                     // validation. Only a successful Router takes the adapter.
                     lock (gate) {
+                        wireMesh.Directory = mesh.Directory;
                         router = new(wireMesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
                         router.DirectPairing=packet=>DirectPairing?.Invoke(packet);
-                        (discovery as DirectMeshDiscovery)?.Attach(router);
+                        synchronization.Attach(router);
                         pendingAdapter = null;
                     }
                     services.Record(folder, rule);
@@ -322,34 +363,20 @@ public sealed class MeshRunner
                 if (reading?.IsCompleted == true) {
                     try {
                         var snapshot = await reading; readFailures = 0; coordinatorUnavailable = false;
-                        bool applied = false; long previous;
-                        lock (gate) {
-                            previous = mesh.Directory?.Revision ?? 0;
-                            if (snapshot != null && snapshot.Directory.Revision >= previous) {
-                                ApplyDirectory(snapshot.Directory); applied = true;
-                            }
-                        }
-                        if (applied && snapshot != null) {
-                            if (snapshot.Directory.Revision > previous) remember(snapshot.Directory);
-                            foreach (var envelope in snapshot.Nodes ?? []) {
-                                if (envelope == null) { log("已拒绝空成员公告"); continue; }
-                                var member = snapshot.Directory.Members.FirstOrDefault(m => m.Slot == envelope.Slot && m.Slot != mesh.Self.Slot); if (member == null) continue;
-                                try {
-                                    var announcement = MeshMetadata.Open(mesh, member, envelope);
-                                    if (revisions.GetValueOrDefault(member.Slot) > announcement.Revision) continue;
-                                    revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
-                                } catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException) {
-                                    log($"已拒绝设备 {member.Slot} 的无效成员公告");
-                                }
-                            }
+                        if (snapshot != null) {
+                            synchronization.Merge(snapshot);
+                            AcceptSynchronizedState();
                             if (traversal != null) traversal.Receive(snapshot.Traversal); else pendingControl = snapshot.Traversal ?? [];
                         }
+                        // Any authorized replica can restore a missing table.
+                        // It forwards the issuer's signature, never signs a new one.
+                        else savedDirectory = 0;
                     } catch (Exception ex) when (!stop.IsCancellationRequested && ex is not MeshRevokedException) {
                         Warning(ex); nextRead = now + Math.Min(30000, 2500L << Math.Min(++readFailures, 4));
                     }
                     reading = null;
                 }
-                if (saving == null && mesh.IsOwner && mesh.Directory is {} directory && savedDirectory < directory.Revision && now >= nextSave && (traversal == null || requestBudget.Take())) {
+                if (saving == null && mesh.Directory is {} directory && savedDirectory < directory.Revision && now >= nextSave && (traversal == null || requestBudget.Take())) {
                     savingRevision = directory.Revision; saving = discovery.SaveDirectory(directory, stop); nextSave = now + 5000;
                 }
                 var statuses = router?.Status() ?? [];
@@ -365,10 +392,12 @@ public sealed class MeshRunner
                 string candidate = Candidate();
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
-                    publishing = discovery.Publish(new(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
+                    var announcement = new MeshAnnouncement(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
                         ExistingEndpoints=server!=null&&!server.Exited&&localExisting.Length>0?localExisting:null,
                         ExistingEntryOnly=existingOnly
-                    }, stop);
+                    };
+                    peerSynchronization?.Publish(announcement);
+                    publishing = discovery.Publish(announcement, stop);
                 }
                 // Negotiated mode shares 40 requests/minute across these HTTP
                 // operations and traversal states. Legacy keeps its old cadence.

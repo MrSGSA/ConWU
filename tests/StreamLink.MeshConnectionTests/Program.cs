@@ -24,6 +24,9 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--decentralization-only"]){await Decentralization();return;}
+        if(args is ["--peer-sync-only"]){SynchronizationValidation();await AsymmetricSynchronization();return;}
+        if(args is ["--network-pause-only"]){await NetworkPause();return;}
         if(args is ["--explicit-reservation-only"]){await ExplicitReservationRecovery();return;}
         if(args is ["--strict-entry-only"]){await StrictExistingOnly();return;}
         if(args is ["--leave-timeout-only"]){await LeaveTimeouts();return;}
@@ -83,6 +86,7 @@ static partial class Program
         await TcpTests.Run();
         await ExistingEntries();
         await DirectNetworks();
+        await Decentralization();
         await EntryProbeReuse();
         await Migration();
         await ListenerFailure();
@@ -347,14 +351,17 @@ static partial class Program
     sealed class ForwardingTransport : IMeshTransport
     {
         readonly UdpClient socket = new(new IPEndPoint(IPAddress.Loopback, 0));
-        readonly CancellationTokenSource stop = new(); readonly Task pump; readonly IPEndPoint remote; IPEndPoint? local;
+        readonly CancellationTokenSource stop = new(); readonly Task pump; readonly IPEndPoint remote; readonly bool toleratePeerOffline; IPEndPoint? local;
         public IPEndPoint ClientEndpoint { get; }
         public bool Exited { get; set; } public bool Disposed; public int Packets; public volatile bool Muted, MuteUplink;
-        public ForwardingTransport(IPEndPoint remote) { this.remote = remote; ClientEndpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
+        public ForwardingTransport(IPEndPoint remote, bool toleratePeerOffline = false) { this.remote = remote; this.toleratePeerOffline = toleratePeerOffline; ClientEndpoint = (IPEndPoint)socket.Client.LocalEndPoint!; pump = Pump(); }
         async Task Pump()
         {
             while (!stop.IsCancellationRequested) {
-                var packet = await socket.ReceiveAsync(stop.Token); Interlocked.Increment(ref Packets);
+                UdpReceiveResult packet;
+                try { packet = await socket.ReceiveAsync(stop.Token); }
+                catch(SocketException ex) when(toleratePeerOffline && ex.SocketErrorCode == SocketError.ConnectionReset) { continue; }
+                Interlocked.Increment(ref Packets);
                 if(Muted)continue;
                 if (packet.RemoteEndPoint.Equals(remote)) { if (local != null) await socket.SendAsync(packet.Buffer, local, stop.Token); }
                 else { local = packet.RemoteEndPoint; if(!MuteUplink)await socket.SendAsync(packet.Buffer, remote, stop.Token); }

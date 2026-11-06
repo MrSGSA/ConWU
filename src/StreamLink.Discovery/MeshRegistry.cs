@@ -27,6 +27,7 @@ public sealed partial class MeshRegistry
                 if (directory.OwnerKey != prior.Directory.OwnerKey || directory.Revision < prior.Directory.Revision || directory.NextSlot < prior.Directory.NextSlot) return Results.Conflict();
                 if (directory.Revision == prior.Directory.Revision) return directory.Signature == prior.Directory.Signature ? Results.NoContent() : Results.Conflict();
                 if (directory.Members.Any(m => m.Slot < prior.Directory.NextSlot && !prior.Directory.Members.Contains(m))) return Results.Conflict();
+                try { MeshIdentity.ValidateSuccessor(directory, prior.Directory); } catch (CryptographicException) { return Results.Conflict(); }
             } else if (networks.Count >= 2048) return Results.StatusCode(503);
             networks[network] = new(auth, directory);
             try { Save(); }

@@ -305,8 +305,19 @@ public sealed partial class ControlWorker
                 try{lock(sync){var startup=ProfileChanges.Copy(profile);startup.AutoStart=autoStart;store.Save(startup);profile=startup;}}
                 catch{StartupSettings.Set(previousStartupOnly);throw;}
                 break;
+            case "pause-network":
+                RequireUiNetwork(action.ExpectedNetwork);
+                if (profile.Mesh == null || !action.ConfirmReplace) throw new IOException("暂时离开当前网络需要确认");
+                await CloseUiPair(token);
+                SetOperation(operation,"停止本机连接并保留网络",false);
+                lock(sync){profile.Enabled=false;store.Save(profile);}
+                await End(token,phase=>SetOperation(operation,phase,false));
+                break;
+            case "delete-network":
             case "leave":
                 RequireUiNetwork(action.ExpectedNetwork);
+                if (action.Action == "delete-network" && profile.Mesh?.IsOwner != true) throw new IOException("仅网络创建者可以删除整个网络");
+                if (action.Action == "leave" && profile.Mesh?.IsOwner == true) throw new IOException("创建者可暂时离开并保留网络；解散网络请使用删除网络");
                 if(!action.ConfirmReplace)throw new IOException("退出网络需要确认");
                 await CloseUiPair(token);
                 // Remove every issued member before deleting an owner's local
@@ -322,7 +333,7 @@ public sealed partial class ControlWorker
                         try{await SaveRevocation(client,retired.Mesh!.Directory!,token);}
                         catch(OperationCanceledException)when(!token.IsCancellationRequested){throw new IOException("协调服务器未及时确认成员撤销，当前网络仍保留。请检查 HTTPS 协调服务后重试删除。");}
                     }
-                    else if(meshRunner!=null)await meshRunner.NotifyDirectClosure(retired.Mesh!.Directory!,token);
+                    if(meshRunner!=null)await meshRunner.NotifyDirectClosure(retired.Mesh!.Directory!,token);
                     lock(sync){store.Save(retired);profile=retired;meshRunner?.UpdateDirectory(retired.Mesh!.Directory!);}
                 }
                 SetOperation(operation,"停止本机网络并回收资源",false);

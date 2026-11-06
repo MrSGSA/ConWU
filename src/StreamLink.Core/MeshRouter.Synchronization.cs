@@ -11,7 +11,7 @@ public sealed partial class MeshRouter
     // run inside the routing guard.
     void ReceiveSynchronization(Peer peer,byte[] payload)
     {
-        if(!profile.Pair.Direct||payload.Length is <24 or >MeshLink.Mtu)return;
+        if(payload.Length is <24 or >MeshLink.Mtu)return;
         long now=Environment.TickCount64;
         var window=syncReceived.GetValueOrDefault(peer.Member.Slot);
         if(now-window.At>=5000)window=(now,0);
@@ -27,7 +27,7 @@ public sealed partial class MeshRouter
     {
         lock(gate){
             long now=Environment.TickCount64;
-            if(!profile.Pair.Direct||payload.Length is <24 or >MeshLink.Mtu||!peers.TryGetValue(slot,out var peer)||!Healthy(peer)||now-syncSent.GetValueOrDefault(slot)<100)return false;
+            if(payload.Length is <24 or >MeshLink.Mtu||!peers.TryGetValue(slot,out var peer)||!Healthy(peer)||now-syncSent.GetValueOrDefault(slot)<100)return false;
             syncSent[slot]=now;
             var frame=peer.Link.Synchronize(payload);
             return peer.Managed is {} managed?SendManaged(frame,managed.Active):Send(frame,peer.Active);

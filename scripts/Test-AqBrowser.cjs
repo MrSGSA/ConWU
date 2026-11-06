@@ -68,6 +68,13 @@ const findings=[];function check(ok,reason){if(!ok)throw Error(reason);findings.
  await approve.click();check(await page.locator('#dialog-confirm').evaluate(e=>e.classList.contains('positive')&&!e.classList.contains('danger')),'approval confirmation uses positive semantics');await page.locator('#dialog-cancel').click();
  await page.unroute('**/api/status',incomingModel);await page.evaluate(()=>refresh());
  const settingsBeforeLeave=await page.evaluate(()=>JSON.stringify(state.settings));
+ const networkBeforePause=await page.evaluate(()=>state.networkId);
+ await page.locator('.nav[data-action=leave]').click();
+ check((await page.locator('#dialog-title').innerText())==='暂时离开网络？'&&!(await page.locator('#dialog-confirm').getAttribute('class')).includes('danger'),'creator leave is local and non-destructive, distinct from network deletion');
+ await page.locator('#dialog-confirm').click();await page.locator('#toast').filter({hasText:'已暂时离开，网络和成员已保留'}).waitFor();
+ check(await page.evaluate(id=>state.networkId===id&&!state.networkEnabled,networkBeforePause),'local departure retains the actual network identity for reconnection');
+ check(await page.evaluate(()=>JSON.stringify(state.settings))===settingsBeforeLeave,'temporary creator departure preserves independent settings');
+ await nav('create');check((await page.locator('#pair-expiry').innerText()).includes('请到概况连接网络')&&await page.locator('[data-action=generate]').isDisabled(),'paused creator sees how to reconnect before generating an invitation');
  await page.evaluate(()=>{joinCodeValue='123456';submittedJoin={code:'123456',direct:false};});
  await nav('create');await action('delete');await page.locator('#dialog-confirm').click();await page.locator('#toast').filter({hasText:'当前网络已删除'}).waitFor();check(await page.locator('[data-action=create]').isEnabled(),'confirmed deletion enables creating again');
  check(await page.evaluate(()=>JSON.stringify(state.settings))===settingsBeforeLeave,'actual network deletion preserves independent saved settings exactly');

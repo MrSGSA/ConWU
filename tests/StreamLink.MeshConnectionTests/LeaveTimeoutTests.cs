@@ -37,7 +37,7 @@ static partial class Program
             using var worker=new ControlWorker();var closing=new ClosingPairClient(wait);
             void Set(string field,object value)=>typeof(ControlWorker).GetField(field,BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(worker,value);
             Set("uiPairClient",closing);Set("uiPairOwner",true);Set("uiRoom",new PairRoomTicket("fixture-room","123456","fixture-token","fixture-commit","fixture",DateTimeOffset.UtcNow.AddMinutes(1).ToUnixTimeSeconds()));
-            var reply=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("leave",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)),sid,default);
+            var reply=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("delete-network",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)),sid,default);
             Check(reply.Ok,"deleting a single-member network does not fail on optional pairing-room close timeout");
             await Until(()=>store.Load().Mesh==null,"network deletion commits after bounded optional pairing cleanup",6500);
             Check(closing.Closed==1&&closing.Disposed&&!store.Load().Enabled,"leave closes pairing resources exactly once and persists the disabled empty network");
@@ -73,7 +73,7 @@ static partial class Program
         try{foreach(string scenario in new[]{"transient","timeout","forbidden"}){
             mode=scenario;calls=0;applied=null;var owner=MeshIdentity.Create(url,pin,"faketcp");MeshIdentity.Issue(owner);store.Save(new DeviceProfile{Mesh=owner,Enabled=false});
             using var worker=new ControlWorker();
-            var reply=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("leave",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)),sid,default);
+            var reply=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("delete-network",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)),sid,default);
             if(scenario=="forbidden")Check(!reply.Ok&&calls==1&&store.Load().Mesh?.Directory?.Members.Length==2,"required member revocation rejection preserves network and is never treated as optional cleanup");
             else Check(reply.Ok&&calls==2&&applied?.Members.Length==1&&store.Load().Mesh==null,"lost revocation acknowledgement retries the identical signed table and completes deletion: "+scenario);
         }}finally{await app.StopAsync();}

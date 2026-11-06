@@ -150,6 +150,26 @@ public static class MeshIdentity
             foreach(string ip in reserved)MeshAddressing.ValidateAddress(ip);
         }
     }
+    public static void ValidateSuccessor(MeshDirectory next, MeshDirectory prior)
+    {
+        ValidateDirectory(next, prior.Network, prior.OwnerKey, prior.Revision);
+        ValidateDirectoryProgression(next, prior);
+    }
+    // For already signature-validated input, recheck the current high-water
+    // mark under the router lock without repeating expensive cryptography.
+    internal static void ValidateDirectoryProgression(MeshDirectory next, MeshDirectory prior)
+    {
+        if (next.Network != prior.Network || next.OwnerKey != prior.OwnerKey || next.Revision < prior.Revision)
+            throw new CryptographicException("成员目录无效或已回退");
+        if (next.Revision == prior.Revision) {
+            if (!DirectoryData(next).AsSpan().SequenceEqual(DirectoryData(prior)))
+                throw new CryptographicException("相同版本的成员目录发生冲突");
+            return;
+        }
+        if (next.NextSlot < prior.NextSlot || next.Members.Any(m => m.Slot < prior.NextSlot && !prior.Members.Contains(m)) ||
+            prior.ReservedAddresses is {} reserved && (next.ReservedAddresses == null || reserved.Any(ip => !next.ReservedAddresses.Contains(ip))))
+            throw new CryptographicException("成员目录回退或重复使用已撤销身份");
+    }
     public static byte[] SharedKey(MeshProfile local, MeshMember peer)
     {
         ValidateMember(local.Pair.Network, local.OwnerKey, peer);

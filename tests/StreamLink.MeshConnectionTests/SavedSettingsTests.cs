@@ -35,7 +35,7 @@ static partial class Program
             var saved=await restarted.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:settings,ExpectedRevision:current.SettingsRevision)),sid,default);
             Check(!saved.Ok&&JsonSerializer.Serialize((await restarted.HandleUi(new("status"),sid,default)).Status!.Settings)==before,"invalid network-bound save cannot partly change the independent settings");
             var active=(await restarted.Handle(new("status"))).Profile!.Mesh!;
-            var leave=await restarted.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("leave",ExpectedNetwork:active.Pair.Network,ConfirmReplace:true)),sid,default);
+            var leave=await restarted.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("delete-network",ExpectedNetwork:active.Pair.Network,ConfirmReplace:true)),sid,default);
             var now=leave.Status!;
             var changed=await restarted.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:now.Settings! with{EntryRefreshSeconds=240},ExpectedRevision:now.SettingsRevision)),sid,default);
             Check(changed.Ok&&changed.Status!.Settings!.EntryRefreshSeconds==240&&changed.Status.SettingsRevision!=revision,"explicit user save changes independent settings and advances their revision");

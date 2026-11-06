@@ -35,7 +35,7 @@ static partial class Program
         try{
             await Until(()=>(worker.Handle(new("status")).GetAwaiter().GetResult().Status?.Connection?.Phase)=="Idle","isolated real runner becomes ready before lifecycle testing");
             saved=JsonSerializer.Serialize((await Call(new("status"))).Status!.Settings);
-            var accepted=await Call(new("network",OperationId:leaving,Network:new("leave",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)));
+            var accepted=await Call(new("network",OperationId:leaving,Network:new("delete-network",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true)));
             Check(accepted.Ok&&accepted.Operation is {Completed:false},"real network exit acknowledges before a synchronous owned-firewall cleanup returns");
             Check(await Task.Run(()=>entered.Wait(TimeSpan.FromSeconds(3))),"real runner reaches its owned-rule-and-record cleanup stage");
             var clock=Stopwatch.StartNew();

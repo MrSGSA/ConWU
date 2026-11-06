@@ -115,6 +115,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
         if (!directory.Members.Contains(profile.Self)) throw new MeshRevokedException();
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
+            if (profile.Directory is {} prior) MeshIdentity.ValidateDirectoryProgression(directory, prior);
             foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { CloseManaged(peers[slot]); peers[slot].Link.Dispose(); peers.Remove(slot); }
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
@@ -314,7 +315,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     // business observation probes; do not discard those pongs.
                     peer.Recovery.Pong(recoveryNonce, Environment.TickCount64);
                 }
-                if(result.Synchronization!=null && endpoint.Equals(peer.Active))ReceiveSynchronization(peer,result.Synchronization);
+                // Both sides may independently retain different proven paths.
+                // Metadata is authenticated to the member and validated again
+                // by its issuer signature; it must not require symmetric path
+                // selection, nor promote the path on which it arrived.
+                if(result.Synchronization!=null)ReceiveSynchronization(peer,result.Synchronization);
                 if (result.Packet != null) {
                     if (Deliver(peer, result.Packet, MeshPackets.Accept(result.Packet, local, peer.Host))) {
                         peer.Received += result.Packet.Length;
