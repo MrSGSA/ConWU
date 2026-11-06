@@ -13,7 +13,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_include_directories(udp2raw-native PRIVATE ${U} "${CMAKE_CURRENT_BINARY_DIR}")
   target_include_directories(udp2raw-native SYSTEM PRIVATE ${U}/libev)
   target_compile_definitions(udp2raw-native PRIVATE STREAMLINK_LINUX)
-  target_compile_options(udp2raw-native PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-sign-compare -Wno-missing-field-initializers)
+  # Upstream key derivation and address conversion still execute inside assert.
+  # Keep these operations enabled in Release, as the Windows build already does.
+  target_compile_options(udp2raw-native PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-sign-compare -Wno-missing-field-initializers -UNDEBUG)
   target_link_libraries(udp2raw-native PRIVATE pthread rt)
   option(STREAMLINK_LINUX_STATIC "Link Linux native runtime statically" ON)
   if(STREAMLINK_LINUX_STATIC)
