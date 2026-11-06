@@ -11,7 +11,7 @@ static partial class Program
 {
     static int Code(IResult result)=>(result as IStatusCodeHttpResult)?.StatusCode??200;
     static void Invalid(Action action,string reason){try{action();}catch(Exception ex)when(ex is IOException or CryptographicException or FormatException){Check(true,reason);return;}throw new Exception(reason+" was accepted");}
-    static async Task Governance()
+    static async Task Governance(bool includeService=true)
     {
         string root=Path.Combine(Path.GetTempPath(),"streamlink-governance-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(root);
         try{
@@ -112,7 +112,7 @@ static partial class Program
             var copied=ProfileChanges.Copy(settings);copied.Validate();Check(copied.Mesh!.CanManage&&copied.ExistingEntries.SequenceEqual(settings.ExistingEntries),"configuration round trip preserves equal membership and saved entries");
         }finally{Directory.Delete(root,true);}
         await GovernanceBounds();
-        await GovernanceServiceRecovery();
+        if(includeService)await GovernanceServiceRecovery();
         await GovernanceRunners();
         Console.WriteLine($"PASS {checks} equal membership checks");
     }

@@ -28,7 +28,11 @@ public sealed partial class ControlWorker
     {
         var mesh=ProfileChanges.Copy(profile).Mesh??throw new IOException("尚未加入网络");
         using var client=new MeshDiscoveryClient(mesh);
-        var remote=await client.Read(token)??throw new IOException("协调服务未保存此网络，请恢复服务器数据；本机网络身份仍保留");
+        MeshSnapshot? remote;
+        try{remote=await client.Read(token);}
+        catch(OperationCanceledException ex)when(!token.IsCancellationRequested){throw new IOException("HTTPS 协调服务确认成员信息超时；已有网络与设置保持不变，请稍后重试。",ex);}
+        catch(HttpRequestException ex){throw new IOException("HTTPS 协调服务无法确认成员信息"+(ex.StatusCode is {} code?$"（HTTP {(int)code}）":"（"+ex.HttpRequestError+"）")+"；已有网络与设置保持不变。",ex);}
+        if(remote==null)throw new IOException("协调服务未保存此网络，请恢复服务器数据；本机网络身份仍保留");
         StoreMembership(remote.Directory);
         if(profile.Mesh?.CanManage!=true)throw new IOException("本机已不在有效成员表中，不能继续管理网络；可退出后重新申请加入");
     }
@@ -58,7 +62,8 @@ public sealed partial class ControlWorker
             ResetUiPair("成员信息已更新，请重新生成配对码并核对申请");
             throw;
         }catch(Exception ex)when(ex is HttpRequestException or OperationCanceledException){
-            throw new IOException("协调服务尚未确认本次网络变更，操作记录已保留；请使用“继续确认”，不会重复添加设备。",ex);
+            string reason=ex is HttpRequestException {StatusCode:{} code}?$"（HTTP {(int)code}）":"";
+            throw new IOException("HTTPS 协调服务尚未确认本次网络变更"+reason+"，操作记录已保留；请使用“继续确认”，不会重复添加设备。",ex);
         }
         StoreMembership(committed);
         committed=profile.Mesh!.Directory!;

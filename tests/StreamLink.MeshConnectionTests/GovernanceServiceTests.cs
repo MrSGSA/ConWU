@@ -22,7 +22,7 @@ static partial class Program
         WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
         string root=ProfileStore.Root;Directory.CreateDirectory(root);
         string registryRoot=Path.Combine(root,"registry");Directory.CreateDirectory(registryRoot);
-        var registry=new MeshRegistry(registryRoot);var rooms=new PairRooms();bool loseReply=false;
+        var registry=new MeshRegistry(registryRoot);var rooms=new PairRooms();bool loseReply=false,stallMembershipRead=false;
         using var key=RSA.Create(2048);
         var request=new CertificateRequest("CN=localhost",key,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
         using var generated=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddHours(1));
@@ -31,7 +31,7 @@ static partial class Program
         builder.WebHost.ConfigureKestrel(o=>o.Listen(IPAddress.Loopback,0,l=>l.UseHttps(cert)));
         await using var app=builder.Build();
         app.MapGet("/health",()=>Results.Json(new{meshProtocol=4,pairingDecisions=1,meshAddressing=1,memberRejoin=1,meshGovernance=1}));
-        app.MapGet("/v3/mesh/{network}",(HttpContext c,string network)=>registry.Read(c,network));
+        app.MapGet("/v3/mesh/{network}",async(HttpContext c,string network)=>{if(stallMembershipRead)await Task.Delay(Timeout.Infinite,c.RequestAborted);return registry.Read(c,network);});
         app.MapPut("/v3/mesh/{network}/directory",(HttpContext c,string network,MeshDirectory d)=>registry.Directory(c,network,d));
         app.MapPut("/v4/mesh/{network}/membership",(HttpContext c,string network,MeshMembershipRequest change)=>{
             var result=registry.Membership(c,network,change);if(loseReply){loseReply=false;c.Abort();}return result;
@@ -99,6 +99,10 @@ static partial class Program
             Check(abandoned.Ok&&!abandoned.Status!.PendingMembership&&abandoned.Status.Peers.Any(peer=>peer.Slot==abandonedSlot),"lost pairing room clears recovery wait and exposes the committed member for explicit removal");
             var cleaned=await Act(new("revoke",ExpectedNetwork:b.Pair.Network,PeerSlot:abandonedSlot));
             Check(cleaned.Ok,"unconfirmed invitation can be removed explicitly without deleting other members");
+            stallMembershipRead=true;
+            var unavailable=await Act(new("revoke",ExpectedNetwork:b.Pair.Network,PeerSlot:1));
+            Check(!unavailable.Ok&&unavailable.Error.Contains("HTTPS 协调服务")&&!unavailable.Error.Contains("对端")&&store.Load().PendingMembership==null&&store.Load().Mesh!.Directory!.Members.Any(m=>m.Slot==1),"management read timeout names HTTPS coordination and leaves membership unchanged");
+            stallMembershipRead=false;
             var removed=await Act(new("revoke",ExpectedNetwork:b.Pair.Network,PeerSlot:1));
             Check(removed.Ok&&store.Load().Mesh!.Directory!.Members.All(m=>m.Slot!=1),"production non-creator service removes the original creator");
             loseReply=true;

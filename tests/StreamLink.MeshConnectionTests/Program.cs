@@ -25,6 +25,7 @@ static partial class Program
     public static async Task Main(string[] args)
     {
         if(args is ["--governance-only"]){await Governance();return;}
+        if(args is ["--governance-service-only"]){await GovernanceServiceRecovery();return;}
         if(args is ["--decentralization-only"]){await Decentralization();return;}
         if(args is ["--peer-sync-only"]){SynchronizationValidation();await AsymmetricSynchronization();return;}
         if(args is ["--network-pause-only"]){await NetworkPause();return;}
@@ -81,7 +82,7 @@ static partial class Program
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AccessDenied or SocketError.AddressAlreadyInUse) { Console.WriteLine(ex.SocketErrorCode); }
             return;
         }
-        await Governance();
+        await Governance(includeService:false); // service fixture owns a separate immutable validation identity
         RejoinIdentity();
         ConnectionFeedback();
         await ExplicitReservationRecovery();
