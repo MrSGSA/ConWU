@@ -279,6 +279,9 @@ public sealed partial class MeshRouter : IAsyncDisposable
             try { received = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), stop.Token); }
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (!IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
+            if(MeshEntryHandshake.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))) {
+                ReceiveNetworkEntry(buffer.AsSpan(0,received.ReceivedBytes),(IPEndPoint)received.RemoteEndPoint);continue;
+            }
             if(profile.Pair.DirectBootstrap && profile.IsOwner && DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
                 var response=DirectPairing?.Invoke(buffer.AsMemory(0,received.ReceivedBytes));
                 if(response!=null)Send(response,(IPEndPoint)received.RemoteEndPoint);

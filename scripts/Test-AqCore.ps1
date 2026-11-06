@@ -38,6 +38,7 @@ try {
  Managed 'PersonalFeatureTests' @((Join-Path $OutputDirectory 'personal.json'))
  Managed 'RenderingTests' @((Join-Path $OutputDirectory 'tray/result.json'))
  Managed 'WebTests'
+ Managed 'UnifiedHostTests'
  Managed 'ManagedPathTests' @('--output',(Join-Path $OutputDirectory 'managed.json'))
  Managed 'NominationTests' @('--output',(Join-Path $OutputDirectory 'nomination.json'))
  Managed 'MeshTraversalTests' @('--native',$native,'--output',(Join-Path $OutputDirectory 'mesh-traversal.json'))

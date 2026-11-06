@@ -34,13 +34,15 @@ public sealed partial class ControlWorker : BackgroundService
     {
         lease = new FileStream(Path.Combine(ProfileStore.Root, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try {
+            if(OperatingSystem.IsLinux())LinuxFirewall.Recover();
             profile = store.Load();
             bool changed=false;
-            if (profile.AdapterBackend != PacketAdapterBackend.OfficialWintun) {
+            var platformAdapter=OperatingSystem.IsLinux()?PacketAdapterBackend.LinuxTun:PacketAdapterBackend.OfficialWintun;
+            if (profile.AdapterBackend != platformAdapter) {
                 store.BackupResearchProfile();
-                profile.AdapterBackend = PacketAdapterBackend.OfficialWintun;
+                profile.AdapterBackend = platformAdapter;
                 profile.Enabled = false;
-                profile.MigrationNotice = "原自研网卡配置已在本机备份并迁移到官方 Wintun；网络保持停止，请核对后连接。";
+                profile.MigrationNotice = OperatingSystem.IsLinux()?"网卡配置已在本机备份并迁移到 Linux TUN；网络保持停止，请核对后连接。":"原自研网卡配置已在本机备份并迁移到官方 Wintun；网络保持停止，请核对后连接。";
                 changed=true;
             }
             if(profile.SavedNetworkSettings==null){
@@ -333,15 +335,17 @@ public sealed partial class ControlWorker : BackgroundService
     public void StartLocal()
     {
         Recovery.Recover(Log, Path.Combine(ProfileStore.Root, "sessions"));
+        StartCoordinator();
         Log("StreamLink 已启动"); if (profile.Enabled) Begin();
         initialized=true;
         PublishReply();
     }
-    public async Task StopLocal(CancellationToken token=default) { await End(token); runStop?.Dispose();runStop=null; }
+    public async Task StopLocal(CancellationToken token=default) { await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
     public override void Dispose() {base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StartLocal();
+        if(OperatingSystem.IsLinux()){try{await RunLinuxControl(stoppingToken);}finally{await StopLocal();}return;}
         var uiServing=RunUiControl(stoppingToken);
         var recovering=profile.PendingMembership==null?Task.CompletedTask:Task.Run(async()=>{var recovered=await HandleCore(new("membership-resume"),stoppingToken,null);if(!recovered.Ok)Log("待确认网络变更需要继续确认："+recovered.Error);},CancellationToken.None);
         using var clientsLimit=new SemaphoreSlim(8,8);var clients=new List<Task>();bool first=true;
@@ -359,6 +363,6 @@ public sealed partial class ControlWorker : BackgroundService
             }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
-        finally {try{await Task.WhenAll(clients.Append(uiServing).Append(recovering)).WaitAsync(TimeSpan.FromSeconds(21));}finally{await End();runStop?.Dispose();runStop=null;}}
+        finally {try{await Task.WhenAll(clients.Append(uiServing).Append(recovering)).WaitAsync(TimeSpan.FromSeconds(21));}finally{await StopLocal();}}
     }
 }

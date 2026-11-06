@@ -15,6 +15,10 @@
 #include "lib/md5.h"
 #include "encrypt.h"
 #include "fd_manager.h"
+#ifdef STREAMLINK_LINUX
+#include "native_attach.h"
+#include "native_so.h"
+#endif
 #ifdef UDP2RAW_NATIVE
 #include "native_backend.h"
 #endif
@@ -393,6 +397,9 @@ int server_on_raw_recv_multi()  // called when server received an raw packet
     packet_info_t &peek_info = peek_raw_info.recv_info;
     mylog(log_trace, "got a packet\n");
     if (pre_recv_raw_packet() < 0) return -1;
+#ifdef STREAMLINK_LINUX
+    if(native_so_receive())return 0;
+#endif
     if (peek_raw(peek_raw_info) < 0) {
         discard_raw_packet();
         // recv(raw_recv_fd, 0,0, 0  );//
@@ -645,6 +652,9 @@ int server_event_loop() {
         }
     }
 
+#ifdef STREAMLINK_LINUX
+    if(!native_attached()){
+#endif
     if (raw_mode == mode_faketcp) {
         bind_fd = socket(local_addr.get_type(), SOCK_STREAM, 0);
     } else if (raw_mode == mode_udp || raw_mode == mode_icmp)  // bind an adress to avoid collision,for icmp,there is no port,just bind a udp port
@@ -671,6 +681,9 @@ int server_event_loop() {
         }
     }
 
+#ifdef STREAMLINK_LINUX
+    }
+#endif
     // init_raw_socket();
     init_filter(local_addr.get_port());  // bpf filter
 
@@ -699,6 +712,10 @@ int server_event_loop() {
     u64_t end_time = 0;
 
     mylog(log_info, "now listening at %s\n", local_addr.get_str());
+#ifdef STREAMLINK_LINUX
+    // Parent installs a kernel guard only after this child has reserved the port.
+    puts("STREAMLINK_LISTENER_READY");fflush(stdout);
+#endif
 
     int fifo_fd = -1;
 
@@ -737,6 +754,9 @@ int server_event_loop() {
             if ((events[idx].data.u64) == (u64_t)timer_fd) {
                 if (debug_flag) begin_time = get_current_time();
                 conn_manager.clear_inactive();
+#ifdef STREAMLINK_LINUX
+                native_so_server_tick();
+#endif
                 u64_t dummy;
                 int unused = read(timer_fd, &dummy, 8);
                 // current_time_rough=get_current_time();

@@ -5,7 +5,6 @@ using System.Security.Principal;
 
 namespace StreamLink.Core;
 
-[SupportedOSPlatform("windows")]
 public sealed class ChildJob : IDisposable
 {
     readonly IntPtr handle;
@@ -19,6 +18,7 @@ public sealed class ChildJob : IDisposable
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     public ChildJob()
     {
+        if(OperatingSystem.IsLinux())return;
         handle = CreateJobObject(IntPtr.Zero, null);
         var limits = new ExtendedLimits(); limits.Basic.Flags = 0x2000; // KILL_ON_JOB_CLOSE
         if (handle == IntPtr.Zero || !SetInformationJobObject(handle, 9, ref limits, (uint)Marshal.SizeOf<ExtendedLimits>()))
@@ -34,7 +34,7 @@ public sealed class ChildJob : IDisposable
         if (environment != null) foreach (var p in environment) info.Environment[p.Key] = p.Value;
         var process = new Process { StartInfo = info };
         if (!process.Start()) throw new IOException("无法启动配套组件");
-        if (!AssignProcessToJobObject(handle, process.Handle)) { process.Kill(); process.Dispose(); throw new IOException("无法托管配套组件，已停止启动"); }
+        if (OperatingSystem.IsWindows() && !AssignProcessToJobObject(handle, process.Handle)) { process.Kill(); process.Dispose(); throw new IOException("无法托管配套组件，已停止启动"); }
         children.Add(process);
         var writer = logPath == null ? null : new StreamWriter(logPath, false) { AutoFlush = true };
         string[] redactions = (secrets ?? []).Where(x => x.Length > 0).Distinct().OrderByDescending(x => x.Length).ToArray();
@@ -55,7 +55,8 @@ public sealed class ChildJob : IDisposable
     public bool AnyExited => children.Any(p => p.HasExited);
     public void Dispose()
     {
-        CloseHandle(handle);
+        if(OperatingSystem.IsWindows())CloseHandle(handle);
+        else foreach(var child in children)if(!child.HasExited){child.Kill();child.WaitForExit();}
         foreach (var p in children) { try { p.WaitForExit(5000); } catch { } p.Dispose(); }
         children.Clear();
     }

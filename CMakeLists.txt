@@ -1,5 +1,26 @@
 cmake_minimum_required(VERSION 3.20)
 project(streamlink_native VERSION 0.1.0 LANGUAGES CXX)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  set(CMAKE_CXX_STANDARD 17)
+  set(U transport/udp2raw)
+  add_executable(udp2raw-native
+    ${U}/main.cpp ${U}/common.cpp ${U}/network.cpp ${U}/connection.cpp
+    ${U}/client.cpp ${U}/server.cpp ${U}/misc.cpp ${U}/fd_manager.cpp
+    ${U}/encrypt.cpp ${U}/log.cpp ${U}/my_ev.cpp
+    ${U}/lib/md5.cpp ${U}/lib/pbkdf2-sha1.cpp ${U}/lib/pbkdf2-sha256.cpp
+    ${U}/lib/aes_faster_c/aes.cpp ${U}/lib/aes_faster_c/wrapper.cpp ${U}/linux_attach.cpp ${U}/native_so.cpp)
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/git_version.h" "const char *gitversion = \"c4995ea+streamlink-linux\";\n")
+  target_include_directories(udp2raw-native PRIVATE ${U} "${CMAKE_CURRENT_BINARY_DIR}")
+  target_include_directories(udp2raw-native SYSTEM PRIVATE ${U}/libev)
+  target_compile_definitions(udp2raw-native PRIVATE STREAMLINK_LINUX)
+  target_compile_options(udp2raw-native PRIVATE -O2 -Wall -Wextra -Wno-unused-parameter -Wno-unused-variable -Wno-sign-compare -Wno-missing-field-initializers)
+  target_link_libraries(udp2raw-native PRIVATE pthread rt)
+  option(STREAMLINK_LINUX_STATIC "Link Linux native runtime statically" ON)
+  if(STREAMLINK_LINUX_STATIC)
+    target_link_options(udp2raw-native PRIVATE -static)
+  endif()
+  return()
+endif()
 if(NOT MINGW)
   message(FATAL_ERROR "This initial native port requires Windows x64 MinGW-w64")
 endif()

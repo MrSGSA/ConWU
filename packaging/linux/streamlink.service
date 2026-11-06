@@ -1,0 +1,30 @@
+[Unit]
+Description=StreamLink network device and optional coordinator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# StreamLink managed unit
+Type=simple
+ExecStart=/opt/streamlink/current/streamlink run
+WorkingDirectory=/var/lib/streamlink
+StateDirectory=streamlink
+StateDirectoryMode=0700
+UMask=0077
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=75
+KillMode=control-group
+NoNewPrivileges=true
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_DAC_OVERRIDE CAP_FOWNER
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/streamlink
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+RestrictSUIDSGID=true
+LockPersonality=true
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target

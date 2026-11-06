@@ -6,6 +6,10 @@
 #include "native_so.h"
 #include "native_so_state.h"
 #include <memory>
+#ifdef STREAMLINK_LINUX
+#include <chrono>
+static unsigned long long GetTickCount64(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
+#endif
 
 namespace {
 std::unique_ptr<streamlink::SimultaneousOpen> state;

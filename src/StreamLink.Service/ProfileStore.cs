@@ -10,6 +10,7 @@ public sealed class ProfileStore
 {
     public void AuthorizeUiUser(string value)
     {
+        if(OperatingSystem.IsLinux()){if(value!=LinuxPlatform.UserIdentity)throw new IOException("Linux 控制仅授权后台所属用户");return;}
         var sid=new SecurityIdentifier(value);if(!sid.IsAccountSid())throw new IOException("必须授权单一用户SID");
         string target=Path.Combine(Root,"ui-user.sid");if(File.Exists(target)&&(File.GetAttributes(target)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");
         string temporary=Path.Combine(Root,"ui-user-"+Guid.NewGuid().ToString("N")+".tmp");
@@ -30,16 +31,18 @@ public sealed class ProfileStore
 
     internal string? AuthorizedUiUser()
     {
+        if(OperatingSystem.IsLinux())return LinuxPlatform.UserIdentity;
         string path=Path.Combine(Root,"ui-user.sid");if(!File.Exists(path))return null;if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");
         var text=File.ReadAllText(path).Trim();if(text.Length>128)throw new IOException("UI授权文件无效");var sid=new SecurityIdentifier(text);return sid.IsAccountSid()?sid.Value:throw new IOException("UI授权SID无效");
     }
     public string? UiUserSnapshot()=>AuthorizedUiUser();
     public void RestoreUiUser(string? previous){if(previous!=null){AuthorizeUiUser(previous);return;}string path=Path.Combine(Root,"ui-user.sid");if(File.Exists(path)){if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("UI授权文件不能是链接");File.Delete(path);}}
-    public static string Root => WindowsInstance.IsValidation ? WindowsInstance.ProfileRoot : Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : PersonalFeature.DataRoot;
+    public static string Root => WindowsInstance.IsValidation ? WindowsInstance.ProfileRoot : Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT") is { Length: > 0 } testRoot ? Path.GetFullPath(testRoot) : OperatingSystem.IsLinux()?"/var/lib/streamlink":PersonalFeature.DataRoot;
     readonly string file;
     public ProfileStore()
     {
         if (Directory.Exists(Root) && (File.GetAttributes(Root) & FileAttributes.ReparsePoint) != 0) throw new IOException("配置目录不能是链接");
+        if(OperatingSystem.IsLinux()){LinuxPlatform.PrivateDirectory(Root);file=Path.Combine(Root,"profile.json");return;}
         Directory.CreateDirectory(Root);
         var acl = new DirectorySecurity(); acl.SetAccessRuleProtection(true, false);
         acl.SetOwner(new SecurityIdentifier(WellKnownSidType.BuiltinAdministratorsSid, null));
@@ -50,7 +53,7 @@ public sealed class ProfileStore
     public DeviceProfile Load()
     {
         if (!File.Exists(file)) return new();
-        var profile = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)) ?? throw new IOException("配置为空");
+        var profile = JsonSerializer.Deserialize<DeviceProfile>(ReadProtected()) ?? throw new IOException("配置为空");
         bool migrated=PersonalFeature.Enabled && profile.MigrateAutomaticTransport();
         profile.Validate();
         if(PersonalFeature.Enabled) profile.RequireFixedTransport();
@@ -66,7 +69,7 @@ public sealed class ProfileStore
     {
         if (!File.Exists(file)) return new();
         if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException("配置文件不能是链接");
-        var profile = JsonSerializer.Deserialize<DeviceProfile>(ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)) ?? throw new IOException("配置为空");
+        var profile = JsonSerializer.Deserialize<DeviceProfile>(ReadProtected()) ?? throw new IOException("配置为空");
         profile.Validate(); return profile;
     }
     public void Save(DeviceProfile profile)
@@ -83,8 +86,13 @@ public sealed class ProfileStore
         }
         Write(profile);
     }
+    byte[] ReadProtected() {
+        if((File.GetAttributes(file)&FileAttributes.ReparsePoint)!=0)throw new IOException("配置文件不能是链接");
+        return OperatingSystem.IsLinux()?File.ReadAllBytes(file):ProtectedData.Unprotect(File.ReadAllBytes(file), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine);
+    }
     void Write(DeviceProfile profile)
     {
+        if(OperatingSystem.IsLinux()){LinuxPlatform.PrivateWrite(file,JsonSerializer.SerializeToUtf8Bytes(profile));return;}
         File.WriteAllBytes(file + ".tmp", ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)); File.Move(file + ".tmp", file, true);
     }
     public void BackupLegacy(DeviceProfile profile)
@@ -92,6 +100,7 @@ public sealed class ProfileStore
         if (profile.Pair == null || profile.Mesh != null) return;
         profile.Validate();
         string backup = Path.Combine(Root, "profile-before-native-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8] + ".dpapi");
+        if(OperatingSystem.IsLinux()){LinuxPlatform.PrivateWrite(backup,JsonSerializer.SerializeToUtf8Bytes(profile));return;}
         File.WriteAllBytes(backup, ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(profile), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine));
     }
     public void BackupResearchProfile()

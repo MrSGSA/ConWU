@@ -12,8 +12,8 @@ if(args.Length>=2&&args[0]=="--validation-instance"){
     if(!WindowsHost.IsAdmin)throw new UnauthorizedAccessException("Isolated backend still requires administrator/System privileges");
     WindowsInstance.ConfigureValidation(args[1]);
 }
-builder.Services.AddWindowsService(o => o.ServiceName = WindowsInstance.Name);
-if (WindowsServiceHelpers.IsWindowsService())
+if(OperatingSystem.IsWindows())builder.Services.AddWindowsService(o => o.ServiceName = WindowsInstance.Name);
+if (OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService())
     builder.Services.Replace(ServiceDescriptor.Singleton<IHostLifetime, StreamLinkServiceLifetime>());
 builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(45));
 builder.Services.AddHostedService<ControlWorker>();

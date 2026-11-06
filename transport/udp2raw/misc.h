@@ -29,7 +29,7 @@ extern int ttl_value;
 // allowance. The application authenticates membership independently; these
 // caps apply before that authentication and never evict established sessions.
 inline bool direct_rendezvous_limits() {
-#ifdef UDP2RAW_NATIVE
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
     const char *value=getenv("STREAMLINK_DIRECT_RENDEZVOUS");
     return value && strcmp(value,"1")==0;
 #else

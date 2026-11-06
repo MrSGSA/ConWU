@@ -3,12 +3,12 @@ module.exports=async({page,context,browser,child,nextLine,nav,section,action,che
  const idle=()=>page.waitForFunction(()=>!busy);
  const persisted=async()=>JSON.stringify((await(await page.request.get(new URL('/api/status',page.url()).href)).json()).status.settings);
  await nav('settings');await section('network');const unchanged=await persisted();
- await page.evaluate(()=>window.matrixOption=document.querySelector('#entry-owner option'));await page.evaluate(()=>refresh());
- check(await page.evaluate(()=>window.matrixOption===document.querySelector('#entry-owner option')),'unchanged backend refresh keeps select-option DOM stable instead of interrupting an open dropdown');
- await page.locator('#entry-owner').selectOption('target');await page.locator('[data-entry-index="0"]').fill('203.0.113.99:44680');
- await page.locator('#entry-owner').selectOption('local');await page.locator('[data-entry-index="0"]').fill('203.0.113.88:44680');
- await page.locator('#entry-owner').selectOption('target');
- check(await page.locator('[data-entry-index="0"]').inputValue()==='203.0.113.99:44680','switching local and target sources preserves each independent draft');
+ await page.evaluate(()=>window.matrixOption=document.querySelector('#protocol option'));await page.evaluate(()=>refresh());
+ check(await page.evaluate(()=>window.matrixOption===document.querySelector('#protocol option')),'unchanged backend refresh keeps select-option DOM stable instead of interrupting an open dropdown');
+ await section('network');await page.locator('[data-entry-index="0"]').fill('203.0.113.99:44680');
+ await section('publish');await page.locator('[data-entry-index="0"]').fill('203.0.113.88:44680');
+ await section('network');
+ check(await page.locator('[data-entry-index="0"]').inputValue()==='203.0.113.99:44680','network and published entry sections preserve independent drafts');
  await page.locator('[data-key=useServer]').uncheck();await page.locator('[name=mode][value=custom]').check();await page.locator('[name=mode][value=existing]').check();
  check(!(await page.locator('[data-key=useServer]').isChecked()),'switching connection modes restores the previous existing-entry pairing choice');
  await action('revert');check(await persisted()===unchanged,'reverting option changes does not write backend settings');

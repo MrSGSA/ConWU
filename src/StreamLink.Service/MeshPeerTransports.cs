@@ -25,6 +25,16 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
     string requested = "";
     public bool HasPending => pending != null || preparing != null;
     public bool HasFailedAttempts => failures>0;
+    public void RetireNetworkEntry(int slot,string endpoint) {
+        if(preparationEndpoint==endpoint)preparationStop?.Cancel();
+        if(pending is {} candidate&&candidate.Endpoint==endpoint){router.CancelLegacyCandidate(slot,candidate.Transport.ClientEndpoint);Close(pending);pending=null;}
+        if(active is {} selected&&selected.Endpoint==endpoint&&!router.HasHealthyPath(slot)){router.FailLegacyTransport(slot,selected.Transport.ClientEndpoint);Close(active);active=null;}
+    }
+    public bool AdoptNetworkEntry(string endpoint,IMeshTransport transport) {
+        if(disposed||active!=null||pending!=null||preparing!=null)return false;
+        pending=(endpoint,transport);requested=endpoint;preparationBegan=started=Environment.TickCount64;attempts++;
+        return true;
+    }
     public string? AuthenticatedEndpoint(int slot)
     {
         if(disposed||!router.HasHealthyPath(slot))return null;

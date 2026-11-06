@@ -9,7 +9,7 @@ public sealed record ControlReply(bool Ok, string Error, DeviceProfile? Profile,
 public static class ServiceProtocol
 {
     public const int MaximumMessageBytes = 65536;
-    static int Limit<T>() => typeof(T)==typeof(ControlReply)||typeof(T)==typeof(ControlRequest)?6_000_000:MaximumMessageBytes;
+    static int Limit<T>() => typeof(T)==typeof(ControlReply)||typeof(T)==typeof(ControlRequest)||typeof(T)==typeof(LocalHostRequest)||typeof(T)==typeof(LocalHostReply)?6_000_000:MaximumMessageBytes;
     public static string PipeName => WindowsInstance.Name + "-Control-v2";
     public static async Task<T> Read<T>(Stream stream, CancellationToken token)
     {

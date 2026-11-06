@@ -7,6 +7,7 @@ internal static class PersonalPacketAdapters
     public static Task Preflight(DeviceProfile profile,CancellationToken token)
     {
         token.ThrowIfCancellationRequested();
+        if(OperatingSystem.IsLinux()){if(profile.AdapterBackend!=PacketAdapterBackend.LinuxTun)throw new IOException("Linux 需要内核 TUN 后端");return Task.CompletedTask;}
         if(profile.AdapterBackend!=PacketAdapterBackend.OfficialWintun)
             throw new IOException("AQ-1 使用官方 Wintun；自研驱动已退出产品范围，请迁移配置后连接");
         return Task.CompletedTask;
@@ -18,6 +19,7 @@ internal static class PersonalPacketAdapters
     {
         await Preflight(profile,token);
         var mesh=profile.Mesh??throw new IOException("虚拟网卡需要 Mesh 网络");
+        if(OperatingSystem.IsLinux())return await Task.Run<IPacketAdapter>(()=>new LinuxTunAdapter(mesh.LocalIp,token),token);
         return await Task.Factory.StartNew<IPacketAdapter>(() => {
             // Official PnP APIs are synchronous. Keep their waits off the
             // packet/control thread pool and join their rollback on cancel.

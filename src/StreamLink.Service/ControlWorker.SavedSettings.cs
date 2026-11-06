@@ -7,14 +7,14 @@ public sealed partial class ControlWorker
     internal static ExistingEntry[] RuntimeEntries(DeviceProfile profile)
     {
         var saved=PublicSettings(profile).ExistingEntries;
-        if(profile.Mesh is not {} mesh)return saved.Where(e=>e.PeerSlot is 0 or ExistingEntry.NetworkOwner).ToArray();
+        if(profile.Mesh is not {} mesh)return saved.Where(e=>e.PeerSlot is 0 or ExistingEntry.NetworkOwner or ExistingEntry.Network).ToArray();
         var bound=new List<ExistingEntry>();
         foreach(var entry in saved){
             if(entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IsDecentralized){
                 int target=MeshGovernance.CurrentSlot(mesh.Directory!,mesh.IntroducerSlot);
                 if(target>0&&target!=mesh.Self.Slot)bound.Add(entry with{PeerSlot=target});
             }
-            else if(entry.PeerSlot==0||entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IntroducerSlot!=mesh.Self.Slot)bound.Add(entry);
+            else if(entry.PeerSlot is 0 or ExistingEntry.Network||entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IntroducerSlot!=mesh.Self.Slot)bound.Add(entry);
             else if(entry.PeerSlot>0&&ActiveSavedPeerSlot(profile,entry.PeerSlot) is >0 and var slot)bound.Add(entry with{PeerSlot=slot});
         }
         return bound.Distinct().ToArray();

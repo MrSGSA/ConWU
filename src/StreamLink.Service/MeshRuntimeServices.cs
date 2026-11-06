@@ -4,6 +4,7 @@ using StreamLink.Core;
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshConnectionTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshRunnerTraversalTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshHarness")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.UnifiedHostTests")]
 
 namespace StreamLink.Service;
 
@@ -37,7 +38,7 @@ internal sealed record MeshRuntimeServices(
     public Func<DeviceProfile,Action<string>,CancellationToken,Task<IPacketAdapter>>? ProfileAdapter {get;init;}
     public Func<DeviceProfile, string, Action<string>, CancellationToken, Task<IMeshCandidateFactory?>> Candidates { get; init; } =
         (profile, folder, log, token) => MeshCandidateFactory.Create(profile, Path.Combine(AppContext.BaseDirectory, "components", "udp2raw-native.exe"), folder, log, token);
-    public static MeshRuntimeServices Default => new(
+    public static MeshRuntimeServices Default => OperatingSystem.IsLinux()?Linux:new(
         mesh => mesh.Pair.Direct ? new DirectMeshDiscovery(mesh) : new MeshDiscoveryClient(mesh),
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
         async (profile, log, token) => profile.TransportMode == "udp"
@@ -52,4 +53,20 @@ internal sealed record MeshRuntimeServices(
             QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests)),
             CandidatesWithEgress=(profile,folder,log,token,pacer)=>MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native.exe"),folder,log,token,pacer)
         };
+    static MeshRuntimeServices Linux => new(
+        mesh=>mesh.Pair.Direct?new DirectMeshDiscovery(mesh):new MeshDiscoveryClient(mesh),
+        mesh=>Task.Run<IPacketAdapter>(()=>new LinuxTunAdapter(mesh.LocalIp)),
+        async (profile,log,token)=>profile.TransportMode=="udp"
+            ?await UdpMapping.Create(profile.ListenPort,profile.ListenPort,log,token,profile.UdpStun,profile.Device)
+            :await GatewayMapping.CreateTcp(profile.SourcePort,profile.ListenPort,log,token,profile.OrderedTcp(),profile.Device,profile.PortControlMapping),
+        r=>new LinuxMeshTransport(Path.Combine(AppContext.BaseDirectory,"components"),r.Folder,r.Mesh,r.Target,r.Server,r.Port,r.Mapping,r.LogLevel,r.ReserveEndpoint),
+        (ip,key,token)=>Quality.Serve(ip,key,token),
+        LinuxFirewall.Update,
+        Recovery.Record,
+        Path.Combine(ProfileStore.Root,"sessions")) {
+            ProfileAdapter=PersonalPacketAdapters.Open,
+            Candidates=(profile,folder,log,token)=>MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native"),folder,log,token),
+            QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests))
+        };
+
 }

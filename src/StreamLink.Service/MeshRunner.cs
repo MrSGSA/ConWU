@@ -121,6 +121,15 @@ public sealed class MeshRunner
         IMeshTransport? server = null;
         IPAddress? serverAddress = null;
         var clients = new Dictionary<int, MeshPeerTransports>();
+        NetworkEntryConnections? networkEntries=null;
+        MeshPeerTransports Paths(int slot) {
+            if(router==null)throw new InvalidOperationException("Router not ready");
+            if(!clients.TryGetValue(slot,out var paths))clients[slot]=paths=new(router,
+                (ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){
+                    ReserveEndpoint=endpoint=>router.CancelLegacyCandidate(slot,endpoint),Egress=sharedEgress
+                }),ct),log);
+            return paths;
+        }
         var existingPlans=new Dictionary<int,ExistingEntryPlan>();
         var reconnectPlans=new Dictionary<int,PeerReconnectPolicy>();
         int refreshSeconds=profile.EntryRefreshSeconds;
@@ -145,7 +154,7 @@ public sealed class MeshRunner
         var feedback = new MeshConnectionFeedback(log);
         long began = Environment.TickCount64;
         bool coordinatorUnavailable = false;
-        AdapterRuntimeStatus adapterStatus = new(profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? PacketAdapterProviders.OfficialWintun : PacketAdapterProviders.NativeExperimental,null,"NotOpened","尚未打开虚拟网卡");
+        AdapterRuntimeStatus adapterStatus = new(profile.AdapterBackend==PacketAdapterBackend.LinuxTun?PacketAdapterProviders.LinuxTun:profile.AdapterBackend==PacketAdapterBackend.OfficialWintun ? PacketAdapterProviders.OfficialWintun : PacketAdapterProviders.NativeExperimental,null,"NotOpened","尚未打开虚拟网卡");
         IPacketAdapter? actualAdapter=null, pendingAdapter=null;
         string adapterPhase = "lifecycle-wait";
         long nextAdapterReport = 0;
@@ -260,8 +269,8 @@ public sealed class MeshRunner
                     try { pendingAdapter=adapter=await opening; }
                     catch(Exception ex) { adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
                     opening = null;actualAdapter=adapter;
-                    adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason="已由实际工厂打开官方 Wintun",Abi=adapter.Descriptor.Abi,Loaded=true};
-                    if(adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
+                    adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason=OperatingSystem.IsLinux()?"已打开 Linux 内核 TUN":"已由实际工厂打开官方 Wintun",Abi=adapter.Descriptor.Abi,Loaded=true};
+                    if(OperatingSystem.IsWindows()&&adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
                         log($"虚拟网段路由警告：{warning.Reason}；{warning.Prefix}；现有路由未改动，可在诊断中检查其他 VPN/父网段");
                     // Keep startup ownership through descriptor/logging/router
                     // validation. Only a successful Router takes the adapter.
@@ -423,6 +432,10 @@ public sealed class MeshRunner
                     await Task.Delay(100, stop); continue;
                 }
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
+                if(legacyAllowed){
+                    networkEntries??=new(router,(ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){Egress=sharedEgress}),ct),Paths,log,stop);
+                    await networkEntries.Tick(resolved.Where(r=>r.PeerSlot==ExistingEntry.Network).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray(),members,now);
+                }
                 string remoteAddresses = string.Join(',', members.Select(m => MeshAddressing.Address(mesh.Pair.Network, m)));
                 if (firewallMembers != remoteAddresses) {
                     services.Firewall(rule, mesh.LocalIp, remoteAddresses); firewallMembers = remoteAddresses;
@@ -437,7 +450,7 @@ public sealed class MeshRunner
                     bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly;
                     if(strictEntry){onlyEntryPeers.Add(member.Slot);selectedEntries[member.Slot]="";}
                     string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
-                        .Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
+                        .Concat(networkEntries?.ForMember(member)??[]).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
                     if(!reconnectPlans.TryGetValue(member.Slot,out var reconnect))reconnectPlans[member.Slot]=reconnect=new();
                     if(!reconnect.Allow(mesh.Pair.Direct,router.HasHealthyPath(member.Slot),fresh,hints,now)){
                         quietPeers.Add(member.Slot);selectedEntries[member.Slot]="";traversal?.PauseOffline(member.Slot);continue;
@@ -475,10 +488,7 @@ public sealed class MeshRunner
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
                     if(selectedEntries.TryGetValue(member.Slot,out var selected))endpoint=selected;
-                    if (!clients.TryGetValue(member.Slot, out var paths)) clients[member.Slot] = paths = new(router,
-                        (ep, preparationToken) => LegacyStartupQueue.Shared.Start(() => services.Transport(new(folder, wireMesh, IPEndPoint.Parse(ep), false, profile.ListenPort, null, profile.LogLevel) {
-                            ReserveEndpoint = endpoint => router.CancelLegacyCandidate(member.Slot, endpoint),Egress=sharedEgress
-                        }), preparationToken), log);
+                    var paths=Paths(member.Slot);
                     bool preferred=priorityPeers.Contains(member.Slot);
                     paths.Update(member.Slot, endpoint, announcement?.Name ?? "", onlyEntryPeers.Contains(member.Slot)?"仅通过已有入口连接；失败时请检查入口或手动切换到自选服务器模式":preferred?"正在优先验证已有入口，失败后自主打洞":traversal?.WaitingDetail(member.Slot) ??
                         (endpoint.Length > 0 ? "正在验证直连" : candidate.Length > 0 ? "等待成员连接本机入口" : "双方暂无可用入口，业务不会转发"),
@@ -616,6 +626,8 @@ public sealed class MeshRunner
                     else if (ex is not OperationCanceledException) try { log("退出任务已结束："+ex.Message); } catch { }
                 }
             }
+            ShutdownStage("network-entry-probes");
+            if(networkEntries!=null)try{await networkEntries.DisposeAsync();}catch(Exception ex){CleanupFailed("network-entry",ex,networkEntries);}
             ShutdownStage("legacy-clients");
             foreach (var client in clients.Values) { try { await client.DisposeAsync(); } catch (Exception ex) { CleanupFailed("legacy-client",ex,client); } }
             ShutdownStage("listener");

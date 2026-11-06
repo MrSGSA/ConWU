@@ -144,7 +144,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 diagnosticNative=wireControl&&r.TryGetProperty("pathDiagnostics",out var diagnostics)&&diagnostics.GetInt32()==1;
                 ipv6 = broker && r.TryGetProperty("ipv6", out var v6) && v6.GetBoolean() && r.TryGetProperty("ipv6Abi", out var abi6) && abi6.GetInt32() == 2 &&
                     r.TryGetProperty("ipv6Attach", out var attach6) && attach6.GetString() == "broker-only";
-                if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == "windivert" &&
+                if (r.GetProperty("nativeAbi").GetInt32() == 1 && r.GetProperty("backend").GetString() == (OperatingSystem.IsLinux()?"linux-raw":"windivert") &&
                     r.TryGetProperty("preparedStart", out var prepared) && prepared.GetBoolean() &&
                     r.TryGetProperty("simultaneousOpen", out var so) && so.GetBoolean() && r.GetProperty("wireProtocol").GetString() == "udp2raw-http-c4995ea")
                     if(profile.Selection().Allows(TraversalProfile.FakeTcpHttpSo)) supported.Add(TraversalProfile.FakeTcpHttpSo);

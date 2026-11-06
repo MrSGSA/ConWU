@@ -43,6 +43,8 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public EntryResolution[] EntryResolutions {get;init;}=[];
     public int[] InactiveEntrySlots {get;init;}=[];
     public UiDesktopStatus? Desktop {get;init;}
+    public CoordinatorStatus? Coordinator {get;init;}
+    public string Platform {get;init;}=OperatingSystem.IsLinux()?"linux":"windows";
 }
 public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);
 public sealed record UiLegacyStage(Guid ResourceId,int ProcessId,string Mode,string Listener,string Target,
@@ -62,6 +64,7 @@ public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Veri
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)
 {
+    public CoordinatorSettings Coordinator {get;init;}=new();
     public string ConnectionSource {get;init;}="custom";
     public bool DirectMode {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];

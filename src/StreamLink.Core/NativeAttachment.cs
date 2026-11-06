@@ -11,7 +11,6 @@ namespace StreamLink.Core;
 
 // A process attachment owns a separate Lease reference until confirmed process
 // exit. Not yet a validated path: callers must authenticate the actual transport.
-[SupportedOSPlatform("windows")]
 public sealed class NativeAttachment : IDisposable, IAsyncDisposable
 {
     readonly int Size;
@@ -21,7 +20,8 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
     readonly NativeWireBudget? wireBudget;
     readonly IPEndPoint announcedPeer;
     readonly ChildJob job;
-    readonly NamedPipeServerStream pipe;
+    readonly NativeControlServer pipe;
+    readonly LinuxRawGuard? linuxGuard;
     readonly byte[] identity;
     readonly CancellationTokenSource stopping = new();
     readonly SemaphoreSlim control = new(1, 1);
@@ -76,10 +76,9 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
         try {
             if (wireBudget != null) brokerSession!.ConfigureWireBudget(wireBudget);
             job = new();
-            string name = "StreamLink.Attach." + Guid.NewGuid().ToString("N");
-            pipe = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
-                PipeOptions.Asynchronous | PipeOptions.CurrentUserOnly | PipeOptions.FirstPipeInstance, Size * 2, Size * 2);
-            PipeName = name;
+            pipe=new NativeControlServer(Size);string name=pipe.Name;
+            PipeName=name;
+            if(OperatingSystem.IsLinux())linuxGuard=new(lease.Local,peer);
             identity = new byte[Size]; "SLNA"u8.CopyTo(identity);
             BinaryPrimitives.WriteUInt16LittleEndian(identity.AsSpan(4), (ushort)(v6 ? 2 : TraversalLimits.NativeAbi));
             BinaryPrimitives.WriteUInt32LittleEndian(identity.AsSpan(8), (uint)Size);
@@ -96,7 +95,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
                 rawChannel = new(name, brokerSession, wireBudget != null);
                 rawChannel.Faulted += () => { if (Volatile.Read(ref disposed) == 0 && process is { HasExited: false }) try { process.Kill(); } catch (InvalidOperationException) { } };
             }
-        } catch { pipe?.Dispose(); reference.Dispose(); job?.Dispose(); throw; }
+        } catch { pipe?.Dispose(); reference.Dispose(); job?.Dispose(); linuxGuard?.Dispose();throw; }
     }
     string PipeName { get; }
     static void Endpoint(byte[] frame, int offset, IPEndPoint ep, int addressOffset)
@@ -123,9 +122,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             owner.process.Exited += (_, _) => { Volatile.Write(ref owner.childExited, 1); owner.reference.Dispose(); owner.ProcessExited?.Invoke(); };
             if (owner.process.HasExited) { owner.reference.Dispose(); throw new IOException("Native process exited before Attach"); }
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(20000);
-            await owner.pipe.WaitForConnectionAsync(deadline.Token);
-            if (!GetNamedPipeClientProcessId(owner.pipe.SafePipeHandle, out uint pid) || pid != owner.process.Id)
-                throw new IOException("AttachUnauthorized: pipe client is not the launched process");
+            await owner.pipe.Accept(owner.process.Id,deadline.Token);
             await owner.Exchange(1, 2, deadline.Token); owner.Armed = true;
             if (startImmediately) await owner.Start(deadline.Token);
             owner.heartbeat = owner.KeepControlAlive();
@@ -210,7 +207,7 @@ public sealed class NativeAttachment : IDisposable, IAsyncDisposable
             Volatile.Write(ref shutdownPhase, "raw-channel-join");
             if (rawChannel != null) await rawChannel.DisposeAsync();
             Volatile.Write(ref shutdownPhase, "job-close");
-            job.Dispose(); stopping.Dispose();
+            job.Dispose(); linuxGuard?.Dispose();stopping.Dispose();
             Volatile.Write(ref shutdownPhase, "complete");
         }
     }

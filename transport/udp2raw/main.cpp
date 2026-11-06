@@ -6,7 +6,10 @@
 #include "lib/md5.h"
 #include "encrypt.h"
 #include "fd_manager.h"
-#ifdef UDP2RAW_NATIVE
+#ifdef STREAMLINK_LINUX
+#include <sys/prctl.h>
+#endif
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
 #include "native_attach.h"
 #endif
 
@@ -28,6 +31,15 @@ int client_event_loop();
 int server_event_loop();
 
 int main(int argc, char *argv[]) {
+#ifdef STREAMLINK_LINUX
+    if(argc==2 && strcmp(argv[1],"--native-info")==0) {
+        puts("{\"backend\":\"linux-raw\",\"wireProtocol\":\"udp2raw-http-c4995ea\",\"client\":true,\"server\":true,\"ipv4\":true,\"preparedStart\":true,\"simultaneousOpen\":true,\"nativeAbi\":1,\"captureBroker\":0,\"directPairing\":1}");
+        return 0;
+    }
+    // Parent death must not leave a raw worker owning ports after a daemon crash.
+    pid_t parent=getppid();
+    if(prctl(PR_SET_PDEATHSIG,SIGTERM)!=0 || getppid()!=parent || parent==1) return 72;
+#endif
 #ifdef UDP2RAW_PARSER_TEST
     // Separate offline test executable: the shipped binary cannot take this
     // branch. Tests call the actual complete network.cpp parser, with no I/O.
@@ -61,11 +73,11 @@ int main(int argc, char *argv[]) {
     enable_log_color = 0;
 #endif
 
-#ifdef UDP2RAW_NATIVE
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
     native_attach_arguments(argc, argv);
 #endif
     pre_process_arg(argc, argv);
-#ifdef UDP2RAW_NATIVE
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
     native_attach_configure();
 #endif
 

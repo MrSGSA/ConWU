@@ -30,7 +30,6 @@ public sealed class NativePathVerificationException(string reason, NativePathDia
 // One authorized native attachment and one loopback bridge. The native child
 // uses a dedicated or shared capture owner; this class never binds helper TCP P.
 // Prepared paths are caller-owned, then transferred to MeshRouter after Qualify.
-[SupportedOSPlatform("windows")]
 public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlledPath, IPreparedMeshPath, ITraversalCheckEvidence, IWireControlPath, IPathDiagnosticWire, IPathResourceLifetime
 {
     const int ProbeSize = TraversalLimits.UdpRequiredPayload;
@@ -126,8 +125,9 @@ public sealed class NativeDatagramPath : IMeshDatagramPath, ITraversalControlled
             }
             string bind = path.client ? path.application!.ToString() : lease.Local.ToString();
             string target = path.client ? peer.ToString() : path.BridgeEndpoint.ToString();
-            await File.WriteAllTextAsync(path.configuration,
-                $"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n", token);
+            string config=$"{(path.client ? "-c" : "-s")}\n-l {bind}\n-r {target}\n-k {rawKey}\n--raw-mode faketcp\n--fix-gro\n--seq-mode 3\n--fake-http test.ustc.edu.cn\n--log-level 4\n";
+            if(OperatingSystem.IsLinux())LinuxPlatform.PrivateWrite(path.configuration,System.Text.Encoding.UTF8.GetBytes(config));
+            else await File.WriteAllTextAsync(path.configuration,config,token);
             path.native = await NativeAttachment.Launch(lease, generation, executable, ["--conf-file", path.configuration], peer,
                 !path.client, Path.ChangeExtension(path.configuration, ".log"), token, environment, [rawKey], simultaneousOpen: true, startImmediately: false, captureOwner: captureOwner, fairnessKey: context.RemoteNodeId, wireBudget: path.wireBudget, peerReflexive: peerReflexive);
             path.native.ProcessExited += path.Fault;

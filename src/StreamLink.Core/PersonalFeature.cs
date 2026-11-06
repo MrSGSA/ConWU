@@ -38,19 +38,21 @@ public static class PersonalFeature
 }
 
 [JsonConverter(typeof(PacketAdapterBackendConverter))]
-public enum PacketAdapterBackend { OfficialWintun, StreamLinkTun }
+public enum PacketAdapterBackend { OfficialWintun, StreamLinkTun, LinuxTun }
 
 public sealed class PacketAdapterBackendConverter : JsonConverter<PacketAdapterBackend>
 {
     public override PacketAdapterBackend Read(ref Utf8JsonReader reader, Type type, JsonSerializerOptions options)
         => reader.TokenType == JsonTokenType.String ? reader.GetString() switch {
             "official-wintun" => PacketAdapterBackend.OfficialWintun,
+            "linux-tun" => PacketAdapterBackend.LinuxTun,
             "streamlink-tun-experimental" => PacketAdapterBackend.StreamLinkTun,
             _ => throw new JsonException("虚拟网卡后端不在白名单")
         } : throw new JsonException("虚拟网卡后端必须是受支持的字符串");
     public override void Write(Utf8JsonWriter writer, PacketAdapterBackend value, JsonSerializerOptions options)
         => writer.WriteStringValue(value switch {
             PacketAdapterBackend.OfficialWintun => PacketAdapterProviders.OfficialWintun,
+            PacketAdapterBackend.LinuxTun => PacketAdapterProviders.LinuxTun,
             PacketAdapterBackend.StreamLinkTun => PacketAdapterProviders.NativeExperimental,
             _ => throw new JsonException("虚拟网卡后端无效")
         });

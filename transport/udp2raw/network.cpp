@@ -6,6 +6,9 @@
  */
 #include "common.h"
 #include "network.h"
+#ifdef STREAMLINK_LINUX
+#include "native_attach.h"
+#endif
 #include "log.h"
 #include "misc.h"
 #ifdef UDP2RAW_NATIVE
@@ -720,6 +723,9 @@ void init_filter(int port) {
         // perror("filter");
         myexit(-1);
     }
+#ifdef STREAMLINK_LINUX
+    native_attachment_armed();
+#endif
 }
 #endif
 
@@ -1066,6 +1072,9 @@ int find_lower_level_info(u32_t ip, u32_t &dest_ip, string &if_name, string &hw)
 
 #ifdef UDP2RAW_LINUX
 int send_raw_packet(raw_info_t &raw_info, const char *packet, int len) {
+#ifdef STREAMLINK_LINUX
+    if(!native_attachment_packet(packet,len))return -1;
+#endif
     const packet_info_t &send_info = raw_info.send_info;
     const packet_info_t &recv_info = raw_info.recv_info;
 
@@ -1107,6 +1116,9 @@ int send_raw_packet(raw_info_t &raw_info, const char *packet, int len) {
 #if defined(UDP2RAW_MP) && !defined(UDP2RAW_NATIVE)
 
 int send_raw_packet(raw_info_t &raw_info, const char *packet, int len) {
+#ifdef STREAMLINK_LINUX
+    if(!native_attachment_packet(packet,len))return -1;
+#endif
     const packet_info_t &send_info = raw_info.send_info;
     const packet_info_t &recv_info = raw_info.recv_info;
 
@@ -2823,6 +2835,8 @@ int try_to_list_and_bind2(int &fd, address_t address)  // try to bind to a port,
             sock_close(fd); fd = -1; return -1;
         }
     }
+#endif
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
     const char *shared_udp = getenv("STREAMLINK_UDP_SHARED_BIND");
     if (raw_mode == mode_udp && program_mode == server_mode && shared_udp && strcmp(shared_udp, "1") == 0) {
         int reuse = 1;

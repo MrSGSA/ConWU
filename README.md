@@ -6,6 +6,8 @@
 
 [下载最新版](https://github.com/MrSGSA/StreamLink/releases/latest) · [使用说明](docs/使用指南.md) · [1.0.5 更新说明](docs/releases/v1.0.5.md)
 
+开发分支正在准备统一设备版本：Windows 与 Linux 可参与网络，也可独立开启内置协调服务；入口改为连接任一获准成员的网络入口。Linux 候选的安装与验证范围见 [Linux 说明](packaging/linux/README.md)。这部分尚未替换上方正式 Release。
+
 ## 能做什么
 
 - 默认使用 **FakeTCP＋HTTP**，也可手动选择 UDP。连接失败时不会擅自切换协议。

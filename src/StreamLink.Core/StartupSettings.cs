@@ -8,6 +8,10 @@ public static class StartupSettings
 {
     public static UiDesktopStatus Read()
     {
+        if(OperatingSystem.IsLinux()) {
+            bool installed=File.Exists("/etc/systemd/system/streamlink.service");
+            return new(installed,File.Exists("/etc/systemd/system/multi-user.target.wants/streamlink.service"),installed?"Installed":"Foreground");
+        }
         if(!OperatingSystem.IsWindows())return new(false,false,"NotInstalled");
         using var key=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name);
         return new(key!=null,key?.GetValue("Start") is int start && start==2,ControlServerIdentity.Availability());
@@ -15,6 +19,10 @@ public static class StartupSettings
     // The service changes only its own startup type, with no user-supplied paths.
     public static void Set(bool enabled)
     {
+        if(OperatingSystem.IsLinux()) {
+            if(!Read().ServiceRegistered)throw new IOException("请先使用安装脚本注册 streamlink.service");
+            LinuxPlatform.Run("systemctl",enabled?"enable":"disable","streamlink.service");return;
+        }
         if(!OperatingSystem.IsWindows())throw new PlatformNotSupportedException();
         IntPtr manager=OpenSCManager(null,null,1);if(manager==IntPtr.Zero)throw new Win32Exception(Marshal.GetLastWin32Error());
         try {

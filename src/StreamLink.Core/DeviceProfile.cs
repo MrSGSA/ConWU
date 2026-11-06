@@ -21,6 +21,7 @@ public sealed class DeviceProfile
     public int Slot { get; set; } = 1;
     public bool Enabled { get; set; }
     public bool AutoStart {get;set;}=true;
+    public CoordinatorSettings Coordinator {get;set;}=new();
     public string Preference { get; set; } = "auto";
     public int LastEntry { get; set; }
     public int ListenPort { get; set; } = PersonalFeature.Enabled ? 44680 : 42680;
@@ -47,7 +48,7 @@ public sealed class DeviceProfile
     public string LastStun { get; set; } = "";
     public string DeviceName { get; set; } = Environment.MachineName;
     public string TransportMode { get; set; } = "faketcp";
-    public PacketAdapterBackend AdapterBackend { get; set; } = PacketAdapterBackend.OfficialWintun;
+    public PacketAdapterBackend AdapterBackend { get; set; } = OperatingSystem.IsLinux()?PacketAdapterBackend.LinuxTun:PacketAdapterBackend.OfficialWintun;
     public string MigrationNotice { get; set; } = "";
     // Staged rollout: existing installations retain the verified explicit path.
     // New traversal is opt-in until the independent Windows/WAN gates pass.
@@ -122,6 +123,7 @@ public sealed class DeviceProfile
     public string LogDirectory { get; set; } = "";
     public void Validate()
     {
+        if(Coordinator==null)throw new FormatException("协调角色设置不能为空");Coordinator.Validate();
         if (ConnectionSource is not ("custom" or "existing")) throw new FormatException("公共协调服务尚未提供，请选择自建服务或已有入口");
         if (CoordinationService is null || CoordinationPin is null || RequestedVirtualIp is null) throw new FormatException("本机连接设置无效");
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();

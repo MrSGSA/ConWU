@@ -6,7 +6,7 @@
 #include "lib/md5.h"
 #include "encrypt.h"
 #include "fd_manager.h"
-#ifdef UDP2RAW_NATIVE
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
 #include "native_backend.h"
 #include "native_attach.h"
 #include "native_so.h"
@@ -28,6 +28,8 @@ int client_on_timer(conn_info_t &conn_info)  // for client. called when a timer 
 {
 #ifdef UDP2RAW_NATIVE
     native_check_health();
+#endif
+#if defined(UDP2RAW_NATIVE) || defined(STREAMLINK_LINUX)
     if (!native_so_client_gate(conn_info)) return 0;
 #endif
     packet_info_t &send_info = conn_info.raw_info.send_info;
@@ -398,6 +400,9 @@ int client_on_raw_recv(conn_info_t &conn_info)  // called when raw fd received a
 
 #ifdef UDP2RAW_LINUX
     if (pre_recv_raw_packet() < 0) return -1;
+#ifdef STREAMLINK_LINUX
+    if(native_so_receive())return 0;
+#endif
 #endif
 
     if (conn_info.state.client_current_state == client_idle) {
@@ -896,6 +901,9 @@ int client_event_loop() {
 #endif
 #endif
 
+#ifdef STREAMLINK_LINUX
+    if(native_attached())init_filter(source_port);
+#endif
     // set_timer(epollfd,timer_fd);
     struct ev_timer clear_timer;
 

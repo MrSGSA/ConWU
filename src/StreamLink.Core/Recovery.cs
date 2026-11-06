@@ -4,7 +4,6 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-[SupportedOSPlatform("windows")]
 public static class Recovery
 {
     sealed record Owner(int Pid,long StartTicks,string Rule);
@@ -30,10 +29,12 @@ public static class Recovery
                 bool alive=false;
                 try {using var p=Process.GetProcessById(owner.Pid); alive=p.StartTime.ToUniversalTime().Ticks==owner.StartTicks;} catch(ArgumentException) { }
                 if(alive) continue;
-                WindowsHost.RemoveFirewall(owner.Rule);
+                if(OperatingSystem.IsWindows())WindowsHost.RemoveFirewall(owner.Rule);
                 foreach(string name in new[]{"network.toml","transport.conf","owner.json","owned-rule.txt"}) File.Delete(Path.Combine(folder,name));
                 foreach (string path in Directory.EnumerateFiles(folder, "raw-*.conf"))
                     if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path)[4..], "N", out _)) File.Delete(path);
+                foreach (string path in Directory.EnumerateFiles(folder, "managed-raw-*.conf"))
+                    if (Guid.TryParseExact(Path.GetFileNameWithoutExtension(path)[12..], "N", out _)) File.Delete(path);
                 log("已恢复清理上次异常退出留下的本软件规则与临时密钥");
             }
             catch(Exception ex) { log("旧会话清理未确认："+ex.Message); }

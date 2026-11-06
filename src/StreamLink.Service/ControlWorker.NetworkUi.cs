@@ -29,7 +29,7 @@ public sealed partial class ControlWorker
         ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
         DirectMode=p.Mesh?.Pair.Direct??p.DirectMode,
         ExistingEntries=p.ExistingEntries.Length>0?p.ExistingEntries:p.ManualEndpoint.Length>0?[new(0,p.ManualEndpoint)]:[],
-        TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
+        Coordinator=p.Coordinator,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
     };
     static string SettingsRevision(DeviceProfile p) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(PublicSettings(p))));
     void RequireUiNetwork(string expected)
@@ -112,7 +112,7 @@ public sealed partial class ControlWorker
                 if((profile.Mesh!=null||profile.Pair!=null)&&!action.ConfirmReplace)throw new IOException("替换网络需要明确确认");
                 if(action.Mode is not ("faketcp" or "udp"))throw new FormatException("网络承载无效");
                 RequireSavedProtocol(action.Mode);
-                var entries=PublicSettings(profile).ExistingEntries.Where(e=>e.PeerSlot==ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
+                var entries=PublicSettings(profile).ExistingEntries.Where(e=>e.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
                 if(entries.Length==0)throw new IOException("短配对码需要目标主机入口，请先在设置中填写；长邀请可以自动带入入口");
                 using(var connectionDeadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
                     connectionDeadline.CancelAfter(18000);
@@ -156,7 +156,7 @@ public sealed partial class ControlWorker
                 directNext.ConnectionSource="existing";directNext.DirectMode=true;
                 directNext.SelectTransport(action.Mode=="udp"?"udp-only":"faketcp-only");
                 directNext.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();directNext.NetworkCreatedHere=true;
-                directNext.ExistingEntries=directNext.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray();
+                directNext.ExistingEntries=directNext.ExistingEntries.Where(e=>e.PeerSlot is 0 or ExistingEntry.Network).ToArray();
                 directNext.Validate();await PersonalPacketAdapters.Preflight(directNext,token);
                 await CloseUiPair(token);await End(token);
                 lock(sync){store.BackupLegacy(profile);directNext.Enabled=true;directNext.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();store.Save(directNext);profile=directNext;}
@@ -193,7 +193,7 @@ public sealed partial class ControlWorker
                     next.CoordinationService=action.Service;next.CoordinationPin=action.CertificatePin;
                     next.DirectMode=false;
                     next.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();next.NetworkCreatedHere=true;
-                    next.ExistingEntries=next.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray();
+                    next.ExistingEntries=next.ExistingEntries.Where(e=>e.PeerSlot is 0 or ExistingEntry.Network).ToArray();
                     next.Validate(); await PersonalPacketAdapters.Preflight(next, token);
                     if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("请先退出当前网络再创建新网络");
                     var equalCreated=ProfileChanges.Copy(next).Mesh!;MeshGovernance.Enable(equalCreated);
@@ -284,10 +284,11 @@ public sealed partial class ControlWorker
                 updated.ManualEndpoint = settings.ManualEndpoint; updated.SelectTransport(settings.PathSelection);
                 updated.ConnectionSource=settings.ConnectionSource;updated.ExistingEntries=settings.ExistingEntries;
                 updated.EntryRefreshSeconds=settings.EntryRefreshSeconds;
+                updated.Coordinator=settings.Coordinator;
                 updated.DirectMode=settings.DirectMode;
                 if(settings.DirectMode&&settings.ConnectionSource!="existing")throw new FormatException("无服务器组网需要选择已有入口");
                 ExistingEntryResolver.Validate(settings.ExistingEntries);
-                if(updated.Mesh!=null && settings.ExistingEntries.Any(e=>e.PeerSlot!=0 && e.PeerSlot!=ExistingEntry.NetworkOwner && updated.Mesh.Directory?.Members.Any(m=>m.Slot==e.PeerSlot&&m.Slot!=updated.Mesh.Self.Slot)!=true&&!PublicSettings(profile).ExistingEntries.Contains(e)))throw new FormatException("入口归属设备已不在当前网络中");
+                if(updated.Mesh!=null && settings.ExistingEntries.Any(e=>e.PeerSlot!=0 && e.PeerSlot!=ExistingEntry.Network && e.PeerSlot!=ExistingEntry.NetworkOwner && updated.Mesh.Directory?.Members.Any(m=>m.Slot==e.PeerSlot&&m.Slot!=updated.Mesh.Self.Slot)!=true&&!PublicSettings(profile).ExistingEntries.Contains(e)))throw new FormatException("入口归属设备已不在当前网络中");
                 if(updated.Mesh==null||updated.Mesh.Pair.Direct){updated.CoordinationService=settings.Service;updated.CoordinationPin=settings.CertificatePin;}
                 updated.RequestedVirtualIp=settings.RequestedVirtualIp;
                 updated.TcpStun=settings.TcpStun is {Length:0}?Stun.TcpServers.ToArray():settings.TcpStun??updated.TcpStun;updated.UdpStun=settings.UdpStun is {Length:0}?Stun.UdpServers.ToArray():settings.UdpStun??updated.UdpStun;
