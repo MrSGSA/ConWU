@@ -127,6 +127,7 @@ function Maintenance([string]$action) {
  if($r.Schema -ne 1 -or $r.Instance -ine $serviceName -or [IO.Path]::GetFullPath($r.DataRoot) -ine $data -or $r.ServiceStopped -ne $true -or $r.Error -or ($action -eq 'release' -and $r.Released -ne $true)){throw "适配器 $action 报告未通过校验。"}
 }
 function RestoreServiceMode {
+ if(-not $wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
  if($wasRunning -and $startMode -eq 'Disabled'){Set-Service -Name $serviceName -StartupType Manual}
  elseif($startMode -eq 'Disabled'){Set-Service -Name $serviceName -StartupType Disabled}
  elseif($startMode -eq 'Auto'){Set-Service -Name $serviceName -StartupType Automatic}
@@ -150,7 +151,6 @@ try {
  RunMsi @('/i',('"'+[IO.Path]::GetFullPath($CandidateMsi)+'"')) (Join-Path $evidence 'candidate-install.log')
  $installed=$true
  VerifyRuntime (Join-Path $install 'app')
- if(-not $wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
  RestoreServiceMode
  $indeterminate=$true;StopDriverGuard;$indeterminate=$false
  'installed'|Set-Content -LiteralPath (Join-Path $evidence 'result.txt')

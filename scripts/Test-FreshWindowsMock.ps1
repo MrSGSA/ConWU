@@ -14,14 +14,14 @@ Set-Content -LiteralPath (Join-Path $data 'profile.dpapi') -Value 'old data'
 $candidate=Join-Path $root 'candidate.msi';$previous=Join-Path $root 'previous.msi';$maintenanceDir=Join-Path $root 'candidate-runtime';New-Item -ItemType Directory -Path $maintenanceDir|Out-Null;$maintenance=Join-Path $maintenanceDir 'ConWU.exe'
 foreach($file in @($candidate,$previous,$maintenance)){Set-Content -LiteralPath $file -Value $file};$candidateManifest=Join-Path $maintenanceDir 'manifest.json';@{version='1.1';sourceCommit=('a'*40);files=@(@{path='ConWU.exe';sha256=(Get-FileHash $maintenance).Hash})}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $candidateManifest
 $global:testUpgrade='{AD076018-A9B8-47F5-B098-97479A363416}';$global:testService='StreamLink-PersonalFeature';$global:testData=$data;$global:testInstall=$install;
-$global:events=[Collections.Generic.List[string]]::new();$global:svc='Running';$global:oldPresent=$true;$global:newPresent=$false
+$global:events=[Collections.Generic.List[string]]::new();$global:svc='Running';$global:svcMode='Auto';$global:oldPresent=$true;$global:newPresent=$false
 $global:fakeInstaller=[pscustomobject]@{};$global:fakeInstaller|Add-Member ScriptMethod ProductState {param($id) if($id -like '*11111111*'){if($global:newPresent){return 5}else{return 2}};if($global:oldPresent){return 5};return 2}
 function icacls.exe {$global:LASTEXITCODE=0}
-function Get-CimInstance {param($ClassName,$Filter) [pscustomobject]@{Name=$global:testService;State=$global:svc;StartMode='Auto';PathName=('"'+(Join-Path $global:testInstall 'app\StreamLink.Service.exe')+'"')}}
+function Get-CimInstance {param($ClassName,$Filter) [pscustomobject]@{Name=$global:testService;State=$global:svc;StartMode=$global:svcMode;PathName=('"'+(Join-Path $global:testInstall 'app\StreamLink.Service.exe')+'"')}}
 function Get-Service {param($Name,$ErrorAction) $o=[pscustomobject]@{Status=$global:svc};$o|Add-Member ScriptMethod WaitForStatus {param($a,$b)};return $o}
 function Stop-Service {param($Name,$ErrorAction) $global:events.Add('stop');$global:svc='Stopped'}
 function Start-Service {param($Name,$ErrorAction) $global:events.Add('start');$global:svc='Running'}
-function Set-Service {param($Name,$StartupType) $global:events.Add('startup:'+ $StartupType)}
+function Set-Service {param($Name,$StartupType) $global:events.Add('startup:'+ $StartupType);$global:svcMode=if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType}}
 function Get-NetAdapter {param([switch]$IncludeHidden) [pscustomobject]@{InterfaceGuid=$global:guardGuid;InterfaceDescription='Wintun test guard'}}
 function Get-PnpDevice {param([switch]$PresentOnly,$InstanceId,$ErrorAction) [pscustomobject]@{InstanceId=$InstanceId}}
 function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru,[switch]$Wait)
@@ -34,7 +34,7 @@ function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$Pass
   }
   $action=$ArgumentList[1];$report=$ArgumentList[2].Trim('"');$global:events.Add('maintenance:'+ $action);@{Schema=1;Instance=$global:testService;DataRoot=$global:testData;ServiceStopped=$true;Scopes=@();Released=($action -eq 'release');Error=''}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $report
  }
- else{$action=$ArgumentList[0];$arg=$ArgumentList[1];if($global:simulateTimeout){$global:events.Add('msi-pending');$o=[pscustomobject]@{ExitCode=0;Id=456};$o|Add-Member ScriptMethod WaitForExit {param($ms) return $false};return $o};if($action -eq '/x'){$global:events.Add('uninstall-candidate');$global:newPresent=$false}elseif($arg -like '*candidate.msi*'){$global:events.Add('install-candidate');$global:newPresent=$true;$global:oldPresent=$false;@{version='1.1';sourceCommit=('b'*40);files=@(@{path='dummy';sha256=('0'*64)})}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $global:testInstall 'app\manifest.json')}else{$global:events.Add('install-previous');if($global:newPresent){throw '模拟拒绝直接降级'};$global:oldPresent=$true}}
+ else{$action=$ArgumentList[0];$arg=$ArgumentList[1];if($global:simulateTimeout){$global:events.Add('msi-pending');$o=[pscustomobject]@{ExitCode=0;Id=456};$o|Add-Member ScriptMethod WaitForExit {param($ms) return $false};return $o};if($action -eq '/x'){$global:events.Add('uninstall-candidate');$global:newPresent=$false}elseif($arg -like '*candidate.msi*'){$global:events.Add('install-candidate');$global:newPresent=$true;$global:oldPresent=$false;@{version='1.1';sourceCommit=('b'*40);files=@(@{path='dummy';sha256=('0'*64)})}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $global:testInstall 'app\manifest.json')}else{$global:events.Add('install-previous');if($global:newPresent){throw '模拟拒绝直接降级'};$global:oldPresent=$true;$global:svc='Running';$global:svcMode='Auto';$global:events.Add('previous-auto-start')}}
  $o=[pscustomobject]@{ExitCode=0;Id=123};$o|Add-Member ScriptMethod WaitForExit {param($ms) return $true};return $o
 }
 $script=Join-Path $root 'mocked-fresh.ps1';[IO.File]::WriteAllText($script,$source,[Text.UTF8Encoding]::new($false))
@@ -45,6 +45,9 @@ if($remove -lt 0 -or $restore -le $remove -or $global:newPresent -or -not $globa
 if((Get-Content -Raw (Join-Path $data 'profile.dpapi')).Trim() -ne 'old data' -or $global:svc -ne 'Running'){throw '旧数据或服务未恢复'}
 if($global:events.IndexOf('maintenance:release') -lt $global:events.IndexOf('stop')){throw '维护释放发生在停服前'}
 if($global:events.IndexOf('guard-start') -gt $global:events.IndexOf('install-candidate') -or $global:events.IndexOf('guard-stop') -le $restore){throw '保护网卡未贯穿安装和回退'}
+$global:events.Clear();$global:svc='Stopped';$global:svcMode='Manual';$global:oldPresent=$true;$global:newPresent=$false
+try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup;throw '模拟失败未触发'}catch {if($_.Exception.Message -notmatch '切换失败，已恢复原数据和服务'){throw}}
+if($global:events.IndexOf('previous-auto-start') -lt 0 -or $global:events.LastIndexOf('stop') -le $global:events.IndexOf('previous-auto-start') -or $global:svc -ne 'Stopped' -or $global:svcMode -ne 'Manual' -or (Get-Content -Raw (Join-Path $data 'profile.dpapi')).Trim() -ne 'old data'){throw '原停止服务回退后状态或启动类型未恢复'}
 $global:testValidation=[guid]::NewGuid().ToString('N');$global:testUpgrade='{'+([guid]::ParseExact($global:testValidation,'N')).ToString('D')+'}';$global:testService='StreamLink-Validation-'+$global:testValidation
 $global:testData=Join-Path $env:ProgramData ('StreamLink-Validation\'+$global:testValidation);$global:testInstall=Join-Path $env:ProgramFiles ('StreamLink-Validation\'+$global:testValidation+'\msi')
 New-Item -ItemType Directory -Path $global:testData,(Join-Path $global:testInstall 'app') -Force|Out-Null;Set-Content -LiteralPath (Join-Path $global:testData 'profile.dpapi') -Value 'validation only'
