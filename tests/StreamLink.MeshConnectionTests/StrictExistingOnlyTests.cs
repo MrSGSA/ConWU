@@ -14,9 +14,9 @@ static partial class Program
         byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var link=new MeshLink(guest.Self.Slot,owner.Self.Slot,key);CryptographicOperations.ZeroMemory(key);
         await using var good=new PeerEndpoint(link);using var sink=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));string dead=sink.Client.LocalEndPoint!.ToString()!;
         var discovery=new Discovery(owner,guest,good.Endpoint.ToString());var adapter=new MemoryAdapter();
-        string supplied=dead;int probes=0,factories=0;var targets=new ConcurrentQueue<string>();SessionStatus? status=null;
+        string supplied=dead;int probes=0,factories=0,listeners=0;var targets=new ConcurrentQueue<string>();SessionStatus? status=null;
         string folder=Path.Combine(Path.GetTempPath(),"streamlink-entry-only-"+Guid.NewGuid().ToString("N"));
-        var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{Interlocked.Increment(ref probes);throw new Exception("strict mode must not probe");},request=>{targets.Enqueue(request.Target.ToString());return new ForwardingTransport(request.Target);},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
+        var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>{Interlocked.Increment(ref probes);throw new Exception("strict mode must not probe");},request=>{if(request.Server)Interlocked.Increment(ref listeners);else targets.Enqueue(request.Target.ToString());return new ForwardingTransport(request.Target);},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
             NetworkWake=()=>new MeshNetworkWake(false),Candidates=(_,_,_,_)=>{Interlocked.Increment(ref factories);throw new Exception("strict mode must not create a candidate factory");},
             ResolveEntries=(_,_,_)=>Task.FromResult(new[]{new EntryResolution(guest.Self.Slot,0,"地址",[supplied],"")})
         };
@@ -24,7 +24,7 @@ static partial class Program
         var runner=new MeshRunner(profile,_=>{},s=>status=s,_=>{},_=>{},services);using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
         try{
             await Until(()=>status?.Peers?.Single().Connection?.Phase=="EntryUnavailable","failed supplied entry reports manual switch guidance instead of autonomous fallback",20000);
-            Check(probes==0&&factories==0&&targets.All(t=>t==dead)&&good.Received==0,"real runner never calls STUN/mapping/factory or the reachable coordinator-discovered alternative");
+            Check(probes==0&&factories==0&&targets.All(t=>t==dead)&&good.Received==0&&listeners==1,"real runner owns one default receiver and never calls STUN/mapping/factory or a discovered outbound alternative");
             Check(discovery.Published.Any(n=>n.ExistingEntryOnly&&n.Traversal==null),"signed announcement tells peer not to initiate autonomous traversal for this device");
             supplied=good.Endpoint.ToString();runner.UpdateEntries(profile);
             await Until(()=>status?.Connected==true,"corrected subscribed entry connects using the same selected mode",7000);

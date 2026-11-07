@@ -331,6 +331,10 @@ void init_filter(int port) {
         filter += " and ip.DstAddr == " + std::string(local_addr.get_ip());
     }
     if (raw_mode == mode_udp && program_mode == server_mode) {
+        // A default receiver can start before the managed STUN mapping exists.
+        // Leave standard STUN replies with their connected kernel socket, even
+        // when a later probe selects another server or a non-default STUN port.
+        filter += " and (udp.PayloadLength < 20 or udp.Payload16[0] >= 0x4000 or udp.Payload32[1] != 0x2112A442)";
         const char *stun_endpoint = getenv("STREAMLINK_STUN_ENDPOINT");
         if (stun_endpoint && *stun_endpoint) {
             address_t stun;

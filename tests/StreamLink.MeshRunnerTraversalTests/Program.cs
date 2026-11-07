@@ -11,6 +11,7 @@ using StreamLink.EndpointPoc;
 using StreamLink.Service;
 
 if (args.Length > 0 && args[0] == "--serve") { await ControlServer.Run(args); return; }
+if(args is ["--capture-filter-only",var filterDll]){CaptureFilterTests.Run(filterDll,(ok,why)=>{if(!ok)throw new Exception(why);Console.WriteLine("PASS "+why);});return;}
 bool upgradeOnly = args.Length == 7 && args[6] == "--upgrade-only";
 bool baselineOnly = args.Length == 7 && args[6] == "--baseline-only";
 bool opportunityOnly = args.Length == 7 && args[6] == "--opportunity-only";

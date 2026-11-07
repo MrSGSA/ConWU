@@ -282,7 +282,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             if(MeshEntryHandshake.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))) {
                 ReceiveNetworkEntry(buffer.AsSpan(0,received.ReceivedBytes),(IPEndPoint)received.RemoteEndPoint);continue;
             }
-            if(profile.Pair.DirectBootstrap && profile.IsOwner && DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
+            if(profile.CanManage && DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
                 var response=DirectPairing?.Invoke(buffer.AsMemory(0,received.ReceivedBytes));
                 if(response!=null)Send(response,(IPEndPoint)received.RemoteEndPoint);
                 continue;

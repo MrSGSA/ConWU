@@ -107,7 +107,7 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);if(remembered.Mesh!.Directory is {} priorDirectory)MeshIdentity.ValidateSuccessor(directory,priorDirectory);remembered.Mesh.Directory=directory;remembered.RejoinHistory=remembered.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();if(remembered.Mesh.IsDecentralized)remembered.ExistingEntries=RuntimeEntries(remembered);store.Save(remembered);profile=remembered;if(remembered.Mesh.IsDecentralized)meshRunner?.UpdateEntries(remembered);PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=uiDirectHost.Handle};
+                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);if(remembered.Mesh!.Directory is {} priorDirectory)MeshIdentity.ValidateSuccessor(directory,priorDirectory);remembered.Mesh.Directory=directory;remembered.RejoinHistory=remembered.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();if(remembered.Mesh.IsDecentralized)remembered.ExistingEntries=RuntimeEntries(remembered);store.Save(remembered);profile=remembered;if(remembered.Mesh.IsDecentralized)meshRunner?.UpdateEntries(remembered);PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=HandleDirectPairing};
                 else runner = new(copy, Log, ReportRuntimeStatus, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -150,6 +150,7 @@ public sealed partial class ControlWorker : BackgroundService
         }
         if(uiPairClient is DirectPairHost)ResetUiPair("连接已停止，请重新生成配对码");
         uiDirectHost.Clear();
+        ClearEntryAdmission();
         runStop?.Cancel();measureStop?.Cancel();
         Task[] ending=new[]{running,measuring}.Where(t=>t!=null).Cast<Task>().ToArray();
         var completion=Task.WhenAll(ending.Select(ObserveShutdown));
@@ -337,10 +338,11 @@ public sealed partial class ControlWorker : BackgroundService
         Recovery.Recover(Log, Path.Combine(ProfileStore.Root, "sessions"));
         StartCoordinator();
         Log("ConWU 已启动"); if (profile.Enabled) Begin();
+        StartEntryAdmission();
         initialized=true;
         PublishReply();
     }
-    public async Task StopLocal(CancellationToken token=default) { await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
+    public async Task StopLocal(CancellationToken token=default) { await StopEntryAdmission();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
     public override void Dispose() {base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {

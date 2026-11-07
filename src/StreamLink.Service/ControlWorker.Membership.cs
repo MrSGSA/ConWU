@@ -43,7 +43,7 @@ public sealed partial class ControlWorker
             if(profile.Mesh?.Pair.Network!=before.Pair.Network || MeshGovernance.Head(profile.Mesh.Directory!)!=MeshGovernance.Head(before.Directory!))
                 throw new IOException("成员信息刚刚更新，请重新核对后操作");
             var next=ProfileChanges.Copy(profile);
-            next.PendingMembership=new(action=="create"?"":MeshGovernance.Head(before.Directory!),proposed,action){Room=room,Candidate=candidate,Ciphertext=cipher,RejoinHistory=history??[]};
+            next.PendingMembership=new(action=="create"?"":MeshGovernance.Head(before.Directory!),proposed,action){Room=room,Candidate=candidate,Ciphertext=cipher,RejoinHistory=history??[],EntryAdmission=action=="approve"&&uiEntryAdmission};
             store.Save(next);profile=next;
         }
     }
@@ -79,11 +79,13 @@ public sealed partial class ControlWorker
             bool remains=committed.Members.Contains(added),expired=pending.Room==null||pending.Room.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             if(remains&&!expired){
                 SetOperation(operation,"成员已获准，正在交付加入凭据",false);
-                using var pair=new ShortPairClient(mesh.Pair.Service,mesh.Pair.CertificatePin);
-                try{await pair.Approve(pending.Room!,pending.Candidate,pending.Ciphertext,operation.Stop.Token);}
+                using var pair=pending.EntryAdmission?null:new ShortPairClient(mesh.Pair.Service,mesh.Pair.CertificatePin);
+                IShortPairClient? delivery=pending.EntryAdmission&&uiEntryAdmission&&uiRoom?.Room==pending.Room!.Room?uiPairClient:pair;
+                if(delivery==null)expired=true;
+                try{if(delivery!=null)await delivery.Approve(pending.Room!,pending.Candidate,pending.Ciphertext,operation.Stop.Token);}
                 catch(PairRoomUnavailableException){expired=true;}
                 catch(IOException ex){
-                    try{var roomState=await pair.Poll(pending.Room!,true,operation.Stop.Token);expired=roomState.Outcome.Length>0;}
+                    try{var roomState=await delivery!.Poll(pending.Room!,true,operation.Stop.Token);expired=roomState.Outcome.Length>0;}
                     catch(PairRoomUnavailableException){expired=true;}
                     catch(IOException){ }
                     if(!expired)throw new IOException("成员已获准，但加入凭据尚未确认送达；请继续确认。不要重复批准新成员。",ex);
@@ -106,7 +108,7 @@ public sealed partial class ControlWorker
         await End(operation.Stop.Token,phase=>SetOperation(operation,phase,false));
         lock(sync){
             var left=ProfileChanges.Copy(profile);left.RejoinCredential=MeshRejoin.Retain(profile.Mesh);
-            left.RejoinHistory=[];left.PendingMembership=null;left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;
+            left.RejoinHistory=[];left.PendingMembership=null;left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;left.JoinedEntryNetwork="";left.JoinedEntrySources=[];
             RestoreSavedNetworkSettings(left);store.Save(left);profile=left;
         }
     }
@@ -119,7 +121,9 @@ public sealed partial class ControlWorker
         var admitted=ProfileChanges.Copy(profile);var prior=RejoiningMember();
         var enrollment=prior==null?MeshIdentity.Issue(admitted.Mesh!,uiRoomState!.RequestedIp):MeshIdentity.Replace(admitted.Mesh!,prior,uiRoomState!.RequestedIp);
         var history=prior==null?admitted.RejoinHistory:MeshRejoin.Remember(admitted.Mesh!,admitted.RejoinHistory,prior,enrollment.Member);
-        string cipher=PairKeyExchange.EncryptInvitation(uiExchange!,MeshIdentity.Export(enrollment),uiRoom!.Room,uiRoomState!.Candidate);
+        string issued=MeshIdentity.Export(enrollment);
+        if(uiEntryAdmission)issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh!));
+        string cipher=PairKeyExchange.EncryptInvitation(uiExchange!,issued,uiRoom!.Room,uiRoomState!.Candidate);
         StageMembership(before,admitted.Mesh!.Directory!,"approve",uiRoom,uiRoomState.Candidate,cipher,history);
         await ResumeMembership(operation);
     }

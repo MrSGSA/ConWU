@@ -23,7 +23,7 @@ public sealed class LinuxMeshTransport : IMeshTransport
         if(server)binding=$"{mapping?.LocalAddress??IPAddress.Any}:{listenPort}";
         else {using var port=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);port.Bind(new IPEndPoint(IPAddress.Loopback,0));ClientEndpoint=(IPEndPoint)port.LocalEndPoint!;binding=ClientEndpoint.ToString();reserve?.Invoke(ClientEndpoint);}
         var ticket=new Invitation(1,profile.Pair.Network,profile.Pair.Secret,target.ToString(),profile.Pair.Mode,"test.ustc.edu.cn",DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
-        string secret=profile.Pair.DirectBootstrap?DirectPairWire.CarriageKey:ticket.RawKey;
+        string secret=DirectPairWire.CarriageKey;
         try {
             string[]? listenerRule=null;
             string sourceOptions="";
@@ -50,8 +50,8 @@ public sealed class LinuxMeshTransport : IMeshTransport
             var start=new ProcessStartInfo(binary){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true};
             start.ArgumentList.Add("--conf-file");start.ArgumentList.Add(configuration);
             foreach(var name in start.Environment.Keys.Where(k=>k.StartsWith("STREAMLINK_")).ToArray())start.Environment.Remove(name);
-            if(profile.Pair.DirectBootstrap)start.Environment["STREAMLINK_DIRECT_RENDEZVOUS"]="1";
-            if(server&&mapping is UdpMapping)start.Environment["STREAMLINK_UDP_SHARED_BIND"]="1";
+            start.Environment["STREAMLINK_DIRECT_RENDEZVOUS"]="1";
+            if(server&&profile.Pair.Mode=="udp")start.Environment["STREAMLINK_UDP_SHARED_BIND"]="1";
             process=Process.Start(start)??throw new IOException("Linux 原生传输启动失败");
             var log=new StreamWriter(Path.ChangeExtension(configuration,".log")){AutoFlush=true};
             var gate=new SemaphoreSlim(1,1);int finished=0;

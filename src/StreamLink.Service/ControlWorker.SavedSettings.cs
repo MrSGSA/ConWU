@@ -17,7 +17,13 @@ public sealed partial class ControlWorker
             else if(entry.PeerSlot is 0 or ExistingEntry.Network||entry.PeerSlot==ExistingEntry.NetworkOwner&&mesh.IntroducerSlot!=mesh.Self.Slot)bound.Add(entry);
             else if(entry.PeerSlot>0&&ActiveSavedPeerSlot(profile,entry.PeerSlot) is >0 and var slot)bound.Add(entry with{PeerSlot=slot});
         }
-        return bound.Distinct().ToArray();
+        var learned=new List<ExistingEntry>();
+        if(profile.JoinedEntryNetwork==mesh.Pair.Network)foreach(var hint in profile.JoinedEntrySources){
+            if(hint.PeerSlot==ExistingEntry.Network){learned.Add(hint);continue;}
+            int slot=mesh.IsDecentralized?MeshGovernance.CurrentSlot(mesh.Directory!,hint.PeerSlot):hint.PeerSlot;
+            if(slot!=mesh.Self.Slot&&mesh.Directory?.Members.Any(m=>m.Slot==slot)==true)learned.Add(hint with{PeerSlot=slot});
+        }
+        return learned.Take(1).Concat(bound).Concat(learned.Skip(1)).DistinctBy(e=>e.Source,StringComparer.Ordinal).Take(ExistingEntryResolver.MaximumSources).ToArray();
     }
 
     static int ActiveSavedPeerSlot(DeviceProfile profile,int slot)

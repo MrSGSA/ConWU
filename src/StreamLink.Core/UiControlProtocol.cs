@@ -25,6 +25,7 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool IsOwner {get;init;}
     public bool IsDecentralized {get;init;}
     public bool CanManageNetwork {get;init;}
+    public bool NetworkDirect {get;init;}
     public int EntryTargetSlot {get;init;}=1;
     public bool PendingMembership {get;init;}
     public bool NetworkClosed {get;init;}
@@ -59,6 +60,7 @@ public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats?
 }
 public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State)
 {
+    public string Method {get;init;}="";
     public string ProposedIp {get;init;}="";
     public bool Direct {get;init;}
     public int ReplacingSlot {get;init;}
@@ -80,6 +82,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="")
 {
+    public string Entry {get;init;}="";
     public bool Background {get;init;}
     public UiConfigPatch? Patch {get;init;}
     public bool? AutoStart {get;init;}
@@ -121,6 +124,9 @@ public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Gu
 public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null)
 {
     public string StatusNotice {get;init;}="";
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Credential {get;init;}
+    public override string ToString()=>"UiControlReply (credentials omitted)";
 }
 public sealed class UiBackendException(string code,string message,Exception? inner=null):IOException(message,inner)
 {

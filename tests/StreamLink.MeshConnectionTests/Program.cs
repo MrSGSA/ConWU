@@ -25,6 +25,7 @@ static partial class Program
     public static async Task Main(string[] args)
     {
         if(args is ["--governance-only"]){await Governance();return;}
+        if(args is ["--entry-admission-only"]){await EntryAdmissions();return;}
         if(args is ["--governance-service-only"]){await GovernanceServiceRecovery();return;}
         if(args is ["--decentralization-only"]){await Decentralization();return;}
         if(args is ["--peer-sync-only"]){SynchronizationValidation();await AsymmetricSynchronization();return;}

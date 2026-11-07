@@ -1,6 +1,6 @@
 # ConWU
 
-原名 StreamLink。统一设备与 Cloudflare DDNS 正在进行 `1.0.6-rc.7` 候选验证，现有 GitHub Release 仍使用旧名称。配置与升级兼容标识保留。源码改动和配置步骤见 [ConWU 与 Cloudflare DDNS](docs/aq1/ConWU与Cloudflare-DDNS-20261106.md)。
+原名 StreamLink。当前开发候选为 `1.0.6-rc.10`，精简设置并加入直接填写设备入口的入网方式；现有 GitHub Release 仍使用旧名称。配置与升级兼容标识保留。改动和验证范围见 [精简入口](docs/aq1/精简入口与三端更新-20261107.md) 和 [Cloudflare DDNS](docs/aq1/ConWU与Cloudflare-DDNS-20261106.md)。
 
 想在外面用 Moonlight 连家里的电脑，却碰上 UDP 限速？ConWU 就是为这件事做的 Windows 直连组网工具。
 
@@ -8,7 +8,7 @@
 
 [下载最新版](https://github.com/MrSGSA/StreamLink/releases/latest) · [使用说明](docs/使用指南.md) · [1.0.5 更新说明](docs/releases/v1.0.5.md)
 
-开发分支正在准备统一设备版本：Windows 与 Linux 可参与网络，也可独立开启内置协调服务；入口改为连接任一获准成员的网络入口。Linux 候选的安装与验证范围见 [Linux 说明](packaging/linux/README.md)。这部分尚未替换上方正式 Release。
+开发分支支持 Windows 与 Linux 参与网络、接收加入申请，也保留内置 HTTPS 协调服务。Linux 候选的安装与验证范围见 [Linux 说明](packaging/linux/README.md)。这部分尚未替换上方正式 Release。
 
 ## 能做什么
 
@@ -21,11 +21,13 @@
 ## 开始使用
 
 1. 在两台 Windows x64 电脑上安装 Release 中的 `.msi`。
-2. 打开 WebUI，选择自选协调服务器，或填写已有入口。使用已有入口时，地址需要通向主机的 ConWU 接收端口，默认是 `44680`。
-3. 一端创建网络，另一端申请加入，由主机确认。服务器组网用六位配对码，无服务器组网用直连邀请。
+2. 一端创建网络；另一端在“加入网络 → 可达入口”填写它的可达地址或订阅链接。地址需要通向 ConWU 接收端口，新安装默认 `44680`，升级保留原值。
+3. 也可以在两端填写相同的 HTTPS 协调入口，使用六位配对码申请加入。两种方式都由获准设备核对校验码后批准。
 4. 把对方的虚拟 IP 填进 Moonlight，开始串流。
 
 目前需要自建协调服务或准备可达入口，还没有公共协调服务器。安装包带齐运行组件，使用者不需要另装 .NET、Python 或开发工具。
+
+rc.10 的统一入口需要网络内设备一并更新，旧版原生外层握手不能混用。接收端口、本机设置和网络身份沿用原配置；默认接收不代表公网已经可达。
 
 ## 使用前了解一下
 

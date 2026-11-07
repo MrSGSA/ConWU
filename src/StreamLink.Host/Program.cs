@@ -38,7 +38,7 @@ ConWU · Linux
   config apply <文件.json>    合并并保存设置，不填写的字段保持原值
   ddns status                 查看域名发布和成员入口读取状态
   ddns token                  从标准输入读取 API Token 并保存，不回显
-  ddns clear-token            清除已保存的令牌（需先关闭发布）
+  ddns clear-token            清除令牌并停止发布，保留域名发现
   coordinator status          查看协调监听、证书与外部 HTTPS 诊断
   coordinator backup <文件>  离线备份协调数据（先关闭协调角色）
   coordinator inspect <文件> 校验备份格式、校验和及成员签名
@@ -46,7 +46,7 @@ ConWU · Linux
                               离线恢复；显式确认可能回滚审批和撤销
   上述 backup/restore 可加 --data <目录> 迁移旧独立协调数据
   network create              按已保存的连接设置创建网络
-  network join <配对码/邀请>  申请加入网络
+  network join <入口/配对码/邀请>  自动识别并申请加入网络
   network invite              生成配对码或直连邀请
   network poll                更新加入申请状态
   network approve <校验码>    批准当前申请（须先核对设备与校验码）
@@ -123,15 +123,15 @@ ConWU · Linux
     if(args[0]=="network"&&args.Length>=2) {
         string value=args.Length>2?args[2]:"";var settings=state.Settings??throw new IOException("设置尚未就绪");
         string command=args[1] switch {
-            "create"=>settings.DirectMode?"create-direct":"create", "join"=>value.Length==6&&value.All(char.IsDigit)?settings.DirectMode?"join-direct-short":"join":"join-invitation",
+            "create"=>settings.Service.Length==0?"create-direct":"create", "join"=>value.Length==6&&value.All(char.IsAsciiDigit)?settings.DirectMode?"join-direct-short":"join":value.StartsWith("SL6.")?"join-invitation":"join-entry",
             "invite"=>"invite","poll"=>"pair-poll","approve"=>"approve","reject"=>"reject","leave"=>"leave","close"=>"delete-network","remove"=>"revoke","resume"=>"membership-resume",
             _=>throw new ArgumentException("未知网络操作")
         };
         if(args[1] is "leave" or "close" && (state.NetworkId.Length==0||value!=state.NetworkId))throw new IOException("请在命令后填写 status 显示的完整当前网络 ID，以确认操作");
         if(args[1]=="approve"&&(state.Pairing?.Verification!=value||value.Length==0))throw new IOException("校验码不匹配，请先运行 network poll 并与申请设备核对");
         int slot=0;if(args[1]=="remove"&&(!int.TryParse(value,out slot)||slot<1))throw new ArgumentException("请填写成员 Slot");
-        var action=new UiNetworkAction(command,settings.Service,settings.CertificatePin,args[1]=="join"?value:"",state.NetworkId,true,
-            Verification:args[1]=="approve"?value:"",Candidate:state.Pairing?.Candidate??"",PeerSlot:slot,Mode:settings.PathSelection=="udp-only"?"udp":"faketcp",ProposedIp:state.Pairing?.ProposedIp??"");
+        var action=new UiNetworkAction(command,settings.Service,settings.CertificatePin,args[1]=="join"&&command!="join-entry"?value:"",state.NetworkId,true,
+            Verification:args[1]=="approve"?value:"",Candidate:state.Pairing?.Candidate??"",PeerSlot:slot,Mode:settings.PathSelection=="udp-only"?"udp":"faketcp",ProposedIp:state.Pairing?.ProposedIp??""){Entry=command=="join-entry"?value:""};
         Print(await Mutate(new("network",Network:action)));return;
     }
     throw new ArgumentException("未知命令，请运行 conwu help");

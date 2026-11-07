@@ -14,7 +14,6 @@ public sealed record DirectInvitation(MeshEnrollment Enrollment, MeshDirectory D
         if(!owner.Pair.Direct)throw new IOException("当前网络使用服务器配对，请使用六位配对码");
         entries=entries.Where(e=>e.PeerSlot==0).Select(e=>e with{PeerSlot=1}).ToArray();
         ExistingEntryResolver.Validate(entries);
-        if(entries.Length==0)throw new IOException("请先在设置中填写本机可供其他设备连接的入口");
         var enrollment=replacing == null ? MeshIdentity.Issue(owner,requestedIp) : MeshIdentity.Replace(owner,replacing,requestedIp);
         var invite=new DirectInvitation(enrollment,owner.Directory!,entries,"");
         var code="SL5."+Convert.ToBase64String(JsonSerializer.SerializeToUtf8Bytes(invite with {Signature=MeshIdentity.Sign(owner.OwnerPrivate,Signed(invite))}));
@@ -27,7 +26,7 @@ public sealed record DirectInvitation(MeshEnrollment Enrollment, MeshDirectory D
         DirectInvitation ticket;
         try {ticket=JsonSerializer.Deserialize<DirectInvitation>(Convert.FromBase64String(code[4..]))??throw new FormatException("直连邀请为空");}
         catch(JsonException){throw new FormatException("直连邀请内容无效");}
-        if(ticket.Enrollment?.Pair?.Direct!=true||ticket.Directory==null||ticket.Entries is not {Length:>0}||
+        if(ticket.Enrollment?.Pair?.Direct!=true||ticket.Directory==null||ticket.Entries is not {Length:<=12}||
             !MeshIdentity.Verify(ticket.Enrollment.OwnerKey,Signed(ticket),ticket.Signature))throw new CryptographicException("直连邀请签名无效");
         var mesh=MeshIdentity.Import(MeshIdentity.Export(ticket.Enrollment));
         MeshIdentity.ValidateDirectory(ticket.Directory,mesh.Pair.Network,mesh.OwnerKey);

@@ -31,7 +31,7 @@ public sealed partial class ControlWorker
     static readonly List<ControlWorker> quarantinedWorkers=[];
     void ReleaseControlOwnership(){
         if(uiEntryResolver.IsValueCreated)uiEntryResolver.Value.Dispose();
-        uiDirectHost.Clear();ResetUiPair("后台已退出");
+        uiDirectHost.Clear();ClearEntryAdmission();ResetUiPair("后台已退出");
         if(Volatile.Read(ref resourceShutdownUnproven)){
             // Strongly retain the worker, its failed owners and file lock.
             // A FileStream finalizer must not admit a second owner in this PID.
@@ -114,7 +114,7 @@ public sealed partial class ControlWorker
     void DisposeControlResources(){
         if(Interlocked.Exchange(ref disposed,1)!=0)return;
         disposing.Cancel();runStop?.Cancel();measureStop?.Cancel();
-        Task[] held;lock(operationGate){held=new[]{running,measuring,coordinating}.Where(t=>t!=null).Cast<Task>().Concat(operations.Values.Where(o=>!o.Completed).Select(o=>o.Completion.Task)).ToArray();}
+        Task[] held;lock(operationGate){held=new[]{running,measuring,coordinating,acceptingEntries}.Where(t=>t!=null).Cast<Task>().Concat(operations.Values.Where(o=>!o.Completed).Select(o=>o.Completion.Task)).ToArray();}
         // A timed-out worker retains its single-instance lock. Disposal must not
         // allow a second owner while native/lease references may still be live.
         var finished=Task.WhenAll(held.Select(ObserveShutdown));

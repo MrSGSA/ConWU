@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.6-rc.9',[string]$Distro='ArchLinux')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.6-rc.10',[string]$Distro='ArchLinux')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo

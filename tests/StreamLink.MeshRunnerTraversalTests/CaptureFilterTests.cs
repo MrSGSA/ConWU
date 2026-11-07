@@ -45,6 +45,17 @@ static class CaptureFilterTests
                 check(!TcpCaptureOwner.Tuple(truncated, out _, out _, true) && !TcpCaptureOwner.Tuple(oversized, out _, out _, true) && !TcpCaptureOwner.Tuple(badTcp, out _, out _, true), "IPv6 broker rejects inconsistent IP/TCP lengths before worker dispatch");
             }
             }
+            const string receiver="inbound and !loopback and ip and udp and udp.DstPort == 44680 and (udp.PayloadLength < 20 or udp.Payload16[0] >= 0x4000 or udp.Payload32[1] != 0x2112A442)";
+            check(compile(receiver,0,IntPtr.Zero,0,out var udpError,out var udpAt),"official compiler accepts default UDP receiver STUN exclusion: "+Marshal.PtrToStringAnsi(udpError)+" at "+udpAt);
+            byte[] udp=new byte[48];udp[0]=0x45;udp[3]=48;udp[9]=17;
+            IPAddress.Parse("192.0.2.2").GetAddressBytes().CopyTo(udp,12);IPAddress.Parse("192.0.2.1").GetAddressBytes().CopyTo(udp,16);
+            BinaryPrimitives.WriteUInt16BigEndian(udp.AsSpan(20),54321);BinaryPrimitives.WriteUInt16BigEndian(udp.AsSpan(22),44680);BinaryPrimitives.WriteUInt16BigEndian(udp.AsSpan(24),28);
+            udp[28]=1;udp[29]=1;BinaryPrimitives.WriteUInt32BigEndian(udp.AsSpan(32),0x2112a442);
+            var inbound=new byte[80];
+            check(!evaluate(receiver,udp,(uint)udp.Length,inbound),"default receiver leaves an RFC STUN success from a custom source port to its kernel socket");
+            udp[29]=0x11;check(!evaluate(receiver,udp,(uint)udp.Length,inbound),"STUN error replies also reach the mapping owner");
+            udp[32]^=1;check(evaluate(receiver,udp,(uint)udp.Length,inbound),"ordinary UDP business remains captured on the same receiver port");
+            udp[32]^=1;udp[28]=0x40;check(evaluate(receiver,udp,(uint)udp.Length,inbound),"a cookie-shaped non-STUN datagram cannot bypass the receiver");
         } finally { NativeLibrary.Free(library); }
     }
 }

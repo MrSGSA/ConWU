@@ -9,6 +9,8 @@ public static class SensitiveText
         void Pair(Pairing? pair){if(pair==null)return;credentials.Add(pair.Secret);string raw=new Invitation(1,pair.Network,pair.Secret,"",pair.Mode,"",0).RawKey;credentials.Add(raw);credentials.Add(raw.ToUpperInvariant());}
         Pair(profile.Pair);Pair(profile.Mesh?.Pair);
         credentials.Add(profile.CloudflareDdnsToken);
+        foreach(var entry in profile.ExistingEntries.Concat(profile.JoinedEntrySources))
+            if(Uri.TryCreate(entry.Source,UriKind.Absolute,out var source)&&source.Scheme=="https"&&source.Query.Length>0)credentials.Add(entry.Source);
         if(profile.Mesh is{} mesh){credentials.Add(mesh.OwnerPrivate);credentials.Add(mesh.SigningPrivate);credentials.Add(mesh.ExchangePrivate);}
         if(profile.PendingMembership is {} pending){if(pending.Ciphertext.Length<=text.Length)credentials.Add(pending.Ciphertext);if(pending.Room!=null)credentials.Add(pending.Room.Token);}
         if(profile.RejoinCredential is {} rejoin)credentials.Add(rejoin.SigningPrivate);

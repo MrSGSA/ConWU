@@ -41,7 +41,7 @@ public sealed class MeshTransport : IMeshTransport
         configuration = Path.Combine(sessionRoot, "raw-" + Guid.NewGuid().ToString("N") + ".conf");
         try {
             string binary = Path.Combine(components, "udp2raw-native.exe");
-            LegacyNativeCapabilities.Require(binary,profile.Pair.DirectBootstrap);
+            LegacyNativeCapabilities.Require(binary,true);
             string binding;
             if (server) binding = $"{mapping?.LocalAddress ?? IPAddress.Any}:{listenPort}";
             else {
@@ -52,12 +52,12 @@ public sealed class MeshTransport : IMeshTransport
             accounting = LegacyTransportLedger.Shared.Acquire(profile.Pair.Mode, server, server ? binding : "",
                 target.ToString(), mapping is TcpMapping tcp ? tcp.HelperResource.LeaseId : Guid.Empty);
             var ticket = new Invitation(1, profile.Pair.Network, profile.Pair.Secret, target.ToString(), profile.Pair.Mode, "test.ustc.edu.cn", DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds());
-            string rawKey=profile.Pair.DirectBootstrap?DirectPairWire.CarriageKey:ticket.RawKey;
+            string rawKey=DirectPairWire.CarriageKey;
             string config = $"{(server ? "-s" : "-c")}\n-l {binding}\n-r {target}\n-k {rawKey}\n--raw-mode {profile.Pair.Mode}\n--fix-gro\n--seq-mode 3\n--log-level {(logLevel == "debug" ? 5 : logLevel == "error" ? 2 : 4)}\n";
             if (profile.Pair.Mode == "faketcp") config += "--fake-http test.ustc.edu.cn\n";
             File.WriteAllText(configuration, config);
             var environment = new Dictionary<string, string> { ["STREAMLINK_ALLOW_DRIVER_INSTALL"] = "1" };
-            if(profile.Pair.DirectBootstrap)environment["STREAMLINK_DIRECT_RENDEZVOUS"]="1";
+            environment["STREAMLINK_DIRECT_RENDEZVOUS"]="1";
             if (testEnvironment != null) foreach (var pair in testEnvironment) {
                 if (!pair.Key.StartsWith("STREAMLINK_TEST_", StringComparison.Ordinal)) throw new ArgumentException("Only explicit test backend variables can be injected");
                 environment[pair.Key] = pair.Value;
@@ -77,7 +77,8 @@ public sealed class MeshTransport : IMeshTransport
             environment["STREAMLINK_LEGACY_AUTH"] = control.Authorization;
             environment["STREAMLINK_LEGACY_PARENT"] = Environment.ProcessId.ToString();
             environment["STREAMLINK_LEGACY_WIRE_ID"]=accounting.ResourceId.ToString("N");
-            if (server && mapping is UdpMapping udp) { environment["STREAMLINK_UDP_SHARED_BIND"] = "1"; environment["STREAMLINK_STUN_ENDPOINT"] = udp.StunEndpoint.ToString(); }
+            if (server&&profile.Pair.Mode=="udp")environment["STREAMLINK_UDP_SHARED_BIND"]="1";
+            if (server && mapping is UdpMapping udp) environment["STREAMLINK_STUN_ENDPOINT"] = udp.StunEndpoint.ToString();
             var child = job.StartObserved(binary, ["--conf-file", configuration], logLevel == "off" ? null : Path.ChangeExtension(configuration, ".log"), environment,
                 [ticket.RawKey, ticket.Secret, control.Authorization],accounting.WireLine);
             control.Start(child.Id);

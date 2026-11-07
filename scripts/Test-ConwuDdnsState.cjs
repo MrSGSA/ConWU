@@ -28,7 +28,7 @@ vm.runInContext(`
  check(dirtyCount()===0,'successful global save has no stale dirty state');
  drafts.ddns.enabled=true;drafts.ddns.publish=true;drafts.ddns.zoneId='a'.repeat(32);
  check(!validateSection('ddns'),'saved credentials can be reused with an empty token input');
- drafts.ddns.clearToken=true;check(!!validateSection('ddns'),'publishing cannot clear its required token');
+ drafts.ddns.clearToken=true;check(!validateSection('ddns'),'explicit clear automatically changes publishing into discovery-only mode');
  drafts.ddns.publish=false;await saveSection();check(writes[1].clearDdnsToken&&!writes[1].ddnsToken,'explicit clear is separate from settings');
  const baseline=JSON.stringify(saved.ddns);drafts.ddns.newToken=token;restoreSettings();
  check(JSON.stringify(drafts.ddns)===baseline,'revert discards an unsaved credential without a write');

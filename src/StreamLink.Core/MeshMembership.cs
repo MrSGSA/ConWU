@@ -14,6 +14,7 @@ public sealed class MeshMembershipConflictException(MeshDirectory current) : IOE
 // exchange key, including after a process restart or a lost HTTP response.
 public sealed record PendingMembershipChange(string ExpectedHead, MeshDirectory Proposed, string Action)
 {
+    public bool EntryAdmission {get;init;}
     public PairRoomTicket? Room {get;init;}
     public string Candidate {get;init;}="";
     public string Ciphertext {get;init;}="";
