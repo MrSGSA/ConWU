@@ -80,6 +80,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="")
 {
+    public bool Background {get;init;}
     public UiConfigPatch? Patch {get;init;}
     public bool? AutoStart {get;init;}
     public bool? ExpectedAutoStart {get;init;}

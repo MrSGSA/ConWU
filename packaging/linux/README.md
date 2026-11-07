@@ -1,6 +1,6 @@
 # ConWU Linux 候选包
 
-当前为 `1.0.6-rc.8` 候选，具体测试范围见随包验证记录。主命令为 `conwu`；保留 `streamlink` 兼容命令、`streamlink.service` 和原数据目录，升级及回退仍指向同一实例。Cloudflare 配置及限制见 [DDNS 说明](../../docs/aq1/ConWU与Cloudflare-DDNS-20261106.md)。
+当前为 `1.0.6-rc.9` 候选，具体测试范围见随包验证记录。主命令为 `conwu`；保留 `streamlink` 兼容命令、`streamlink.service` 和原数据目录，升级及回退仍指向同一实例。Cloudflare 配置及限制见 [DDNS 说明](../../docs/aq1/ConWU与Cloudflare-DDNS-20261106.md)。
 
 同一程序可以参与组网、提供 HTTPS 协调服务，或同时承担两项功能。默认 FakeTCP＋HTTP，不自动改走 UDP。协调服务默认关闭，不会自动开放公网端口。
 

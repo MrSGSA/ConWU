@@ -6,7 +6,7 @@ const heading=(title,description,extra='')=>`<div class="heading"><div><h1 id="p
 let state=null,online=false,busy=false,busyKind='',expired=false,csrf='',reading=null,generation=0,lastStatusAt=0,baseRevision='',saved=clone(defaults),drafts=clone(saved),history=null;
 let page='overview',section='network',networkActive=false,owner=false,pairCode='',pairExpires=0,invitation='',inviteExpires=0,joinTab='outgoing',joinCodeValue='',joinInviteValue='',joinStatus='',joinName='',joinError='',incoming=false,createdAt=0,theme='dark',toastTimer,testTimer,testGeneration=0,modalCallback=null,networkRoute='server';
 let previousTraffic=null,traffic={peers:new Map(),up:null,down:null},historyTraffic=[],logLines=[],lastLogs=[],lastPairPoll=0,lastPairError='',pairNotice='',pairNoticeTimer,joinModel='',settingsHydrated=false;
-let noticeSource='',noticeTimer,lastStatusFailure='',resumeGraceUntil=0,submittedJoin=null;
+let noticeSource='',noticeTimer,lastStatusFailure='',resumeGraceUntil=0,submittedJoin=null,pairPolling=null;
 const expanded=new Set(),dirty=key=>!same(drafts[key],saved[key]),dirtyCount=()=>Object.keys(defaults).filter(dirty).length,localName=()=>state?.deviceName||'正在读取',localIp=()=>state?.virtualIp||'尚未分配',activeRoute=()=>saved.network.mode==='custom'?'server':saved.network.route,protocol=()=>saved.network.protocol==='udp'?'直接 UDP':'FakeTCP + HTTP';
 const total=value=>value>=1e9?(value/1e9).toFixed(2)+' GB':value>=1e6?(value/1e6).toFixed(1)+' MB':value>=1000?(value/1000).toFixed(1)+' KB':Math.max(0,value||0)+' B';
 const speed=value=>value==null?'—':(value/1e6).toFixed(2)+' MB/s',duration=ms=>{let n=Math.max(0,Math.floor(ms/1000));return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');};
@@ -210,12 +210,9 @@ async function api(path,body,valid=()=>true,sessionRetried=false){
  }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const pending=Error('本机后台暂未响应，操作结果尚待确认；正在自动刷新。');pending.retryable=true;throw pending;}throw error;}finally{clearTimeout(timer);}
 }
 
-async function command(method,extra={},quiet=false){
- if(busy)throw Error('上一项操作仍在进行，请稍候。');if(!online)throw Error('请先恢复面板与后台的连接。');
- busy=true;busyKind=method==='network'&&extra.network?.action==='settings'?'settings-save':quiet?'background':'action';generation++;joinError='';if($('join-error'))$('join-error').textContent='';controls();if(!quiet)notice(method==='register-service'?'请在 Windows 授权窗口确认服务操作…':'正在处理，请稍候…');
- try{
+async function requestCommand(method,extra={},quiet=false,valid=()=>true){
   const operationId=crypto.randomUUID();let reply;
-  try{reply=await api('/api/command',{method,operationId,...extra});}
+  try{reply=await api('/api/command',{method,operationId,...extra},valid);}
   catch(error){
    if(!error.retryable||method==='register-service')throw error;
    // A lost HTTP/IPC reply does not prove that the mutation was rejected.
@@ -227,13 +224,16 @@ async function command(method,extra={},quiet=false){
    if(!quiet)notice('后台正在'+(operation.phase||'处理')+'，请稍候…');
    const until=Date.now()+100000;
    while(Date.now()<until){
+    if(!valid())return null;
     await new Promise(r=>setTimeout(r,700));let progress;
-    try{progress=await api('/api/status?operation='+encodeURIComponent(operation.id));}
+    if(!valid())return null;
+    try{progress=await api('/api/status?operation='+encodeURIComponent(operation.id),undefined,valid);}
     catch(error){
      if(!error.retryable)throw error;
      // Retry observation only. An accepted mutation must never be resubmitted.
      if(!quiet)notice('后台已受理，暂时无法读取进度，正在重试…');continue;
     }
+    if(!valid())return null;
     if(!progress.ok)throw Error(progress.error||'无法读取操作结果');
     if(progress.status)render(progress.status);
     if(!quiet&&progress.operation?.id===operation.id&&!progress.operation.completed)notice(progress.operation.phase||'后台正在处理，请稍候…');
@@ -241,6 +241,14 @@ async function command(method,extra={},quiet=false){
    }
    if(!reply.operation?.completed)throw Error('后台结果尚未确认，请刷新状态确认结果后再操作。');
   }
+  return valid()?reply:null;
+}
+async function command(method,extra={},quiet=false){
+ if(busy)throw Error('上一项操作仍在进行，请稍候。');if(!online)throw Error('请先恢复面板与后台的连接。');
+ busy=true;busyKind=method==='network'&&extra.network?.action==='settings'?'settings-save':quiet?'background':'action';generation++;
+ try{
+  joinError='';if($('join-error'))$('join-error').textContent='';controls();if(!quiet)notice(method==='register-service'?'请在 Windows 授权窗口确认服务操作…':'正在处理，请稍候…');
+  const reply=await requestCommand(method,extra,quiet);
   generation++;if(reply.status)render(reply.status);else if(reply.statusNotice)unavailable(reply.statusNotice);
   if(!reply.ok)throw Error(reply.error||'操作未完成');if(!quiet&&online)notice('');return reply;
  }
@@ -284,14 +292,14 @@ function ddnsDiagnostics(){const d=state?.ddns;return `<div class="inline-note" 
 function refreshDdnsStatus(){const el=$('ddns-live-status');if(el)el.innerHTML=ddnsDiagnostics();const token=$('ddns-token-status');if(token)token.textContent=state?.ddnsCredentialConfigured?'已保存令牌，留空保持原值':'尚未保存令牌';}
 function ddnsFields(){const d=drafts.ddns;return `<div class="switch-row"><div><h3>通过域名自动发现设备</h3><p class="hint">自己的设备共用一个域名，软件维护各自的签名地址记录。首次加入仍需配对与批准。</p></div>${switchControl('enabled',d.enabled,'启用域名自动发现')}</div>
  <label class="field"><span>共用域名</span><input data-key="domain" value="${esc(d.domain)}" placeholder="conwu.space4sgsa.com" autocomplete="off"><span class="hint">各成员填写同一个域名。软件只管理专用设备记录，不覆盖该域名原有的网站解析。</span></label>
- <div class="switch-row"><div><h3>发布本机入口</h3><p class="hint">自动发布 ConWU 建立的有效映射，以及“提供网络入口”中已解析的公网地址。只读取其他设备入口时，无需填写更新凭据。</p></div>${switchControl('publish',d.publish,'发布本机入口')}</div>
- <button class="text-btn" data-settings="publish">设置 Lucky 等工具提供的本机入口${icon('chevron')}</button>
+ <div class="switch-row"><div><h3>发布本机入口</h3><p class="hint">自主模式取得可达入口后，自动发布并续期。只读取其他设备入口时，无需填写更新凭据。</p></div>${switchControl('publish',d.publish,'发布本机入口')}</div>
+ <button class="text-btn" data-settings="publish">查看本机入口设置${icon('chevron')}</button>
  <label class="field"><span>Cloudflare Zone ID</span><input data-key="zoneId" value="${esc(d.zoneId)}" maxlength="32" autocomplete="off"><span class="hint">在 Cloudflare 对应域名的概述页复制区域 ID。只读设备可以留空。</span></label>
  <label class="field"><span>Cloudflare API Token</span><input data-key="newToken" type="password" value="${esc(d.newToken)}" maxlength="512" autocomplete="new-password"><span class="hint" id="ddns-token-status">${state?.ddnsCredentialConfigured?'已保存令牌，留空保持原值':'尚未保存令牌'}</span><span class="hint">使用限定到指定 Zone 的 DNS 编辑令牌，不使用 Global API Key。令牌仅保存在本机，不进入邀请、日志或设置导出；恢复设置不会恢复旧令牌。</span></label>
  <label class="switch-row"><span>保存时清除已存令牌（需先关闭发布）</span><input data-key="clearToken" type="checkbox" ${d.clearToken?'checked':''}></label>
  <label class="field"><span>检查间隔（秒）</span><input data-key="refreshSeconds" type="number" min="30" max="600" value="${d.refreshSeconds}"><span class="hint">地址变化会提前更新；定期续期签名记录。DNS 缓存可能短暂延迟，不会重建健康连接。</span></label>
  <div id="ddns-live-status">${ddnsDiagnostics()}</div>
- <div class="inline-note">DDNS 负责地址更新和发现，与所选连接方式配合使用，不改变传输协议。自选服务器模式下可发布自主建立的入口；已有入口模式只发布填写的本机入口，不启动自主打洞。使用带设备签名的 DNS TXT，同时携带 IP 与端口；仅有 STUN 映射并不保证可入站。</div>`;}
+ <div class="inline-note">先创建或加入网络并启动连接，再发布本机记录。自主模式会维护取得的映射和 DDNS；找不到可达入口时会显示等待原因。已有稳定的 HTTPS/TXT 更新链接可直接用于“已有可达入口”。第三方工具不应覆盖 ConWU 的签名记录。</div>`;}
 function coordinatorHostFields(){
  const d=drafts.host,c=state?.coordinator;
  return `<div class="switch-row"><div><h3>提供协调服务</h3><p class="hint">可以只提供协调，也可以同时参与网络。关闭不会删除协调数据或本机网络。</p></div>${switchControl('enabled',d.enabled,'提供协调服务')}</div>
@@ -415,7 +423,22 @@ const network=(action,fields={},quiet=false)=>command('network',{network:{action
 async function joinNetwork(){requireApplied();if(networkActive)throw Error('需要退出当前网络后才能申请加入。');const direct=activeRoute()==='direct',code=(direct?joinInviteValue:joinCodeValue).replace(/\s/g,'');if(direct&&!code.startsWith('SL6.'))throw Error('请使用新版主机生成的 SL6. 直连邀请；旧版预授权邀请需重新生成。');if(!direct&&!/^\d{6}$/.test(code))throw Error('请输入六位数字配对码。');const name=(joinName||localName()).trim();if(!name)throw Error('请输入本机设备名称。');if(name!==state.deviceName)await command('patch',{patch:{deviceName:name,expectedDeviceName:state.deviceName}},true);submittedJoin={code,direct};try{await network(direct?'join-invitation':'join',{...(direct?{}:coordination()),code,expectedNetwork:state.networkId,mode:saved.network.protocol});}catch(error){if(!state?.pairing?.active)submittedJoin=null;throw error;}notify('申请已发送，等待主机批准');}
 function bindJoinInput(){const direct=activeRoute()==='direct',input=$(direct?'join-invite':'join-code');if(!input)return;input.oninput=()=>{if(direct)joinInviteValue=input.value;else{joinCodeValue=input.value.replace(/\D/g,'').slice(0,6);input.value=joinCodeValue;input.closest('.digits-input').querySelectorAll('.digit').forEach((el,i)=>{const digit=joinCodeValue[i]||'';el.textContent=digit;el.classList.toggle('filled',!!digit);});}joinError='';$('join-error').textContent='';};$('join-device-name').oninput=e=>joinName=e.target.value;$('join-form').onsubmit=e=>{e.preventDefault();run(joinNetwork).catch(()=>{});};}
 async function testAddresses(){const settings=settingsDto(),local=section==='publish',entries=settings.existingEntries.filter(e=>local?e.peerSlot===0:e.peerSlot!==0);if(!entries.length)throw Error('请先填写地址来源。');const version=++testGeneration,selected=section;await network('resolve-entries',{settings:{...settings,existingEntries:entries}});if(page!=='settings'||section!==selected||version!==testGeneration||!$('test-results'))return;const results=state.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="test-result ${r.error?'error':''}">${icon(r.error?'x':'check')}<div class="grow"><div>${esc(r.error||(r.endpoints.length?r.endpoints.join('、'):'来源已确认，目前没有可连接入口'))}</div><p>${r.error?'请检查来源或稍后重试；现有健康连接继续保持。':'已解析。实际连接还需核验网络身份和双向通信。'}</p></div></div>`).join('');}
-async function pollPair(){if(!online||busy||state?.pendingMembership||!state?.pairing?.active||state.pairing.direct||Date.now()-lastPairPoll<2500)return;lastPairPoll=Date.now();try{await network('pair-poll',{},true);if(lastPairError&&noticeSource==='pair')notice('');lastPairError='';if(!state.pairing?.active&&state.pairing?.state)notify(state.pairing.state);}catch(e){lastPairPoll=Date.now()+10000;if(e.message!==lastPairError){lastPairError=e.message;notice(e.message,true,'pair');}}}
+async function pollPair(){
+ if(!online||expired||busy||pairPolling||state?.pendingMembership||!state?.pairing?.active||state.pairing.direct||Date.now()-lastPairPoll<2500)return;
+ const version=generation,attempt={};pairPolling=attempt;lastPairPoll=Date.now();
+ const valid=()=>version===generation&&!expired;
+ try{
+  // Routine pairing discovery must not disable leave, approve, save or other
+  // explicit actions. Accepted polls yield to them at the service mutation gate.
+  const reply=await requestCommand('network',{network:{action:'pair-poll',background:true}},true,valid);
+  if(!reply||!valid())return;
+  if(!reply.ok)throw Error(reply.error||'配对状态暂未更新');
+  if(reply.status)render(reply.status);
+  if(lastPairError&&noticeSource==='pair')notice('');lastPairError='';
+  if(!state.pairing?.active&&state.pairing?.state)notify(state.pairing.state);
+ }catch(e){if(!valid())return;lastPairPoll=Date.now()+10000;if(e.message!==lastPairError){lastPairError=e.message;notice(e.message,true,'pair');}}
+ finally{if(pairPolling===attempt)pairPolling=null;}
+}
 function appendLogs(lines){let overlap=0;for(let n=Math.min(lastLogs.length,lines.length);n>0;n--)if(lastLogs.slice(-n).every((v,i)=>v===lines[i])){overlap=n;break;}for(const line of lines.slice(overlap)){const m=line.match(/^(\d\d:\d\d:\d\d) (?:\[(INFO|WARN|ERROR|DEBUG)\] )?(.*)$/);logLines.push({time:m?.[1]||'',level:m?.[2]||'INFO',message:m?.[3]||line});}lastLogs=lines.slice();if(logLines.length>500)logLines.splice(0,logLines.length-500);}
 let logFilter='ALL',logSearch='',autoScroll=true;
 function visibleLogs(){return logLines.filter(l=>(logFilter==='ALL'||l.level===logFilter)&&(!logSearch||l.message.toLowerCase().includes(logSearch.toLowerCase())));}

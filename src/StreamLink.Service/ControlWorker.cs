@@ -329,7 +329,7 @@ public sealed partial class ControlWorker : BackgroundService
             }
             if(!background)CompleteOperation(operation);PublishReply();return issued.Length > 0 ? Reply() with { Invite = issued,Operation=operation.State } : Reply() with {Operation=operation.State};
         }
-        catch (Exception ex) { var error=OperationError(ex,operation);Log("控制操作 "+operation.DisplayCommand+" 未完成："+error);CompleteOperation(operation,error);PublishReply();return Reply(error) with {Operation=operation.State}; }
+        catch (Exception ex) { var error=operation.Superseded?"":OperationError(ex,operation);if(!operation.Superseded)Log("控制操作 "+operation.DisplayCommand+" 未完成："+error);CompleteOperation(operation,error);PublishReply();return Reply(error) with {Operation=operation.State}; }
         finally { if(acquired)requests.Release(); }
     }
     public void StartLocal()

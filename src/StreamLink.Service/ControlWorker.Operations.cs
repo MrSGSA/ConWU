@@ -18,6 +18,9 @@ public sealed partial class ControlWorker
         public bool UserCancelled;
         public CancellationToken ServiceLifetime;
         public string DisplayCommand {get;set;}=command;
+        public bool BackgroundPairPoll;
+        public string CallerSid="";
+        public bool Superseded;
     }
     readonly object operationGate=new();
     readonly Dictionary<Guid,Operation> operations=new();
@@ -39,6 +42,7 @@ public sealed partial class ControlWorker
     }
     Operation OpenOperation(ControlRequest request,CancellationToken token,out bool duplicate,UiOperation? ui=null)
     {
+        Operation entry;CancellationTokenSource[] yielding=[];
         lock(operationGate){
             duplicate=false;
             token.ThrowIfCancellationRequested();disposing.Token.ThrowIfCancellationRequested();
@@ -48,28 +52,49 @@ public sealed partial class ControlWorker
                 if(prior.Command!=request.Command||prior.Digest!=digest)throw new IOException("操作ID已被不同请求使用");
                 duplicate=true;return prior; // Read progress, never repeat mutation.
             }
-            if(operations.Values.Count(o=>!o.Completed)>=8)throw new IOException("已有太多控制操作，稍后重试");
+            bool backgroundPairPoll=ui?.Network is {Action:"pair-poll",Background:true};
+            if(ui?.Network is {Background:true}&&!backgroundPairPoll)throw new FormatException("只有自动配对轮询可使用后台调度");
+            var observations=ui!=null&&!backgroundPairPoll?operations.Values.Where(o=>o.BackgroundPairPoll&&o.CallerSid==ui.CallerSid&&!o.Completed&&o.Cancelable&&!o.Superseded).ToArray():[];
+            if(operations.Values.Count(o=>!o.Completed&&!o.Superseded)-observations.Length>=8)throw new IOException("已有太多控制操作，稍后重试");
             if(operations.Count>=64){var old=operations.Values.FirstOrDefault(o=>o.Completed);if(old!=null)operations.Remove(old.Id);else throw new IOException("后台操作队列已满，请等待当前操作完成");}
+            foreach(var observation in observations){
+                // The same authenticated user's explicit action takes priority
+                // over a speculative read. A poll already committing approved
+                // membership is non-cancelable and must finish its transaction.
+                observation.Superseded=true;
+            }
+            yielding=observations.Select(o=>o.Stop).ToArray();
             // An authenticated UI request hands ownership to the service. Closing
             // a tab or expiring a pipe must not cancel an accepted mutation.
             // ServeUi passes the service lifetime here, never its response timer.
-            var entry=new Operation(id,request.Command,digest,CancellationTokenSource.CreateLinkedTokenSource(token,disposing.Token));
+            entry=new Operation(id,request.Command,digest,CancellationTokenSource.CreateLinkedTokenSource(token,disposing.Token));
+            entry.BackgroundPairPoll=backgroundPairPoll;entry.CallerSid=ui?.CallerSid??"";
             if(ui!=null)entry.ServiceLifetime=token;
             if(ui!=null)entry.Stop.CancelAfter(TimeSpan.FromSeconds(90));
             if(ui?.Network is {} action)entry.DisplayCommand=request.Command+":"+action.Action;
             entry.State=entry.State with{Command=entry.DisplayCommand};
-            operations.Add(id,entry);Volatile.Write(ref operationStatus,entry.State);PublishReply();return entry;
+            operations.Add(id,entry);Volatile.Write(ref operationStatus,entry.State);PublishReply();
         }
+        // Network cancellation callbacks can block synchronously. Never hold
+        // the status/operation lock while invoking them. The poll is already
+        // barred from entering a non-cancelable commit by Superseded above.
+        foreach(var cancellation in yielding)try{cancellation.Cancel();}catch(ObjectDisposedException){}catch(AggregateException){Log("后台配对读取的取消回调未正常结束，继续核对操作状态");}
+        return entry;
     }
-    void SetOperation(Operation operation,string phase,bool cancelable){lock(operationGate){operation.Cancelable=cancelable;operation.State=new(operation.Id,operation.DisplayCommand,phase,false,cancelable);Volatile.Write(ref operationStatus,operation.State);}PublishReply();}
+    void SetOperation(Operation operation,string phase,bool cancelable){lock(operationGate){
+        if(!cancelable&&operation.Superseded)throw new OperationCanceledException("自动轮询已让出给新的操作");
+        operation.Cancelable=cancelable;operation.State=new(operation.Id,operation.DisplayCommand,phase,false,cancelable);Volatile.Write(ref operationStatus,operation.State);
+    }PublishReply();}
     void CompleteOperation(Operation operation,string error=""){
         lock(operationGate){if(operation.Completed)return;operation.Completed=true;operation.Cancelable=false;operation.Stop.Dispose();
-            operation.State=new(operation.Id,operation.DisplayCommand,error.Length==0?"已完成":"未完成",true,false,error);
+            operation.State=new(operation.Id,operation.DisplayCommand,operation.Superseded?"后台轮询已让出":error.Length==0?"已完成":"未完成",true,false,error);
             if(operationStatus?.Id==operation.Id)Volatile.Write(ref operationStatus,operation.State);operation.Completion.TrySetResult();}
     }
     ControlReply CancelOperation(Guid id){
+        CancellationTokenSource cancellation;
         lock(operationGate){if(id==Guid.Empty||!operations.TryGetValue(id,out var op)||op.Completed)return Reply("未找到运行中的操作");
-            if(!op.Cancelable)return Reply("操作已进入资源退出阶段，可取消界面等待，但不能撤销已请求的网络停止");op.UserCancelled=true;op.Stop.Cancel();}
+            if(!op.Cancelable)return Reply("操作已进入资源退出阶段，可取消界面等待，但不能撤销已请求的网络停止");op.UserCancelled=true;cancellation=op.Stop;}
+        try{cancellation.Cancel();}catch(ObjectDisposedException){}
         return Reply();
     }
     ControlOperationStatus? OperationState(Guid id){lock(operationGate)return operations.GetValueOrDefault(id)?.State;}
