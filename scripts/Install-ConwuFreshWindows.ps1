@@ -39,16 +39,23 @@ if(-not $service -or -not $service.PathName.TrimStart('"').StartsWith($install+'
 # during backup or rename; other applications are never traversed.
 if(@(Get-ChildItem -LiteralPath $data -Force -Recurse | Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){throw '产品数据包含链接，无法安全备份。'}
 $installer=New-Object -ComObject WindowsInstaller.Installer
+if(-not ('ConwuInstallerProductState' -as [type])){Add-Type -TypeDefinition 'using System.Runtime.InteropServices; public static class ConwuInstallerProductState { [DefaultDllImportSearchPaths(DllImportSearchPath.System32)] [DllImport("msi.dll", CharSet=CharSet.Unicode, ExactSpelling=true)] public static extern int MsiQueryProductStateW(string product); }'}
+function Get-MsiProductState([string]$product) {
+ $state=[ConwuInstallerProductState]::MsiQueryProductStateW($product)
+ if($state -notin @(-1,1,2,3,4,5)){throw "无法确认 MSI 产品状态：$state"}
+ return $state
+}
 function MsiProperty([string]$path,[string]$property) {
  $db=$installer.OpenDatabase([IO.Path]::GetFullPath($path),0)
  $view=$db.OpenView(('SELECT `Value` FROM `Property` WHERE `Property`=''{0}''' -f $property))
- $view.Execute();$row=$view.Fetch();if(-not $row){throw "MSI 缺少 $property"};return $row.StringData(1)
+ [void]$view.Execute();$row=$view.Fetch();if(-not $row){throw "MSI 缺少 $property"};$value=$row.StringData(1)
+ if($value -isnot [string] -or [string]::IsNullOrWhiteSpace($value)){throw "MSI 的 $property 为空或无效"};return $value
 }
 $candidateProduct=MsiProperty $CandidateMsi 'ProductCode';$oldProduct=MsiProperty $RollbackMsi 'ProductCode'
 $candidateUpgrade=MsiProperty $CandidateMsi 'UpgradeCode';$oldUpgrade=MsiProperty $RollbackMsi 'UpgradeCode'
 if($candidateUpgrade -ine $expectedUpgrade -or $oldUpgrade -ine $expectedUpgrade -or $candidateProduct -notmatch '^\{[0-9A-Fa-f-]{36}\}$' -or $oldProduct -notmatch '^\{[0-9A-Fa-f-]{36}\}$'){throw 'MSI 产品身份不匹配。'}
 if($candidateProduct -ieq $oldProduct){throw '候选和回退 MSI 的产品代码相同，无法安全区分卸载目标。'}
-if($installer.ProductState($oldProduct) -notin @(3,4,5)){throw '指定的回退 MSI 与当前安装产品不匹配。'}
+if((Get-MsiProductState $oldProduct) -notin @(3,4,5)){throw '指定的回退 MSI 与当前安装产品不匹配。'}
 if($ExpectedCommit -notmatch '^[a-fA-F0-9]{40}$'){throw '需要候选完整源码提交标识。'}
 function VerifyRuntime([string]$folder) {
  $folder=[IO.Path]::GetFullPath($folder);$manifestPath=Join-Path $folder 'manifest.json'
@@ -163,11 +170,11 @@ try {
   $safeToRestore=$true
   try {$currentService=Get-Service -Name $serviceName -ErrorAction SilentlyContinue;if($currentService -and $currentService.Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}}catch{$safeToRestore=$false;$restoreErrors.Add('停止新服务：'+$_.Exception.Message)}
   if(-not $safeToRestore){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "切换失败且新服务未停止，已保留旧数据，未执行恢复：$evidence；$($original.Exception.Message)"}
-  if($installer.ProductState($candidateProduct) -in @(3,4,5)){try {RunMsi @('/x',$candidateProduct) (Join-Path $evidence 'candidate-remove.log')}catch{$restoreErrors.Add('卸载候选 MSI：'+$_.Exception.Message)}}
+  try {if((Get-MsiProductState $candidateProduct) -in @(3,4,5)){RunMsi @('/x',$candidateProduct) (Join-Path $evidence 'candidate-remove.log')}}catch{$restoreErrors.Add('查询或卸载候选 MSI：'+$_.Exception.Message)}
   if($restoreErrors.Count){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "卸载候选版本失败，保留旧数据未恢复：$evidence；$($original.Exception.Message)"}
   if($moved){try {if(Test-Path -LiteralPath $data){Move-Item -LiteralPath $data -Destination (Join-Path $evidence 'failed-new-data')};Move-Item -LiteralPath $quarantine -Destination $data}catch{$restoreErrors.Add('恢复数据：'+$_.Exception.Message)}}
   if($restoreErrors.Count){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "恢复旧数据失败，未安装回退 MSI：$evidence；$($original.Exception.Message)"}
-  try {if($installer.ProductState($oldProduct) -notin @(3,4,5)){RunMsi @('/i',('"'+[IO.Path]::GetFullPath((Join-Path $evidence 'previous.msi'))+'"')) (Join-Path $evidence 'previous-install.log')}}catch{$restoreErrors.Add('恢复旧 MSI：'+$_.Exception.Message)}
+  try {if((Get-MsiProductState $oldProduct) -notin @(3,4,5)){RunMsi @('/i',('"'+[IO.Path]::GetFullPath((Join-Path $evidence 'previous.msi'))+'"')) (Join-Path $evidence 'previous-install.log')}}catch{$restoreErrors.Add('恢复旧 MSI：'+$_.Exception.Message)}
   try {RestoreServiceMode}catch{$restoreErrors.Add('恢复服务状态：'+$_.Exception.Message)}
  }
  if($restoreErrors.Count){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "切换失败且自动恢复不完整：$evidence；原始错误：$($original.Exception.Message)"}

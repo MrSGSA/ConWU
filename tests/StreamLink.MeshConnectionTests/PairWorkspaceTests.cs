@@ -51,11 +51,53 @@ static partial class Program
             var summary=(await Ui(new("status"))).Status!;
             Check(summary.Aggregate?.NetworkCount==2&&summary.NetworkId.Length==0&&summary.SelectedNetworkId.Length==0,"device overview aggregates all networks without selecting a runtime");
             Check(summary.Networks.Select(n=>n.Status.Settings!.ListenPort).Distinct().Count()==1&&summary.Networks.Select(n=>n.Status.Settings!.SourcePort).Distinct().Count()==2&&probes==0,"compatible receivers share one port with separate source ownership and no autonomous probing");
+            var originalDefaults=summary.DeviceSettings!;
+            foreach(string source in new[]{"198.51.100.42:45120","https://entry.example.test/current.txt"}){
+                var beforeDefaults=(await Ui(new("status"))).Status!;
+                var fixedEntry=originalDefaults with{PathSelection="udp-only",ExistingEntries=[new(0,source)]};
+                var setDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
+                    SettingsBatch=new(new("settings",Settings:fixedEntry,ExpectedRevision:beforeDefaults.DeviceSettingsRevision,ConfirmReplace:true),[])
+                });Check(setDefaults.Ok,setDefaults.Error);
+                string folder=Path.Combine(ProfileStore.Root,"networks");
+                var directories=Directory.GetDirectories(folder).Order().ToArray();
+                string savedDefaults=JsonSerializer.Serialize(store.Load());
+                int adaptersBefore;lock(adapters)adaptersBefore=adapters.Count;
+                var conflict=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Pinned entry conflict"}));
+                Check(!conflict.Ok&&conflict.Error.Contains("接收端口")&&conflict.Error.Contains("设备默认"),"incompatible listener rejects a fixed or subscription entry instead of silently changing the published port");
+                Check(conflict.Status!.Networks.Length==2&&directories.SequenceEqual(Directory.GetDirectories(folder).Order())&&JsonSerializer.Serialize(store.Load())==savedDefaults,
+                    "listener conflict leaves no network reservation and preserves the saved device settings");
+                lock(adapters)Check(adapters.Count==adaptersBefore,"rejected listener allocation does not open a network adapter");
+                Check(conflict.Status.Networks.All(n=>n.Status.NetworkEnabled&&n.Status.Settings!.ListenPort==45120&&n.Status.Settings.PathSelection=="faketcp-only")&&probes==0,
+                    "listener conflict keeps both existing networks and their protocol active without autonomous probing");
+                var currentDefaults=(await Ui(new("status"))).Status!;
+                var restoreDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
+                    SettingsBatch=new(new("settings",Settings:originalDefaults,ExpectedRevision:currentDefaults.DeviceSettingsRevision,ConfirmReplace:true),[])
+                });Check(restoreDefaults.Ok,restoreDefaults.Error);
+            }
+            var beforeIndependent=(await Ui(new("status"))).Status!;
+            var independentSettings=originalDefaults with{PathSelection="udp-only",ListenPort=45130,ExistingEntries=[new(0,"198.51.100.42:45130")]};
+            var independentDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
+                SettingsBatch=new(new("settings",Settings:independentSettings,ExpectedRevision:beforeIndependent.DeviceSettingsRevision,ConfirmReplace:true),[])
+            });Check(independentDefaults.Ok,independentDefaults.Error);
+            var independent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Independent UDP port"}));
+            Check(independent.Ok,independent.Error);string independentId=independent.Status!.SelectedNetworkId;
+            Check(independent.Status.Settings!.ListenPort==45130&&independent.Status.Settings.SourcePort is not (45121 or 45123)&&independent.Status.Settings.ExistingEntries.Single().Source=="198.51.100.42:45130",
+                "an explicit independent receiver permits another protocol and allocates only its colliding outgoing source port");
+            await Until(()=>{lock(adapters)return adapters.Count==3;},"independent protocol adapter opens");
+            var closeIndependent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("forget-network",ExpectedNetwork:independent.Status.NetworkId,ConfirmReplace:true)){NetworkId=independentId});
+            Check(closeIndependent.Ok,closeIndependent.Error);
+            var removeIndependent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("remove-network",ConfirmReplace:true)){NetworkId=independentId});
+            Check(removeIndependent.Ok&&removeIndependent.Status!.Networks.Length==2,"independent protocol cleanup retains both compatible networks");
+            var defaultsNow=(await Ui(new("status"))).Status!;
+            var resetDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
+                SettingsBatch=new(new("settings",Settings:originalDefaults,ExpectedRevision:defaultsNow.DeviceSettingsRevision,ConfirmReplace:true),[])
+            });Check(resetDefaults.Ok,resetDefaults.Error);
             var late=await Ui(new("status",OperationId:firstOperation));Check(late.Status!.SelectedNetworkId==firstId,"operation polling resolves an originally empty creation target");
             var unknown=await Ui(new("stop"){NetworkId=Guid.NewGuid().ToString("N")});Check(!unknown.Ok&&unknown.Status!.Networks.All(n=>n.Status.NetworkEnabled),"an invalid network target cannot stop another connection");
+            int disposedBeforeFirstExit;lock(adapters)disposedBeforeFirstExit=adapters.Count(a=>a.Disposed);
             var left=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("forget-network",ExpectedNetwork:firstNetwork,ConfirmReplace:true)){NetworkId=firstId});
             Check(left.Ok&&left.Status!.NetworkId.Length==0&&left.Status.Networks.Single(n=>n.Id==secondId).Status.NetworkEnabled,"offline local exit affects only its selected relationship");
-            lock(adapters)Check(adapters.Count(a=>a.Disposed)==1,"exiting one network retains the other network adapter");
+            lock(adapters)Check(adapters.Count(a=>a.Disposed)==disposedBeforeFirstExit+1,"exiting one network retains the other network adapter");
             Check(store.Load().Mesh==null&&store.Load().ListenPort==45120,"network creation and exit preserve device defaults");
             var renamed=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("rename-network",ExpectedNetwork:secondNetwork){Name="Second renamed"}){NetworkId=secondId});
             Check(renamed.Ok&&renamed.Status!.Networks.Single(n=>n.Id==secondId).Name=="Second renamed","network names persist independently from authenticated identities");

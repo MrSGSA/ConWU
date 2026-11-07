@@ -3,6 +3,8 @@ $ErrorActionPreference='Stop'
 $source=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Install-ConwuFreshWindows.ps1'))
 $source=[regex]::Replace($source,"(?m)^if\(-not \(\[Security\.Principal\.WindowsPrincipal\].*?\}\s*$",'# test admin stub',1)
 $source=$source.Replace('$installer=New-Object -ComObject WindowsInstaller.Installer', '$installer=$global:fakeInstaller')
+$source=[regex]::Replace($source,'(?s)if\(-not \(''ConwuInstallerProductState'' -as \[type\]\)\).*?function Get-MsiProductState\(\[string\]\$product\) \{.*?\r?\n\}', 'function Get-MsiProductState([string]$product) { if($global:badCandidateState -and $product -like "*11111111*"){throw "无法确认 MSI 产品状态：-2"}; return $global:fakeInstaller.ProductState($product) }',1)
+if($source.Contains('MsiQueryProductStateW')){throw '模拟产品状态替换失败'}
 $replacement='function MsiProperty([string]$path,[string]$property) { if($property -eq "UpgradeCode"){return $global:testUpgrade};if($path -like "*candidate*"){return "{11111111-1111-1111-1111-111111111111}"};return "{22222222-2222-2222-2222-222222222222}" }'
 $source=[regex]::Replace($source,'(?s)function MsiProperty\(.*?\r?\n\}',$replacement,1)
 if($source.Contains('WindowsIdentity]::GetCurrent') -or $source.Contains('New-Object -ComObject WindowsInstaller.Installer')){throw '模拟隔离失败'}
@@ -48,6 +50,12 @@ if($global:events.IndexOf('guard-start') -gt $global:events.IndexOf('install-can
 $global:events.Clear();$global:svc='Stopped';$global:svcMode='Manual';$global:oldPresent=$true;$global:newPresent=$false
 try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup;throw '模拟失败未触发'}catch {if($_.Exception.Message -notmatch '切换失败，已恢复原数据和服务'){throw}}
 if($global:events.IndexOf('previous-auto-start') -lt 0 -or $global:events.LastIndexOf('stop') -le $global:events.IndexOf('previous-auto-start') -or $global:svc -ne 'Stopped' -or $global:svcMode -ne 'Manual' -or (Get-Content -Raw (Join-Path $data 'profile.dpapi')).Trim() -ne 'old data'){throw '原停止服务回退后状态或启动类型未恢复'}
+$global:events.Clear();$global:svc='Running';$global:svcMode='Auto';$global:oldPresent=$true;$global:newPresent=$false;$global:badCandidateState=$true
+try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup;throw '异常状态未触发'}catch {if($_.Exception.Message -notmatch '卸载候选版本失败'){throw}}
+if($global:events.Contains('guard-stop') -or $global:events.Contains('install-previous') -or $global:events.Contains('uninstall-candidate')){throw '未知产品状态未保留保护或错误启动恢复'}
+$held=@(Get-ChildItem -LiteralPath (Split-Path $data) -Directory|Where-Object {$_.Name -like ((Split-Path $data -Leaf)+'.preinstall-*')});if($held.Count -ne 1){throw '模拟隔离旧数据无法唯一确认'}
+Move-Item -LiteralPath $data -Destination (Join-Path $root 'failed-mock-data');Move-Item -LiteralPath $held[0].FullName -Destination $data
+$global:badCandidateState=$false
 $global:testValidation=[guid]::NewGuid().ToString('N');$global:testUpgrade='{'+([guid]::ParseExact($global:testValidation,'N')).ToString('D')+'}';$global:testService='StreamLink-Validation-'+$global:testValidation
 $global:testData=Join-Path $env:ProgramData ('StreamLink-Validation\'+$global:testValidation);$global:testInstall=Join-Path $env:ProgramFiles ('StreamLink-Validation\'+$global:testValidation+'\msi')
 New-Item -ItemType Directory -Path $global:testData,(Join-Path $global:testInstall 'app') -Force|Out-Null;Set-Content -LiteralPath (Join-Path $global:testData 'profile.dpapi') -Value 'validation only'

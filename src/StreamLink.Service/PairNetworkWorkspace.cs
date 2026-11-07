@@ -95,9 +95,11 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             if(peer!=null&&knownPeer?.Device==peer.Device)throw new IOException("本机已保存与此设备的连接，请使用已有配置或先移除它");
             if(MeshAddressing.Prefix(known.LocalIp)==MeshAddressing.Prefix(mesh.LocalIp))throw new NetworkAddressConflictException("虚拟网段与本机另一条网络冲突："+MeshAddressing.Prefix(mesh.LocalIp)+".0/24，请重新创建或调整固定地址");
             if(other.Enabled&&candidate.Enabled&&(other.ListenPort==candidate.SourcePort||other.SourcePort==candidate.ListenPort||other.SourcePort==candidate.SourcePort))throw new IOException("端口与另一条运行网络冲突，请在此网络设置独立端口");
-            if(other.Enabled&&candidate.Enabled&&other.ListenPort==candidate.ListenPort&&(other.TransportMode!=candidate.TransportMode||candidate.TransportMode=="udp"&&!candidate.UsesExistingEntriesOnly||other.ManagedEgressMbps>0||candidate.ManagedEgressMbps>0))throw new IOException("此接收端口正被不兼容的网络策略使用，请为本网络设置独立端口");
+            if(other.Enabled&&candidate.Enabled&&other.ListenPort==candidate.ListenPort&&!CanShareListener(other,candidate))throw new IOException("此接收端口正被不兼容的网络策略使用，请为本网络设置独立端口");
         }
     }
+    static bool CanShareListener(DeviceProfile left,DeviceProfile right)=>left.TransportMode==right.TransportMode&&
+        (left.TransportMode!="udp"||left.UsesExistingEntriesOnly&&right.UsesExistingEntriesOnly)&&left.ManagedEgressMbps==0&&right.ManagedEgressMbps==0;
     static void ValidateName(string name){if(name is null||name.Length is <1 or >64||name.Any(char.IsControl))throw new FormatException("网络名称需为 1–64 个可见字符");}
     static void WriteInfo(Context context)
     {
@@ -203,12 +205,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         if(networks.Values.Count(n=>n.Worker.ProfileSnapshot() is {Enabled:true,Mesh:not null})>=8)throw new IOException("本机最多同时运行 8 条双机网络，请先暂停一条连接");
                         string name=request.Network!.Name.Trim();if(name.Length==0)name="连接 "+(networks.Count+1);ValidateName(name);
                         string id=Guid.NewGuid().ToString("N"),folder=Path.Combine(Folder,id);
-                        var networkStore=new ProfileStore(folder,store);var template=device.ProfileSnapshot();
-                        // An unfinished reservation is never loaded as an active
-                        // network after a crash between its configuration writes.
-                        var reservation=new Information(id,name,Removed:true,CreationOperation:request.OperationId);
-                        string marker=Path.Combine(folder,"network-info.json");
-                        if(OperatingSystem.IsLinux())LinuxPlatform.PrivateWrite(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));else File.WriteAllBytes(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));
+                        var template=device.ProfileSnapshot();
                         template.Mesh=null;template.Pair=null;template.Enabled=false;template.PendingMembership=null;template.RejoinCredential=null;template.RejoinHistory=[];
                         template.AdapterScope=id;
                         template.NetworkCreatedHere=false;template.NetworkEstablishedAt=0;template.JoinedEntryNetwork="";template.JoinedEntrySources=[];
@@ -217,16 +214,23 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                             template.ConnectionSource="existing";template.DirectMode=true;
                             if(template.SavedNetworkSettings is {} entrySettings)template.SavedNetworkSettings=entrySettings with{ConnectionSource="existing",DirectMode=true};
                         }
-                        // One explicit listener per incompatible resource; the shared
-                        // listener pool can reuse compatible default bindings.
+                        // A published address may be a fixed NAT mapping or an
+                        // opaque subscription. Never silently move its receiver.
+                        // Only the private outgoing source port may be allocated.
                         var used=networks.Values.Select(n=>n.Worker.ProfileSnapshot()).ToArray();
-                        while(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.SourcePort||p.SourcePort==template.SourcePort||
-                            p.ListenPort==template.ListenPort&&(p.TransportMode!=template.TransportMode||template.TransportMode=="udp"&&!template.UsesExistingEntriesOnly))){
-                            if(template.ListenPort>65500||template.SourcePort>65500)throw new IOException("没有空闲的网络接收端口，请调整设备默认端口");
+                        if(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&!CanShareListener(p,template)))
+                            throw new IOException($"接收端口 {template.ListenPort} 与另一条已保存的网络配置冲突；请先在设备默认设置中为新网络选择独立接收端口，并核对已有入口的映射或订阅。现有端口和入口未更改");
+                        while(used.Any(p=>p.ListenPort==template.SourcePort||p.SourcePort==template.SourcePort)){
+                            if(template.SourcePort>65500)throw new IOException("没有空闲的网络源端口，请调整设备默认端口");
                             template.SourcePort+=2;
-                            if(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&(p.TransportMode!=template.TransportMode||template.TransportMode=="udp"&&!template.UsesExistingEntriesOnly)))template.ListenPort+=2;
                         }
                         if(template.SavedNetworkSettings is {} saved)template.SavedNetworkSettings=saved with{ListenPort=template.ListenPort,SourcePort=template.SourcePort,Coordinator=new()};
+                        var networkStore=new ProfileStore(folder,store);
+                        // An unfinished reservation is never loaded as an active
+                        // network after a crash between its configuration writes.
+                        var reservation=new Information(id,name,Removed:true,CreationOperation:request.OperationId);
+                        string marker=Path.Combine(folder,"network-info.json");
+                        if(OperatingSystem.IsLinux())LinuxPlatform.PrivateWrite(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));else File.WriteAllBytes(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));
                         networkStore.Save(template);
                         bool pending=request.Network.Action is not ("create" or "create-direct");
                         var context=Open(new(id,name,CreationOperation:request.OperationId,PendingEnrollment:pending),folder);
