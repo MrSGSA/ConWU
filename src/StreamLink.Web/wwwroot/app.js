@@ -433,7 +433,7 @@ async function pollPair(){
   const reply=await requestCommand('network',{network:{action:'pair-poll',background:true}},true,valid);
   if(!reply||!valid())return;
   if(!reply.ok)throw Error(reply.error||'配对状态暂未更新');
-  if(reply.status)render(reply.status);
+  if(reply.status){generation++;render(reply.status);}
   if(lastPairError&&noticeSource==='pair')notice('');lastPairError='';
   if(!state.pairing?.active&&state.pairing?.state)notify(state.pairing.state);
  }catch(e){if(!valid())return;lastPairPoll=Date.now()+10000;if(e.message!==lastPairError){lastPairError=e.message;notice(e.message,true,'pair');}}
