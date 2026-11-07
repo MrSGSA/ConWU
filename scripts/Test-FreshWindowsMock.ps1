@@ -24,7 +24,7 @@ function Get-Service {param($Name,$ErrorAction) $o=[pscustomobject]@{Status=$glo
 function Stop-Service {param($Name,$ErrorAction) $global:events.Add('stop');$global:svc='Stopped'}
 function Start-Service {param($Name,$ErrorAction) $global:events.Add('start');$global:svc='Running'}
 function Set-Service {param($Name,$StartupType) $global:events.Add('startup:'+ $StartupType);$global:svcMode=if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType}}
-function Get-NetAdapter {param([switch]$IncludeHidden) [pscustomobject]@{InterfaceGuid=$global:guardGuid;InterfaceDescription='Wintun test guard'}}
+function Get-NetAdapter {param([switch]$IncludeHidden) [pscustomobject]@{InterfaceGuid=$global:guardGuid;InterfaceDescription='StreamLink Tunnel'}}
 function Get-PnpDevice {param([switch]$PresentOnly,$InstanceId,$ErrorAction) [pscustomobject]@{InstanceId=$InstanceId}}
 function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru,[switch]$Wait)
  if($FilePath -like '*maintenance-runtime*ConWU.exe'){

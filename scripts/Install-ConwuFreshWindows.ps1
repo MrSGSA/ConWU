@@ -99,7 +99,7 @@ function AssertDriverGuard {
  if(-not $guard -or -not $guardInfo){throw '保护网卡尚未就绪。'}
  $guard.Refresh()
  if($guard.HasExited -or $guardInfo.Status -ne 'Ready' -or $guardInfo.Scope -cne $guardScope -or $guardInfo.Instance -ine $serviceName -or [IO.Path]::GetFullPath($guardInfo.DataRoot) -ine $data -or $guardInfo.ProcessId -ne $guard.Id -or $guard.StartTime.ToUniversalTime().Ticks -ne [DateTimeOffset]::Parse($guardStarted).UtcTicks){throw "保护网卡进程或代次不符；证据：$evidence"}
- $interfaces=@(Get-NetAdapter -IncludeHidden|Where-Object {$_.InterfaceGuid -eq [guid]$guardInfo.InterfaceGuid -and $_.InterfaceDescription -match 'Wintun'})
+ $interfaces=@(Get-NetAdapter -IncludeHidden|Where-Object {$_.InterfaceGuid -eq [guid]$guardInfo.InterfaceGuid})
  if($interfaces.Count -ne 1){throw "保护网卡接口不可确认；证据：$evidence"}
  $instance='SWD\WINTUN\'+([guid]$guardInfo.InterfaceGuid).ToString('B').ToUpperInvariant()
  $present=@(Get-PnpDevice -PresentOnly -InstanceId $instance -ErrorAction Stop)
