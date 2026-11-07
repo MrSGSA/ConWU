@@ -27,6 +27,11 @@ static class Program
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
         if(args.Length>=2&&args[0]=="--validation-instance") { StreamLink.Core.WindowsInstance.ConfigureValidation(args[1]);args=args[2..]; }
+        if(args is ["--driver-guard","hold",var guardScope,var guardReport,var guardStop]){
+            try{DriverGuard.Hold(guardScope,guardReport,guardStop);}
+            catch(Exception){Environment.ExitCode=1;}
+            return;
+        }
         if(args is ["--adapter-maintenance",var maintenanceAction,var maintenanceOutput]){
             try{if(!Path.IsPathFullyQualified(maintenanceOutput))throw new ArgumentException("维护输出需要绝对路径");File.WriteAllText(maintenanceOutput,System.Text.Json.JsonSerializer.Serialize(ServiceInstaller.AdapterMaintenance(maintenanceAction)));}
             catch(Exception ex){Environment.ExitCode=1;if(Path.IsPathFullyQualified(maintenanceOutput))File.WriteAllText(maintenanceOutput,System.Text.Json.JsonSerializer.Serialize(new{Schema=1,Instance=StreamLink.Core.WindowsInstance.Name,DataRoot=StreamLink.Service.ProfileStore.Root,Released=false,Error=ex.Message}));}

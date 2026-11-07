@@ -133,8 +133,15 @@ static partial class Program
         using var wire=new MemoryStream();await ServiceProtocol.Write(wire,full,default);wire.Position=0;
         var restored=await ServiceProtocol.Read<ControlReply>(wire,default);
         Check(restored.Profile!.Mesh!.Directory!.Revision==owner.Directory!.Revision,"private IPC transports the bounded long-lived profile");
-        try{await ServiceProtocol.Write(new MemoryStream(),new UiControlReply(false,new string('x',70000),null),default);throw new Exception("UI limit bypassed");}
-        catch(IOException){Check(true,"public UI IPC retains its independent 64 KiB limit");}
+        using var uiWire=new MemoryStream();
+        await ServiceProtocol.Write(uiWire,new UiControlReply(false,new string('x',70000),null),default);uiWire.Position=0;
+        Check((await ServiceProtocol.Read<UiControlReply>(uiWire,default)).Error.Length==70000,"multi-network UI IPC preserves messages above the former 64 KiB limit");
+        using var tooLarge=new MemoryStream();
+        try{await ServiceProtocol.Write(tooLarge,new UiControlReply(false,new string('x',ServiceProtocol.MaximumUiMessageBytes),null),default);throw new Exception("UI write limit bypassed");}
+        catch(IOException){Check(tooLarge.Length==0,"UI messages exceeding 1 MiB are rejected before writing a partial frame");}
+        using var oversizedHeader=new MemoryStream(new byte[]{1,0,16,0}); // 1 MiB + 1, little endian.
+        try{await ServiceProtocol.Read<UiControlReply>(oversizedHeader,default);throw new Exception("UI read limit bypassed");}
+        catch(IOException ex){Check(ex is not EndOfStreamException,"oversized UI frame headers are rejected before reading or allocating their body");}
         using var compressed=new MemoryStream();
         using(var writer=new System.IO.Compression.BrotliStream(compressed,System.IO.Compression.CompressionLevel.SmallestSize,true))writer.Write(new byte[MeshGovernance.MaximumProofBytes+1]);
         Invalid(()=>MeshGovernance.Unpack(Convert.ToBase64String(compressed.ToArray())),"compressed authorization cannot exceed the decompressed size budget");

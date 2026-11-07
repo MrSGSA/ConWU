@@ -22,22 +22,37 @@ function Get-Service {param($Name,$ErrorAction) $o=[pscustomobject]@{Status=$glo
 function Stop-Service {param($Name,$ErrorAction) $global:events.Add('stop');$global:svc='Stopped'}
 function Start-Service {param($Name,$ErrorAction) $global:events.Add('start');$global:svc='Running'}
 function Set-Service {param($Name,$StartupType) $global:events.Add('startup:'+ $StartupType)}
+function Get-NetAdapter {param([switch]$IncludeHidden) [pscustomobject]@{InterfaceGuid=$global:guardGuid;InterfaceDescription='Wintun test guard'}}
+function Get-PnpDevice {param([switch]$PresentOnly,$InstanceId,$ErrorAction) [pscustomobject]@{InstanceId=$InstanceId}}
 function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru,[switch]$Wait)
- if($FilePath -like '*maintenance-runtime*ConWU.exe'){if($ArgumentList[0] -eq '--validation-instance'){if($ArgumentList[1] -ne $global:testValidation){throw 'validation 参数不符'};$global:events.Add('validation-scope');$ArgumentList=$ArgumentList[2..($ArgumentList.Count-1)]};$action=$ArgumentList[1];$report=$ArgumentList[2].Trim('"');$global:events.Add('maintenance:'+ $action);@{Schema=1;Instance=$global:testService;DataRoot=$global:testData;ServiceStopped=$true;Scopes=@();Released=($action -eq 'release');Error=''}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $report}
- else{$action=$ArgumentList[0];$arg=$ArgumentList[1];if($action -eq '/x'){$global:events.Add('uninstall-candidate');$global:newPresent=$false}elseif($arg -like '*candidate.msi*'){$global:events.Add('install-candidate');$global:newPresent=$true;$global:oldPresent=$false;@{version='1.1';sourceCommit=('b'*40);files=@(@{path='dummy';sha256=('0'*64)})}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $global:testInstall 'app\manifest.json')}else{$global:events.Add('install-previous');if($global:newPresent){throw '模拟拒绝直接降级'};$global:oldPresent=$true}}
+ if($FilePath -like '*maintenance-runtime*ConWU.exe'){
+  if($ArgumentList[0] -eq '--validation-instance'){if($ArgumentList[1] -ne $global:testValidation){throw 'validation 参数不符'};$global:events.Add('validation-scope');$ArgumentList=$ArgumentList[2..($ArgumentList.Count-1)]}
+  if($ArgumentList[0] -eq '--driver-guard'){
+   $global:guardScope=$ArgumentList[2];$global:guardReport=$ArgumentList[3].Trim('"');$global:guardStop=$ArgumentList[4].Trim('"');$global:guardGuid=[guid]::NewGuid();$global:guardStarted=[DateTime]::UtcNow;$global:events.Add('guard-start')
+   @{Status='Ready';Scope=$global:guardScope;Instance=$global:testService;DataRoot=$global:testData;InterfaceGuid=$global:guardGuid;ProcessId=321;StartedAt=$global:guardStarted.ToString('O')}|ConvertTo-Json|Set-Content -LiteralPath $global:guardReport
+   $o=[pscustomobject]@{ExitCode=0;Id=321;HasExited=$false;StartTime=$global:guardStarted};$o|Add-Member ScriptMethod Refresh {}; $o|Add-Member ScriptMethod WaitForExit {param($ms) if(Test-Path -LiteralPath $global:guardStop){@{Status='Stopped';Scope=$global:guardScope;ProcessId=321;StartedAt=$global:guardStarted.ToString('O')}|ConvertTo-Json|Set-Content -LiteralPath ($global:guardReport+'.stopped');$global:events.Add('guard-stop');return $true};return $false};return $o
+  }
+  $action=$ArgumentList[1];$report=$ArgumentList[2].Trim('"');$global:events.Add('maintenance:'+ $action);@{Schema=1;Instance=$global:testService;DataRoot=$global:testData;ServiceStopped=$true;Scopes=@();Released=($action -eq 'release');Error=''}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath $report
+ }
+ else{$action=$ArgumentList[0];$arg=$ArgumentList[1];if($global:simulateTimeout){$global:events.Add('msi-pending');$o=[pscustomobject]@{ExitCode=0;Id=456};$o|Add-Member ScriptMethod WaitForExit {param($ms) return $false};return $o};if($action -eq '/x'){$global:events.Add('uninstall-candidate');$global:newPresent=$false}elseif($arg -like '*candidate.msi*'){$global:events.Add('install-candidate');$global:newPresent=$true;$global:oldPresent=$false;@{version='1.1';sourceCommit=('b'*40);files=@(@{path='dummy';sha256=('0'*64)})}|ConvertTo-Json -Depth 5|Set-Content -LiteralPath (Join-Path $global:testInstall 'app\manifest.json')}else{$global:events.Add('install-previous');if($global:newPresent){throw '模拟拒绝直接降级'};$global:oldPresent=$true}}
  $o=[pscustomobject]@{ExitCode=0;Id=123};$o|Add-Member ScriptMethod WaitForExit {param($ms) return $true};return $o
 }
-$script=[ScriptBlock]::Create($source)
+$script=Join-Path $root 'mocked-fresh.ps1';[IO.File]::WriteAllText($script,$source,[Text.UTF8Encoding]::new($false))
 try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup;throw '模拟失败未触发'}
-catch {if($_.Exception.Message -notmatch '切换失败，已恢复原数据和服务'){throw}}
+catch {$global:failureMessage=$_.Exception.Message;if($_.Exception.Message -notmatch '切换失败，已恢复原数据和服务'){throw}}
 $remove=$global:events.IndexOf('uninstall-candidate');$restore=$global:events.IndexOf('install-previous')
-if($remove -lt 0 -or $restore -le $remove -or $global:newPresent -or -not $global:oldPresent){throw ('候选卸载和旧包恢复顺序错误：'+($global:events -join ','))}
+if($remove -lt 0 -or $restore -le $remove -or $global:newPresent -or -not $global:oldPresent){throw ('候选卸载和旧包恢复顺序错误：'+($global:events -join ',')+'；'+$global:failureMessage)}
 if((Get-Content -Raw (Join-Path $data 'profile.dpapi')).Trim() -ne 'old data' -or $global:svc -ne 'Running'){throw '旧数据或服务未恢复'}
 if($global:events.IndexOf('maintenance:release') -lt $global:events.IndexOf('stop')){throw '维护释放发生在停服前'}
+if($global:events.IndexOf('guard-start') -gt $global:events.IndexOf('install-candidate') -or $global:events.IndexOf('guard-stop') -le $restore){throw '保护网卡未贯穿安装和回退'}
 $global:testValidation=[guid]::NewGuid().ToString('N');$global:testUpgrade='{'+([guid]::ParseExact($global:testValidation,'N')).ToString('D')+'}';$global:testService='StreamLink-Validation-'+$global:testValidation
 $global:testData=Join-Path $env:ProgramData ('StreamLink-Validation\'+$global:testValidation);$global:testInstall=Join-Path $env:ProgramFiles ('StreamLink-Validation\'+$global:testValidation+'\msi')
 New-Item -ItemType Directory -Path $global:testData,(Join-Path $global:testInstall 'app') -Force|Out-Null;Set-Content -LiteralPath (Join-Path $global:testData 'profile.dpapi') -Value 'validation only'
 $global:events.Clear();$global:svc='Running';$global:oldPresent=$true;$global:newPresent=$false
 try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup -ValidationInstance $global:testValidation;throw '模拟失败未触发'}catch {if($_.Exception.Message -notmatch '切换失败，已恢复原数据和服务'){throw}}
 if(-not $global:events.Contains('validation-scope') -or (Get-Content -Raw (Join-Path $global:testData 'profile.dpapi')).Trim() -ne 'validation only' -or (Get-Content -Raw (Join-Path $data 'profile.dpapi')).Trim() -ne 'old data'){throw 'validation 模拟未隔离生产数据或维护参数错误'}
-Write-Output 'PASS 模拟 Windows MSI 降级顺序、旧数据和服务恢复及 validation 实例隔离；没有操作真实服务。'
+$global:events.Clear();$global:simulateTimeout=$true;$global:svc='Running';$global:oldPresent=$true;$global:newPresent=$false
+[IO.File]::WriteAllText($script,$source.Replace('AddMilliseconds(900000)','AddMilliseconds(5)'),[Text.UTF8Encoding]::new($false))
+try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup -ValidationInstance $global:testValidation;throw '模拟超时未触发'}catch {if($_.Exception.Message -notmatch 'MSI 尚在运行'){throw}}
+if(-not $global:events.Contains('msi-pending') -or $global:events.Contains('guard-stop') -or $global:events.Contains('uninstall-candidate') -or (Test-Path -LiteralPath $global:guardStop)){throw 'MSI 未定状态没有保留保护网卡或启动了回退'}
+Write-Output 'PASS 模拟 Windows MSI 降级顺序、validation 隔离及超时保留 guard；没有操作真实服务。'

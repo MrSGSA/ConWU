@@ -77,10 +77,45 @@ if(Test-Path -LiteralPath $quarantine){throw '隔离目标已存在。'}
 $wasRunning=$service.State -eq 'Running';$startMode=$service.StartMode
 $service|Select-Object Name,State,StartMode,PathName|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $evidence 'service-before.json') -Encoding utf8NoBOM
 $stopped=$false;$moved=$false;$installed=$false;$indeterminate=$false
+$guard=$null;$guardInfo=$null;$guardScope=[guid]::NewGuid().ToString('N');$guardReport=Join-Path $evidence 'driver-guard.json';$guardStop=Join-Path $evidence 'driver-guard.stop'
+function StartDriverGuard {
+ $guardArgs=$maintenancePrefix+@('--driver-guard','hold',$guardScope,('"'+$guardReport+'"'),('"'+$guardStop+'"'))
+ $startedGuard=Start-Process -FilePath (Join-Path $evidence 'maintenance-runtime\ConWU.exe') -ArgumentList $guardArgs -WindowStyle Hidden -PassThru
+ $until=[DateTime]::UtcNow.AddSeconds(45)
+ while(-not (Test-Path -LiteralPath $guardReport) -and [DateTime]::UtcNow -lt $until){$startedGuard.Refresh();if($startedGuard.HasExited){break};Start-Sleep -Milliseconds 200}
+ if(-not (Test-Path -LiteralPath $guardReport)){$script:indeterminate=$true;throw "保护网卡未确认启动；PID $($startedGuard.Id)，证据：$evidence"}
+ $guardJson=Get-Content -Raw -LiteralPath $guardReport;$info=$guardJson|ConvertFrom-Json
+ if($info.Status -ne 'Ready'){$startedGuard.Refresh();if(-not $startedGuard.HasExited){$script:indeterminate=$true};throw "保护网卡未就绪；PID $($startedGuard.Id)，证据：$evidence"}
+ return @{process=$startedGuard;info=$info;started=[Text.Json.JsonDocument]::Parse($guardJson).RootElement.GetProperty('StartedAt').GetString()}
+}
+function AssertDriverGuard {
+ if(-not $guard -or -not $guardInfo){throw '保护网卡尚未就绪。'}
+ $guard.Refresh()
+ if($guard.HasExited -or $guardInfo.Status -ne 'Ready' -or $guardInfo.Scope -cne $guardScope -or $guardInfo.Instance -ine $serviceName -or [IO.Path]::GetFullPath($guardInfo.DataRoot) -ine $data -or $guardInfo.ProcessId -ne $guard.Id -or $guard.StartTime.ToUniversalTime().Ticks -ne [DateTimeOffset]::Parse($guardStarted).UtcTicks){throw "保护网卡进程或代次不符；证据：$evidence"}
+ $interfaces=@(Get-NetAdapter -IncludeHidden|Where-Object {$_.InterfaceGuid -eq [guid]$guardInfo.InterfaceGuid -and $_.InterfaceDescription -match 'Wintun'})
+ if($interfaces.Count -ne 1){throw "保护网卡接口不可确认；证据：$evidence"}
+ $instance='SWD\WINTUN\'+([guid]$guardInfo.InterfaceGuid).ToString('B').ToUpperInvariant()
+ $present=@(Get-PnpDevice -PresentOnly -InstanceId $instance -ErrorAction Stop)
+ if($present.Count -ne 1 -or $present[0].InstanceId -ine $instance){throw "保护网卡 PnP 实例不在场；证据：$evidence"}
+}
+function StopDriverGuard {
+ AssertDriverGuard
+ $stream=[IO.File]::Open($guardStop,[IO.FileMode]::CreateNew,[IO.FileAccess]::Write,[IO.FileShare]::None);$stream.Dispose()
+ if(-not $guard.WaitForExit(90000) -or $guard.ExitCode -ne 0 -or -not (Test-Path -LiteralPath ($guardReport+'.stopped'))){throw "保护网卡未确认释放；PID $($guard.Id)，证据：$evidence"}
+ $doneJson=Get-Content -Raw -LiteralPath ($guardReport+'.stopped');$done=$doneJson|ConvertFrom-Json
+ $doneStarted=[Text.Json.JsonDocument]::Parse($doneJson).RootElement.GetProperty('StartedAt').GetString()
+ if($done.Status -ne 'Stopped' -or $done.Scope -cne $guardScope -or $done.ProcessId -ne $guard.Id -or $doneStarted -cne $guardStarted){throw "保护网卡释放报告不符；证据：$evidence"}
+}
 function RunMsi([string[]]$arguments,[string]$log) {
+ AssertDriverGuard
  $args=@($arguments)+@('/qn','/norestart','/l*v',('"'+$log+'"'))
  $process=Start-Process -FilePath 'msiexec.exe' -ArgumentList $args -WindowStyle Hidden -PassThru
- if(-not $process.WaitForExit(900000)){$script:indeterminate=$true;throw "MSI 尚在运行（PID $($process.Id)），禁止并发恢复；请检查 $log。"}
+ $until=[DateTime]::UtcNow.AddMilliseconds(900000)
+ while(-not $process.WaitForExit(250)){
+  try{AssertDriverGuard}catch{$script:indeterminate=$true;throw "保护网卡失效而 MSI 仍可能运行（PID $($process.Id)）；请检查 $evidence。"}
+  if([DateTime]::UtcNow -ge $until){$script:indeterminate=$true;throw "MSI 尚在运行（PID $($process.Id)），禁止并发恢复；请检查 $log。"}
+ }
+ try{AssertDriverGuard}catch{$script:indeterminate=$true;throw "MSI 已结束但保护网卡失效，请检查 $evidence。"}
  if($process.ExitCode -eq 3010){$script:indeterminate=$true;throw 'MSI 要求重启；状态未确认，禁止自动并发恢复。'}
  if($process.ExitCode -ne 0){throw "MSI 失败，退出码 $($process.ExitCode)。"}
 }
@@ -102,6 +137,7 @@ function RestoreServiceMode {
 $mutex=[Threading.Mutex]::new($false,('Global\ConwuFreshInstallTransaction-'+$serviceName))
 if(-not $mutex.WaitOne(0)){$mutex.Dispose();throw '另一个全新安装任务正在运行。'}
 try {
+ $guardState=StartDriverGuard;$guard=$guardState.process;$guardInfo=$guardState.info;$guardStarted=$guardState.started;AssertDriverGuard
  Copy-Item -LiteralPath $data -Destination (Join-Path $evidence 'data-before-stop') -Recurse -Force
  if($wasRunning){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
  if((Get-Service -Name $serviceName).Status -ne 'Stopped'){throw '服务尚未停止。'}
@@ -116,6 +152,7 @@ try {
  VerifyRuntime (Join-Path $install 'app')
  if(-not $wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
  RestoreServiceMode
+ $indeterminate=$true;StopDriverGuard;$indeterminate=$false
  'installed'|Set-Content -LiteralPath (Join-Path $evidence 'result.txt')
  Write-Output "全新安装完成。旧数据：$quarantine；备份：$evidence"
 } catch {
@@ -134,5 +171,6 @@ try {
   try {RestoreServiceMode}catch{$restoreErrors.Add('恢复服务状态：'+$_.Exception.Message)}
  }
  if($restoreErrors.Count){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "切换失败且自动恢复不完整：$evidence；原始错误：$($original.Exception.Message)"}
+ if($guardInfo -and $guardInfo.Status -eq 'Ready'){try{StopDriverGuard}catch{$_|Out-String|Set-Content -LiteralPath (Join-Path $evidence 'guard-cleanup-error.txt');throw "旧数据已恢复，但保护网卡未确认释放：$evidence"}}
  'rolled-back'|Set-Content -LiteralPath (Join-Path $evidence 'result.txt');throw "切换失败，已恢复原数据和服务；备份：$evidence；$($original.Exception.Message)"
 } finally { $mutex.ReleaseMutex();$mutex.Dispose() }
