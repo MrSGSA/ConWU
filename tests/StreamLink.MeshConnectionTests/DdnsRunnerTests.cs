@@ -28,15 +28,17 @@ static partial class Program
             string settings=JsonSerializer.Serialize(profile);
             var runner=new MeshRunner(profile,_=>{},_=>{},_=>{},_=>{},services);using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
             try {
-                string expected=scenario=="autonomous"?"203.0.113.5:44680":"203.0.113.6:44680";
+                string expected=scenario=="existing-source"?"203.0.113.6:44680":"203.0.113.5:44680";
                 await Until(()=>api.Published.Any(r=>r.Endpoints.Contains(expected)),scenario+": real runner publishes its live listener's selected ingress without waiting for peers",22000);
                 Check(listeners==1&&!adapter.Disposed&&DdnsEntryLink.Parse(runner.DdnsStatus.EntryLink).Device==mesh.Self.Device,scenario+": publication exposes a stable link without recreating adapter/listener");
-                Check(scenario=="autonomous"?probes==1&&reads==0:probes==0&&reads>0,scenario+": only the appropriate ingress acquisition path runs");
+                Check(scenario=="existing-source"?probes==0&&reads>0:probes==1&&reads==0,scenario+": only the selected ingress acquisition path runs; saved manual addresses remain dormant in autonomous mode");
                 if(scenario=="existing-source")Check(factories==0,"DDNS publishing in existing mode never starts autonomous candidate machinery");
                 Check(JsonSerializer.Serialize(profile)==settings,scenario+": runtime DDNS leaves persisted settings unchanged");
             } finally {await Stop(running,stop);if(Directory.Exists(folder))Directory.Delete(folder,true);}
         }
         await DdnsReconnect();
+        await ThirdPartyDdnsDiscovery();
+        await ThirdPartyDdnsRunner();
     }
     static async Task DdnsReconnect() {
         var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;

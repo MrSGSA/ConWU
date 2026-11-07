@@ -33,6 +33,7 @@ static partial class Program
         if(args is ["--explicit-reservation-only"]){await ExplicitReservationRecovery();return;}
         if(args is ["--strict-entry-only"]){await StrictExistingOnly();return;}
         if(args is ["--ddns-runner-only"]){await DdnsRunner();return;}
+        if(args is ["--thirdparty-ddns-only"]){await ThirdPartyDdnsDiscovery();await ThirdPartyDdnsRunner();return;}
         if(args is ["--leave-timeout-only"]){await LeaveTimeouts();return;}
         if(args is ["--saved-settings-only"]){await SavedSettingsLifecycle();return;}
         if(args is ["--connection-view-only"]){ConnectionView();await ExistingRunner();return;}

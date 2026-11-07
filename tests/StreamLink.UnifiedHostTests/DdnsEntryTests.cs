@@ -50,7 +50,7 @@ static class DdnsEntryTests
         const string lucky="https://entries.example.test/latest#streamlink";
         var profile=new DeviceProfile{Mesh=owner,ConnectionSource="custom",ExistingEntries=[new(0,lucky),new(ExistingEntry.Network,"203.0.113.20:44680")]};
         string saved=System.Text.Json.JsonSerializer.Serialize(profile);
-        check(MeshRunner.EntrySources(profile,owner).SequenceEqual([new ExistingEntry(0,lucky)]),"self-provided subscriptions are consumed in autonomous/coordinator mode without activating dormant remote settings");
+        check(MeshRunner.EntrySources(profile,owner).Length==0&&profile.ExistingEntries.Length==2,"autonomous mode keeps saved manual sources intact but does not activate third-party ingress acquisition");
         profile.ConnectionSource="existing";
         check(MeshRunner.EntrySources(profile,owner).Length==2&&profile.UsesExistingEntriesOnly,"existing mode retains all configured ingress hints and its strict no-autonomous policy");
         profile.ConnectionSource="custom";

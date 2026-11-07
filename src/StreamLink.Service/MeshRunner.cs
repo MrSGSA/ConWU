@@ -54,7 +54,7 @@ public sealed class MeshRunner
             announcements.TryGetValue(m.Slot, out var node) && node.Device == m.Device && node.Expires > now);
     internal static ExistingEntry[] EntrySources(DeviceProfile profile, MeshProfile mesh) {
         // Local ingress publication is independent of how peers are discovered.
-        var sources=profile.ExistingEntries.Where(e=>e.PeerSlot==0||profile.ConnectionSource=="existing"||mesh.Pair.Direct)
+        var sources=profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly)
             .Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray();
         return sources.Length==0&&profile.ManualEndpoint.Length>0?[new(0,profile.ManualEndpoint)]:sources;
     }
@@ -122,6 +122,7 @@ public sealed class MeshRunner
         using var networkWake = services.NetworkWake();
         using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver() : null;
         Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> resolveEntries = services.ResolveEntries ?? entryResolver!.Resolve;
+        await using var thirdPartyDdns=new MeshThirdPartyDdns(resolveEntries,stop);
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
         IMeshCandidateFactory? factory = null;
@@ -155,6 +156,7 @@ public sealed class MeshRunner
         EntryResolution[] resolved=[];
         long nextResolve=0;
         string[] localExisting=[];
+        string[] LocalEntries()=>thirdPartyDdns.ForMember(mesh.Self).Concat(resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints)).Distinct().Take(8).ToArray();
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
@@ -234,12 +236,14 @@ public sealed class MeshRunner
                         resolved=nextSources.Select((source,index)=>{
                             int old=Array.IndexOf(externalSources,source);return resolved.FirstOrDefault(r=>r.Index==old) is {} cached?cached with{Index=index}:null;
                         }).OfType<EntryResolution>().ToArray();
-                        externalSources=nextSources;localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
+                        externalSources=nextSources;localExisting=LocalEntries();
                         nextResolve=0;lastPublish=0;resolutionState="";
                         foreach(var plan in existingPlans.Values)plan.Retry();
                         log("入口设置已更新：重新解析来源，保留已验证的连接与虚拟网卡");
                     }
                 }
+                thirdPartyDdns.Tick(profile.Ddns,mesh,profile.TransportMode,existingOnly,now);
+                localExisting=LocalEntries();
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
                 if(externalSources.Length>0 && resolving==null && now>=nextResolve){
                     resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);
@@ -250,7 +254,7 @@ public sealed class MeshRunner
                 }
                 if(resolving?.IsCompleted==true){
                     if(!resolvingSources.SequenceEqual(externalSources)){try{await resolving;}catch(Exception)when(!stop.IsCancellationRequested){}resolving=null;nextResolve=0;continue;}
-                    try {var previous=resolved;resolved=(await resolving).Select(item=>EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds())).ToArray();localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
+                    try {var previous=resolved;resolved=(await resolving).Select(item=>EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds())).ToArray();localExisting=LocalEntries();
                         string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}"));
                         if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址，仍需验证直连"));}
                     }catch(Exception ex)when(!stop.IsCancellationRequested){log("已有入口解析失败，保留上次可用地址："+ex.GetType().Name);}
@@ -262,7 +266,7 @@ public sealed class MeshRunner
                 long sourceUtc=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 if(resolved.Any(r=>r.Endpoints.Length>0&&r.ExpiresAt>0&&r.ExpiresAt<=sourceUtc)) {
                     resolved=resolved.Select(r=>EntryResolutionCache.Current(r,sourceUtc)).ToArray();
-                    localExisting=resolved.Where(r=>r.PeerSlot==0).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray();
+                    localExisting=LocalEntries();
                 }
                 if(Interlocked.Exchange(ref retryRequested,0)!=0) {
                     entryProbeRequested = mapping == null && probe == null;
@@ -428,8 +432,8 @@ public sealed class MeshRunner
                 }
                 string candidate = Candidate();
                 ddns.Tick(profile.Ddns,profile.CloudflareDdnsToken,mesh,profile.TransportMode,
-                    profile.Ddns is {Enabled:true,Publish:true}&&server!=null&&!server.Exited?DdnsPublishable(mapping,resolved,DateTimeOffset.UtcNow.ToUnixTimeSeconds()):[],now);
-                Volatile.Write(ref ddnsStatus,ddns.Status);
+                    profile.Ddns is {Enabled:true,Publish:true}&&server!=null&&!server.Exited?DdnsPublishable(mapping,resolved,DateTimeOffset.UtcNow.ToUnixTimeSeconds()).Concat(localExisting.Where(DdnsAddressRecords.PublicEndpoint)).Distinct().Take(4).ToArray():[],now);
+                Volatile.Write(ref ddnsStatus,ddns.Status with{ThirdPartyReadState=thirdPartyDdns.ReadState});
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
                     var announcement = new MeshAnnouncement(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
@@ -465,7 +469,8 @@ public sealed class MeshRunner
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                 if(legacyAllowed){
                     networkEntries??=new(router,(ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){Egress=sharedEgress}),ct),Paths,log,stop);
-                    await networkEntries.Tick(resolved.Where(r=>r.PeerSlot==ExistingEntry.Network).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray(),members,now);
+                    var knownEntries=members.SelectMany(m=>thirdPartyDdns.ForMember(m).Concat(ddns.ForMember(mesh,m,profile.TransportMode)).Concat(resolved.Where(r=>r.PeerSlot==m.Slot).SelectMany(r=>r.Endpoints))).ToHashSet();
+                    await networkEntries.Tick(resolved.Where(r=>r.PeerSlot==ExistingEntry.Network).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray(),members,now,knownEntries);
                 }
                 string remoteAddresses = string.Join(',', members.Select(m => MeshAddressing.Address(mesh.Pair.Network, m)));
                 if (firewallMembers != remoteAddresses) {
@@ -479,18 +484,19 @@ public sealed class MeshRunner
                     announcements.TryGetValue(member.Slot,out var remote);
                     bool fresh=remote?.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                     string[] ddnsHints=ddns.ForMember(mesh,member,profile.TransportMode);
+                    string[] thirdPartyHints=thirdPartyDdns.ForMember(member);
                     var networkHints=networkEntries?.ForMember(member)??[];
                     bool signedEntry=ddnsHints.Length>0||resolved.Any(r=>r.Kind=="DDNS"&&r.ExpiresAt>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&r.Endpoints.Length>0&&
                         (r.PeerSlot==member.Slot||r.PeerSlot==ExistingEntry.Network&&r.Endpoints.Intersect(networkHints).Any()));
                     // DNS is a reconnect hint, never a reason to tear down an
                     // authenticated healthy native path when coordination ages.
-                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&signedEntry&&!router.HasHealthyPath(member.Slot);
+                    bool hasDiscoveryHint=signedEntry||thirdPartyHints.Length>0;
+                    bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&hasDiscoveryHint&&!router.HasHealthyPath(member.Slot);
                     if(strictEntry){onlyEntryPeers.Add(member.Slot);selectedEntries[member.Slot]="";}
-                    string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
-                        .Concat(ddnsHints)
-                        .Concat(networkHints).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
+                    string[] hints=thirdPartyHints.Concat(resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints))
+                        .Concat(networkHints).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Concat(ddnsHints).Distinct().Take(8).ToArray();
                     if(!reconnectPlans.TryGetValue(member.Slot,out var reconnect))reconnectPlans[member.Slot]=reconnect=new();
-                    if(!reconnect.Allow(mesh.Pair.Direct||signedEntry,router.HasHealthyPath(member.Slot),fresh,hints,now)){
+                    if(!reconnect.Allow(mesh.Pair.Direct||hasDiscoveryHint,router.HasHealthyPath(member.Slot),fresh,hints,now)){
                         quietPeers.Add(member.Slot);selectedEntries[member.Slot]="";traversal?.PauseOffline(member.Slot);continue;
                     }
                     if(hints.Length==0&&localExisting.Length==0&&!strictEntry)continue;
@@ -526,6 +532,7 @@ public sealed class MeshRunner
                     announcements.TryGetValue(member.Slot, out var announcement);
                     string endpoint = announcement?.Expires > DateTimeOffset.UtcNow.ToUnixTimeSeconds() ? announcement.Endpoint : "";
                     if(selectedEntries.TryGetValue(member.Slot,out var selected))endpoint=selected;
+                    if(networkEntries?.OwnsEndpoint(endpoint)==true)continue;
                     var paths=Paths(member.Slot);
                     bool preferred=priorityPeers.Contains(member.Slot);
                     paths.Update(member.Slot, endpoint, announcement?.Name ?? "", onlyEntryPeers.Contains(member.Slot)?"仅通过已有入口连接；失败时请检查入口或手动切换到自选服务器模式":preferred?"正在优先验证已有入口，失败后自主打洞":traversal?.WaitingDetail(member.Slot) ??

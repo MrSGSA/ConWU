@@ -28,6 +28,8 @@ public sealed record CloudflareDdnsSettings(bool Enabled = false, string Domain 
 public sealed record CloudflareDdnsStatus(string State, string PublishState, string ReadState, string RecordName = "", long PublishedAt = 0, long CheckedAt = 0, int PeerEntries = 0)
 {
     public string EntryLink {get;init;}="";
+    public string ThirdPartyRecordName {get;init;}="";
+    public string ThirdPartyReadState {get;init;}="";
 }
 public sealed record DdnsAddressRecord(int Version, string Domain, string Network, string Device, int Slot, string Mode,
     long IssuedAt, long ExpiresAt, string[] Endpoints, string Signature);

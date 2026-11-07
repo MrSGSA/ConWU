@@ -22,8 +22,13 @@ public sealed partial class ControlWorker
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),NetworkDirect=p.Mesh?.Pair.Direct==true,
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
              NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),Desktop=StartupSettings.Read(),Coordinator=Volatile.Read(ref coordinatorStatus),
-             Ddns=!p.Ddns.Enabled?new("未启用","",""):p.Mesh==null?new("等待创建或加入网络","建立网络身份并启动连接后，才生成本机 DNS 记录","加入同一网络后读取已授权成员入口"):!p.Enabled?new("本机网络已停止","启动连接后恢复地址发布和续期","启动连接后读取成员入口"):meshRunner?.DdnsStatus??new("等待启动网络","网络运行后按已保存设置发布","网络运行后读取已授权成员入口"),DdnsCredentialConfigured=p.CloudflareDdnsToken.Length>0,
+             Ddns=PublicDdns(p),DdnsCredentialConfigured=p.CloudflareDdnsToken.Length>0,
              QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
+    }
+    CloudflareDdnsStatus PublicDdns(DeviceProfile p)
+    {
+        CloudflareDdnsStatus status=!p.Ddns.Enabled?new("未启用","",""):p.Mesh==null?new("等待创建或加入网络","建立网络身份后生成本机 DNS 记录","加入同一网络后读取已授权成员入口"):!p.Enabled?new("本机网络已停止","启动连接后恢复地址发布和续期","启动连接后读取成员入口"):meshRunner?.DdnsStatus??new("等待启动网络","网络运行后按已保存设置发布","网络运行后读取已授权成员入口");
+        return status with {ThirdPartyRecordName=p.Ddns.Enabled&&p.Mesh!=null?ThirdPartyDdns.Name(p.Ddns.Domain,p.Mesh.Pair.Network,p.Mesh.Self.Device):""};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
         progress with { Detail = PublicText(progress.Detail,profile,400) };
