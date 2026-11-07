@@ -210,7 +210,7 @@ async function api(path,body,valid=()=>true,sessionRetried=false){
  }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const pending=Error('本机后台暂未响应，操作结果尚待确认；正在自动刷新。');pending.retryable=true;throw pending;}throw error;}finally{clearTimeout(timer);}
 }
 
-async function requestCommand(method,extra={},quiet=false,valid=()=>true){
+async function requestCommand(method,extra={},quiet=false,valid=()=>true,receive=render){
   const operationId=crypto.randomUUID();let reply;
   try{reply=await api('/api/command',{method,operationId,...extra},valid);}
   catch(error){
@@ -235,7 +235,7 @@ async function requestCommand(method,extra={},quiet=false,valid=()=>true){
     }
     if(!valid())return null;
     if(!progress.ok)throw Error(progress.error||'无法读取操作结果');
-    if(progress.status)render(progress.status);
+    if(progress.status)receive(progress.status);
     if(!quiet&&progress.operation?.id===operation.id&&!progress.operation.completed)notice(progress.operation.phase||'后台正在处理，请稍候…');
     if(progress.operation?.id===operation.id&&progress.operation.completed){reply={...progress,ok:!progress.operation.error,error:progress.operation.error};break;}
    }
@@ -425,15 +425,16 @@ function bindJoinInput(){const direct=activeRoute()==='direct',input=$(direct?'j
 async function testAddresses(){const settings=settingsDto(),local=section==='publish',entries=settings.existingEntries.filter(e=>local?e.peerSlot===0:e.peerSlot!==0);if(!entries.length)throw Error('请先填写地址来源。');const version=++testGeneration,selected=section;await network('resolve-entries',{settings:{...settings,existingEntries:entries}});if(page!=='settings'||section!==selected||version!==testGeneration||!$('test-results'))return;const results=state.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="test-result ${r.error?'error':''}">${icon(r.error?'x':'check')}<div class="grow"><div>${esc(r.error||(r.endpoints.length?r.endpoints.join('、'):'来源已确认，目前没有可连接入口'))}</div><p>${r.error?'请检查来源或稍后重试；现有健康连接继续保持。':'已解析。实际连接还需核验网络身份和双向通信。'}</p></div></div>`).join('');}
 async function pollPair(){
  if(!online||expired||busy||pairPolling||state?.pendingMembership||!state?.pairing?.active||state.pairing.direct||Date.now()-lastPairPoll<2500)return;
- const version=generation,attempt={};pairPolling=attempt;lastPairPoll=Date.now();
+ let version=generation;const attempt={};pairPolling=attempt;lastPairPoll=Date.now();
  const valid=()=>version===generation&&!expired;
+ const receive=next=>{if(valid()){version=++generation;render(next);}};
  try{
   // Routine pairing discovery must not disable leave, approve, save or other
   // explicit actions. Accepted polls yield to them at the service mutation gate.
-  const reply=await requestCommand('network',{network:{action:'pair-poll',background:true}},true,valid);
+  const reply=await requestCommand('network',{network:{action:'pair-poll',background:true}},true,valid,receive);
   if(!reply||!valid())return;
   if(!reply.ok)throw Error(reply.error||'配对状态暂未更新');
-  if(reply.status){generation++;render(reply.status);}
+  if(reply.status)receive(reply.status);
   if(lastPairError&&noticeSource==='pair')notice('');lastPairError='';
   if(!state.pairing?.active&&state.pairing?.state)notify(state.pairing.state);
  }catch(e){if(!valid())return;lastPairPoll=Date.now()+10000;if(e.message!==lastPairError){lastPairError=e.message;notice(e.message,true,'pair');}}
