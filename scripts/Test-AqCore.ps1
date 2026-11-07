@@ -1,5 +1,5 @@
 #requires -Version 7.0
-param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.0.1-rc.1',[ValidateSet('Full','InstallerRefresh','CandidateCore')][string]$Profile='Full')
+param([Parameter(Mandatory)][string]$OutputDirectory,[string]$Version='1.1.0-preview.1',[ValidateSet('Full','InstallerRefresh','CandidateCore')][string]$Profile='Full')
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
@@ -60,6 +60,11 @@ try {
  Run 'approval-guest-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-guest-service')
  Run 'coordination-faults' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--coordination-faults')
  Run 'leave-timeouts' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--leave-timeout-only')
+ foreach($case in @('only','integration','coordination','concurrent-identity','recovery','operations','budgets')) {
+  $argument=if($case -eq 'only'){'--pair-workspace-only'}else{'--pair-workspace-'+$case}
+  Run "pair-workspace-$case" 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',$argument) 300
+ }
+ Run 'pair-workspace-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-workspace-native',$native,(Join-Path $OutputDirectory 'pair-workspace-native')) 300
  Run 'saved-settings' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')
  Run 'control-lifecycle' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--control-lifecycle-only')
  Run 'pair-poll-priority' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-poll-priority-only')

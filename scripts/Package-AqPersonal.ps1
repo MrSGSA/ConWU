@@ -1,14 +1,14 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.0.6-rc.10',[string]$MsiVersion='1.0.35',[switch]$PublicationApproved)
+      [string]$Version='1.1.0-preview.1',[string]$MsiVersion='1.1.0',[switch]$PublicationApproved)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
 try {
- $stable=$Version -match '^1\.0\.[1-9][0-9]*$'
- if(-not $stable -and $Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$' -and $Version -notmatch '^1\.0\.[1-9][0-9]*-rc\.[1-9][0-9]*$'){throw 'Supported release or candidate version required'}
- if($MsiVersion -notmatch '^1\.0\.([1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 65535){throw 'Explicit monotonic MSI version required'}
+ $stable=$Version -match '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+ if(-not $stable -and $Version -notmatch '^1\.0\.0-aq1-personal\.[1-9][0-9]*$' -and $Version -notmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)-(rc|preview)\.[1-9][0-9]*$'){throw 'Supported release or candidate version required'}
+ if($MsiVersion -notmatch '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535){throw 'Explicit monotonic MSI version required'}
  $fileVersion=$MsiVersion+'.0'
  $commit=(& git rev-parse HEAD).Trim()
  if($LASTEXITCODE -or @(& git status --porcelain).Count){throw 'Commit and freeze the exact candidate first'}
@@ -64,17 +64,14 @@ try {
  [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel=$(if($stable){'stable'}else{'engineering-candidate'});releaseGate='NotPassed';
   provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};
   product='ConWU';integratedCoordinator=1;networkEntryIdentity=1;signedDnsDiscovery=1;dnsPublisher='Cloudflare (opt-in)';
-  msiVersion=$MsiVersion;researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';directControl='authenticated MeshLink, no coordinator';directInvitationVersion=2;directShortPairing=1;peerMetadataReplication=1;equalMembership=1;coordinatedNetworks='HTTPS discovery and atomic membership commits retained; approved members have equal management rights; no business relay';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
+  msiVersion=$MsiVersion;researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';directControl='authenticated MeshLink, no coordinator';directInvitationVersion=2;directShortPairing=1;peerMetadataReplication=1;equalMembership=0;pairNetworks=1;nodeIdentity=1;workspaceVersion=1;sharedReceiverFrame='CNW1';freshInstallRequiredFrom='1.0.x';maximumStoredNetworks=16;maximumEnabledNetworks=8;networkModel='independent two-device networks; creator approves the guest; bidirectional data; no inter-network forwarding';coordinatedNetworks='shared integrated HTTPS discovery; coordinator does not enroll itself; no business relay';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
  [ordered]@{schemaVersion=1;version=$Version;sourceCommit=$commit;entryPoint='ConWU.exe';runtimeDirectory='app';runtimeManifest='app/manifest.json';runtimeManifestSha256=(Get-FileHash (Join-Path $runtime 'manifest.json')).Hash;launcherSha256=(Get-FileHash (Join-Path $stage 'ConWU.exe')).Hash;installer='MSI';profileDirectory='%ProgramData%/StreamLink-PersonalFeature'}|ConvertTo-Json|Set-Content (Join-Path $stage 'layout-manifest.json') -Encoding utf8NoBOM
  $p=Start-Process -FilePath (Join-Path $runtime 'ConWU.exe') -ArgumentList @('--verify-bundle',"`"$(Join-Path $logs 'bundle-preflight.json')`"") -WindowStyle Hidden -Wait -PassThru
  if($p.ExitCode){throw 'Actual app rejected bundle'}
- $coord=Join-Path $candidate 'coordination-linux-x64'
- & dotnet publish src/StreamLink.Discovery -c Release -r linux-x64 --self-contained true -p:RuntimeFrameworkVersion=10.0.12 "-p:StreamLinkReleaseVersion=$Version" -o $coord *> (Join-Path $logs 'coordination-publish.log')
- if($LASTEXITCODE){throw 'Coordination publish failed'}
- Copy-Item -LiteralPath LICENSE,scripts/Deploy-PersonalCoordination.sh,docs/aq1/协调服务.txt -Destination $coord
- [ordered]@{sourceCommit=$commit;businessRelay=$false;deployment='PreparedOnlyNotDeployed';oldServiceUnchanged=$true;nativeSynObservation='Included, requires explicit authenticated observer configuration and CAP_NET_RAW'}|ConvertTo-Json|Set-Content (Join-Path $coord 'deployment.json')
+ # Linux member/coordinator uses the same integrated host, packaged by
+ # Package-UnifiedLinux.ps1. Do not ship a second coordinator-only application.
  & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "ConWU-$Version-x64.msi") -MsiVersion $MsiVersion
- foreach($folder in @($stage,$coord)){Compress-Archive -LiteralPath $folder -DestinationPath ($folder+'.zip') -CompressionLevel Optimal}
+ Compress-Archive -LiteralPath $stage -DestinationPath ($stage+'.zip') -CompressionLevel Optimal
  $hashes=@(Get-ChildItem -LiteralPath $candidate -File|Where-Object Extension -in '.zip','.msi'|ForEach-Object{[ordered]@{file=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
  [ordered]@{version=$Version;sourceCommit=$commit;publicReleaseApproved=[bool]$PublicationApproved;releaseGate='NotPassed';files=$hashes}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $candidate 'artifact-hashes.json') -Encoding utf8NoBOM
  Write-Output $candidate

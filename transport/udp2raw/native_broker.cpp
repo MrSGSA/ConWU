@@ -55,6 +55,10 @@ native_wire_kind native_wire_classify(char type,const char *data,int length) {
     // MeshLink frame. Unknown application input never gains business exemption.
     if(type!='d' || !data || length<9) return native_wire_kind::handshake;
     data+=4; length-=4;
+    // The shared pair listener adds one public network-routing hint around
+    // the unchanged MeshLink payload. It is not authentication, and unknown
+    // or nested envelopes still do not gain a business exemption.
+    if(length>=20 && !memcmp(data,"CNW1",4)) { data+=20; length-=20; }
     if(length==1344 && !memcmp(data,"SLF1",4) && data[4]==2) return native_wire_kind::completion;
     if(length<64 || memcmp(data,"SLM4",4)) return native_wire_kind::handshake;
     switch(static_cast<unsigned char>(data[4])) {

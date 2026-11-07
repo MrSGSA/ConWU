@@ -38,6 +38,7 @@ vm.runInContext(`
  check(drafts.ddns.newToken===token&&drafts.ddns.domain==='draft.example.test','failed save retains editable draft for retry');
  check(saved.ddns.newToken===''&&!JSON.stringify(history).includes(token),'failed save does not copy credentials into persisted history');
  drafts.ddns.clearToken=true;check(!!validateSection('ddns'),'clear and replace cannot be requested together');
+ state.ddns={publishedEndpoints:['candidate.example:123'],publishedAt:0,readState:'查询成功',publishState:'尚未确认'};check(!ddnsDiagnostics().includes('candidate.example:123'),'unconfirmed endpoints are not displayed as published');state.ddns.publishedAt=1700000000;check(ddnsDiagnostics().includes('candidate.example:123')&&ddnsDiagnostics().includes('上次确认发布'),'confirmed endpoints and time are displayed');
  state.ddns={thirdPartyRecordName:'e-device.n-network.conwu.example.test'};saved.ddns.domain=drafts.ddns.domain='conwu.example.test';drafts.network.mode='existing';
  check(thirdPartyDnsFields().includes('e-device.n-network.conwu.example.test')&&thirdPartyDnsFields().includes('streamlink='),'existing mode displays its generated third-party TXT record and shared format');
  check(!thirdPartyDnsFields().includes(token),'third-party instructions never contain the API token');

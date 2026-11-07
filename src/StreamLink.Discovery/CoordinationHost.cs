@@ -161,7 +161,7 @@ string instanceId = Guid.NewGuid().ToString("N");
 app.MapGet("/health", (HttpContext context) => {
     string challenge = context.Request.Query["challenge"].ToString();
     if (challenge.Length != 0 && !Regex.IsMatch(challenge, "^[a-f0-9]{32}$")) return Results.BadRequest();
-    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, integratedCoordinator = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false });
+    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, pairNetworks=1,nodeIdentity=1,integratedCoordinator = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false });
 });
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");

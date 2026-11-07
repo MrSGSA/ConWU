@@ -108,7 +108,7 @@ public sealed partial class ControlWorker
         await End(operation.Stop.Token,phase=>SetOperation(operation,phase,false));
         lock(sync){
             var left=ProfileChanges.Copy(profile);left.RejoinCredential=MeshRejoin.Retain(profile.Mesh);
-            left.RejoinHistory=[];left.PendingMembership=null;left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;left.JoinedEntryNetwork="";left.JoinedEntrySources=[];
+            left.RejoinHistory=[];left.PendingMembership=null;left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;left.NetworkCreatedHere=false;left.JoinedEntryNetwork="";left.JoinedEntrySources=[];
             RestoreSavedNetworkSettings(left);store.Save(left);profile=left;
         }
     }

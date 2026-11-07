@@ -2,7 +2,7 @@
   <PropertyGroup>
     <Product>ConWU</Product>
     <Description>ConWU device network</Description>
-    <StreamLinkReleaseVersion Condition="'$(StreamLinkReleaseVersion)'==''">1.0.6-rc.10</StreamLinkReleaseVersion>
+    <StreamLinkReleaseVersion Condition="'$(StreamLinkReleaseVersion)'==''">1.1.0-preview.1</StreamLinkReleaseVersion>
     <Version>$(StreamLinkReleaseVersion)</Version>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <FileVersion>1.0.0.0</FileVersion>

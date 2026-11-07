@@ -211,3 +211,6 @@ body .settings-layout { grid-template-columns: 182px minmax(0, 760px); gap: 30px
   .preview-terminal span { margin-right: 8px; }
 }
 @media(prefers-reduced-motion:reduce) { *,*::before,*::after { transition: none !important; scroll-behavior: auto !important; } }
+
+.nav #request-dot { width:auto; min-width:19px; height:19px; padding:0 5px; border-radius:10px; display:inline-grid; place-items:center; font-size:11px; color:var(--sidebar); }
+.nav #request-dot[hidden] { display:none; }

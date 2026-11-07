@@ -39,5 +39,15 @@ internal sealed class LinuxKernelResource : IDisposable
             if(removed)File.Delete(file);
         }
     }
+    internal static object[] Remaining()
+    {
+        if(!Directory.Exists(Root))return [];
+        var result=new List<object>();foreach(string path in Directory.EnumerateFiles(Root,"*.json")){
+            if((File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0||new FileInfo(path).Length>4096)throw new IOException("资源记录无效");
+            bool active=false;Entry? value=null;
+            try{using var held=new FileStream(path,FileMode.Open,FileAccess.ReadWrite,FileShare.None);value=JsonSerializer.Deserialize<Entry>(held);}catch(IOException){active=true;}
+            result.Add(new{record=Path.GetFileName(path),active,networkNamespace=value?.Namespace??"",table=value?.Table??""});
+        }return result.ToArray();
+    }
     public void Dispose(){if(disposed)return;try{Cleanup(entry);File.Delete(path);disposed=true;}finally{lease.Dispose();}}
 }

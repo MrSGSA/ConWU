@@ -2,6 +2,21 @@ namespace StreamLink;
 
 static class Program
 {
+    static StreamLink.Core.UiControlReply Ui(StreamLink.Core.UiControlRequest request)
+    {
+        var reply=StreamLink.Core.UiControlProtocol.Call(request).GetAwaiter().GetResult();
+        if(!reply.Ok)throw new IOException(reply.Error);return reply;
+    }
+    static StreamLink.Core.UiControlReply UiMutation(StreamLink.Core.UiControlRequest request)
+    {
+        var id=Guid.NewGuid();request=request with{OperationId=id};var reply=Ui(request);
+        var deadline=DateTime.UtcNow.AddSeconds(90);
+        while(reply.Operation is not {Completed:true}){
+            if(DateTime.UtcNow>=deadline)throw new TimeoutException("验收操作未及时完成");
+            Thread.Sleep(200);reply=Ui(new StreamLink.Core.UiControlRequest("status",OperationId:id){NetworkId=request.NetworkId});
+        }
+        if(reply.Operation.Error.Length>0)throw new IOException(reply.Operation.Error);return reply;
+    }
     /// <summary>
     ///  The main entry point for the application.
     /// </summary>
@@ -12,6 +27,11 @@ static class Program
         // see https://aka.ms/applicationconfiguration.
         ApplicationConfiguration.Initialize();
         if(args.Length>=2&&args[0]=="--validation-instance") { StreamLink.Core.WindowsInstance.ConfigureValidation(args[1]);args=args[2..]; }
+        if(args is ["--adapter-maintenance",var maintenanceAction,var maintenanceOutput]){
+            try{if(!Path.IsPathFullyQualified(maintenanceOutput))throw new ArgumentException("维护输出需要绝对路径");File.WriteAllText(maintenanceOutput,System.Text.Json.JsonSerializer.Serialize(ServiceInstaller.AdapterMaintenance(maintenanceAction)));}
+            catch(Exception ex){Environment.ExitCode=1;if(Path.IsPathFullyQualified(maintenanceOutput))File.WriteAllText(maintenanceOutput,System.Text.Json.JsonSerializer.Serialize(new{Schema=1,Instance=StreamLink.Core.WindowsInstance.Name,DataRoot=StreamLink.Service.ProfileStore.Root,Released=false,Error=ex.Message}));}
+            return;
+        }
         if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--validation-tray"]){
             if(StreamLink.Core.WindowsHost.IsAdmin)throw new UnauthorizedAccessException("Tray validation requires an ordinary user");
             Application.Run(new WebTrayContext(openBrowser:false));return;
@@ -30,21 +50,32 @@ static class Program
         }
         if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-status",var output]) {
             try {
-                var status=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
+                var old=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
+                var status=Ui(new("status")).Status??throw new IOException("工作区状态不可用");
+                var networkRow=status.Networks.FirstOrDefault();var network=networkRow?.Status;
                 var root=StreamLink.Service.ProfileStore.Root;var file=Path.Combine(root,"profile.dpapi");
-                File.WriteAllText(Path.GetFullPath(output),System.Text.Json.JsonSerializer.Serialize(new{status.Ok,status.ServiceReady,status.Version,status.ControlOperationsVersion,NetworkEnabled=status.Profile?.Enabled??false,Network=status.Profile?.Mesh?.Pair.Network,DirectoryRevision=status.Profile?.Mesh?.Directory?.Revision,ProfileSha256=File.Exists(file)?Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file))):"",UiSid=new StreamLink.Service.ProfileStore().UiUserSnapshot(),instance=StreamLink.Core.WindowsInstance.Name}));
+                var profiles=new StreamLink.Service.ProfileStore();var revision=profiles.NetworksForMaintenance().FirstOrDefault(n=>n.ConfigurationId==networkRow?.Id).Profile?.Mesh?.Directory?.Revision;
+                File.WriteAllText(Path.GetFullPath(output),System.Text.Json.JsonSerializer.Serialize(new{Ok=old.Ok,status.ServiceReady,status.Version,old.ControlOperationsVersion,NetworkEnabled=network?.NetworkEnabled??false,Network=network?.NetworkId,DirectoryRevision=revision,ProfileSha256=File.Exists(file)?Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(file))):"",UiSid=profiles.UiUserSnapshot(),instance=StreamLink.Core.WindowsInstance.Name,Networks=status.Networks.Select(n=>new{n.Id,n.Name,n.Status.NetworkId}).ToArray()}));
             }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.GetFullPath(output),System.Text.Json.JsonSerializer.Serialize(new{Ok=false,error=ex.Message}));}return;
         }
         if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-create-network"]) {
-            try {var created=StreamLink.Core.ServiceProtocol.Call(new("mesh-create",Service:"https://example.com/")).GetAwaiter().GetResult();if(!created.Ok)throw new IOException(created.Error);}
-            catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
+            try {
+                var status=Ui(new("status")).Status??throw new IOException("工作区状态不可用");
+                var settings=status.DeviceSettings??status.Settings??throw new IOException("设备默认设置不可用");
+                if(settings.ConnectionSource!="existing"||!settings.DirectMode){
+                    var action=new StreamLink.Core.UiNetworkAction("settings",Settings:settings with{ConnectionSource="existing",DirectMode=true},ExpectedRevision:status.DeviceSettingsRevision,ConfirmReplace:true);
+                    UiMutation(new StreamLink.Core.UiControlRequest("save-settings"){SettingsBatch=new(action,[])});
+                }
+                var created=UiMutation(new StreamLink.Core.UiControlRequest("network",Network:new("create-direct",Mode:settings.PathSelection=="udp-only"?"udp":"faketcp")));
+                string id=created.Status?.SelectedNetworkId??throw new IOException("创建后未返回网络配置 ID");
+                UiMutation(new StreamLink.Core.UiControlRequest("stop"){NetworkId=id});
+            }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
         }
         if(StreamLink.Core.WindowsInstance.IsValidation&&args is ["--acceptance-disable-startup"]) {
             try {
-                var reply=StreamLink.Core.ServiceProtocol.Call(new("status")).GetAwaiter().GetResult();
-                var profile=reply.Profile??throw new IOException("后台配置不可用");profile.AutoStart=false;
-                var saved=StreamLink.Core.ServiceProtocol.Call(new("save",Profile:profile)).GetAwaiter().GetResult();
-                if(!saved.Ok)throw new IOException(saved.Error);StreamLink.Core.StartupSettings.Set(false);
+                var status=Ui(new("status")).Status??throw new IOException("工作区状态不可用");
+                var action=new StreamLink.Core.UiNetworkAction("settings",Settings:status.DeviceSettings??status.Settings,ExpectedRevision:status.DeviceSettingsRevision,ConfirmReplace:true){AutoStart=false,ExpectedAutoStart=status.Desktop?.AutoStart};
+                UiMutation(new StreamLink.Core.UiControlRequest("save-settings"){SettingsBatch=new(action,[])});
             }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;
         }
         if (args.Length == 2 && args[0] == "--verify-bundle") {

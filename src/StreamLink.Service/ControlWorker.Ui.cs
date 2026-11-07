@@ -6,8 +6,10 @@ namespace StreamLink.Service;
 public sealed partial class ControlWorker
 {
     sealed record UiOperation(string CallerSid,UiConfigPatch? Patch,UiNetworkAction? Network=null);
+    readonly System.Collections.Concurrent.ConcurrentDictionary<int,long> connectedSince=new();
 
-    UiStatusDto UiSnapshot()
+    UiStatusDto UiSnapshot()=>workspace?.Snapshot()??SingleUiSnapshot();
+    internal UiStatusDto SingleUiSnapshot()
     {
         if(Volatile.Read(ref uiPairSnapshot) is {Direct:true,Active:true} direct && direct.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds())
             Volatile.Write(ref uiPairSnapshot,direct with{Active=false,Code="",State="直连邀请已过期；未使用的设备授权可从概况中移除"});
@@ -16,6 +18,11 @@ public sealed partial class ControlWorker
         var visible=peers.Select(x=>new UiPeerDto(x.Slot,x.Name,x.Ip,x.Connected,x.Degraded,x.RttMs,PublicText(x.Detail,p,256)){Connection=PublicProgress(x.Connection,p),Liveness=x.Liveness,TraversalMethod=x.TraversalMethod,ActualTransport=x.ActualTransport,SentBytes=x.SentBytes,ReceivedBytes=x.ReceivedBytes,DroppedPackets=x.DroppedPackets,LocalDrops=x.LocalDrops,Quality=x.Quality?.Result??"Unknown",OuterSource=x.OuterSource,OuterTarget=x.OuterTarget,EntryDirection=x.EntryDirection}).ToList();
         if(p.Mesh is {} membership)foreach(var member in membership.Directory?.Members??[])
             if(member.Slot!=membership.Self.Slot&&!visible.Any(v=>v.Slot==member.Slot))visible.Add(new(member.Slot,"设备 "+member.Slot,MeshAddressing.Address(membership.Pair.Network,member),false,false,null,"等待设备上线"));
+        for(int index=0;index<visible.Count;index++){
+            var peer=visible[index];long since=0;
+            if(peer.Connected)since=connectedSince.GetOrAdd(peer.Slot,_=>DateTimeOffset.UtcNow.ToUnixTimeSeconds());else connectedSince.TryRemove(peer.Slot,out _);
+            visible[index]=peer with{DeviceId=p.Mesh?.Directory?.Members.FirstOrDefault(m=>m.Slot==peer.Slot)?.Device??"",ConnectedSince=since};
+        }
         return new(System.Reflection.CustomAttributeExtensions.GetCustomAttribute<System.Reflection.AssemblyInformationalVersionAttribute>(typeof(ControlWorker).Assembly)?.InformationalVersion??full.Version,p.DeviceName,p.Mesh?.LocalIp??state?.LocalIp??"",PublicText(state?.State??"网络未启动",p,256),full.ServiceReady,p.Enabled,peers.Count(x=>x.Connected),visible.Count,
             visible.ToArray(),p.LogLevel,SettingsPatchVersion:2)
             {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,IsDecentralized=p.Mesh?.IsDecentralized==true,CanManageNetwork=p.Mesh?.CanManage==true,EntryTargetSlot=p.Mesh is {IsDecentralized:true,Directory:{} d} equal?MeshGovernance.CurrentSlot(d,equal.IntroducerSlot):p.Mesh?.IntroducerSlot??1,PendingMembership=p.PendingMembership!=null,NetworkClosed=p.Mesh?.Directory?.Closed==true,
@@ -32,7 +39,9 @@ public sealed partial class ControlWorker
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
         progress with { Detail = PublicText(progress.Detail,profile,400) };
-    internal async Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
+    internal Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
+        =>workspace?.Handle(request,callerSid,token)??HandleSingleUi(request,callerSid,token);
+    internal async Task<UiControlReply> HandleSingleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
         if(request.Method=="ddns-token"&&request.Patch==null&&request.Network==null&&request.OperationId!=Guid.Empty){
@@ -68,8 +77,7 @@ public sealed partial class ControlWorker
                 var handling=request.Method=="status"?HandleUi(request,caller,token):Task.Run(()=>HandleUi(request,caller,token),CancellationToken.None);
                 UiControlReply reply;
                 if(request.OperationId!=Guid.Empty && request.Method!="status" && await Task.WhenAny(handling,Task.Delay(700,deadline.Token))!=handling){
-                    var operation=PublicOperation(OperationState(request.OperationId),Volatile.Read(ref snapshot)!.Profile!);
-                    reply=new(operation?.Completed!=true||operation.Error.Length==0,operation?.Error??"",UiSnapshot(),Operation:operation);
+                    reply=await HandleUi(new("status",OperationId:request.OperationId){NetworkId=request.NetworkId},caller,token);
                     _=handling.ContinueWith(t=>Log("UI后台操作异常："+t.Exception!.GetBaseException().GetType().Name),CancellationToken.None,TaskContinuationOptions.OnlyOnFaulted,TaskScheduler.Default);
                 }else reply=await handling;
                 stage="write-reply";

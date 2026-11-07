@@ -24,6 +24,14 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--pair-workspace-budgets"]){await PairWorkspaceBudgets();return;}
+        if(args is ["--pair-workspace-recovery"]){await PairWorkspaceRecovery();return;}
+        if(args is ["--pair-workspace-native",var pairNative,var pairNativeFolder]){await PairWorkspaceIntegration(Path.GetFullPath(pairNative),Path.GetFullPath(pairNativeFolder));return;}
+        if(args is ["--pair-workspace-operations"]){await PairWorkspaceOperations();return;}
+        if(args is ["--pair-workspace-concurrent-identity"]){await PairWorkspaceConcurrentIdentity();return;}
+        if(args is ["--pair-workspace-only"]){await PairWorkspace();return;}
+        if(args is ["--pair-workspace-integration"]){await PairWorkspaceIntegration();return;}
+        if(args is ["--pair-workspace-coordination"]){await PairWorkspaceCoordination();return;}
         if(args is ["--governance-only"]){await Governance();return;}
         if(args is ["--entry-admission-only"]){await EntryAdmissions();return;}
         if(args is ["--governance-service-only"]){await GovernanceServiceRecovery();return;}
@@ -378,7 +386,7 @@ static partial class Program
         public void Dispose()
         {
             if (Disposed) return; Disposed = true; Exited = true; stop.Cancel();
-            try { pump.GetAwaiter().GetResult(); } catch (OperationCanceledException) { }
+            try { pump.GetAwaiter().GetResult(); } catch (OperationCanceledException) { } catch(Exception ex) { Console.WriteLine("FixtureForwardingFailure: "+ex); throw; }
             socket.Dispose(); stop.Dispose();
         }
     }

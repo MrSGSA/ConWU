@@ -8,17 +8,20 @@ using System.Text.RegularExpressions;
 namespace StreamLink.Core;
 
 public sealed class PairRoomUnavailableException() : IOException("配对码无效、已使用、已过期或协调服务已重启，请让邀请端生成新码；已确认的成员身份不受影响");
-public sealed record PairRoomCreate(string Commitment, string Name);
+public sealed record PairRoomCreate(string Commitment, string Name){public NodeIdentityProof? Identity {get;init;}}
 public sealed record PairRoomJoin(string Code, string Commitment, string Name, string RequestedIp="", int Addressing=0)
 {
+    public NodeIdentityProof? Identity {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public int Governance {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public MeshRejoinProof? Rejoin {get;init;}
 }
-public sealed record PairRoomTicket(string Room, string Code, string Token, string HostCommitment, string HostName, long Expires, string Candidate = "");
+public sealed record PairRoomTicket(string Room, string Code, string Token, string HostCommitment, string HostName, long Expires, string Candidate = ""){public NodeIdentityProof? Identity {get;init;}}
 public sealed record PairRoomState(string Candidate, string GuestCommitment, string GuestName, string HostPublic, string GuestPublic, string Ciphertext, bool Approved, long Expires)
 {
+    public NodeIdentityProof? GuestIdentity {get;init;}
+    public string GuestIdentityDigest {get;init;}="";
     public string Outcome {get;init;}="";
     public string RequestedIp {get;init;}="";
     public int Addressing {get;init;}
@@ -37,6 +40,8 @@ public sealed record PairRoomApproval(string Candidate, string Ciphertext);
 // derived authentication string before the owner releases an encrypted invite.
 public sealed class PairKeyExchange : IDisposable
 {
+    public PairKeyExchange(string nodePrivate=""){Identity=nodePrivate.Length==0?null:NodeIdentityProof.Create(nodePrivate,Commitment);}
+    public NodeIdentityProof? Identity {get;}
     readonly ECDiffieHellman key = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
     public string PublicKey => Convert.ToBase64String(key.ExportSubjectPublicKeyInfo());
     public string Commitment => Convert.ToHexString(SHA256.HashData(Convert.FromBase64String(PublicKey)));
@@ -61,6 +66,9 @@ public sealed class PairKeyExchange : IDisposable
     }
     public static void ValidateState(PairRoomTicket ticket, PairRoomState? previous, PairRoomState state, PairKeyExchange key, bool owner)
     {
+        if(ticket.Identity!=null&&!NodeIdentityProof.Valid(ticket.Identity,ticket.HostCommitment)||state.GuestIdentity!=null&&!NodeIdentityProof.Valid(state.GuestIdentity,state.GuestCommitment)||previous?.GuestIdentity!=null&&previous.GuestIdentity!=state.GuestIdentity||previous?.GuestIdentityDigest.Length>0&&previous.GuestIdentityDigest!=state.GuestIdentityDigest)
+            throw new CryptographicException("配对设备身份签名无效或已变化");
+        if(!owner&&key.Identity!=null&&state.GuestIdentity?.PublicKey!=key.Identity.PublicKey&&(state.GuestIdentity!=null||state.GuestIdentityDigest!=NodeIdentityProof.Fingerprint(key.Identity)))throw new CryptographicException("协调返回的设备身份与本机不符");
         if (state.Expires != ticket.Expires || (!owner && state.Candidate != ticket.Candidate) ||
             (previous?.Candidate.Length > 0 && (previous.Candidate != state.Candidate || previous.GuestCommitment != state.GuestCommitment)) ||
             (state.HostPublic.Length > 0 && owner && state.HostPublic != key.PublicKey) ||
@@ -147,8 +155,8 @@ public sealed class ShortPairClient : IShortPairClient
         if (!response.IsSuccessStatusCode) throw new IOException($"协调服务未完成配对请求（HTTP {(int)response.StatusCode}）");
         return await response.Content.ReadFromJsonAsync<T>(cancel) ?? throw new IOException("配对响应为空");
     }
-    public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name), null, cancel);
-    public async Task RequireMeshSupport(CancellationToken cancel,bool requireDecisions=false,bool requireAddressing=false,bool requireRejoin=false,bool requireGovernance=false)
+    public Task<PairRoomTicket> Create(PairKeyExchange key, string name, CancellationToken cancel) => Send<PairRoomTicket>(HttpMethod.Post, "v2/pair", new PairRoomCreate(key.Commitment, name){Identity=key.Identity}, null, cancel);
+    public async Task RequireMeshSupport(CancellationToken cancel,bool requireDecisions=false,bool requireAddressing=false,bool requireRejoin=false,bool requireGovernance=false,bool requirePairwise=false)
     {
         var document = await Send<JsonElement>(HttpMethod.Get,"health",null,null,cancel);
         if (!document.TryGetProperty("meshProtocol", out var version) || version.GetInt32() != 4)
@@ -161,6 +169,7 @@ public sealed class ShortPairClient : IShortPairClient
             throw new IOException("成员平等网络需要更新协调服务；请先部署本版协调服务包，原网络仍保留");
         if(requireRejoin && (!document.TryGetProperty("memberRejoin",out var rejoin)||rejoin.GetInt32()!=1))
             throw new IOException("退出后重新加入需要 1.0.3 协调服务，请更新协调服务后重试，避免留下重复成员");
+        if(requirePairwise&&(!document.TryGetProperty("pairNetworks",out var pairs)||pairs.GetInt32()!=1||!document.TryGetProperty("nodeIdentity",out var identity)||identity.GetInt32()!=1))throw new IOException("此协调设备尚未支持新版双机网络与设备身份，请先更新它的 ConWU");
     }
     public async Task RequireAddressing(CancellationToken cancel)
     {
@@ -171,7 +180,7 @@ public sealed class ShortPairClient : IShortPairClient
     public Task<PairRoomTicket> Join(string code, PairKeyExchange key, string name, CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)
     {
         if (!Regex.IsMatch(code, "^[0-9]{6}$")) throw new FormatException("请输入 6 位数字配对码");
-        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name,requestedIp,1){Rejoin=rejoin,Governance=1}, null, cancel);
+        return Send<PairRoomTicket>(HttpMethod.Post, "v2/pair/join", new PairRoomJoin(code, key.Commitment, name,requestedIp,1){Rejoin=rejoin,Governance=1,Identity=key.Identity}, null, cancel);
     }
     public Task<PairRoomState> Poll(PairRoomTicket ticket, bool owner, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Get, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}", null, ticket.Token, cancel);
     public Task<PairRoomState> Reveal(PairRoomTicket ticket, bool owner, PairKeyExchange key, CancellationToken cancel) => Send<PairRoomState>(HttpMethod.Post, $"v2/pair/{ticket.Room}/{(owner ? "owner" : "guest")}/reveal", new PairRoomReveal(key.PublicKey), ticket.Token, cancel);

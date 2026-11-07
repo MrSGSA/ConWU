@@ -6,6 +6,7 @@ using StreamLink.Core;
 using StreamLink.Discovery;
 using StreamLink.Service;
 
+if(args is ["--wal-foreground"]){ForegroundWalRecoveryTests.Run();return;}
 int count=0;
 void Check(bool condition,string name){if(!condition)throw new Exception(name);count++;Console.WriteLine("PASS "+name);}
 void Invalid(Action action,string name){try{action();}catch(Exception ex)when(ex is FormatException or ArgumentException or IOException){Check(true,name);return;}throw new Exception("accepted: "+name);}

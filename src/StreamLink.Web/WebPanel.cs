@@ -45,7 +45,7 @@ public sealed class WebPanel : IAsyncDisposable
         builder.Logging.ClearProviders();
         builder.WebHost.ConfigureKestrel(o => {
             o.Listen(IPAddress.Loopback, port);
-            o.Limits.MaxRequestBodySize = 65536;
+            o.Limits.MaxRequestBodySize = ServiceProtocol.MaximumUiMessageBytes;
             o.Limits.MaxConcurrentConnections = 32;
             o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(5);
             o.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(30);
@@ -84,14 +84,20 @@ public sealed class WebPanel : IAsyncDisposable
         response.Headers["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
         if (origin.Length == 0 || context.Connection.RemoteIpAddress is not {} ip || !IPAddress.IsLoopback(ip) || request.Host.Value != new Uri(origin).Authority) { response.StatusCode = 403; return; }
         if (request.Headers.Origin.Count > 1 || request.Headers.Origin.Count == 1 && request.Headers.Origin.ToString() != origin || request.Headers["Sec-Fetch-Site"] is var site && site.Count > 0 && site.ToString() is not ("same-origin" or "none")) { response.StatusCode = 403; return; }
-        // Progress is the only route that accepts a query. An operation ID is
-        // just a selector; the session/Origin/CSRF boundaries below still apply.
+        // Selectors do not grant access; the session and origin checks still apply.
         Guid operation = Guid.Empty;
+        string networkId = "";
         if (request.QueryString.HasValue) {
-            if (request.Method != "GET" || request.Path != "/api/status" || request.Query.Count != 1 ||
-                request.Query.Single().Key != "operation" || request.Query["operation"].Count != 1) { response.StatusCode = 403; return; }
-            string selector = request.Query["operation"].ToString();
-            if (selector.Length != 36 || !Guid.TryParseExact(selector, "D", out operation) || operation == Guid.Empty) { response.StatusCode = 400; return; }
+            if (request.Method != "GET" || request.Path != "/api/status" ||
+                request.Query.Any(q => q.Key is not ("operation" or "networkId") || q.Value.Count != 1)) { response.StatusCode = 403; return; }
+            if (request.Query.TryGetValue("operation", out var operationValue)) {
+                string selector = operationValue.ToString();
+                if (selector.Length != 36 || !Guid.TryParseExact(selector, "D", out operation) || operation == Guid.Empty) { response.StatusCode = 400; return; }
+            }
+            if (request.Query.TryGetValue("networkId", out var networkValue)) {
+                networkId = networkValue.ToString();
+                if (networkId.Length != 32 || !Guid.TryParseExact(networkId, "N", out var parsedNetwork) || parsedNetwork == Guid.Empty) { response.StatusCode = 400; return; }
+            }
         }
         lock (gate) {
             long now = Now;
@@ -107,7 +113,7 @@ public sealed class WebPanel : IAsyncDisposable
                 await response.SendFileAsync(Path.Combine(assets,file),context.RequestAborted); return;
             }
             bool post = request.Method == "POST";
-            if (post && (request.Headers.Origin.ToString() != origin || request.ContentType?.Split(';')[0].Trim() != "application/json" || request.ContentLength is > 65536)) { response.StatusCode = 403; return; }
+            if (post && (request.Headers.Origin.ToString() != origin || request.ContentType?.Split(';')[0].Trim() != "application/json" || request.ContentLength is > ServiceProtocol.MaximumUiMessageBytes)) { response.StatusCode = 403; return; }
             if (post && path == "/api/session") {
                 var boot = await JsonSerializer.DeserializeAsync<Bootstrap>(request.Body,Json,context.RequestAborted);
                 Session session; string id;
@@ -136,7 +142,7 @@ public sealed class WebPanel : IAsyncDisposable
             if (request.Method == "GET" && path == "/api/session") { Touch();await response.WriteAsJsonAsync(new {csrf=current.Csrf},context.RequestAborted); return; }
             UiControlRequest command;
             if (request.Method == "GET" && path == "/api/status") {
-                command = new("status",OperationId:operation);
+                command = new UiControlRequest("status",OperationId:operation) { NetworkId = networkId };
             }
             else if (post && path == "/api/command") {
                 if (!Equal(request.Headers["X-StreamLink-CSRF"].ToString(),current.Csrf)) {

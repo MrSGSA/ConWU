@@ -1,0 +1,15 @@
+const {chromium}=require('../out/browser-tools/node_modules/playwright');
+const {spawn}=require('node:child_process'),{createInterface}=require('node:readline'),path=require('node:path');
+const root=path.resolve(__dirname,'..');
+const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot'),'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+let browser;const lines=createInterface({input:child.stdout});
+const link=new Promise(resolve=>lines.once('line',resolve));child.stdin.write('open\n');
+(async()=>{try{browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(await link);await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();
+await page.locator('.nav[data-page="join"]').click();if((await page.locator('[role=tab]').first().innerText())!=='配对码')throw Error('默认配对码');if(!await page.locator('#join-code').isVisible())throw Error('配对码输入不可用');
+await page.locator('#join-help summary').click();await page.locator('.nav[data-page="create"]').click();await page.locator('.nav[data-page="join"]').click();if(!await page.locator('#join-help').evaluate(e=>e.open))throw Error('跨页面折叠状态');
+await page.locator('.nav[data-page="requests"]').click();if(!await page.getByText('暂无加入申请').isVisible())throw Error('独立申请页');
+await page.locator('.nav[data-page="settings"]').click();await page.locator('[data-section="network"]').click();for(const name of ['连接策略与远端入口','本机发布来源（可选）']){const summary=page.getByText(name,{exact:true});if(!await summary.locator('..').evaluate(e=>e.open))await summary.click();}if(!await page.getByText('STUN 服务器',{exact:true}).locator('..').evaluate(e=>e.open))throw Error('STUN 默认未展开');
+await page.locator('[data-entry-editor="target"] input[data-entry-index="0"]').fill('target.example:1234');await page.locator('[data-entry-editor="publish"] input[data-entry-index="0"]').fill('local.example:1234');
+await page.locator('[data-entry-editor="target"] [data-action="add-entry"]').click();await page.locator('[data-entry-editor="publish"] [data-action="add-entry"]').click();
+const data=await page.evaluate(()=>({target:drafts.network.entries.target,publish:drafts.publish.sources}));if(data.target[0]!=='target.example:1234'||data.publish[0]!=='local.example:1234'||data.target.length!==2||data.publish.length!==2)throw Error('入口作用域串写 '+JSON.stringify(data));if(errors.length)throw Error(errors.join('; '));console.log('PASS 独立申请、默认配对码、折叠保持、入口作用域');
+}catch(e){console.error(e);process.exitCode=1;}finally{await browser?.close();child.stdin.write('close\n');child.kill();}})();

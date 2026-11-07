@@ -72,17 +72,8 @@ public static class WintunMaintenance
             log?.Invoke($"本网卡设备已清理；Windows 仍缓存 {cached} 个已关闭接口，保留官方驱动供新版复用");
             return new(adapter,"PreservedCachedInterfaces",0,false);
         }
-        IntPtr library=LoadOfficialLibrary(components);
-        try{
-            var delete=Marshal.GetDelegateForFunctionPointer<DeleteDriver>(NativeLibrary.GetExport(library,"WintunDeleteDriver"));
-            if(!delete()){
-                int error=Marshal.GetLastPInvokeError();
-                log?.Invoke($"本网卡已清理；官方 Wintun 驱动清理未完成（{error}），保留驱动供新版复用");
-                return new(adapter,"PreservedDriverError:"+error,0,false);
-            }
-        }finally{NativeLibrary.Free(library);}
-        log?.Invoke("已清理闲置 Wintun 驱动；新版按需重新加载");
-        return new(adapter,"RemovedUnusedDriver",0,false);
+        log?.Invoke("本实例网卡已清理；保留共享官方 Wintun 驱动供其他应用及新版复用");
+        return new(adapter,"PreservedSharedDriver",0,false);
     }
 
     static void RequireNoNameConflict(WintunIdentity identity, WindowsInterfaceIdentity[] interfaces)

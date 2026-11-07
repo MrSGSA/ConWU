@@ -1,104 +1,95 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "specVersion": "AQ-1",
-  "scope": "Formal-direction engineering candidate; same AQ-1 core; E1 physical effect, E2 multi-stack quality and E3 formal release assessed separately",
-  "userConfirmedScope": "2026-11-02: fix both clients' local HTTP 403 on accepted operation progress, reconcile success/error notices, replace the browser tab's cached old logo. Preserve rc.11 transport and entry resolution behavior.",
-  "reportedDefectVersion": "1.0.1-rc.11",
-  "candidateVersion": "1.0.1-rc.12",
-  "msiVersion": "1.0.18",
-  "startCommit": "8d096f190a6e52ba794491c2f47d8db7931cde47",
-  "sourceDirectory": "D:/Codex_workspace/UDP2RAW/Reborn/StreamLink",
+  "scope": "Two-device networks, concurrent independent relationships, aggregate overview, integrated coordination and Windows/Linux parity",
+  "userConfirmedScope": "2026-11-07: implement the two-device plan with sol and terra; fresh settings allowed; preserve independent management and rollback; no business relay",
+  "baselineVersion": "1.0.6-rc.10",
+  "candidateVersion": "1.1.0-preview.1",
+  "msiVersion": "1.1.0",
+  "startCommit": "89e2798c840e703831aa252573e228809ade3512",
+  "executionPlan": "docs/aq1/双机网络与统一概览推进计划-20261107.md",
+  "implementationRecord": "docs/aq1/双机多网络实施记录-20261108.md",
   "primaryProfile": "FakeTcpHttpDatagram",
-  "control": "HTTPS for server networks; authenticated MeshLink synchronization for explicit serverless networks",
+  "protocolPolicy": "Fixed user-selected protocol; no UDP fallback; supplied-entry mode performs no autonomous traversal",
+  "networkModel": {
+    "members": 2,
+    "management": "creator approves the guest; bidirectional data",
+    "interNetworkForwarding": false,
+    "maximumStoredConfigurations": 16,
+    "maximumEnabledRelationships": 8,
+    "maximumWindowsNativeResources": 32,
+    "addressing": "independent /24 and official adapter per relation; conflict rejection at join, no automatic bilateral renumbering",
+    "sharedReceiver": "compatible listeners share a port; CNW1 is only a routing hint; independent inner authentication"
+  },
+  "coordination": "Integrated shared HTTPS discovery; coordinator is not implicitly a member and never relays business",
+  "ddns": "Optional shared Cloudflare root; records separated by NetworkId and DeviceId; signed discovery distinct from third-party candidates; six-digit codes still use HTTPS coordination",
   "adapters": [
     "official Wintun 0.14.1",
-    "WinDivert 2.2.2"
+    "WinDivert 2.2.2",
+    "Linux kernel TUN"
   ],
   "preserve": [
-    "any still-present legacy service and management channel; do not reinstall previously removed 0.3.2",
+    "independent SSH/EasyTier management",
     "HTTP/SEQ wire semantics",
-    "2000ms observation freshness",
-    "90s quality cooldown",
-    "bounded resource ownership"
+    "saved settings during lifecycle operations",
+    "monotonic signed membership and revocation",
+    "bounded resource ownership",
+    "protected old data and installable rollback package",
+    "shared Wintun driver and unrelated applications"
   ],
   "outOfScopeByUserDecision": [
-    "ResearchTunDriver",
-    "ResearchWfpReplacement",
-    "mandatory true TLS dataplane research"
+    "custom kernel driver",
+    "business relay",
+    "network leader election",
+    "coordination replica takeover",
+    "serverless DDNS short-code protocol",
+    "new anti-QoS transports",
+    "mobile clients"
   ],
-  "implementation": [
-    "create-page delete/leave and invitation generation; simplified join input and transient completion feedback; matching connection-method cards",
-    "pre-enrollment owner ingress, plain TXT and normalized HTTPS server input",
-    "SL5 per-device signed bearer invitations, initial signed directory, bounded authenticated direct snapshot propagation and revocation; no HTTPS coordinator in direct mode",
-    "existing server-assisted six-digit approval and fixed-protocol autonomous hole punching retained",
-    "unified Tokyo Night code-native logo and palette; MSI artwork no longer overlaps interactive controls",
-    "monotonic directory preservation across async settings saves",
-    "affected checks, two separate self-reviews, frozen core, isolated native MSI rendering and actual lifecycle; runnable installer/ZIP/source",
-    "same fixed-protocol ingress carries bounded pre-membership short pairing; committed ECDH and explicit SAS owner approval, single-device signed encrypted enrollment",
-    "new DirectBootstrap capability uses public outer carriage only; per-member MeshLink keys remain the business security boundary; native pre-auth caps 64 pending / 16 ready / 2 conversations, application 5 replies/s and 1200-byte maximum",
-    "short-pair core, real restricted service and real C++ FakeTCP/UDP loopback checks; fresh frozen Full core and isolated installer lifecycle",
-    "service-owned UI operations with short acknowledgement and per-ID progress; service-stop cancellation and explicit timeout causes",
-    "Windows system TXT lookup verified against the same rc.10 lookup on the real user domain",
-    "configurable 1s-24h subscription refresh, last-known endpoint retention and changed-source retry window",
-    "offline presence gates, serverless bounded attempt and low-rate checks, idle optional STUN/gateway probes",
-    "six underlined short-code slots, one owner role, scoped source counts and nonwrapping subscription URLs",
-    "narrow GET /api/status operation-ID query allowlist, canonical nonempty GUID, session and origin boundaries preserved",
-    "bounded retries of progress reads only; actual failure remains visible and confirmed success clears obsolete notice",
-    "fresh favicon URL backed by the exact same Tokyo Night 45-degree SVG"
-  ],
-  "baselineOrder": [
-    "Q2 final application physical route first when second endpoint is available",
-    "Q0/Q1 only to localize a measured defect",
-    "Q3 same build enhanced path",
-    "Q4 shared-egress checks"
-  ],
-  "quality": {
-    "profile": "Historical50Short",
-    "requestedMbps": 50,
-    "seconds": 20,
-    "directions": 2,
-    "cooldownSeconds": 90,
-    "minimumReceivedMbps": 49.5,
-    "maximumLossPercent": 0,
-    "retest": "at most one predeclared repeat after new discriminating evidence; retain failures",
-    "unknownIsNotPass": true,
-    "physicalUnderlayRequired": true
-  },
-  "lifecycle": {
-    "personalStartStopRounds": 5,
-    "closePerformanceTargetSeconds": 3,
-    "resourceSafetyIsIndependent": true,
-    "pnpConvergenceSeconds": 5,
-    "pnpMeasurement": "SetupAPI DIGCF_PRESENT matched by exact NetCfgInstanceId; retain historical IPHelper-row failures separately because cached interface records can outlive the device"
-  },
-  "userTrial": {
-    "application": "Moonlight or actual user streaming application",
-    "minutes": 10,
-    "status": "PendingUserTrial"
-  },
   "regression": {
-    "orchestration": "Reproduce HTTP rejection before fixing; real HTTP security tests and browser -> HTTP -> actual SID pipe deferred operations; separate correctness/security and product/quality self-reviews; freeze rc.12 and run InstallerRefresh (every core case once, no new 30-round claim); package and validate isolated MSI without changing daily clients.",
-    "retryTestContract": "Next adapter created within 4 seconds after accepted manual retry, then authenticated path within the existing 15-second validation window; product ten-second backoff and twelve-second liveness unchanged.",
-    "affectedTestsAfterChanges": true,
-    "finalFrozenCoreRun": true,
+    "orchestration": "Affected regressions, two separate reviews, freeze exact source, CandidateCore single-pass core, verify packages and actual isolated install/rollback, then authorized three-device fresh deployment",
     "nativeProtocolAndParser": true,
     "identityPairingReplayRouting": true,
-    "tcpUdpNominationCancellationOwnership": true,
+    "settingsTransactionsCrashAndConcurrency": true,
+    "offlineExitCancellationAndOwnership": true,
+    "multiNetworkIsolationAndRestart": true,
     "uiPermissionsBrowserNegativeCases": true,
     "officialBundleAndIsolatedInstall": true,
-    "disabledResearchFailuresRemainHistorical": true
+    "linuxRealTunAndFakeTcp": true,
+    "completedResultSource": "Final evidence for the exact frozen commit; requested checks are not a pass claim"
+  },
+  "quality": {
+    "focus": "high-bitrate streaming",
+    "candidateMbps": [
+      50,
+      100,
+      150
+    ],
+    "baselineRequired": true,
+    "physicalUnderlayRequiredForWanClaim": true,
+    "targetApplicationMinutes": 60,
+    "separateEvidence": [
+      "controlled loopback",
+      "real Linux TUN namespaces",
+      "physical WAN synthetic load",
+      "actual Moonlight streaming"
+    ],
+    "unknownIsNotPass": true
+  },
+  "deployment": {
+    "freshInstallFrom1_0": true,
+    "windowsTargets": [
+      "Thinkbook",
+      "Akane"
+    ],
+    "linuxRole": "integrated coordination without automatic network enrollment",
+    "githubPublication": "not requested for this implementation round"
   },
   "formalOnly": [
-    "eight independent Windows stacks / 28 edges",
-    "60 minute application stream",
+    "eight independent physical devices",
+    "60-minute application stream",
     "100 lifecycle rounds",
     "clean Windows VM and cross-account cold boot"
   ],
-  "externalRequirements": [
-    "authorized second Windows endpoint and reachable StreamLink-compatible existing mapping for cross-NAT serverless verification",
-    "existing rc.8 HTTPS coordinator for server-backed pairing; neither direct short codes plus host ingress nor SL5 invitations require a coordinator",
-    "independent management before stopping any existing channel",
-    "long user streaming confirmation; formal eight-stack/cross-account/clean-VM checks remain unverified"
-  ],
-  "stopRule": "Deliver runnable fixed package, source, hashes, two review checklists and honest per-item state after available work. PartialCode is not an external blocker."
+  "stopRule": "Finish all currently executable implementation and verification; deliver runnable packages, exact source, hashes, two reviews and precise limitations. Unfinished code is not an external blocker."
 }

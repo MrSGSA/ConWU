@@ -5,7 +5,7 @@ $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$BundleRoot=[IO.Path]::GetFullPath($BundleRoot);$OutputPath=[IO.Path]::GetFullPath($OutputPath)
 $manifest=Get-Content -LiteralPath (Join-Path $BundleRoot 'app/manifest.json') -Raw|ConvertFrom-Json
 if(-not $MsiVersion){if($manifest.version -notmatch '^1\.0\.0-aq1-personal\.([1-9][0-9]*)$'){throw 'Personal version required'};$MsiVersion='1.0.'+$Matches[1]}
-if($MsiVersion -notmatch '^1\.0\.([1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 65535){throw 'Invalid MSI version'}
+if($MsiVersion -notmatch '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535){throw 'Invalid MSI version'}
 $wix=Join-Path $repo 'out/wix-tools/wix.exe';if(-not(Test-Path -LiteralPath $wix)){throw 'Install pinned WiX 6.0.2 in out/wix-tools first (build dependency only)'}
 $service='StreamLink-PersonalFeature';$productName='ConWU';$upgrade='AD076018-A9B8-47F5-B098-97479A363416';$directory='<Directory Id="INSTALLFOLDER" Name="StreamLink" />';$validationArgs='';$registryKey='Software\StreamLink\Installation'
 if($ValidationInstance){

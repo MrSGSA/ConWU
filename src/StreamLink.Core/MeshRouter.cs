@@ -238,13 +238,14 @@ public sealed partial class MeshRouter : IAsyncDisposable
     bool Send(byte[]? packet, IPEndPoint? endpoint)
     {
         if (packet == null || endpoint == null) return false;
+        if(profile.Directory?.Pairwise==true&&!DirectPairWire.IsFrame(packet))packet=PairNetworkFrame.Wrap(profile.Pair.Network,packet);
         try { return socket.SendTo(packet, endpoint) == packet.Length; }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { Interlocked.Increment(ref legacySendRejected); return false; }
     }
     bool SendLegacyControl(Peer peer, byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
         => LegacyAllowed && packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
             !peer.NativeControlSources.ContainsKey(endpoint) && legacyListenerControlsWire ||
-            TraversalResources.Shared.TrySend(packet.Length, maintenance)) && Send(packet, endpoint);
+            TraversalResources.Shared.TrySend(packet.Length+(profile.Directory?.Pairwise==true?PairNetworkFrame.HeaderSize:0), maintenance)) && Send(packet, endpoint);
     void Transmit()
     {
         var buffer = new byte[MeshLink.Mtu];
@@ -279,6 +280,11 @@ public sealed partial class MeshRouter : IAsyncDisposable
             try { received = await socket.ReceiveFromAsync(buffer, SocketFlags.None, new IPEndPoint(IPAddress.Any, 0), stop.Token); }
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (!IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
+            if(PairNetworkFrame.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
+                if(profile.Directory?.Pairwise!=true||PairNetworkFrame.Network(buffer.AsSpan(0,received.ReceivedBytes))!=profile.Pair.Network)continue;
+                int length=received.ReceivedBytes-PairNetworkFrame.HeaderSize;
+                buffer.AsSpan(PairNetworkFrame.HeaderSize,length).CopyTo(buffer);received=received with{ReceivedBytes=length};
+            }else if(profile.Directory?.Pairwise==true&&!DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes)))continue;
             if(MeshEntryHandshake.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))) {
                 ReceiveNetworkEntry(buffer.AsSpan(0,received.ReceivedBytes),(IPEndPoint)received.RemoteEndPoint);continue;
             }

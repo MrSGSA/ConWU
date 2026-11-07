@@ -8,11 +8,11 @@ static class ProgressQueryTests
 {
     public static async Task Run(string root, Action<bool, string> check)
     {
-        int calls = 0;
+        int calls = 0; string seenNetwork = "";
         var id = Guid.NewGuid();
         var operation = new ControlOperationStatus(id, "ui-network:resolve-entries", "排队", false, true);
         await using var panel = await WebPanel.Start((request, _) => {
-            calls++;
+            calls++; seenNetwork = request.NetworkId;
             return Task.FromResult(new UiControlReply(true, "", null,
                 Operation: request.OperationId == id ? operation : null));
         }, root);
@@ -47,6 +47,17 @@ static class ProgressQueryTests
             if (completed.IsSuccessStatusCode)
                 check((await completed.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("operation").GetProperty("completed").GetBoolean(), "completion result is returned to the browser");
         }
+        string networkId = Guid.NewGuid().ToString("N");
+        using (var reply = await Send(query + "&networkId=" + networkId))
+            check(reply.IsSuccessStatusCode && seenNetwork == networkId, "operation and network selectors reach backend together");
+        using (var reply = await Send("/api/status?networkId=" + networkId))
+            check(reply.IsSuccessStatusCode && seenNetwork == networkId, "ordinary status forwards network selector");
+        foreach (string invalid in new[] { "bad", Guid.Empty.ToString("N"), Guid.NewGuid().ToString("D") }) {
+            using var reply = await Send("/api/status?networkId=" + invalid);
+            check(reply.StatusCode == HttpStatusCode.BadRequest, "invalid network selector rejected");
+        }
+        using (var reply = await Send("/api/status?networkId=" + networkId + "&networkId=" + networkId))
+            check(reply.StatusCode == HttpStatusCode.Forbidden, "duplicate network selector rejected");
         int before = calls;
         foreach (string invalid in new[] { "", "bad", Guid.Empty.ToString(), id.ToString("N"), "%7B" + id + "%7D", "%20" + id }) {
             using var reply = await Send("/api/status?operation=" + invalid);

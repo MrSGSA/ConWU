@@ -23,6 +23,7 @@ internal sealed class MeshDdnsSession : IAsyncDisposable
     Task<(MeshMember Member, DdnsAddressRecord? Record, string Error)[]>? reading;
     CancellationTokenSource? writeStop, readStop;
     string publishState = "未启用", readState = "未启用", recordName = "";
+    string[] writingEndpoints=[],publishedEndpoints=[];
     public CloudflareDdnsStatus Status { get; private set; } = new("未启用", "", "");
 
     public MeshDdnsSession(CancellationToken stop, CloudflareDdnsClient? writer = null,
@@ -40,7 +41,7 @@ internal sealed class MeshDdnsSession : IAsyncDisposable
             identity = currentIdentity;
             if (changedTrust) { cache.Clear(); seen.Clear(); }
             if (!desired.Enabled) cache.Clear();
-            sourceKey = membersKey = ""; nextRead = nextWrite = 0; lastWrite = retryAfter = 0; failures = 0; publishedAt = checkedAt = 0;
+            sourceKey = membersKey = ""; nextRead = nextWrite = 0; lastWrite = retryAfter = 0; failures = 0; publishedAt = checkedAt = 0;publishedEndpoints=[];
             publishState = desired.Publish ? "等待发布本机入口" : "仅读取，不发布本机入口"; readState = "等待查询成员入口";
         }
         long utc = utcNow();
@@ -57,7 +58,7 @@ internal sealed class MeshDdnsSession : IAsyncDisposable
             if (!bySlot.TryGetValue(slot, out var member) || seen[slot].Record.Device != member.Device || seen[slot].SigningKey != member.SigningKey) seen.Remove(slot);
         if (writing?.IsCompleted == true) {
             try { writing.GetAwaiter().GetResult(); if (writeGeneration == generation) {
-                publishedAt = utc; failures = 0; retryAfter = 0;
+                publishedAt = utc; failures = 0; retryAfter = 0;publishedEndpoints=writingEndpoints.ToArray();
                 publishState = "Cloudflare 已确认发布；DNS 缓存仍可能短暂保留旧记录";
                 // A write may finish after the listener/address has changed.
                 // Do not let that older completion defer the new publication.
@@ -107,14 +108,15 @@ internal sealed class MeshDdnsSession : IAsyncDisposable
             long issued = Math.Max(utc, lastIssued + 1);
             if (issued > utc + 60) { nextWrite = now + 1000; return; }
             var record = DdnsAddressRecords.Create(mesh, settings.Domain, mode, publishable, issued, Math.Clamp(settings.RefreshSeconds * 3, 180, 1800));
-            lastIssued = issued; writingSources = sources;
+            lastIssued = issued; writingSources = sources;writingEndpoints=publishable.ToArray();
             writeStop = CancellationTokenSource.CreateLinkedTokenSource(stop); writeStop.CancelAfter(TimeSpan.FromSeconds(25)); writeGeneration = generation;
             writing = writer.Publish(settings, credential, record, writeStop.Token); lastWrite = now; nextWrite = now + settings.RefreshSeconds * 1000L;
             publishState = publishable.Length > 0 ? "正在发布本机入口" : "正在发布空入口：尚无已映射或已配置的公网接收地址";
         }
         string state = settings.Publish && publishable.Length == 0 ? "等待本机公网接收入口；DDNS 不会自动打开 NAT" : "已启用";
         Status = new(state, publishState, readState, recordName, publishedAt, checkedAt, cache.Values.Count(r => r.Record.Endpoints.Length > 0)) {
-            EntryLink = settings.Publish ? DdnsEntryLink.Create(settings.Domain, mesh) : ""
+            EntryLink = settings.Publish ? DdnsEntryLink.Create(settings.Domain, mesh) : "",
+            PublishedEndpoints=publishedEndpoints.ToArray(),ReadEndpoints=cache.Values.SelectMany(v=>v.Record.Endpoints).Distinct().ToArray()
         };
     }
 

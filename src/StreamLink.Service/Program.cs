@@ -16,5 +16,5 @@ if(OperatingSystem.IsWindows())builder.Services.AddWindowsService(o => o.Service
 if (OperatingSystem.IsWindows() && WindowsServiceHelpers.IsWindowsService())
     builder.Services.Replace(ServiceDescriptor.Singleton<IHostLifetime, StreamLinkServiceLifetime>());
 builder.Services.Configure<HostOptions>(o => o.ShutdownTimeout = TimeSpan.FromSeconds(45));
-builder.Services.AddHostedService<ControlWorker>();
+builder.Services.AddHostedService<ControlWorker>(_=>new ControlWorker(pairNetworks:true));
 await builder.Build().RunAsync();

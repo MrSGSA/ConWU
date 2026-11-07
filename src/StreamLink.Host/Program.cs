@@ -21,12 +21,26 @@ async Task<UiControlReply> Mutate(UiControlRequest request) {
     request=request with{OperationId=Guid.NewGuid()};
     var reply=await Call(request);
     while(reply.Operation is not {Completed:true}) {
-        await Task.Delay(400,stop.Token);reply=await Call(new("status",OperationId:request.OperationId));
+        await Task.Delay(400,stop.Token);reply=await Call(new UiControlRequest("status",OperationId:request.OperationId){NetworkId=request.NetworkId});
     }
     if(reply.Operation.Error.Length>0)throw new IOException(reply.Operation.Error);
     return reply;
 }
+async Task<UiStatusDto> SelectNetwork(string id){
+    if(id.Length!=32||!Guid.TryParseExact(id,"N",out var parsed)||parsed==Guid.Empty)throw new ArgumentException("网络配置 ID 必须为 32 位标识");
+    var selected=(await Call(new UiControlRequest("status"){NetworkId=id})).Status??throw new IOException("网络状态尚未就绪");
+    if(selected.SelectedNetworkId!=id||!selected.Networks.Any(n=>n.Id==id))throw new IOException("未找到指定网络配置");return selected;
+}
 try {
+    if(args.Length>0&&args[0]=="--data"){
+        if(args.Length<2||!Path.IsPathFullyQualified(args[1])||!Directory.Exists(args[1]))throw new ArgumentException("--data 需要已存在的绝对目录");
+        Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",Path.GetFullPath(args[1]));args=args[2..];
+    }
+    if(args is ["maintenance","resources","--json"]){
+        var maintenanceStore=new ProfileStore();using var held=new FileStream(Path.Combine(ProfileStore.Root,"runtime.lock"),FileMode.OpenOrCreate,FileAccess.ReadWrite,FileShare.None);
+        LinuxFirewall.Recover();var remaining=LinuxFirewall.RemainingResources();
+        Print(new{schemaVersion=1,complete=remaining.Length==0,ownedResources=remaining,tunPersistence="non-persistent; main process exit closes CLOEXEC TUN descriptors",scopes=maintenanceStore.NetworksForMaintenance().Select(p=>new{configurationId=p.ConfigurationId,networkId=p.Profile.Mesh?.Pair.Network??"",adapterScope=p.Profile.AdapterScope})});return;
+    }
     if(!OperatingSystem.IsLinux())throw new PlatformNotSupportedException("此统一 CLI 适用于 Linux；Windows 请使用已安装的服务和 WebUI");
     if(args.Length==0||args[0] is "help" or "--help") {
         Console.WriteLine("""
@@ -45,24 +59,26 @@ ConWU · Linux
   coordinator restore <文件> --confirm-rollback
                               离线恢复；显式确认可能回滚审批和撤销
   上述 backup/restore 可加 --data <目录> 迁移旧独立协调数据
-  network create              按已保存的连接设置创建网络
-  network join <入口/配对码/邀请>  自动识别并申请加入网络
-  network invite              生成配对码或直连邀请
-  network poll                更新加入申请状态
-  network approve <校验码>    批准当前申请（须先核对设备与校验码）
-  network reject              拒绝当前申请
-  network leave <网络ID>      确认退出指定的当前网络
-  network close <网络ID>      确认解散指定的整个网络
-  network remove <成员Slot>   移除指定成员
-  network resume              继续确认未完成的成员变更
-  start | stop | retry        启动、暂停或重试本机数据连接
+  network list                    列出全部网络及本机配置 ID
+  network status <配置ID>         查看指定网络状态
+  network create                   使用设备默认设置创建新网络
+  network join <入口/配对码/邀请>  创建新关系并申请加入
+  network invite|poll|reject|leave|withdraw|close|resume <配置ID>
+  network approve <配置ID> <校验码>
+  network rename <配置ID> <名称>  修改本机显示名称
+  network remove-config <配置ID>  删除指定本机网络配置
+  network remove <配置ID> <成员Slot>  撤销指定成员
+  start|stop|retry <配置ID>       启动、暂停或重试指定连接
+  config show [--network <配置ID>]
+  config apply <文件.json> [--network <配置ID>]
+  可在命令前使用 --data <已存在的绝对目录> 选择后台数据目录。
 
 使用同一后台用户操作（系统服务通常使用 sudo）。网络管理和本机协调是独立角色。
 首次使用可在 config apply 的 Network.Coordinator 中开启协调服务。
 """);return;
     }
     if(args[0]=="run") {
-        using var worker=new ControlWorker();WebPanel? panel=null;
+        using var worker=new ControlWorker(pairNetworks:true);WebPanel? panel=null;
         try {
             if(!args.Contains("--no-web")) {
                 panel=await WebPanel.Start(worker.HandleLocalUi,Path.Combine(AppContext.BaseDirectory,"wwwroot"),port:WebPanel.DefaultPort);
@@ -101,11 +117,20 @@ ConWU · Linux
     }
     if(args is ["coordinator","status"]){Print(state.Coordinator??throw new IOException("协调状态尚未就绪"));return;}
     if(args[0]=="status"){Print(state);return;}
-    if(args[0] is "start" or "stop" or "retry"){Print(await Mutate(new(args[0])));return;}
+    if(args[0] is "start" or "stop" or "retry"){
+        if(args.Length!=2)throw new ArgumentException("请明确填写网络配置 ID");
+        var selected=await SelectNetwork(args[1]);Print(await Mutate(new UiControlRequest(args[0]){NetworkId=selected.SelectedNetworkId}));return;
+    }
     if(args[0]=="config") {
+        string configurationId="";var parts=args.ToList();int index=parts.IndexOf("--network");
+        if(index>=0){if(index+1>=parts.Count||index!=parts.Count-2)throw new ArgumentException("--network 需要一个配置 ID");configurationId=parts[index+1];parts.RemoveRange(index,2);state=await SelectNetwork(configurationId);}
+        args=parts.ToArray();
+        var shared=state.DeviceSettings??state.Settings??throw new IOException("设备设置尚未就绪");
+        var chosen=state.Settings??throw new IOException("网络设置尚未就绪");
+        chosen=chosen with {Coordinator=shared.Coordinator,Ddns=shared.Ddns};
         var settings=new JsonObject{
             ["DeviceName"]=state.DeviceName,["LogLevel"]=state.LogLevel,
-            ["AutoStart"]=state.Desktop?.AutoStart??false,["Network"]=JsonSerializer.SerializeToNode(state.Settings,json)
+            ["AutoStart"]=state.Desktop?.AutoStart??false,["Network"]=JsonSerializer.SerializeToNode(chosen,json)
         };
         if(args.Length==2&&args[1]=="show"){Console.WriteLine(settings.ToJsonString(json));return;}
         if(args.Length!=3||args[1]!="apply")throw new ArgumentException("用法：config show 或 config apply 文件.json");
@@ -114,25 +139,33 @@ ConWU · Linux
         Merge(settings,input);
         var network=settings["Network"]?.Deserialize<UiNetworkSettings>(json)??throw new FormatException("Network 设置为空");
         string name=settings["DeviceName"]!.GetValue<string>(),level=settings["LogLevel"]!.GetValue<string>();bool auto=settings["AutoStart"]!.GetValue<bool>();
-        var action=new UiNetworkAction("settings",Settings:network,ExpectedRevision:state.SettingsRevision,ConfirmReplace:true){
+        var deviceSettings=configurationId.Length==0?network:shared with{Coordinator=network.Coordinator,Ddns=network.Ddns};
+        var deviceAction=new UiNetworkAction("settings",Settings:deviceSettings,ExpectedRevision:state.DeviceSettingsRevision,ConfirmReplace:true){
             Patch=new(name,level,state.DeviceName,state.LogLevel),
             AutoStart=auto!=state.Desktop?.AutoStart?auto:null,ExpectedAutoStart=auto!=state.Desktop?.AutoStart?state.Desktop?.AutoStart:null
         };
-        Print(await Mutate(new("network",Network:action)));return;
+        var networks=configurationId.Length==0?Array.Empty<UiNetworkSettingChange>():new[]{new UiNetworkSettingChange(new("settings",Settings:network,ExpectedRevision:state.SettingsRevision,ConfirmReplace:true),configurationId)};
+        Print(await Mutate(new UiControlRequest("save-settings"){NetworkId=configurationId,SettingsBatch=new(deviceAction,networks)}));return;
     }
     if(args[0]=="network"&&args.Length>=2) {
-        string value=args.Length>2?args[2]:"";var settings=state.Settings??throw new IOException("设置尚未就绪");
-        string command=args[1] switch {
-            "create"=>settings.Service.Length==0?"create-direct":"create", "join"=>value.Length==6&&value.All(char.IsAsciiDigit)?settings.DirectMode?"join-direct-short":"join":value.StartsWith("SL6.")?"join-invitation":"join-entry",
-            "invite"=>"invite","poll"=>"pair-poll","approve"=>"approve","reject"=>"reject","leave"=>"leave","close"=>"delete-network","remove"=>"revoke","resume"=>"membership-resume",
-            _=>throw new ArgumentException("未知网络操作")
-        };
-        if(args[1] is "leave" or "close" && (state.NetworkId.Length==0||value!=state.NetworkId))throw new IOException("请在命令后填写 status 显示的完整当前网络 ID，以确认操作");
-        if(args[1]=="approve"&&(state.Pairing?.Verification!=value||value.Length==0))throw new IOException("校验码不匹配，请先运行 network poll 并与申请设备核对");
-        int slot=0;if(args[1]=="remove"&&(!int.TryParse(value,out slot)||slot<1))throw new ArgumentException("请填写成员 Slot");
-        var action=new UiNetworkAction(command,settings.Service,settings.CertificatePin,args[1]=="join"&&command!="join-entry"?value:"",state.NetworkId,true,
-            Verification:args[1]=="approve"?value:"",Candidate:state.Pairing?.Candidate??"",PeerSlot:slot,Mode:settings.PathSelection=="udp-only"?"udp":"faketcp",ProposedIp:state.Pairing?.ProposedIp??""){Entry=command=="join-entry"?value:""};
-        Print(await Mutate(new("network",Network:action)));return;
+        string verb=args[1];
+        if(verb=="list"&&args.Length==2){Print(state.Networks.Select(n=>new{configurationId=n.Id,name=n.Name,networkId=n.Status.NetworkId,role=n.Status.IsOwner?"host":"guest",enabled=n.Status.NetworkEnabled,virtualIp=n.Status.VirtualIp,state=n.Status.State}));return;}
+        if(verb=="status"&&args.Length==3){Print(await SelectNetwork(args[2]));return;}
+        if(verb is "create" or "join"){
+            if(verb=="create"&&args.Length!=2||verb=="join"&&args.Length!=3)throw new ArgumentException("用法：network create 或 network join 入口/配对码/邀请");
+            var template=state.DeviceSettings??state.Settings??throw new IOException("设备默认设置尚未就绪");if(template.ConnectionSource!="existing"&&string.IsNullOrWhiteSpace(template.Service))throw new IOException("自主打洞需要 HTTPS 协调入口；无协调时请明确选择只使用已有入口");string value=verb=="join"?args[2]:"";
+            string enrollmentAction=verb=="create"?(template.Service.Length==0?"create-direct":"create"):value.Length==6&&value.All(char.IsAsciiDigit)?(template.DirectMode?"join-direct-short":"join"):value.StartsWith("SL6.")?"join-invitation":"join-entry";
+            var request=new UiNetworkAction(enrollmentAction,template.Service,template.CertificatePin,enrollmentAction is "join-entry" or "create" or "create-direct"?"":value,Mode:template.PathSelection=="udp-only"?"udp":"faketcp"){Entry=enrollmentAction=="join-entry"?value:""};
+            Print(await Mutate(new UiControlRequest("network",Network:request){NetworkId=""}));return;
+        }
+        bool needsValue=verb is "approve" or "rename" or "remove";
+        if(args.Length!=(needsValue?4:3))throw new ArgumentException("请填写明确的网络配置 ID 和所需参数");
+        string id=args[2],valueArg=needsValue?args[3]:"";var chosen=await SelectNetwork(id);
+        string command=verb switch{"invite"=>"invite","poll"=>"pair-poll","approve"=>"approve","reject"=>"reject","leave"=>"forget-network","withdraw"=>"leave","close"=>"delete-network","remove"=>"revoke","resume"=>"membership-resume","rename"=>"rename-network","remove-config"=>"remove-network",_=>throw new ArgumentException("未知网络操作")};
+        if(verb=="approve"&&(chosen.Pairing?.Verification!=valueArg||valueArg.Length==0))throw new IOException("校验码不匹配，请先查询该网络申请并与对端核对");
+        int slot=0;if(verb=="remove"&&(!int.TryParse(valueArg,out slot)||slot<1))throw new ArgumentException("请填写成员 Slot");
+        var action=new UiNetworkAction(command,ExpectedNetwork:chosen.NetworkId,ConfirmReplace:true,Verification:verb=="approve"?valueArg:"",Candidate:chosen.Pairing?.Candidate??"",PeerSlot:slot,ProposedIp:chosen.Pairing?.ProposedIp??""){Name=verb=="rename"?valueArg:""};
+        Print(await Mutate(new UiControlRequest("network",Network:action){NetworkId=id}));return;
     }
     throw new ArgumentException("未知命令，请运行 conwu help");
 }catch(OperationCanceledException)when(stop.IsCancellationRequested){}

@@ -12,12 +12,36 @@ public sealed partial class ControlWorker
     Task? acceptingEntries;
     bool uiEntryAdmission;
     ExistingEntry[] uiEntrySources=[];
+    DdnsEntryLink? uiEntryIdentity;
 
     byte[]? HandleDirectPairing(ReadOnlyMemory<byte> packet)
     {
         DirectPairRequest request;
         try{request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);}catch{return null;}
+        if(networkContext&&request.Method=="join"&&!NodeIdentityProof.Valid(request.Identity,request.Commitment))return DirectPairWire.Encode(new DirectPairReply(request.Id,"此版本需要新版 ConWU 设备身份，请先更新对端再申请"));
         return (request.EntryAdmission?entryAdmissionHost:uiDirectHost).Handle(packet);
+    }
+    internal bool AcceptsDirectPairing(ReadOnlyMemory<byte> packet)
+    {
+        try{
+            var request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);
+            if(request.EntryAdmission&&request.Method=="join"&&profile.Mesh?.Directory is {Pairwise:true,Members.Length:>=2} full&&request.Rejoin?.Network!=profile.Mesh.Pair.Network&&
+                !(NodeIdentityProof.Valid(request.Identity,request.Commitment)&&full.Members.Any(m=>m.Slot!=profile.Mesh.Self.Slot&&m.Device==request.Identity!.DeviceId)))return false;
+            return (request.EntryAdmission?entryAdmissionHost:uiDirectHost).Matches(request);
+        }catch{return false;}
+    }
+    internal bool AuthenticatedNetworkFrame(ReadOnlyMemory<byte> packet)
+        =>Volatile.Read(ref snapshot)?.Profile?.Mesh is {} mesh&&PairNetworkFrame.Authenticated(mesh,packet.Span);
+    internal int DirectPairPriority(ReadOnlyMemory<byte> packet)
+    {
+        try{var request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);
+            if(profile.Mesh?.CanManage!=true)return 0;
+            if(request.EntryAdmission&&request.Method=="join"){
+                if(NodeIdentityProof.Valid(request.Identity,request.Commitment)&&profile.Mesh.Directory?.Members.Any(m=>m.Slot!=profile.Mesh.Self.Slot&&m.Device==request.Identity!.DeviceId)==true)return 2;
+                if(profile.Mesh.Directory is {Pairwise:true,Members.Length:>=2}||uiEntryAdmission&&uiRoomState is {Candidate.Length:>0} current&&current.GuestCommitment!=request.Commitment)return 0;
+            }
+            return 1;
+        }catch{return 0;}
     }
     void StartEntryAdmission()
     {
@@ -50,7 +74,7 @@ public sealed partial class ControlWorker
                             if(uiPairClient is DirectPairHost&&uiPairOwner){await PollUiPair(null,token);}
                             if(uiPairClient!=entryAdmissionHost){
                                 if((entryAdmissionRoom==null||entryAdmissionRoom.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds())&&entryAdmissionHost.CanCreate){
-                                    entryAdmissionKey?.Dispose();entryAdmissionKey=new();
+                                    entryAdmissionKey?.Dispose();entryAdmissionKey=new(profile.NodeSigningPrivate);
                                     try{entryAdmissionRoom=await entryAdmissionHost.Create(entryAdmissionKey,name,token);}
                                     catch(IOException){entryAdmissionKey.Dispose();entryAdmissionKey=null;entryAdmissionRoom=null;}
                                 }
@@ -103,15 +127,17 @@ public sealed partial class ControlWorker
         if(endpoints.Length==0)throw new IOException("未取得可用入口。"+string.Join("；",resolved.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
         await CloseUiPair(operation.Stop.Token);
         uiPairOwner=false;uiEntryAdmission=true;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;
-        uiPairKey=new();uiEntrySources=sources;
+        uiPairKey=new(profile.NodeSigningPrivate);uiEntrySources=sources;
+        uiEntryIdentity=action.Entry.StartsWith(DdnsEntryLink.Scheme,StringComparison.OrdinalIgnoreCase)?DdnsEntryLink.Parse(action.Entry):null;
         var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
-        var folder=Path.Combine(ProfileStore.Root,"sessions","entry-pair-"+Guid.NewGuid().ToString("N"));
+        var folder=Path.Combine(store.DirectoryPath,"sessions","entry-pair-"+Guid.NewGuid().ToString("N"));
         try{
             IOException? last=null;
             for(int index=0;index<endpoints.Length;index++){
                 SetOperation(operation,$"联系入口（{index+1}/{endpoints.Length}），等待设备回应",true);
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);attempt.CancelAfter(endpoints.Length>1?6000:12000);
-                uiPairClient=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,System.Net.IPEndPoint.Parse(endpoints[index]),false,0,null,"error")),entryAdmission:true);
+                string targetNetwork=uiEntryIdentity?.Network??"";
+                uiPairClient=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,System.Net.IPEndPoint.Parse(endpoints[index]),false,0,null,"error")),entryAdmission:true,targetNetwork:targetNetwork);
                 try{
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential,DirectPairWire.EntryLocator,uiPairKey);
                     uiRoom=await uiPairClient.Join(DirectPairWire.EntryLocator,uiPairKey,profile.DeviceName,attempt.Token,profile.RequestedVirtualIp,uiExpectedRejoin);

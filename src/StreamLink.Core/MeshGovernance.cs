@@ -60,6 +60,7 @@ public static class MeshGovernance
     public static void Enable(MeshProfile profile)
     {
         profile.Validate();
+        if(profile.Directory?.Pairwise==true)throw new IOException("双机网络不启用成员平等管理");
         if (profile.IsDecentralized) return;
         if (!profile.IsOwner || profile.Pair.Direct || profile.Directory == null) throw new IOException("请由原创建者在协调网络中启用成员平等管理");
         var genesis = profile.Directory;

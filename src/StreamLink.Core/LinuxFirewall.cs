@@ -7,6 +7,7 @@ public static class LinuxFirewall
     static readonly object gate=new();
     static readonly Dictionary<string,LinuxKernelResource> owned=[];
     public static void Recover()=>LinuxKernelResource.Recover();
+    public static object[] RemainingResources()=>LinuxKernelResource.Remaining();
     public static void Update(string rule,string local,string remote) {
         if(!rule.StartsWith("StreamLink-")||!Guid.TryParseExact(rule[11..],"N",out _))throw new ArgumentException("防火墙规则不属于本实例");
         lock(gate){

@@ -5,6 +5,7 @@
 #include "network.h"
 #include "misc.h"
 #include "log.h"
+#include "native_broker.h"
 #include <array>
 #include <random>
 #include <vector>
@@ -80,6 +81,26 @@ void run(const std::vector<char>& p,bool expect_valid,int expected_size=-1) {
 }
 }
 int native_parser_test_main() {
+#if defined(UDP2RAW_NATIVE)
+    for(unsigned kind=1;kind<=9;++kind) {
+        auto expected=kind==4||kind==9?native_wire_kind::business:kind==5||kind==6?native_wire_kind::maintenance:
+            kind==2||kind==3||kind==7?native_wire_kind::completion:kind==8?native_wire_kind::diagnostic:native_wire_kind::handshake;
+        for(bool wrapped:{false,true}) {
+            std::vector<char> payload(4+(wrapped?20:0)+64,0);
+            char *inner=payload.data()+4;
+            if(wrapped){memcpy(inner,"CNW1",4);inner+=20;}
+            memcpy(inner,"SLM4",4);inner[4]=static_cast<char>(kind);inner[6]=7;
+            check(native_wire_classify('d',payload.data(),static_cast<int>(payload.size()))==expected,"pair routing envelope preserves native packet classification");
+            check(native_wire_peer()==(expected==native_wire_kind::business?7u:0u),"pair routing envelope preserves business peer classification");
+        }
+    }
+    std::vector<char> unknown(4+20+20+64,0);memcpy(unknown.data()+4,"CNW1",4);memcpy(unknown.data()+24,"CNW1",4);memcpy(unknown.data()+44,"SLM4",4);unknown[48]=4;
+    check(native_wire_classify('d',unknown.data(),static_cast<int>(unknown.size()))==native_wire_kind::handshake,"nested routing envelopes do not gain business exemption");
+    for(int length=4;length<88;++length) {
+        std::vector<char> truncated(88,0);memcpy(truncated.data()+4,"CNW1",4);memcpy(truncated.data()+24,"SLM4",4);truncated[28]=4;
+        check(native_wire_classify('d',truncated.data(),length)==native_wire_kind::handshake,"truncated pair routing envelopes do not gain business exemption");
+    }
+#endif
     // Even offline inet_ntop used by normal RST logging requires Winsock init.
 #ifdef _WIN32
     WSADATA winsock{};

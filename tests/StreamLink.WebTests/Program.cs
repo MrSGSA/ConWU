@@ -10,7 +10,7 @@ using StreamLink.Web;
 if(args is ["--ui-responsiveness"])return await UiResponsivenessTests.Run();
 if(args is ["--browser-fixture",var assetRoot,..var fixtureOptions]) {
  WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
- using var fixture=new ControlWorker();fixture.StartLocal();
+ using var fixture=new ControlWorker();if(fixtureOptions.Contains("--pair-workspace"))fixture.EnablePairNetworks();fixture.StartLocal();
  string sid=WindowsIdentity.GetCurrent().User!.Value;new ProfileStore().AuthorizeUiUser(sid);
  await using var pipe=new UiPipeFixture(fixture,fixtureOptions.Contains("--deferred"));
  await using var panel=await WebPanel.Start(pipe.Call,Path.GetFullPath(assetRoot));
@@ -61,6 +61,17 @@ await using(var panel=await WebPanel.Start(Backend,root,clock)) {
  Check((await Send("POST","/api/command",request,"https://attacker.example",csrf)).StatusCode==HttpStatusCode.Forbidden,"cross-site mutation rejected");
  Check((await Send("POST","/api/command",request,panel.Origin,csrf)).IsSuccessStatusCode&&calls==2,"authenticated command forwarded once");
  Check((await Send("POST","/api/command",request,panel.Origin,csrf)).StatusCode==HttpStatusCode.Conflict&&calls==2,"operation replay never forwarded");
+ int beforeOversize=calls;
+ using var oversizedClient=new HttpClient(new HttpClientHandler{UseCookies=false}){BaseAddress=new(panel.Origin)};
+ using(var oversizedRequest=new HttpRequestMessage(HttpMethod.Post,"/api/command")){
+  oversizedRequest.Content=new StringContent(new string('x',ServiceProtocol.MaximumUiMessageBytes+1),System.Text.Encoding.UTF8,"application/json");
+  oversizedRequest.Headers.Add("Origin",panel.Origin);oversizedRequest.Headers.Add("X-StreamLink-CSRF",csrf);oversizedRequest.Headers.Add("Cookie",cookie.Split(';')[0]);
+  try {using var oversized=await oversizedClient.SendAsync(oversizedRequest);Check((oversized.StatusCode is HttpStatusCode.Forbidden or HttpStatusCode.RequestEntityTooLarge)&&calls==beforeOversize,"oversized UI request rejected before dispatch");}
+  catch(HttpRequestException){Check(calls==beforeOversize,"oversized UI connection rejected before dispatch");}
+ }
+ var largerUiRequest=new UiControlRequest("network",OperationId:Guid.NewGuid(),Network:new UiNetworkAction("test"){Entry=new string('x',70000)});
+ using(var largerUiReply=await Send("POST","/api/command",largerUiRequest,panel.Origin,csrf))
+  Check(largerUiReply.IsSuccessStatusCode&&calls==beforeOversize+1,"UI request above old 64 KiB limit reaches restricted backend");
  var priorCsrf=csrf;
  var secondTicket=new Uri(panel.OpenLink()).Fragment[1..];
  using(var secondSession=await Send("POST","/api/session",new{ticket=secondTicket},panel.Origin))csrf=(await secondSession.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("csrf").GetString()!;

@@ -6,7 +6,9 @@ namespace StreamLink.Service;
 
 public sealed partial class ControlWorker : BackgroundService
 {
-    readonly ProfileStore store = new();
+    readonly ProfileStore store;
+    readonly bool networkContext;
+    PairNetworkWorkspace? workspace;
     readonly object sync = new();
     readonly Queue<string> logs = new();
     DeviceProfile profile;
@@ -22,6 +24,7 @@ public sealed partial class ControlWorker : BackgroundService
     QualityResult? lastQuality;
     UiStageLedger? stageLedger;
     bool initialized;
+    bool applicationStopping;
     bool stoppingNetwork;
     bool resourceShutdownUnproven;
     TaskCompletionSource? retryWake;
@@ -29,12 +32,16 @@ public sealed partial class ControlWorker : BackgroundService
     readonly SemaphoreSlim requests = new(1, 1);
     readonly FileStream lease;
     readonly MeshRuntimeServices? meshRuntime;
-    internal ControlWorker(MeshRuntimeServices services):this() { meshRuntime=services; }
-    public ControlWorker()
+    internal ControlWorker(MeshRuntimeServices services):this(new ProfileStore(),services) { }
+    public ControlWorker():this(new ProfileStore()){}
+    public ControlWorker(bool pairNetworks):this(new ProfileStore(),enableWorkspace:pairNetworks){}
+    internal ControlWorker(ProfileStore profileStore,MeshRuntimeServices? services=null,bool isolatedNetwork=false,bool enableWorkspace=false)
     {
-        lease = new FileStream(Path.Combine(ProfileStore.Root, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;
+        lease = new FileStream(Path.Combine(store.DirectoryPath, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try {
-            if(OperatingSystem.IsLinux())LinuxFirewall.Recover();
+            if(enableWorkspace&&store.LoadForMaintenance() is { } old&&(old.Mesh!=null||old.Pair!=null))throw new IOException("旧版网络配置与双机多网络不兼容，请使用全新安装流程重新设置；配置尚未迁移");
+            if(OperatingSystem.IsLinux()&&!networkContext)LinuxFirewall.Recover();
             profile = store.Load();
             bool changed=false;
             var platformAdapter=OperatingSystem.IsLinux()?PacketAdapterBackend.LinuxTun:PacketAdapterBackend.OfficialWintun;
@@ -55,7 +62,37 @@ public sealed partial class ControlWorker : BackgroundService
             }
             if(changed)store.Save(profile);
             PublishReply();
+            if(enableWorkspace)EnablePairNetworks();
         } catch { lease.Dispose(); throw; }
+    }
+    public void EnablePairNetworks()
+    {
+        if(initialized||workspace!=null)throw new InvalidOperationException("多网络模式只能在启动前配置");
+        if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("旧版网络配置需要全新安装，不能自动改变管理权限");
+        PairSettingsTransaction.Recover(store);PairBatchSettingsTransaction.Recover(store);profile=store.Load();PublishReply();
+        if(profile.NodeSigningPrivate.Length==0){profile.NodeSigningPrivate=NodeIdentityProof.GeneratePrivate();profile.Device=MeshIdentity.NetworkId(MeshIdentity.PublicSigning(profile.NodeSigningPrivate));store.Save(profile);PublishReply();}
+        workspace=new(this,store,meshRuntime);
+    }
+    internal DeviceProfile ProfileSnapshot()=>ProfileChanges.Copy(Volatile.Read(ref snapshot)!.Profile!);
+    internal bool IsOperationComplete(Guid id)=>OperationState(id)?.Completed!=false;
+    internal bool HasOutstandingOwnership{get{lock(operationGate)return Volatile.Read(ref resourceShutdownUnproven)||running?.IsCompleted==false||measuring?.IsCompleted==false||acceptingEntries?.IsCompleted==false||operations.Values.Any(o=>!o.Completed);}}
+    internal void BeginApplicationStop()=>Volatile.Write(ref applicationStopping,true);
+    internal async Task RestoreSettings(DeviceProfile before,CancellationToken token)
+    {
+        await requests.WaitAsync(token);
+        try{
+            DeviceProfile restored;bool restart;
+            lock(sync){restored=PairSettingsTransaction.SettingsOnly(profile,before);restart=ProfileChanges.Impact(profile,restored)==ProfileChangeImpact.RestartNetwork;}
+            if(restart)await End(token);
+            lock(sync){store.Save(restored);profile=restored;PublishReply();}
+            if(restart&&restored.Enabled&&!Volatile.Read(ref applicationStopping))Begin();else meshRunner?.UpdateEntries(restored);
+        }finally{requests.Release();}
+    }
+    internal void RefreshSharedSettings()
+    {
+        lock(sync){var shared=store.Load();profile.DeviceName=shared.DeviceName;profile.LogLevel=shared.LogLevel;
+            profile.Ddns=shared.Ddns;profile.CloudflareDdnsToken=shared.CloudflareDdnsToken;
+            meshRunner?.UpdateEntries(profile);PublishReply();}
     }
     void Log(string text)
     {
@@ -71,7 +108,7 @@ public sealed partial class ControlWorker : BackgroundService
             PublishReply();
             {
                 try {
-                    string folder = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(ProfileStore.Root, "logs");
+                    string folder = profile.LogDirectory.Length > 0 ? profile.LogDirectory : Path.Combine(store.DirectoryPath, "logs");
                     Directory.CreateDirectory(folder);
                     if ((File.GetAttributes(folder) & FileAttributes.ReparsePoint) != 0) throw new IOException("日志目录不能是链接");
                     string path = Path.Combine(folder, "streamlink.log");
@@ -84,6 +121,7 @@ public sealed partial class ControlWorker : BackgroundService
     }
     void Begin()
     {
+        if(Volatile.Read(ref applicationStopping))throw new OperationCanceledException("后台正在停止");
         RequireResourceOwnership();
         if (running != null && !running.IsCompleted) return;
         Volatile.Write(ref stoppingNetwork,false);
@@ -140,7 +178,13 @@ public sealed partial class ControlWorker : BackgroundService
             }
         });
     }
-    void ReportRuntimeStatus(SessionStatus next){lock(sync){if(Volatile.Read(ref stoppingNetwork))return;status=next;PublishReply();}}
+    void ReportRuntimeStatus(SessionStatus next){lock(sync){
+        if(Volatile.Read(ref stoppingNetwork))return;
+        var active=next.Peers?.Where(p=>p.Connected).Select(p=>p.Slot).ToHashSet()??[];
+        foreach(var slot in connectedSince.Keys)if(!active.Contains(slot))connectedSince.TryRemove(slot,out _);
+        foreach(var slot in active)connectedSince.TryAdd(slot,DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        status=next;PublishReply();
+    }}
     async Task End(CancellationToken token = default,Action<string>? progress=null)
     {
         Volatile.Write(ref stoppingNetwork,true);
@@ -176,7 +220,7 @@ public sealed partial class ControlWorker : BackgroundService
         RequireResourceOwnership(); // completed task is not proof that its owners closed
         running = null; runner = null; meshRunner = null;runningProfile=null;
         measureStop?.Dispose();measureStop=null;measuring=null;
-        lock (sync) { quality = ""; lastQuality=null; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); PublishReply();}
+        lock (sync) { connectedSince.Clear();quality = ""; lastQuality=null; status = new("已停止", "", "", "faketcp", false, null, "后台网络已停止，配对仍保留"); PublishReply();}
     }
     static async Task ObserveShutdown(Task task){try{await task;}catch(OperationCanceledException){} }
     void RequireResourceOwnership(){
@@ -203,7 +247,7 @@ public sealed partial class ControlWorker : BackgroundService
         }).ToArray()
     };
     public Task<ControlReply> Handle(ControlRequest request,CancellationToken token=default)
-        => HandleCore(request,token,null);
+        => workspace!=null&&request.Command!="status"?Task.FromResult(Reply("多网络操作请使用 WebUI 或 conwu network 命令并指定网络")):HandleCore(request,token,null);
 
     // UI requests carry their original patch until AFTER the shared mutation gate.
     async Task<ControlReply> HandleCore(ControlRequest request,CancellationToken token,UiOperation? ui)
@@ -335,15 +379,17 @@ public sealed partial class ControlWorker : BackgroundService
     }
     public void StartLocal()
     {
-        Recovery.Recover(Log, Path.Combine(ProfileStore.Root, "sessions"));
-        StartCoordinator();
-        Log("ConWU 已启动"); if (profile.Enabled) Begin();
-        StartEntryAdmission();
+        Volatile.Write(ref applicationStopping,false);
+        Recovery.Recover(Log, Path.Combine(store.DirectoryPath, "sessions"));
+        if(!networkContext)StartCoordinator();
+        Log("ConWU 已启动");
+        if(workspace!=null)workspace.Start();
+        else{if (profile.Enabled) Begin();StartEntryAdmission();}
         initialized=true;
         PublishReply();
     }
-    public async Task StopLocal(CancellationToken token=default) { await StopEntryAdmission();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
-    public override void Dispose() {base.Dispose();DisposeControlResources();}
+    public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
+    public override void Dispose() {BeginApplicationStop();if(workspace?.HasOutstandingOwnership==true)Volatile.Write(ref resourceShutdownUnproven,true);workspace?.Dispose();base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StartLocal();

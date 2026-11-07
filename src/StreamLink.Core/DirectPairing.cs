@@ -8,6 +8,8 @@ namespace StreamLink.Core;
 
 public sealed record DirectPairRequest(string Id,string Method,string Room="",string Token="",string Code="",string Commitment="",string Name="",string PublicKey="",int Offset=0)
 {
+    public string TargetNetwork {get;init;}="";
+    public NodeIdentityProof? Identity {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public MeshRejoinProof? Rejoin {get;init;}
     public string RequestedIp {get;init;}="";
@@ -30,7 +32,7 @@ public static class DirectPairWire
     public const int MaximumDatagram=1200, MaximumCipher=44000, Chunk=800;
     // The owner reads the full proof locally. Guests only need its digest as
     // an acknowledgement, keeping replies bounded even for escaped Unicode.
-    public static PairRoomState ForGuest(PairRoomState state)=>state with{Ciphertext="",Rejoin=null,RejoinDigest=state.Rejoin==null?null:MeshRejoin.Fingerprint(state.Rejoin)};
+    public static PairRoomState ForGuest(PairRoomState state)=>state with{Ciphertext="",Rejoin=null,RejoinDigest=state.Rejoin==null?null:MeshRejoin.Fingerprint(state.Rejoin),GuestIdentity=null,GuestIdentityDigest=state.GuestIdentity==null?"":NodeIdentityProof.Fingerprint(state.GuestIdentity)};
     public static bool IsFrame(ReadOnlySpan<byte> packet)=>packet.Length>=4&&packet[..4].SequenceEqual("SLP1"u8);
     public static byte[] Encode<T>(T value){var body=JsonSerializer.SerializeToUtf8Bytes(value,new JsonSerializerOptions{Encoder=System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping});if(body.Length>MaximumDatagram-4)throw new IOException("直连配对消息过大");return "SLP1"u8.ToArray().Concat(body).ToArray();}
     public static T Decode<T>(ReadOnlySpan<byte> packet)=>IsFrame(packet)&&packet.Length<=MaximumDatagram?JsonSerializer.Deserialize<T>(packet[4..],new JsonSerializerOptions{MaxDepth=8})??throw new FormatException("配对消息为空"):throw new FormatException("配对消息无效");
@@ -41,6 +43,16 @@ public static class DirectPairWire
 // ECDH keys + human SAS confirmation authenticate the encrypted enrollment.
 public sealed class DirectPairHost : IShortPairClient
 {
+    public bool Matches(DirectPairRequest request)
+    {
+        lock(gate){
+            if(ticket==null||ticket.Expires<=clock.GetUtcNow().ToUnixTimeSeconds())return false;
+            if(request.Method=="join")return request.EntryAdmission==entryAdmission&&
+                (entryAdmission?request.Code==DirectPairWire.EntryLocator:request.Code==invitationCapability||request.Code==ticket.Code)&&
+                (state?.GuestCommitment.Length is not >0||state.GuestCommitment==request.Commitment||RecoveringIdentity(request));
+            return request.Room==ticket.Room&&guest!=null&&Equal(request.Token,guest.Token);
+        }
+    }
     readonly object gate=new();
     readonly TimeProvider clock;
     readonly bool entryAdmission;
@@ -52,6 +64,8 @@ public sealed class DirectPairHost : IShortPairClient
     long rejectedExpires;
     sealed class EntryBusy(bool retry,string message):IOException(message){public bool Retry=>retry;}
     long window;int replies,badCodes;bool delivered;
+    bool RecoveringIdentity(DirectPairRequest request)=>entryAdmission&&state is {Approved:true,GuestIdentity:not null} prior&&
+        prior.GuestCommitment!=request.Commitment&&NodeIdentityProof.Valid(request.Identity,request.Commitment)&&prior.GuestIdentity.DeviceId==request.Identity!.DeviceId;
     public DirectPairHost(TimeProvider? clock=null,bool entryAdmission=false){this.clock=clock??TimeProvider.System;this.entryAdmission=entryAdmission;}
     public bool CanCreate {get{lock(gate)return ticket==null||ticket.Expires<=clock.GetUtcNow().ToUnixTimeSeconds()||state?.Approved!=true||delivered;}}
     static string Token()=>Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -72,7 +86,7 @@ public sealed class DirectPairHost : IShortPairClient
             // One short-lived rejection receipt lets the old applicant read
             // its outcome while the next applicant already uses a fresh room.
             if(entryAdmission&&priorExpires>clock.GetUtcNow().ToUnixTimeSeconds()){rejectedGuest=priorGuest;rejectedState=priorState;rejectedExpires=priorExpires;}
-            ticket=new(Guid.NewGuid().ToString("N"),RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"),Token(),key.Commitment,name,clock.GetUtcNow().AddMinutes(5).ToUnixTimeSeconds());
+            ticket=new(Guid.NewGuid().ToString("N"),RandomNumberGenerator.GetInt32(1_000_000).ToString("D6"),Token(),key.Commitment,name,clock.GetUtcNow().AddMinutes(5).ToUnixTimeSeconds()){Identity=key.Identity};
             state=new("","","","","","",false,ticket.Expires){Addressing=1};return Task.FromResult(ticket);
         }
     }
@@ -103,14 +117,21 @@ public sealed class DirectPairHost : IShortPairClient
         if(r.Method=="join"){
             if(!Equal(r.Code,entryAdmission?DirectPairWire.EntryLocator:invitationCapability??ticket!.Code)){if(!entryAdmission&&++badCodes>=20)Clear();throw new IOException();}
             if(!PairKeyExchange.ValidCommitment(r.Commitment)||r.Name is not {Length:>0 and <=64}||r.Name.Any(char.IsControl))throw new IOException();
+            // A client may lose the encrypted enrollment reply after approval
+            // and restart with its persistent identity but a new ephemeral key.
+            // Release only its own old delivery reservation. The owner loop
+            // opens a fresh room/key and requires a new SAS and approval; this
+            // proof never grants or resurrects network membership by itself.
+            if(RecoveringIdentity(r)){delivered=true;throw new EntryBusy(true,"设备申请已重新开始，正在准备新的校验与批准");}
             if(entryAdmission&&(state!.Outcome.Length>0||state.Approved&&delivered))throw new EntryBusy(true,"设备正在准备下一次申请，正在重试");
             if(entryAdmission&&state!.Approved)throw new EntryBusy(false,"设备正在交付上一项授权，请稍后重试");
             if(state!.Approved||state.Outcome.Length>0)throw new IOException();
-            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name||state.RequestedIp!=r.RequestedIp||state.Rejoin!=r.Rejoin){if(entryAdmission)throw new EntryBusy(false,"设备正在处理另一项加入申请，请稍后重试");throw new IOException();}return new(r.Id,Ticket:guest);}
+            if(r.Identity!=null&&!NodeIdentityProof.Valid(r.Identity,r.Commitment))throw new IOException("设备身份签名无效");
+            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name||state.RequestedIp!=r.RequestedIp||state.Rejoin!=r.Rejoin||state.GuestIdentity!=r.Identity){if(entryAdmission)throw new EntryBusy(false,"设备正在处理另一项加入申请，请稍后重试");throw new IOException();}return new(r.Id,Ticket:guest);}
             if(r.Rejoin is {} proof && !MeshRejoin.WellFormed(proof))throw new IOException("重新加入证明格式无效");
             if(r.RequestedIp is null)throw new IOException();if(r.RequestedIp.Length>0)MeshAddressing.ValidateAddress(r.RequestedIp);
-            guest=new(ticket!.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N"));
-            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name,Rejoin=r.Rejoin,RequestedIp=r.RequestedIp,Governance=entryAdmission?1:state.Governance};return new(r.Id,Ticket:guest);
+            guest=new(ticket!.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N")){Identity=ticket.Identity};
+            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name,Rejoin=r.Rejoin,RequestedIp=r.RequestedIp,Governance=entryAdmission?1:state.Governance,GuestIdentity=r.Identity};return new(r.Id,Ticket:guest);
         }
         if(guest==null||r.Room!=guest.Room||!Equal(r.Token,guest.Token))throw new IOException();
         switch(r.Method){
@@ -134,6 +155,7 @@ public sealed class DirectPairHost : IShortPairClient
 
 public sealed class DirectPairClient : IShortPairClient
 {
+    readonly string targetNetwork;
     readonly UdpClient socket=new(new IPEndPoint(IPAddress.Loopback,0));
     readonly IMeshTransport transport;
     readonly IPEndPoint target;
@@ -143,7 +165,7 @@ public sealed class DirectPairClient : IShortPairClient
     readonly bool entryAdmission;
     Exception? disposalError;
     int disposed;
-    public DirectPairClient(Func<IPEndPoint,IMeshTransport> factory,bool entryAdmission=false){this.entryAdmission=entryAdmission;try{transport=factory((IPEndPoint)socket.Client.LocalEndPoint!);target=transport.ClientEndpoint??throw new IOException("配对传输未提供本地端口");expiry=new(_=>{try{Dispose();}catch(Exception ex){Volatile.Write(ref disposalError,ex);}},null,TimeSpan.FromMinutes(6),Timeout.InfiniteTimeSpan);}catch{try{transport?.Dispose();}finally{socket.Dispose();lifetime.Dispose();}throw;}}
+    public DirectPairClient(Func<IPEndPoint,IMeshTransport> factory,bool entryAdmission=false,string targetNetwork=""){this.entryAdmission=entryAdmission;this.targetNetwork=targetNetwork;try{transport=factory((IPEndPoint)socket.Client.LocalEndPoint!);target=transport.ClientEndpoint??throw new IOException("配对传输未提供本地端口");expiry=new(_=>{try{Dispose();}catch(Exception ex){Volatile.Write(ref disposalError,ex);}},null,TimeSpan.FromMinutes(6),Timeout.InfiniteTimeSpan);}catch{try{transport?.Dispose();}finally{socket.Dispose();lifetime.Dispose();}throw;}}
     async Task<DirectPairReply> Send(DirectPairRequest request,CancellationToken cancel)
     {
         if(Volatile.Read(ref disposed)!=0)throw new IOException("直连配对已结束或超时，请重新申请");
@@ -168,13 +190,13 @@ public sealed class DirectPairClient : IShortPairClient
             finally{deadline.Cancel();if(pending!=null)try{await pending;}catch(OperationCanceledException){}catch(SocketException){}}
         }finally{gate.Release();}
     }
-    DirectPairRequest Request(string method,PairRoomTicket? ticket=null)=>new(Guid.NewGuid().ToString("N"),method,ticket?.Room??"",ticket?.Token??""){EntryAdmission=entryAdmission};
+    DirectPairRequest Request(string method,PairRoomTicket? ticket=null)=>new(Guid.NewGuid().ToString("N"),method,ticket?.Room??"",ticket?.Token??""){EntryAdmission=entryAdmission,TargetNetwork=targetNetwork};
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel)=>throw new NotSupportedException();
     public async Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)
     {
         if(entryAdmission?code!=DirectPairWire.EntryLocator:!(code.Length==6&&code.All(char.IsAsciiDigit))&&!(code.Length==64&&code.All(char.IsAsciiHexDigit)))throw new FormatException("直连配对凭据无效");
         if(requestedIp.Length>0)MeshAddressing.ValidateAddress(requestedIp);
-        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name,Rejoin=rejoin,RequestedIp=requestedIp},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
+        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name,Rejoin=rejoin,RequestedIp=requestedIp,Identity=key.Identity},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
         if(!Guid.TryParseExact(ticket.Room,"N",out _)||!Guid.TryParseExact(ticket.Candidate,"N",out _)||ticket.Token.Length!=64||!PairKeyExchange.ValidCommitment(ticket.HostCommitment)||ticket.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||ticket.Expires>DateTimeOffset.UtcNow.AddMinutes(6).ToUnixTimeSeconds()||ticket.HostName.Length>64)throw new IOException("主机配对响应无效");return ticket;
     }
     async Task<PairRoomState> State(DirectPairRequest request,CancellationToken cancel)

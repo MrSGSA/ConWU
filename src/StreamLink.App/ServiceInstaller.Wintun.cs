@@ -21,16 +21,31 @@ public static partial class ServiceInstaller
         string path = Path.Combine(ProfileStore.Root, "runtime.lock");
         if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("运行所有权文件不能是链接");
         using var runtime = new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
-        var profile = store.LoadForMaintenance();
+        var profiles = (store.HasSavedProfile?new[]{("",store.LoadForMaintenance())}:Array.Empty<(string,DeviceProfile)>()).Concat(store.NetworksForMaintenance()).ToArray();
         string journal = Path.Combine(ProfileStore.Root, "wintun-upgrade.jsonl");
         if (File.Exists(journal) && (File.GetAttributes(journal) & FileAttributes.ReparsePoint) != 0) throw new IOException("网卡维护日志不能是链接");
         void Log(object value) => File.AppendAllText(journal, JsonSerializer.Serialize(new { timestamp = DateTimeOffset.UtcNow, instance = WindowsInstance.Name, value }) + Environment.NewLine);
-        if (profile.AdapterBackend != PacketAdapterBackend.OfficialWintun) { Log("本实例未使用官方 Wintun，无需卸载"); return; }
         try {
             Log("旧服务已停止，独占运行锁已取得，开始更新清理");
-            var result = WintunMaintenance.PrepareUpgrade(Path.Combine(AppContext.BaseDirectory, "components"), profile.Mesh?.Pair.Network??profile.Device, profile.Mesh?.Self.Slot??1, text => Log(text),ownerNetwork:profile.Device);
-            Log(result);
+            foreach(var (_,profile) in profiles){
+                if(profile.AdapterBackend!=PacketAdapterBackend.OfficialWintun)continue;
+                string owner=profile.AdapterScope.Length>0?profile.AdapterScope:profile.Device;
+                var result = WintunMaintenance.PrepareUpgrade(Path.Combine(AppContext.BaseDirectory, "components"), profile.Mesh?.Pair.Network??owner, profile.Mesh?.Self.Slot??1, text => Log(text),ownerNetwork:owner);
+                Log(result);
+            }
         } catch (Exception ex) { Log(new { failed = true, error = ex.Message }); throw; }
+    }
+    public static object AdapterMaintenance(string action)
+    {
+        if(!WindowsHost.IsAdmin)throw new UnauthorizedAccessException("网卡维护需要管理员权限");
+        if(action is not ("inspect" or "release"))throw new ArgumentException("网卡维护操作无效");
+        bool stopped=true;if(Installed){using var service=new ServiceController(WindowsInstance.Name);stopped=service.Status==ServiceControllerStatus.Stopped;}
+        var store=new ProfileStore();
+        var scopes=(store.HasSavedProfile?new[]{("",store.LoadForMaintenance())}:Array.Empty<(string,DeviceProfile)>()).Concat(store.NetworksForMaintenance()).Select(row=>new{
+            ConfigurationId=row.Item1,NetworkId=row.Item2.Mesh?.Pair.Network??"",OwnerScope=row.Item2.AdapterScope.Length>0?row.Item2.AdapterScope:row.Item2.Device,Slot=row.Item2.Mesh?.Self.Slot??1
+        }).ToArray();
+        if(action=="release")PrepareWintunUpgrade(store);
+        return new{Schema=1,Instance=WindowsInstance.Name,DataRoot=ProfileStore.Root,ServiceStopped=stopped,Scopes=scopes,Released=action=="release",Error=""};
     }
 
     [StructLayout(LayoutKind.Sequential)] struct ServiceProcessStatus

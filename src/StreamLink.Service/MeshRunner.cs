@@ -8,6 +8,8 @@ public sealed class MeshShutdownException(string[] failures):IOException("网络
 
 public sealed class MeshRunner
 {
+    int receiverReady;
+    public bool ReceiverReady=>Volatile.Read(ref receiverReady)!=0;
     readonly DeviceProfile profile;
     readonly MeshProfile mesh;
     readonly Action<string> log, rememberStun;
@@ -390,6 +392,7 @@ public sealed class MeshRunner
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
                 router?.SetLegacyListenerControl(server?.ControlsWirePackets == true && !server.Exited);
+                Volatile.Write(ref receiverReady,server!=null&&!server.Exited?1:0);
                 // startup can hold up local child recovery or the other direction.
                 if (saving?.IsCompleted == true) {
                     try { await saving; savedDirectory = savingRevision; }
@@ -639,6 +642,7 @@ public sealed class MeshRunner
                 Adapter=adapterStatus,Connection=new("Recovering","连接组件发生异常，正在安全退出旧资源后重试。",nowElapsed(),CanRetry:false) });
             throw;
         } finally {
+            Volatile.Write(ref receiverReady,0);
             lock (gate) stopping = true;
             long shutdownStarted = Environment.TickCount64;
             var cleanupFailures=new List<string>();

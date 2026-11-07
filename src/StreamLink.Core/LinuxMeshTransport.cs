@@ -17,6 +17,9 @@ public sealed class LinuxMeshTransport : IMeshTransport
     public string FailureReason=>Exited?"Linux 原生传输已退出，请查看本机会话日志":"";
     public LinuxMeshTransport(string components,string sessionRoot,MeshProfile profile,IPEndPoint target,bool server,int listenPort,IMapping? mapping,string logLevel,Action<IPEndPoint>? reserve=null) {
         if(!OperatingSystem.IsLinux())throw new PlatformNotSupportedException();
+        // Pairing and shared-receiver callers also allocate fresh session
+        // paths; require the same private-directory contract as the runner.
+        LinuxPlatform.PrivateDirectory(sessionRoot);
         configuration=Path.Combine(sessionRoot,"raw-"+Guid.NewGuid().ToString("N")+".conf");
         string binary=Path.Combine(components,"udp2raw-native");
         string binding;

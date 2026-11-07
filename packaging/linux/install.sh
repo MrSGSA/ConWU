@@ -16,8 +16,12 @@ for path in /opt/streamlink /opt/streamlink/releases /var/lib/streamlink; do
     [[ ! -L $path ]] || { echo "拒绝通过符号链接安装：$path"; exit 1; }
 done
 install -d -m 0755 /opt/streamlink /opt/streamlink/releases
-exec 9>/opt/streamlink/install.lock
-flock -n 9 || { echo '另一个安装或卸载任务正在运行'; exit 1; }
+if [[ ${CONWU_INSTALL_LOCK_INHERITED:-} == 1 ]]; then
+    [[ $(readlink /proc/$$/fd/9 2>/dev/null) == /opt/streamlink/install.lock ]] || { echo '安装锁继承无效'; exit 1; }
+else
+    exec 9>/opt/streamlink/install.lock
+    flock -n 9 || { echo '另一个安装或卸载任务正在运行'; exit 1; }
+fi
 unit=/etc/systemd/system/streamlink.service
 if [[ -e $unit ]] && ! grep -q '^# StreamLink managed unit$' "$unit"; then echo '已有同名服务不是本安装器创建，请先核对。'; exit 1; fi
 if [[ -e /usr/local/bin/streamlink || -L /usr/local/bin/streamlink ]]; then

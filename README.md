@@ -1,14 +1,14 @@
 # ConWU
 
-原名 StreamLink。当前开发候选为 `1.0.6-rc.10`，精简设置并加入直接填写设备入口的入网方式；现有 GitHub Release 仍使用旧名称。配置与升级兼容标识保留。改动和验证范围见 [精简入口](docs/aq1/精简入口与三端更新-20261107.md) 和 [Cloudflare DDNS](docs/aq1/ConWU与Cloudflare-DDNS-20261106.md)。
+原名 StreamLink。当前开发候选为 `1.1.0-preview.1`：每个网络连接两台设备，一台设备可以同时创建、加入多个网络，概览统一显示。现有 GitHub Release 尚未替换；本次架构更新需备份后全新设置，见[实施记录](docs/aq1/双机多网络实施记录-20261108.md)。
 
-想在外面用 Moonlight 连家里的电脑，却碰上 UDP 限速？ConWU 就是为这件事做的 Windows 直连组网工具。
+想在外面用 Moonlight 连家里的电脑，却碰上 UDP 限速？ConWU 就是为这件事做的直连组网工具，支持 Windows 和 Linux。
 
 两台电脑装好后，通过虚拟 IP 连接。平时放在托盘里，需要操作时打开 WebUI。
 
 [下载最新版](https://github.com/MrSGSA/StreamLink/releases/latest) · [使用说明](docs/使用指南.md) · [1.0.5 更新说明](docs/releases/v1.0.5.md)
 
-开发分支支持 Windows 与 Linux 参与网络、接收加入申请，也保留内置 HTTPS 协调服务。Linux 候选的安装与验证范围见 [Linux 说明](packaging/linux/README.md)。这部分尚未替换上方正式 Release。
+Windows 与 Linux 都能创建、加入网络，也能兼任 HTTPS 协调服务。协调设备不自动成为成员，不转发串流。Linux 候选的安装与验证范围见 [Linux 说明](packaging/linux/README.md)。
 
 ## 能做什么
 
@@ -28,7 +28,7 @@
 
 目前需要自建协调服务或准备可达入口，还没有公共协调服务器。安装包带齐运行组件，使用者不需要另装 .NET、Python 或开发工具。
 
-rc.10 的统一入口需要网络内设备一并更新，旧版原生外层握手不能混用。接收端口、本机设置和网络身份沿用原配置；默认接收不代表公网已经可达。
+1.1 的双机授权和共享接收格式需要两端一并更新。一个网络包含一台审批主机和一台从机，通道双向；不同网络互不转发。共用裸入口有多条待配对网络时，使用明确绑定网络的邀请。默认接收不代表公网已经可达。
 
 ## 使用前了解一下
 

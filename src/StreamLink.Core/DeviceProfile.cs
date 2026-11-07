@@ -12,6 +12,9 @@ public sealed class DeviceProfile
     public Dictionary<string,bool?> CapabilityIntents {get;set;}=new();
     public int Version { get; set; } = 2;
     public string Device { get; set; } = Guid.NewGuid().ToString("N");
+    public string AdapterScope {get;set;}="";
+    [JsonIgnore] public string ResourceScope=>AdapterScope.Length>0?AdapterScope:Device;
+    public string NodeSigningPrivate {get;set;}="";
     public Pairing? Pair { get; set; }
     public MeshProfile? Mesh { get; set; }
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
@@ -130,6 +133,9 @@ public sealed class DeviceProfile
     public string LogDirectory { get; set; } = "";
     public void Validate()
     {
+        if(AdapterScope is null||AdapterScope.Length>0&&!Guid.TryParseExact(AdapterScope,"N",out _))throw new FormatException("网卡所有权身份无效");
+        if(NodeSigningPrivate is null||NodeSigningPrivate.Length>512)throw new FormatException("设备身份密钥无效");
+        if(NodeSigningPrivate.Length>0&&MeshIdentity.NetworkId(MeshIdentity.PublicSigning(NodeSigningPrivate))!=Device)throw new FormatException("设备身份密钥与标识不符");
         if(Coordinator==null)throw new FormatException("协调角色设置不能为空");Coordinator.Validate();
         if(Ddns==null)throw new FormatException("DDNS 设置不能为空");Ddns.Validate();CloudflareDdnsSettings.ValidateToken(CloudflareDdnsToken);
         if(Ddns.Enabled&&Ddns.Publish&&CloudflareDdnsToken.Length==0)throw new FormatException("发布 DDNS 需要先保存 Cloudflare API Token，或关闭“发布本机入口”");

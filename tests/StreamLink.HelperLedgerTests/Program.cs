@@ -112,7 +112,7 @@ var legacy=new LegacyTransportLedger();var compatibility=new List<LegacyTranspor
 try{
  for(int i=0;i<LegacyTransportLedger.CompatibilityLimit;i++)compatibility.Add(legacy.Acquire("faketcp",i==0,i==0?"192.0.2.1:11010":"","198.51.100.1:40001",helperIdentity));
  bool rejected=false;try{using var tooMany=legacy.Acquire("faketcp",false,"","198.51.100.1:40001",Guid.Empty);}catch(IOException){rejected=true;}
- Check(rejected&&legacy.Snapshot().OpenResources==15&&legacy.Snapshot().Limit==15,"legacy listener plus seven Active/Candidate pairs have an explicit fifteen-resource allowance");
+ Check(rejected&&legacy.Snapshot().OpenResources==32&&legacy.Snapshot().Limit==32,"eight pair networks have a bounded allowance for listeners, Active/Candidate and transient enrollment resources");
  Check(legacy.Snapshot().Resources.All(r=>r.HelperResourceId==helperIdentity)&&legacy.Snapshot().Resources.Count(r=>r.Listener.Length>0)==1,"P helper lineage and Q listener are separate; client source port is never invented");
 }finally{foreach(var h in compatibility){h.Dispose();h.Dispose();}}
 Check(legacy.Snapshot().OpenResources==0&&!legacy.Snapshot().CompleteWireAudit,"prepared compatibility resources retire idempotently without claiming packet totals");

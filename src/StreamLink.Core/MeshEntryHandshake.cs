@@ -28,6 +28,7 @@ public static class MeshEntryHandshake
             return member!=null&&MeshIdentity.Verify(member.SigningKey,Signed(m),m.Signature)?m:null;
         }catch(Exception ex)when(ex is JsonException or FormatException or CryptographicException){return null;}
     }
+    public static bool Authenticated(MeshProfile mesh,ReadOnlySpan<byte> bytes)=>Read(mesh,bytes)!=null;
     public static byte[]? Reply(MeshProfile mesh,ReadOnlySpan<byte> bytes) {
         var request=Read(mesh,bytes);return request is {ReplyTo.Length:0}&&request.Device!=mesh.Self.Device?Encode(Sign(mesh,request.Nonce,request.Device)):null;
     }

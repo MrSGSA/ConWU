@@ -23,13 +23,13 @@ public sealed record LegacyTransportUsage(int OpenResources, int Limit, int Peak
     public bool CompleteWireAudit => false;
 }
 
-// A legacy listener multiplexes peers; each of seven other members can retain
-// Active + Candidate clients. This explicit compatibility allowance is distinct
-// from the managed eight-source TCP pool, not secretly charged as eight sockets.
+// Eight pair contexts can each own a listener, Active + Candidate clients and
+// one transient enrollment carriage. Shared listeners normally use far less.
+// This is a hard whole-device cap, distinct from the managed TCP socket pool.
 public sealed class LegacyTransportLedger
 {
     public static LegacyTransportLedger Shared { get; } = new();
-    public const int CompatibilityLimit = 1 + 2 * (MeshIdentity.MaxMembers - 1);
+    public const int CompatibilityLimit = 32;
     readonly object gate = new();
     readonly Dictionary<Guid, Handle> resources = [];
     readonly Queue<LegacyTransportResource> history = [];

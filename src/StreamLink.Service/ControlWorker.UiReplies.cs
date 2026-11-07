@@ -23,7 +23,7 @@ public sealed partial class ControlWorker
     // result and the runner's evidence used for selection remain unchanged.
     internal static UiControlReply FitUiReply(UiControlReply source)
     {
-        static bool Fits(UiControlReply value) => JsonSerializer.SerializeToUtf8Bytes(value).Length <= ServiceProtocol.MaximumMessageBytes;
+        static bool Fits(UiControlReply value) => JsonSerializer.SerializeToUtf8Bytes(value).Length <= (value.Status?.WorkspaceVersion>0?ServiceProtocol.MaximumUiMessageBytes:ServiceProtocol.MaximumMessageBytes);
         static ControlOperationStatus? ShortOperation(ControlOperationStatus? op) => op == null ? null : op with {
             Command = ShortText(op.Command, 64), Phase = ShortText(op.Phase, 128), Error = ShortText(op.Error, 1024)
         };
@@ -32,6 +32,14 @@ public sealed partial class ControlWorker
         status = status with { Operation = ShortOperation(status.Operation) };
         reply = reply with { Status = status };
         if (Fits(reply)) return reply;
+
+        if(status.WorkspaceVersion>0&&status.Networks.Length>0){
+            status=status with{Networks=status.Networks.Select(network=>network with{Status=network.Status with{
+                Logs=network.Status.Logs.TakeLast(8).Select(line=>ShortText(line,512)).ToArray(),Stages=null,LastQuality=null,Coordinator=null,Desktop=null,
+                Peers=network.Status.Peers.Select(peer=>peer with{LocalDrops=null,Liveness=peer.Liveness is {} l?l with{Keepalive=null}:null}).ToArray()
+            }}).ToArray(),DiagnosticsNotice="已精简各网络的较早日志和分段诊断，网络列表与操作结果完整保留。"};
+            reply=reply with{Status=status};if(Fits(reply))return reply;
+        }
 
         int originalLogs = status.Logs.Length;
         var omissions = new List<string>();

@@ -39,7 +39,7 @@ public sealed partial class ControlWorker
             else if(request.Ui is {} ui) {
                 var handling=HandleLocalUi(ui,stop);
                 if(ui.Method!="status"&&ui.OperationId!=Guid.Empty&&await Task.WhenAny(handling,Task.Delay(700,timeout.Token))!=handling) {
-                    reply=new(Ui:await HandleLocalUi(new("status",OperationId:ui.OperationId),stop));
+                    reply=new(Ui:await HandleLocalUi(new("status",OperationId:ui.OperationId){NetworkId=ui.NetworkId},stop));
                     _=handling.ContinueWith(t=>Log("本机控制操作异常："+t.Exception!.GetBaseException().GetType().Name),TaskContinuationOptions.OnlyOnFaulted);
                 }else reply=new(Ui:await handling);
             }else reply=new(Admin:await Handle(request.Admin!,stop));

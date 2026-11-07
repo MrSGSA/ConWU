@@ -52,6 +52,7 @@ static partial class Program
             Check(propagated&&closing.Disposed&&store.Load().Mesh?.Pair.Network==retained.Pair.Network,"caller cancellation remains cancellation and cannot silently delete the network");
         }
         await LeaveRevocation(store,sid);
+        await OfflineLocalExit(store,sid);
         Console.WriteLine($"PASS {checks} pairing-close/leave timeout checks");
     }
     static async Task LeaveRevocation(ProfileStore store,string sid)

@@ -3,6 +3,8 @@ using System.IO.Pipes;
 namespace StreamLink.Core;
 public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connected,bool Degraded,double? RttMs,string Phase)
 {
+    public string DeviceId {get;init;}="";
+    public long ConnectedSince {get;init;}
     public ConnectionProgress? Connection {get;init;}
     public PeerLiveness? Liveness {get;init;}
     public string TraversalMethod {get;init;}="None";
@@ -18,6 +20,12 @@ public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connec
 }
 public sealed record UiStatusDto(string Version,string DeviceName,string VirtualIp,string State,bool ServiceReady,bool NetworkEnabled,int DirectPeers,int TotalPeers,UiPeerDto[] Peers,string LogLevel,int SettingsPatchVersion=1)
 {
+    public int WorkspaceVersion {get;init;}
+    public string SelectedNetworkId {get;init;}="";
+    public UiNetworkDto[] Networks {get;init;}=[];
+    public UiAggregateDto? Aggregate {get;init;}
+    public UiNetworkSettings? DeviceSettings {get;init;}
+    public string DeviceSettingsRevision {get;init;}="";
     public ConnectionProgress? Connection {get;init;}
     public AdapterRuntimeStatus? Adapter {get;init;}
     public bool PersonalFeatureEdition {get;init;}
@@ -49,6 +57,9 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool DdnsCredentialConfigured {get;init;}
     public string Platform {get;init;}=OperatingSystem.IsLinux()?"linux":"windows";
 }
+public sealed record UiNetworkDto(string Id,string Name,UiStatusDto Status);
+public sealed record UiAggregatePeerDto(string NetworkId,string DeviceId,string Role,UiPeerDto Peer,long ConnectedSince);
+public sealed record UiAggregateDto(int NetworkCount,int ConnectedNetworks,int ConnectingNetworks,int OfflineNetworks,int TotalDevices,long SentBytes,long ReceivedBytes,UiAggregatePeerDto[] Peers);
 public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);
 public sealed record UiLegacyStage(Guid ResourceId,int ProcessId,string Mode,string Listener,string Target,
     LegacyBusinessHandoffReport? Handoff,LegacyBusinessEgressStats? Egress,EgressRouteWitness[] Routes);
@@ -82,6 +93,8 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkAction(string Action,string Service="",string CertificatePin="",string Code="",string ExpectedNetwork="",bool ConfirmReplace=false,string Verification="",string Candidate="",int PeerSlot=0,UiNetworkSettings? Settings=null,string ExpectedRevision="",string Mode="faketcp",string ProposedIp="")
 {
+    public string Name {get;init;}="";
+    public string ExpectedDeviceRevision {get;init;}="";
     public string Entry {get;init;}="";
     public bool Background {get;init;}
     public UiConfigPatch? Patch {get;init;}
@@ -120,7 +133,15 @@ public sealed record UiConfigPatch(string? DeviceName=null,string? LogLevel=null
     }
 }
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
-public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Guid OperationId=default,UiNetworkAction? Network=null,int PeerSlot=0,int Mbps=50,Guid CancelOperationId=default);
+public sealed record UiControlRequest(string Method,UiConfigPatch? Patch=null,Guid OperationId=default,UiNetworkAction? Network=null,int PeerSlot=0,int Mbps=50,Guid CancelOperationId=default)
+{
+    public string NetworkId {get;init;}="";
+    public UiSettingsBatch? SettingsBatch {get;init;}
+}
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public sealed record UiSettingsBatch(UiNetworkAction? Device,UiNetworkSettingChange[] Networks);
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+public sealed record UiNetworkSettingChange(UiNetworkAction Action,string NetworkId);
 public sealed record UiControlReply(bool Ok,string Error,UiStatusDto? Status,int Api=1,ControlOperationStatus? Operation=null)
 {
     public string StatusNotice {get;init;}="";
