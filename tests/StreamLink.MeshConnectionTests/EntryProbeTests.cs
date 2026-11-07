@@ -24,12 +24,12 @@ static partial class Program
         using var peer = new MeshLink(guest.Self.Slot, owner.Self.Slot, key); System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
         await using var endpoint = new PeerEndpoint(peer);
         var discovery = new Discovery(owner, guest, endpoint.Endpoint.ToString()); var adapter = new MemoryAdapter();
-        var transports = new ConcurrentBag<ForwardingTransport>(); var logs = new ConcurrentQueue<string>();
+        var transports = new ConcurrentBag<ForwardingTransport>(); var receivers = new ConcurrentBag<StubTransport>(); var logs = new ConcurrentQueue<string>();
         int probes = 0; SessionStatus? status = null;
         string folder = Path.Combine(Path.GetTempPath(), "streamlink-entry-probe-" + Guid.NewGuid().ToString("N"));
         var services = new MeshRuntimeServices(_ => discovery, _ => Task.FromResult<IPacketAdapter>(adapter),
             (_, _, _) => { Interlocked.Increment(ref probes); return Task.FromException<IMapping>(new IOException("fixture has no gateway")); },
-            request => { var t = new ForwardingTransport(request.Target); transports.Add(t); return t; },
+            request => { if (request.Server) { var receiver = new StubTransport(null); receivers.Add(receiver); return receiver; } var t = new ForwardingTransport(request.Target); transports.Add(t); return t; },
             (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, folder) {
                 NetworkWake = () => new MeshNetworkWake(false), Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(null)
             };
@@ -38,11 +38,11 @@ static partial class Program
         try {
             await Until(() => status?.Connected == true, "real Runner authenticates the peer while its own optional mapping fails");
             await Until(() => logs.Any(l => l.StartsWith("现有在线成员已直连")), "normal probe retry is deferred after a healthy direct path", 6500);
-            Check(probes == 1 && transports.Count == 1 && !transports.Single().Disposed && !adapter.Disposed,
-                "automatic retry deadline does not re-probe, replace transport or close the adapter");
+            Check(probes == 1 && transports.Count == 1 && !transports.Single().Disposed && receivers.Count == 1 && !receivers.Single().Disposed && !adapter.Disposed,
+                "automatic retry deadline preserves the healthy outbound transport, default receiver and adapter without re-probing");
             runner.RequestRetry();
             await Until(() => probes == 2, "explicit retry still requests an entry probe beside the retained path");
-            Check(transports.Count == 1 && !transports.Single().Disposed, "explicit entry retry also preserves the healthy business transport");
+            Check(transports.Count == 1 && !transports.Single().Disposed && receivers.Count == 1 && !receivers.Single().Disposed && !adapter.Disposed, "explicit entry retry also preserves the healthy business transport, default receiver and adapter");
         } finally {
             await Stop(running, stop);
             foreach (var d in Directory.EnumerateDirectories(folder)) Directory.Delete(d); Directory.Delete(folder);

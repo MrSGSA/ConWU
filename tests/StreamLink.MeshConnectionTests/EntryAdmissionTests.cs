@@ -76,6 +76,18 @@ static partial class Program
             var hidden=await worker.HandleUi(new("ddns-token",OperationId:Guid.NewGuid()),"S-1-5-21-1-2-3-9999",default);
             var shown=await worker.HandleUi(new("ddns-token",OperationId:Guid.NewGuid()),sid,default);
             Check(!hidden.Ok&&hidden.Credential==null&&shown.Credential==credential&&shown.Status==null&&!shown.ToString().Contains(credential),"only an authorized explicit reveal can read the locally stored token");
+            using var refusedKey=new PairKeyExchange();using var refusedClient=new DirectPairClient(_=>new PairTransport(listener!),entryAdmission:true);
+            var refusedTicket=await refusedClient.Join(DirectPairWire.EntryLocator,refusedKey,"declined entry",default);
+            await Until(()=>Status().GetAwaiter().GetResult().Status!.Pairing?.Candidate==refusedTicket.Candidate,"next entry request is accepted after the previous authorization delivery");
+            var refused=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("reject",Candidate:refusedTicket.Candidate)),sid,default);
+            Check(refused.Ok&&store.Load().Mesh!.Directory!.Members.Length==2,"rejecting an entry request grants no credential");
+            using var nextKey=new PairKeyExchange();using var nextClient=new DirectPairClient(_=>new PairTransport(listener!),entryAdmission:true);
+            var nextTicket=await nextClient.Join(DirectPairWire.EntryLocator,nextKey,"following entry",default);
+            await Until(()=>Status().GetAwaiter().GetResult().Status!.Pairing?.Candidate==nextTicket.Candidate,"rejecting one request does not block the next applicant for five minutes");
+            var receipt=await refusedClient.Poll(refusedTicket,false,default);
+            Check(receipt.Outcome=="Rejected"&&(await Status()).Status!.Pairing!.Candidate==nextTicket.Candidate,"old applicant can read its rejection while the next applicant is pending");
+            await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("reject",Candidate:nextTicket.Candidate)),sid,default);
+            Check((await nextClient.Poll(nextTicket,false,default)).Outcome=="Rejected"&&store.Load().Mesh!.Directory!.Members.Length==2,"successive rejection receipts remain bounded and never enroll either applicant");
             CryptographicOperations.ZeroMemory(shared);
         }finally{await worker.StopLocal();}
     }

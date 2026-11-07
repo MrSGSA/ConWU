@@ -135,12 +135,12 @@ try {
         var adapters = new[] { new Adapter(), new Adapter() }; var states = new SessionStatus?[2];
         var factories = new[] { new Factory(a, kind, binary, root, reflector, proxy), new Factory(b, kind, binary, root, reflector, proxy) };
         using var runningStop = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var logs = new ConcurrentQueue<string>(); int legacyCalls = 0;
+        var logs = new ConcurrentQueue<string>(); var receivers = new ConcurrentBag<DefaultReceiver>(); int legacyCalls = 0;
         var probeModes = new ConcurrentQueue<string>();
         MeshRuntimeServices Services(int i) => new(
             mesh => new MeshDiscoveryClient(mesh), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
             async (profile, _, ct) => { probeModes.Enqueue(profile.TransportMode); await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); },
-            _ => { Interlocked.Increment(ref legacyCalls); throw new IOException("no explicit entry in this fixture"); },
+            request => { if(request.Server){var receiver=new DefaultReceiver();receivers.Add(receiver);return receiver;} Interlocked.Increment(ref legacyCalls); throw new IOException("no explicit outbound entry in this fixture"); },
             (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "sessions")) {
                 Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
             };
@@ -158,7 +158,7 @@ try {
             long selectedMs = clock.ElapsedMilliseconds;
             Check(states.All(s => !s!.Degraded && !s.Peers!.Single().Degraded && s.Peers!.Single().ActualTransport==(kind==TraversalProfile.UdpDirect?"UDP_DIRECT":"FakeTCP+HTTP")), "Runner reports the user-selected protocol without labeling explicit UDP as fallback");
             Check(probeModes.All(mode=>mode==(kind==TraversalProfile.UdpDirect?"udp":"faketcp")),"optional ingress probes retain the selected protocol; UDP-only never requests a FakeTCP probe");
-            Check(legacyCalls == 0 && factories.All(f => f.Gathers == 1 && f.Prepared == 1), $"{kind} round {round}: production MeshRunner automatically negotiates and owns one actual endpoint per peer");
+            Check(legacyCalls == 0 && receivers.Count == 2 && receivers.All(r=>!r.Disposed) && factories.All(f => f.Gathers == 1 && f.Prepared == 1), $"{kind} round {round}: each production MeshRunner retains one default receiver and automatically owns one actual candidate endpoint per peer without legacy outbound");
             if (round == 1) { controlOffline = true; await Task.Delay(9000, token); }
             adapters[0].Outgoing.Add(Packet(a.LocalIp, b.LocalIp)); adapters[1].Outgoing.Add(Packet(b.LocalIp, a.LocalIp));
             var data = Stopwatch.StartNew();
@@ -182,7 +182,7 @@ try {
                     logs=logs.ToArray(),scope="Shutdown timeout diagnostic; original failure/deadline retained; no native stacks captured"},new JsonSerializerOptions{WriteIndented=true}));
                 throw;
             }
-            Check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed), "Runner shutdown closes the final endpoint references and adapter");
+            Check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed) && receivers.All(r=>r.Disposed), "Runner shutdown closes the final endpoint references, default receivers and adapter");
         }
     }
     }
@@ -207,6 +207,10 @@ static byte[] Packet(string from, string to) {
     IPAddress.Parse(from).GetAddressBytes().CopyTo(p, 12); IPAddress.Parse(to).GetAddressBytes().CopyTo(p, 16);
     uint sum = 0; for (int i = 0; i < 20; i += 2) sum += BinaryPrimitives.ReadUInt16BigEndian(p.AsSpan(i)); while (sum > 65535) sum = (sum & 65535) + (sum >> 16);
     BinaryPrimitives.WriteUInt16BigEndian(p.AsSpan(10), (ushort)~sum); return p;
+}
+sealed class DefaultReceiver : IMeshTransport {
+    public IPEndPoint? ClientEndpoint=>null; public bool Exited=>Disposed; public bool Disposed;
+    public void Dispose()=>Disposed=true;
 }
 sealed class Adapter : IPacketAdapter {
     public readonly BlockingCollection<byte[]> Outgoing = new(); public readonly ConcurrentQueue<byte[]> Incoming = new(); public bool Disposed;

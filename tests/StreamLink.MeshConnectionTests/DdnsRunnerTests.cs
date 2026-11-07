@@ -42,10 +42,10 @@ static partial class Program
         var owner=MeshIdentity.Create("https://example.com/","","faketcp");var guest=Guest(owner);guest.Directory=owner.Directory;
         byte[] key=MeshIdentity.SharedKey(guest,owner.Self);using var link=new MeshLink(guest.Self.Slot,owner.Self.Slot,key);System.Security.Cryptography.CryptographicOperations.ZeroMemory(key);
         await using var peer=new PeerEndpoint(link);var adapter=new MemoryAdapter();var discovery=new Discovery(owner,guest,""){ExpiresOverride=1};
-        var transports=new ConcurrentBag<ForwardingTransport>();bool withdrawn=false;int resolutions=0;SessionStatus? status=null;
+        var transports=new ConcurrentBag<ForwardingTransport>();var receivers=new ConcurrentBag<ForwardingTransport>();bool withdrawn=false;int resolutions=0;SessionStatus? status=null;
         string folder=Path.Combine(Path.GetTempPath(),"conwu-ddns-reconnect-"+Guid.NewGuid().ToString("N"));
         var services=new MeshRuntimeServices(_=>discovery,_=>Task.FromResult<IPacketAdapter>(adapter),(_,_,_)=>throw new Exception("no autonomous probe allowed"),
-            r=>{var t=new ForwardingTransport(r.Target);transports.Add(t);return t;},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder) {
+            r=>{var t=new ForwardingTransport(r.Target);(r.Server?receivers:transports).Add(t);return t;},(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder) {
             NetworkWake=()=>new MeshNetworkWake(false),Candidates=(_,_,_,_)=>throw new Exception("no autonomous factory allowed"),
             ResolveEntries=(_,_,_)=>{Interlocked.Increment(ref resolutions);return Task.FromResult(new[]{new EntryResolution(guest.Self.Slot,0,"DDNS",withdrawn?[]:[peer.Endpoint.ToString()],""){ExpiresAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds()+60,AllowCached=false}});}
         };
@@ -56,7 +56,7 @@ static partial class Program
             withdrawn=true;int before=resolutions;
             await Until(()=>resolutions>before,"runner consumes signed endpoint withdrawal");await Task.Delay(500);
             adapter.Outgoing.Add(Packet(owner.LocalIp,guest.LocalIp));await Until(()=>peer.DataPackets==1,"withdrawal stops new dialing hints without tearing down an authenticated live data path");
-            Check(transports.Count==1&&!transports.Single().Disposed&&!adapter.Disposed,"DDNS refresh/retraction retains the same healthy transport and adapter");
+            Check(transports.Count==1&&!transports.Single().Disposed&&receivers.Count==1&&!receivers.Single().Disposed&&!adapter.Disposed,"DDNS refresh/retraction retains the same healthy outbound path, default receiver and adapter");
         }finally{await Stop(running,stop);if(Directory.Exists(folder))Directory.Delete(folder,true);}
     }
     sealed class QuietDiscovery(MeshProfile mesh):IMeshDiscovery {

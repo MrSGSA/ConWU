@@ -20,11 +20,11 @@ static class SharedBrokerRunner
         var adapters = mesh.Select(_ => new Adapter()).ToArray(); var statuses = new SessionStatus?[3];
         var factories = mesh.Select(m => new Factory(m, binary, root, reflector.Endpoint, wire)).ToArray();
         var stops = mesh.Select(_ => CancellationTokenSource.CreateLinkedTokenSource(token)).ToArray();
-        var logs = new ConcurrentQueue<string>(); int legacy = 0;
+        var logs = new ConcurrentQueue<string>();var receivers=new ConcurrentBag<DefaultReceiver>(); int legacy = 0;
         var tasks = Enumerable.Range(0, 3).Select(i => {
             var services = new MeshRuntimeServices(m => new MeshDiscoveryClient(m), _ => Task.FromResult<IPacketAdapter>(adapters[i]),
                 async (_, _, ct) => { await Task.Delay(Timeout.Infinite, ct); throw new InvalidOperationException(); },
-                _ => { Interlocked.Increment(ref legacy); throw new IOException("No explicit fixture entry"); },
+                request => {if(request.Server){var receiver=new DefaultReceiver();receivers.Add(receiver);return receiver;}Interlocked.Increment(ref legacy);throw new IOException("No explicit outbound fixture entry");},
                 (_, _, ct) => Task.Delay(Timeout.Infinite, ct), (_, _, _) => { }, (_, _) => { }, Path.Combine(root, "broker-runner")) {
                     Candidates = (_, _, _, _) => Task.FromResult<IMeshCandidateFactory?>(factories[i])
                 };
@@ -41,8 +41,8 @@ static class SharedBrokerRunner
         }
         try {
             await Until(() => statuses.All(s => s?.Connected == true && s.Peers?.Length == 2 && s.Peers.All(p => p.Connected)), "three production Runners automatically negotiate full mesh through shared source owners");
-            check(legacy == 0 && factories.All(f => f.Leases.Distinct().Count() == 1 && f.Owners.Distinct().Count() == 1) && reflector.Accepted == 3,
-                "each Runner's two peers use one real TCP helper/capture, no legacy or member relay");
+            check(legacy == 0 && receivers.Count==3&&factories.All(f => f.Leases.Distinct().Count() == 1 && f.Owners.Distinct().Count() == 1) && reflector.Accepted == 3,
+                "each Runner owns its default receiver and uses one real TCP helper/capture for two peers, with no legacy outbound or member relay");
             for (int from = 0; from < 3; from++) for (int to = 0; to < 3; to++) if (from != to) adapters[from].Outgoing.Add(Packet(mesh[from].LocalIp, mesh[to].LocalIp));
             await Until(() => adapters.All(a => a.Incoming.Count == 2), "three Runners carry authenticated full-MTU business over every direct pair");
             check(factories.All(f => f.Paths.Count == 2 && f.Paths.All(p => p.WireControl is { Selected: true, HandshakePackets: > 0, BusinessPackets: > 0 } && p.ControlRound.Packets == p.WireControl.HandshakePackets)),
@@ -59,8 +59,9 @@ static class SharedBrokerRunner
             foreach (var task in tasks) try { await task.WaitAsync(TimeSpan.FromSeconds(10), token); } catch (OperationCanceledException) { }
             foreach (var stop in stops) stop.Dispose();
         }
-        check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed), "production Runner shutdown joins shared capture pool after native workers and adapters");
+        check(factories.All(f => f.Closed) && adapters.All(a => a.Disposed)&&receivers.All(r=>r.Disposed), "production Runner shutdown joins shared capture pool, default receivers, native workers and adapters");
     }
+    sealed class DefaultReceiver:IMeshTransport {public IPEndPoint? ClientEndpoint=>null;public bool Exited=>Disposed;public bool Disposed;public void Dispose()=>Disposed=true;}
     sealed class Factory(MeshProfile mesh, string binary, string root, IPEndPoint reflector, Wire wire) : IMeshCandidateFactory, IAsyncDisposable
     {
         readonly Guid generation = Guid.NewGuid(); readonly TraversalResources budget = new();

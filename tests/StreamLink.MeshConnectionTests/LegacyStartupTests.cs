@@ -76,11 +76,12 @@ static partial class Program
         await using var remote = new PeerEndpoint(peer);
         var adapter = new MemoryAdapter(); var discovery = new Discovery(owner, guest, remote.Endpoint.ToString());
         using var entered = new ManualResetEventSlim(); using var release = new ManualResetEventSlim();
-        ForwardingTransport? transport = null; SessionStatus? status = null; int creations = 0;
+        ForwardingTransport? transport = null; StubTransport? receiver = null; SessionStatus? status = null; int creations = 0, receivers = 0;
         string root = Path.Combine(Path.GetTempPath(), "streamlink-startup-runner-" + Guid.NewGuid().ToString("N"));
         var services = new MeshRuntimeServices(_ => discovery, _ => Task.FromResult<IPacketAdapter>(adapter),
             async (_, _, token) => { await Task.Delay(Timeout.Infinite, token); throw new IOException(); },
             request => {
+                if (request.Server) { Interlocked.Increment(ref receivers); receiver = new StubTransport(null); return receiver; }
                 Interlocked.Increment(ref creations); transport = new(remote.Endpoint); request.ReserveEndpoint?.Invoke(transport.ClientEndpoint);
                 entered.Set(); release.Wait(); return transport;
             }, (_, _, token) => Task.Delay(Timeout.Infinite, token), (_, _, _) => { }, (_, _) => { }, root) {
@@ -92,14 +93,14 @@ static partial class Program
             await Until(() => entered.IsSet, "formal Runner starts its real blocked constructor in the background");
             int reads = discovery.Reads; long revision = discovery.Published.Last().Revision;
             await Until(() => discovery.Reads > reads, "formal Runner keeps discovery alive while native preparation is blocked", 4000);
-            Check(creations == 1 && status?.Connected != true, "formal Runner neither duplicates startup nor announces usable business before preparation");
+            Check(creations == 1 && receivers == 1 && receiver?.Disposed == false && status?.Connected != true, "formal Runner retains its default receiver without duplicating outbound startup or announcing usable business before preparation");
             release.Set();
             await Until(() => status?.Connected == true, "formal Runner publishes completed preparation and authenticates its own path");
             adapter.Outgoing.Add(Packet(owner.LocalIp, guest.LocalIp));
             await Until(() => remote.DataPackets == 1, "full-MTU encrypted IP traverses the async prepared production path");
         } finally { release.Set(); await Stop(running, stop); }
-        Check(adapter.Disposed && transport?.Disposed == true && discovery.Disposed && creations == 1,
-            "formal Runner stop joins startup and closes its original adapter/transport/discovery");
+        Check(adapter.Disposed && transport?.Disposed == true && receiver?.Disposed == true && discovery.Disposed && creations == 1 && receivers == 1,
+            "formal Runner stop joins startup and closes its original adapter, outbound transport, default receiver and discovery");
         return new { fullProductionRunner = true, creations, reads = discovery.Reads, driver = false,
             scope = "production MeshRunner including pre-launch endpoint reservation, real UDP encrypted path; blocked constructor and IP adapter are fixtures" };
     }
