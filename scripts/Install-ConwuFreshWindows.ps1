@@ -56,6 +56,7 @@ $candidateUpgrade=MsiProperty $CandidateMsi 'UpgradeCode';$oldUpgrade=MsiPropert
 if($candidateUpgrade -ine $expectedUpgrade -or $oldUpgrade -ine $expectedUpgrade -or $candidateProduct -notmatch '^\{[0-9A-Fa-f-]{36}\}$' -or $oldProduct -notmatch '^\{[0-9A-Fa-f-]{36}\}$'){throw 'MSI 产品身份不匹配。'}
 if($candidateProduct -ieq $oldProduct){throw '候选和回退 MSI 的产品代码相同，无法安全区分卸载目标。'}
 if((Get-MsiProductState $oldProduct) -notin @(3,4,5)){throw '指定的回退 MSI 与当前安装产品不匹配。'}
+if((Get-MsiProductState $candidateProduct) -in @(3,4,5)){throw '候选 MSI 已注册，无法把现有产品当作本次失败安装卸载。'}
 if($ExpectedCommit -notmatch '^[a-fA-F0-9]{40}$'){throw '需要候选完整源码提交标识。'}
 function VerifyRuntime([string]$folder) {
  $folder=[IO.Path]::GetFullPath($folder);$manifestPath=Join-Path $folder 'manifest.json'
@@ -82,8 +83,8 @@ VerifyRuntime (Join-Path $evidence 'maintenance-runtime')
 $quarantine=$data+'.preinstall-'+[guid]::NewGuid().ToString('N')
 if(Test-Path -LiteralPath $quarantine){throw '隔离目标已存在。'}
 $wasRunning=$service.State -eq 'Running';$startMode=$service.StartMode
-$service|Select-Object Name,State,StartMode,PathName|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $evidence 'service-before.json') -Encoding utf8NoBOM
-$stopped=$false;$moved=$false;$installed=$false;$indeterminate=$false
+$service|Select-Object Name,State,StartMode,ProcessId,PathName|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $evidence 'service-before.json') -Encoding utf8NoBOM
+$stopped=$false;$moved=$false;$installed=$false;$indeterminate=$false;$indeterminateResult='msi-indeterminate'
 $guard=$null;$guardInfo=$null;$guardScope=[guid]::NewGuid().ToString('N');$guardReport=Join-Path $evidence 'driver-guard.json';$guardStop=Join-Path $evidence 'driver-guard.stop'
 function StartDriverGuard {
  $guardArgs=$maintenancePrefix+@('--driver-guard','hold',$guardScope,('"'+$guardReport+'"'),('"'+$guardStop+'"'))
@@ -136,7 +137,7 @@ function Maintenance([string]$action) {
  if($r.Schema -ne 1 -or $r.Instance -ine $serviceName -or [IO.Path]::GetFullPath($r.DataRoot) -ine $data -or $r.ServiceStopped -ne $true -or $r.Error -or ($action -eq 'release' -and $r.Released -ne $true)){throw "适配器 $action 报告未通过校验。"}
 }
 function RestoreServiceMode {
- if(-not $wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
+ if(-not $wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Stopped'){StopOwnedService}
  if($wasRunning -and $startMode -eq 'Disabled'){Set-Service -Name $serviceName -StartupType Manual}
  elseif($startMode -eq 'Disabled'){Set-Service -Name $serviceName -StartupType Disabled}
  elseif($startMode -eq 'Auto'){Set-Service -Name $serviceName -StartupType Automatic}
@@ -144,14 +145,42 @@ function RestoreServiceMode {
  if($wasRunning -and (Get-Service -Name $serviceName).Status -ne 'Running'){Start-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Running',[TimeSpan]::FromSeconds(60))}
  if($wasRunning -and $startMode -eq 'Disabled'){Set-Service -Name $serviceName -StartupType Disabled}
 }
+function StopOwnedService {
+ $current=Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+ if(-not $current -or -not $current.PathName.TrimStart('"').StartsWith($install+'\',[StringComparison]::OrdinalIgnoreCase)){throw '服务进程归属不可确认，未请求停止。'}
+ if($current.State -eq 'Stopped' -and $current.ProcessId -eq 0){return}
+ $ownedProcess=$null
+ try {
+   if($current.ProcessId -le 0){throw '无法确认原服务进程，未开始切换。'}
+   $ownedProcess=Get-Process -Id $current.ProcessId -ErrorAction Stop
+   [void]$ownedProcess.Handle
+   if($ownedProcess.HasExited -or -not $ownedProcess.Path -or -not $ownedProcess.Path.StartsWith($install+'\',[StringComparison]::OrdinalIgnoreCase)){throw '原服务进程归属不可确认，未开始切换。'}
+   $confirmed=Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+   if(-not $confirmed -or $confirmed.ProcessId -ne $ownedProcess.Id -or $confirmed.PathName -ine $current.PathName){throw '原服务进程代次已变化，未开始切换。'}
+   $script:stopped=$true;$script:indeterminate=$true;$script:indeterminateResult='service-stop-indeterminate'
+   if($confirmed.State -notin @('Stopped','Stop Pending')){Stop-Service -Name $serviceName -ErrorAction Stop}
+   (Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))
+   if(-not $ownedProcess.WaitForExit(60000)){$script:indeterminate=$true;throw "SCM 已停止但原服务进程 $($ownedProcess.Id) 尚未退出，保留数据与保护网卡，未运行 MSI。"}
+  if((Get-Service -Name $serviceName).Status -ne 'Stopped'){throw '服务尚未停止。'}
+  $script:stopped=$true;$script:indeterminate=$false;$script:indeterminateResult='msi-indeterminate'
+ }finally{if($ownedProcess){$ownedProcess.Dispose()}}
+}
+function StopForSnapshot {
+ $current=Get-CimInstance Win32_Service -Filter "Name='$serviceName'"
+ if(-not $current -or $current.State -ne $service.State -or $current.PathName -ine $service.PathName){throw '原服务状态或路径已变化，未开始切换。'}
+ if(-not $wasRunning -and ($current.State -ne 'Stopped' -or $current.ProcessId -ne 0)){throw '原服务不处于稳定停止状态，未开始切换。'}
+ StopOwnedService
+ $script:stopped=$true
+}
 $mutex=[Threading.Mutex]::new($false,('Global\ConwuFreshInstallTransaction-'+$serviceName))
 if(-not $mutex.WaitOne(0)){$mutex.Dispose();throw '另一个全新安装任务正在运行。'}
 try {
  $guardState=StartDriverGuard;$guard=$guardState.process;$guardInfo=$guardState.info;$guardStarted=$guardState.started;AssertDriverGuard
- Copy-Item -LiteralPath $data -Destination (Join-Path $evidence 'data-before-stop') -Recurse -Force
- if($wasRunning){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}
- if((Get-Service -Name $serviceName).Status -ne 'Stopped'){throw '服务尚未停止。'}
- $stopped=$true
+ # A running worker owns root and per-network runtime.lock files; atomic saves
+ # may also hold temporary files. Snapshot only after the exact old process
+ # exits, retaining every persistent file instead of skipping sharing errors.
+ StopForSnapshot
+ if(@(Get-ChildItem -LiteralPath $data -Force -Recurse|Where-Object {$_.Attributes -band [IO.FileAttributes]::ReparsePoint}).Count){throw '停止后的产品数据包含链接，无法安全备份。'}
  Copy-Item -LiteralPath $data -Destination (Join-Path $evidence 'data-stopped') -Recurse -Force
  Maintenance 'inspect';Maintenance 'release'
  Move-Item -LiteralPath $data -Destination $quarantine
@@ -161,17 +190,17 @@ try {
  $installed=$true
  VerifyRuntime (Join-Path $install 'app')
  RestoreServiceMode
- $indeterminate=$true;StopDriverGuard;$indeterminate=$false
+ $indeterminate=$true;$indeterminateResult='guard-release-indeterminate';StopDriverGuard;$indeterminate=$false
  'installed'|Set-Content -LiteralPath (Join-Path $evidence 'result.txt')
  Write-Output "全新安装完成。旧数据：$quarantine；备份：$evidence"
 } catch {
  $original=$_
- if($indeterminate){'msi-indeterminate'|Set-Content -LiteralPath (Join-Path $evidence 'result.txt');throw $original}
+ if($indeterminate){$indeterminateResult|Set-Content -LiteralPath (Join-Path $evidence 'result.txt');throw $original}
  $restoreErrors=[Collections.Generic.List[string]]::new()
  if($stopped){
   $safeToRestore=$true
-  try {$currentService=Get-Service -Name $serviceName -ErrorAction SilentlyContinue;if($currentService -and $currentService.Status -ne 'Stopped'){Stop-Service -Name $serviceName -ErrorAction Stop;(Get-Service -Name $serviceName).WaitForStatus('Stopped',[TimeSpan]::FromSeconds(60))}}catch{$safeToRestore=$false;$restoreErrors.Add('停止新服务：'+$_.Exception.Message)}
-  if(-not $safeToRestore){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "切换失败且新服务未停止，已保留旧数据，未执行恢复：$evidence；$($original.Exception.Message)"}
+  try {$currentService=Get-Service -Name $serviceName -ErrorAction SilentlyContinue;if($currentService){StopOwnedService}}catch{$safeToRestore=$false;$restoreErrors.Add('停止新服务：'+$_.Exception.Message)}
+  if(-not $safeToRestore){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');if($indeterminate){$indeterminateResult|Set-Content -LiteralPath (Join-Path $evidence 'result.txt')};throw "切换失败且新服务未停止，已保留旧数据，未执行恢复：$evidence；$($original.Exception.Message)"}
   try {if((Get-MsiProductState $candidateProduct) -in @(3,4,5)){RunMsi @('/x',$candidateProduct) (Join-Path $evidence 'candidate-remove.log')}}catch{$restoreErrors.Add('查询或卸载候选 MSI：'+$_.Exception.Message)}
   if($restoreErrors.Count){$restoreErrors|Set-Content -LiteralPath (Join-Path $evidence 'rollback-errors.txt');throw "卸载候选版本失败，保留旧数据未恢复：$evidence；$($original.Exception.Message)"}
   if($moved){try {if(Test-Path -LiteralPath $data){Move-Item -LiteralPath $data -Destination (Join-Path $evidence 'failed-new-data')};Move-Item -LiteralPath $quarantine -Destination $data}catch{$restoreErrors.Add('恢复数据：'+$_.Exception.Message)}}
