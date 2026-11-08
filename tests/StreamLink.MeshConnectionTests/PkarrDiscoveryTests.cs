@@ -23,6 +23,11 @@ static partial class Program
         string key=PkarrPacket.PublicKey(seed),source="pkarr://"+key;
         Check(Convert.ToHexString(PkarrPacket.DecodeKey(key)).Equals("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",StringComparison.OrdinalIgnoreCase),"PKARR Ed25519 public key matches RFC 8032 independently published vector");
         ExistingEntryResolver.Validate([new(ExistingEntry.NetworkOwner,source)]);
+        var full=new UiNetworkSettings{ConnectionSource="existing",DirectMode=true,ExistingEntries=Enumerable.Range(1,12).Select(i=>new ExistingEntry(0,$"203.0.113.{i}:8436")).ToArray()};
+        Check(ConnectionSettings.Normalize(full).ExistingEntries.Length==12,"existing twelve-source configurations remain valid when PKARR is disabled");
+        bool capacity=false;try{ConnectionSettings.Normalize(full with{PkarrPublish=true});}catch(FormatException ex){capacity=ex.Message.Contains("11 项本机入口");}
+        Check(capacity,"PKARR source capacity is checked before saving rather than failing during approval");
+        Check(ConnectionSettings.Normalize(full with{PkarrPublish=true,ExistingEntries=full.ExistingEntries.Take(11).ToArray()}).PkarrPublish,"eleven sources leave room for the signed discovery hint");
         long now=DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()*1000;var announcement=new PkarrAnnouncement(1,"faketcp",DateTimeOffset.UtcNow.AddHours(1).ToUnixTimeSeconds(),["203.0.113.1:8436"]);
         byte[] packet=PkarrPacket.Create(seed,now,announcement);
         Check(PkarrPacket.Read(key,packet,DateTimeOffset.UtcNow).Announcement.Endpoints.Single()=="203.0.113.1:8436","real signed PKARR DNS TXT payload round-trips");
