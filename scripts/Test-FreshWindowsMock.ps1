@@ -24,7 +24,7 @@ function Get-Service {param($Name,$ErrorAction) $o=[pscustomobject]@{Status=$glo
 function Stop-Service {param($Name,$ErrorAction) $global:events.Add('stop');$global:svc='Stopped'}
 function Start-Service {param($Name,$ErrorAction) $global:events.Add('start');$global:svc='Running'}
 function Set-Service {param($Name,$StartupType) $global:events.Add('startup:'+ $StartupType);$global:svcMode=if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType}}
-function Get-NetAdapter {param([switch]$IncludeHidden) [pscustomobject]@{InterfaceGuid=$global:guardGuid;InterfaceDescription='StreamLink Tunnel'}}
+function Get-NetAdapter {param([switch]$IncludeHidden) if($null -ne $global:adapterGuidRows){return $global:adapterGuidRows};[pscustomobject]@{InterfaceGuid=$global:guardGuid.ToString('B').ToUpperInvariant();InterfaceDescription='StreamLink Tunnel'}}
 function Get-PnpDevice {param([switch]$PresentOnly,$InstanceId,$ErrorAction) [pscustomobject]@{InstanceId=$InstanceId}}
 function Start-Process {param($FilePath,$ArgumentList,$WindowStyle,[switch]$PassThru,[switch]$Wait)
  if($FilePath -like '*maintenance-runtime*ConWU.exe'){
@@ -67,3 +67,29 @@ $global:events.Clear();$global:simulateTimeout=$true;$global:svc='Running';$glob
 try {& $script -CandidateMsi $candidate -CandidateHash (Get-FileHash $candidate).Hash -RollbackMsi $previous -RollbackHash (Get-FileHash $previous).Hash -MaintenanceExe $maintenance -MaintenanceHash (Get-FileHash $maintenance).Hash -ExpectedManifestHash (Get-FileHash $candidateManifest).Hash -ExpectedCommit ('a'*40) -BackupParent $backup -ValidationInstance $global:testValidation;throw '模拟超时未触发'}catch {if($_.Exception.Message -notmatch 'MSI 尚在运行'){throw}}
 if(-not $global:events.Contains('msi-pending') -or $global:events.Contains('guard-stop') -or $global:events.Contains('uninstall-candidate') -or (Test-Path -LiteralPath $global:guardStop)){throw 'MSI 未定状态没有保留保护网卡或启动了回退'}
 Write-Output 'PASS 模拟 Windows MSI 降级顺序、validation 隔离及超时保留 guard；没有操作真实服务。'
+# Exercise the real guard predicate with actual CIM string formats, typed GUIDs,
+# malformed unrelated rows and missing/duplicate ownership; no MSI is launched.
+$tokens=$null;$parseErrors=$null
+$ast=[Management.Automation.Language.Parser]::ParseInput($source,[ref]$tokens,[ref]$parseErrors)
+$definition=$ast.Find({param($node)$node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'AssertDriverGuard'},$true)
+if($parseErrors.Count -or -not $definition){throw '无法提取正式保护检查函数'}
+$checkGuard=[scriptblock]::Create($definition.Extent.Text+"`nAssertDriverGuard")
+$guardInfo=Get-Content -Raw -LiteralPath $global:guardReport|ConvertFrom-Json
+$fixtureGuardStart=[DateTime]$guardInfo.StartedAt
+$guardScope=$global:guardScope;$guardStarted=$fixtureGuardStart.ToString('O');$serviceName=$global:testService;$data=$global:testData;$evidence=$root
+$guard=[pscustomobject]@{HasExited=$false;Id=321;StartTime=$fixtureGuardStart};$guard|Add-Member ScriptMethod Refresh {}
+$junk=@([pscustomobject]@{InterfaceGuid=$null},[pscustomobject]@{InterfaceGuid='not-a-guid'},[pscustomobject]@{InterfaceGuid=[guid]::NewGuid().ToString('B')})
+foreach($representation in @($global:guardGuid,$global:guardGuid.ToString('B').ToUpperInvariant(),$global:guardGuid.ToString('D').ToLowerInvariant())){
+ $global:adapterGuidRows=$junk+@([pscustomobject]@{InterfaceGuid=$representation;InterfaceDescription='StreamLink Tunnel'})
+ & $checkGuard
+}
+foreach($invalidRows in @(@($junk),@([pscustomobject]@{InterfaceGuid=$global:guardGuid.ToString('B')},[pscustomobject]@{InterfaceGuid=$global:guardGuid.ToString('D')}))){
+ $global:adapterGuidRows=$invalidRows;$rejected=$false
+ try{& $checkGuard}catch{if($_.Exception.Message -notmatch '保护网卡接口不可确认'){throw};$rejected=$true}
+ if(-not $rejected){throw '缺失或重复的保护 GUID 被接受'}
+}
+$guardInfo.InterfaceGuid='invalid-guid';$rejected=$false
+try{& $checkGuard}catch{if($_.Exception.Message -notmatch '保护网卡 GUID 无效'){throw};$rejected=$true}
+if(-not $rejected){throw '无效保护报告 GUID 被接受'}
+$global:adapterGuidRows=$null
+Write-Output 'PASS 真实CIM格式、大小写、Guid对象及无效/重复/缺失GUID的所有权检查。'

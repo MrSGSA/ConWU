@@ -36,6 +36,6 @@ if(-not $process.WaitForExit(90000) -or -not (Test-Path -LiteralPath ($report+'.
 $stopped=Get-Content -Raw -LiteralPath ($report+'.stopped')|ConvertFrom-Json
 if($stopped.Status -ne 'Stopped' -or $stopped.Scope -cne $scope -or $stopped.ProcessId -ne $r.ProcessId -or $stopped.StartedAt -ne $r.StartedAt){throw 'guard 释放报告身份不匹配'}
 if(Get-PnpDevice -PresentOnly -InstanceId $expected -ErrorAction SilentlyContinue){throw "guard PnP 仍 present：$expected"}
-$after=@(Get-NetAdapter -IncludeHidden|Where-Object {$_.InterfaceGuid -ne [guid]$r.InterfaceGuid}|Sort-Object InterfaceGuid|Select-Object Name,InterfaceGuid,InterfaceDescription,Status)|ConvertTo-Json -Compress;$after|Set-Content -LiteralPath (Join-Path $Evidence 'adapters-after.json')
+$after=@(Get-NetAdapter -IncludeHidden|Where-Object {$adapterGuid=[guid]::Empty;-not ([guid]::TryParse([string]$_.InterfaceGuid,[ref]$adapterGuid) -and $adapterGuid -eq [guid]$r.InterfaceGuid)}|Sort-Object InterfaceGuid|Select-Object Name,InterfaceGuid,InterfaceDescription,Status)|ConvertTo-Json -Compress;$after|Set-Content -LiteralPath (Join-Path $Evidence 'adapters-after.json')
 if($before -cne $after){throw '外部网卡清单有变化'}
 @{status='Pass';scope=$scope;interfaceGuid=$r.InterfaceGuid;instance=$instance;checks=@('private DACL','short parent exited','invalid stop ignored','owned PnP absent','external inventory unchanged')}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $Evidence 'result.json')
