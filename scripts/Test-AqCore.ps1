@@ -33,6 +33,7 @@ try {
  Run 'native-parser' (Join-Path $repo 'out/native/udp2raw-parser-test.exe') @() 120 @{STREAMLINK_PARSER_CORPUS=(Join-Path $OutputDirectory 'parser-corpus.txt')}
  Run 'native-so-state' (Join-Path $repo 'out/native/native-so-state-test.exe') @()
  Managed 'NativeInputTests' @((Join-Path $OutputDirectory 'parser-corpus.txt'))
+ Run 'fresh-windows-mock' 'pwsh' @('-NoProfile','-File','scripts/Test-FreshWindowsMock.ps1') 120
  foreach($name in @('Tests','PairingTests','WindowsTests','ConnectionTests','MappingTests','MeshTests','TraversalTests','MeshConnectionTests','MeshWatchTests','ControlTests','AdapterContractTests','Rc2PortableTests','QualityTests')){
   # This suite now also runs membership governance and creator-offline recovery.
   # Keep every case's own deadline; allow the sequential suite to finish.
