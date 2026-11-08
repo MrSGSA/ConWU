@@ -23,7 +23,7 @@ else
     flock -n 9 || { echo '另一个安装或卸载任务正在运行'; exit 1; }
 fi
 unit=/etc/systemd/system/streamlink.service
-if [[ -e $unit ]] && ! grep -q '^# StreamLink managed unit$' "$unit"; then echo '已有同名服务不是本安装器创建，请先核对。'; exit 1; fi
+if [[ -e $unit ]] && ! (sed 's/\r$//' "$unit" | grep -qx '# StreamLink managed unit'); then echo '已有同名服务不是本安装器创建，请先核对。'; exit 1; fi
 if [[ -e /usr/local/bin/streamlink || -L /usr/local/bin/streamlink ]]; then
     [[ $(readlink /usr/local/bin/streamlink) == /opt/streamlink/current/streamlink ]] || { echo '/usr/local/bin/streamlink 已被其他程序占用'; exit 1; }
 fi

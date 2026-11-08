@@ -10,7 +10,7 @@ bundle=$(realpath -e -- "$1"); expected=${2,,}; parent=$(realpath -e -- "$3")
 [[ $bundle != /opt/streamlink/* && $bundle != /var/lib/streamlink/* && $parent != /opt/streamlink* && $parent != /var/lib/streamlink* ]] || { echo '包和备份不能位于产品安装或数据目录内' >&2; exit 1; }
 [[ ! -L /opt/streamlink && ! -L /opt/streamlink/releases && ! -L /var/lib/streamlink && ! -L /etc/systemd/system/streamlink.service ]] || { echo '拒绝产品路径符号链接' >&2; exit 1; }
 unit=/etc/systemd/system/streamlink.service
-[[ -f $unit ]] && grep -qx '# StreamLink managed unit' "$unit" || { echo '现有服务不属于本安装器，停止操作' >&2; exit 1; }
+[[ -f $unit ]] && (sed 's/\r$//' "$unit" | grep -qx '# StreamLink managed unit') || { echo '现有服务不属于本安装器，停止操作' >&2; exit 1; }
 [[ -d /var/lib/streamlink && -L /opt/streamlink/current ]] || { echo '未找到完整的现有实例' >&2; exit 1; }
 old=$(readlink -f -- /opt/streamlink/current)
 [[ $old == /opt/streamlink/releases/* && -d $old && ! -L $old ]] || { echo '现有版本目录不符合预期' >&2; exit 1; }
