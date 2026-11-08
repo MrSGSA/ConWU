@@ -16,7 +16,7 @@ static partial class Program
             var mesh=scenario.EndsWith("guest")?guest:owner;
             var original=new DeviceProfile{Mesh=mesh,Enabled=false,ConnectionSource="existing",DeviceName="Offline preserved",LogLevel="debug",
                 ExistingEntries=[new(0,"203.0.113.5:44680"),new(ExistingEntry.Network,"https://entries.example.test/streamlink?token=fixture")],
-                EntryRefreshSeconds=300,RequestedVirtualIp="10.73.74.9",CloudflareDdnsToken="fixture-offline-ddns-token-1234567",JoinedEntryNetwork=mesh.Pair.Network,JoinedEntrySources=[new(ExistingEntry.Network,"203.0.113.7:44680")]};
+                EntryRefreshSeconds=300,RequestedVirtualIp="10.73.74.9",PkarrSeed=PkarrPacket.NewSeed(),JoinedEntryNetwork=mesh.Pair.Network,JoinedEntrySources=[new(ExistingEntry.Network,"203.0.113.7:44680")]};
             if(scenario=="pending-close")original.PendingMembership=new(MeshGovernance.Head(mesh.Directory!),MeshGovernance.Change(mesh,"close"),"close");
             store.Save(original);
             using var worker=new ControlWorker();
@@ -35,13 +35,13 @@ static partial class Program
             Check(result.Ok&&watch.ElapsedMilliseconds<2000&&result.Status!.NetworkId.Length==0,"unreachable coordinator cannot block a local exit: "+scenario);
             var after=result.Status!;var saved=store.Load();
             Check(closing.Closed==0&&closing.Disposed,"local exit discards pairing resources without a network cleanup request: "+scenario);
-            Check(JsonSerializer.Serialize(before.Settings)==JsonSerializer.Serialize(after.Settings)&&before.SettingsRevision==after.SettingsRevision&&saved.CloudflareDdnsToken==original.CloudflareDdnsToken,"local exit preserves complete settings and DNS credentials: "+scenario);
+            Check(JsonSerializer.Serialize(before.Settings)==JsonSerializer.Serialize(after.Settings)&&before.SettingsRevision==after.SettingsRevision&&saved.PkarrSeed==original.PkarrSeed,"local exit preserves complete settings and protected discovery identity: "+scenario);
             Check(saved.Mesh==null&&!saved.Enabled&&saved.PendingMembership==null&&saved.JoinedEntryNetwork.Length==0&&saved.JoinedEntrySources.Length==0&&(saved.RejoinCredential!=null)==retainProof,"local exit clears active state and retains only an authorized rejoin proof: "+scenario);
             string backup=Directory.GetFiles(ProfileStore.Root,"profile-before-local-exit-*").Single(p=>!priorBackups.Contains(p));
             byte[] protectedBytes=File.ReadAllBytes(backup);
             byte[] clearBytes=OperatingSystem.IsLinux()?protectedBytes:ProtectedData.Unprotect(protectedBytes,"StreamLink-profile-v2"u8.ToArray(),DataProtectionScope.LocalMachine);
             var retained=JsonSerializer.Deserialize<DeviceProfile>(clearBytes)!;
-            Check(retained.Mesh?.Pair.Network==mesh.Pair.Network&&retained.CloudflareDdnsToken==original.CloudflareDdnsToken,"local exit creates an actual protected network backup: "+scenario);
+            Check(retained.Mesh?.Pair.Network==mesh.Pair.Network&&retained.PkarrSeed==original.PkarrSeed,"local exit creates an actual protected network backup: "+scenario);
             var changed=after.Settings! with{Service="https://new.example.test/",CertificatePin=""};
             var edit=await worker.HandleUi(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:changed,ExpectedRevision:after.SettingsRevision)),sid,default);
             Check(edit.Ok&&edit.Status!.Settings!.Service==changed.Service,"coordination settings unlock immediately after offline exit: "+scenario);

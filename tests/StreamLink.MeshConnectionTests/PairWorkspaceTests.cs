@@ -53,45 +53,32 @@ static partial class Program
             Check(summary.Networks.Select(n=>n.Status.Settings!.ListenPort).Distinct().Count()==1&&summary.Networks.Select(n=>n.Status.Settings!.SourcePort).Distinct().Count()==2&&probes==0,"compatible receivers share one port with separate source ownership and no autonomous probing");
             var originalDefaults=summary.DeviceSettings!;
             foreach(string source in new[]{"198.51.100.42:45120","https://entry.example.test/current.txt"}){
-                var beforeDefaults=(await Ui(new("status"))).Status!;
                 var fixedEntry=originalDefaults with{PathSelection="udp-only",ExistingEntries=[new(0,source)]};
-                var setDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
-                    SettingsBatch=new(new("settings",Settings:fixedEntry,ExpectedRevision:beforeDefaults.DeviceSettingsRevision,ConfirmReplace:true),[])
-                });Check(setDefaults.Ok,setDefaults.Error);
+                var setDefaults=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",Name:"Pinned UDP",Settings:fixedEntry)));Check(setDefaults.Ok,setDefaults.Error);
+                string pinnedConfiguration=setDefaults.ConfigurationId;
                 string folder=Path.Combine(ProfileStore.Root,"networks");
                 var directories=Directory.GetDirectories(folder).Order().ToArray();
                 string savedDefaults=JsonSerializer.Serialize(store.Load());
                 int adaptersBefore;lock(adapters)adaptersBefore=adapters.Count;
-                var conflict=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Pinned entry conflict"}));
-                Check(!conflict.Ok&&conflict.Error.Contains("接收端口")&&conflict.Error.Contains("设备默认"),"incompatible listener rejects a fixed or subscription entry instead of silently changing the published port");
+                var conflict=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Pinned entry conflict",ConfigurationId=pinnedConfiguration}));
+                Check(!conflict.Ok&&conflict.Error.Contains("接收端口")&&conflict.Error.Contains("连接配置"),"incompatible listener rejects a fixed or subscription entry instead of silently changing the published port");
                 Check(conflict.Status!.Networks.Length==2&&directories.SequenceEqual(Directory.GetDirectories(folder).Order())&&JsonSerializer.Serialize(store.Load())==savedDefaults,
                     "listener conflict leaves no network reservation and preserves the saved device settings");
                 lock(adapters)Check(adapters.Count==adaptersBefore,"rejected listener allocation does not open a network adapter");
                 Check(conflict.Status.Networks.All(n=>n.Status.NetworkEnabled&&n.Status.Settings!.ListenPort==45120&&n.Status.Settings.PathSelection=="faketcp-only")&&probes==0,
                     "listener conflict keeps both existing networks and their protocol active without autonomous probing");
-                var currentDefaults=(await Ui(new("status"))).Status!;
-                var restoreDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
-                    SettingsBatch=new(new("settings",Settings:originalDefaults,ExpectedRevision:currentDefaults.DeviceSettingsRevision,ConfirmReplace:true),[])
-                });Check(restoreDefaults.Ok,restoreDefaults.Error);
+                var restoreDefaults=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("delete",pinnedConfiguration,ExpectedRevision:1)));Check(restoreDefaults.Ok,restoreDefaults.Error);
             }
-            var beforeIndependent=(await Ui(new("status"))).Status!;
             var independentSettings=originalDefaults with{PathSelection="udp-only",ListenPort=45130,ExistingEntries=[new(0,"198.51.100.42:45130")]};
-            var independentDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
-                SettingsBatch=new(new("settings",Settings:independentSettings,ExpectedRevision:beforeIndependent.DeviceSettingsRevision,ConfirmReplace:true),[])
-            });Check(independentDefaults.Ok,independentDefaults.Error);
-            var independent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Independent UDP port"}));
+            var independentDefaults=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",Name:"Independent UDP",Settings:independentSettings)));Check(independentDefaults.Ok,independentDefaults.Error);
+            var independent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct",Mode:"udp"){Name="Independent UDP port",ConfigurationId=independentDefaults.ConfigurationId}));
             Check(independent.Ok,independent.Error);string independentId=independent.Status!.SelectedNetworkId;
             Check(independent.Status.Settings!.ListenPort==45130&&independent.Status.Settings.SourcePort is not (45121 or 45123)&&independent.Status.Settings.ExistingEntries.Single().Source=="198.51.100.42:45130",
                 "an explicit independent receiver permits another protocol and allocates only its colliding outgoing source port");
             await Until(()=>{lock(adapters)return adapters.Count==3;},"independent protocol adapter opens");
             var closeIndependent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("forget-network",ExpectedNetwork:independent.Status.NetworkId,ConfirmReplace:true)){NetworkId=independentId});
-            Check(closeIndependent.Ok,closeIndependent.Error);
-            var removeIndependent=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("remove-network",ConfirmReplace:true)){NetworkId=independentId});
-            Check(removeIndependent.Ok&&removeIndependent.Status!.Networks.Length==2,"independent protocol cleanup retains both compatible networks");
-            var defaultsNow=(await Ui(new("status"))).Status!;
-            var resetDefaults=await Ui(new("save-settings",OperationId:Guid.NewGuid()){
-                SettingsBatch=new(new("settings",Settings:originalDefaults,ExpectedRevision:defaultsNow.DeviceSettingsRevision,ConfirmReplace:true),[])
-            });Check(resetDefaults.Ok,resetDefaults.Error);
+            Check(closeIndependent.Ok&&closeIndependent.Status!.Networks.Length==2,"independent protocol cleanup removes its local record and retains both compatible networks");
+            var resetDefaults=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("delete",independentDefaults.ConfigurationId,ExpectedRevision:1)));Check(resetDefaults.Ok,resetDefaults.Error);
             var late=await Ui(new("status",OperationId:firstOperation));Check(late.Status!.SelectedNetworkId==firstId,"operation polling resolves an originally empty creation target");
             var unknown=await Ui(new("stop"){NetworkId=Guid.NewGuid().ToString("N")});Check(!unknown.Ok&&unknown.Status!.Networks.All(n=>n.Status.NetworkEnabled),"an invalid network target cannot stop another connection");
             int disposedBeforeFirstExit;lock(adapters)disposedBeforeFirstExit=adapters.Count(a=>a.Disposed);
@@ -101,39 +88,50 @@ static partial class Program
             Check(store.Load().Mesh==null&&store.Load().ListenPort==45120,"network creation and exit preserve device defaults");
             var renamed=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("rename-network",ExpectedNetwork:secondNetwork){Name="Second renamed"}){NetworkId=secondId});
             Check(renamed.Ok&&renamed.Status!.Networks.Single(n=>n.Id==secondId).Name=="Second renamed","network names persist independently from authenticated identities");
-            var settingsBefore=renamed.Status!;var changed=settingsBefore.Settings! with{EntryRefreshSeconds=123,Ddns=new(false,"ddns.example.test")};
-            var saveRequest=new UiControlRequest("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:changed,ExpectedRevision:settingsBefore.SettingsRevision){ExpectedDeviceRevision=settingsBefore.DeviceSettingsRevision}){NetworkId=secondId};
-            var saved=await Ui(saveRequest);Check(saved.Ok,saved.Error);
-            Check(saved.Status!.Settings!.EntryRefreshSeconds==123&&store.Load().EntryRefreshSeconds==60&&store.Load().Ddns.Domain=="ddns.example.test","one save separates per-network options from shared DDNS settings");
-            Check(saved.Status.Networks.Single(n=>n.Id==firstId).Status.Settings!.EntryRefreshSeconds==60&&saved.Status.Networks.All(n=>n.Status.Settings!.Ddns!.Domain=="ddns.example.test"),"shared settings refresh all contexts without overwriting their independent options");
-            var duplicateSave=await Ui(saveRequest);Check(duplicateSave.Ok,"settings transaction replay returns its completed result");
-            var previousDefault=store.Load();var current=saved.Status;
-            var rejected=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("settings",Settings:current.Settings! with{EntryRefreshSeconds=456,Ddns=new(false,"different.example.test")},ExpectedRevision:current.SettingsRevision){ExpectedDeviceRevision="stale"}){NetworkId=secondId});
-            Check(!rejected.Ok&&store.Load().Ddns==previousDefault.Ddns&&rejected.Status!.Settings!.EntryRefreshSeconds==123,"stale shared revision rejects the entire settings transaction");
+            var configuration=renamed.Status!.Configurations.Single();
+            var saveRequest=new UiControlRequest("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",configuration.Id,configuration.Name,configuration.Revision,configuration.Settings with{EntryRefreshSeconds=123},true));
+            var saved=await Ui(saveRequest);Check(saved.Ok,saved.Error);configuration=saved.Status!.Configurations.Single();
+            var deviceBefore=(await Ui(new("status"))).Status!;
+            var deviceSave=new UiControlRequest("save-settings",OperationId:Guid.NewGuid()){
+                SettingsBatch=new(new("settings",Settings:deviceBefore.DeviceSettings!,ExpectedRevision:deviceBefore.DeviceSettingsRevision,ConfirmReplace:true){Patch=new(DeviceName:"Shared device")},[])
+            };
+            var shared=await Ui(deviceSave);Check(shared.Ok,shared.Error);
+            Check(shared.Status!.Networks.Single().Status.Settings!.EntryRefreshSeconds==123&&store.Load().EntryRefreshSeconds==60&&store.Load().DeviceName=="Shared device","connection configuration and global device settings persist independently");
+            Check(shared.Status.Networks.All(n=>n.Status.DeviceName=="Shared device"),"global device settings refresh every context without rewriting connection configurations");
+            var duplicateSave=await Ui(saveRequest);Check(duplicateSave.Ok&&duplicateSave.Status!.Configurations.Single().Revision==configuration.Revision,"configuration transaction replay returns its completed result without another revision");
+            var rejected=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",configuration.Id,configuration.Name,1,configuration.Settings with{EntryRefreshSeconds=456},true)));
+            Check(!rejected.Ok&&store.Load().DeviceName=="Shared device"&&rejected.Status!.Networks.Single().Status.Settings!.EntryRefreshSeconds==123,"stale configuration revision rejects the entire transaction");
             var removed=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("remove-network",ExpectedNetwork:firstNetwork,ConfirmReplace:true)){NetworkId=firstId});
             Check(!removed.Ok,"a stale removal confirmation cannot delete a changed network profile");
             var removedNow=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("remove-network",ExpectedNetwork:"",ConfirmReplace:true)){NetworkId=firstId});
-            Check(removedNow.Ok&&removedNow.Status!.Networks.Length==1,"explicit profile removal releases only the selected empty configuration");
+            Check(!removedNow.Ok&&removedNow.Status!.Networks.Length==1,"an already removed local record cannot redirect removal to another network");
             int previousCount=removedNow.Status!.Networks.Length;
             var failed=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("join-entry"){Entry="not an endpoint",Name="Bad join"}));
             Check(!failed.Ok&&failed.Status!.Networks.Length==previousCount,"a failed initial join does not retain an empty configuration or consume a network slot");
-            var third=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct"){Name="Third"}));Check(third.Ok,third.Error);
+            var copy=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("copy",configuration.Id,"Third settings",configuration.Revision)));Check(copy.Ok,copy.Error);
+            string copyId=copy.ConfigurationId;
+            var third=await Ui(new("network",OperationId:Guid.NewGuid(),Network:new("create-direct"){Name="Third",ConfigurationId=copyId}));Check(third.Ok,third.Error);
             string thirdId=third.Status!.SelectedNetworkId;
-            var deviceBefore=(await Ui(new("status"))).Status!;
+            var changed=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",configuration.Id,configuration.Name,configuration.Revision,configuration.Settings with{EntryRefreshSeconds=222},true)));Check(changed.Ok,changed.Error);
+            configuration=changed.Status!.Configurations.Single(c=>c.Id==configuration.Id);
+            var independentConfiguration=changed.Status.Configurations.Single(c=>c.Id==copyId);
+            changed=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",copyId,independentConfiguration.Name,independentConfiguration.Revision,independentConfiguration.Settings with{EntryRefreshSeconds=333},true)));Check(changed.Ok,changed.Error);
+            Check(changed.Status!.Networks.Single(n=>n.Id==secondId).Status.Settings!.EntryRefreshSeconds==222&&changed.Status.Networks.Single(n=>n.Id==thirdId).Status.Settings!.EntryRefreshSeconds==333,"independent saved configurations update only their selected networks");
+            deviceBefore=(await Ui(new("status"))).Status!;
             var secondBefore=(await Ui(new("status"){NetworkId=secondId})).Status!;
             var thirdBefore=(await Ui(new("status"){NetworkId=thirdId})).Status!;
             UiNetworkAction Local(UiStatusDto status,int refresh)=>new("settings",Settings:status.Settings! with{EntryRefreshSeconds=refresh},ExpectedRevision:status.SettingsRevision);
             var batchRequest=new UiControlRequest("save-settings",OperationId:Guid.NewGuid()){
-                NetworkId=secondId,SettingsBatch=new(new("settings",Settings:deviceBefore.Settings! with{Ddns=new(false,"batch.example.test")},ExpectedRevision:deviceBefore.SettingsRevision),
-                    [new(Local(secondBefore,222),secondId),new(Local(thirdBefore,333),thirdId)])
+                NetworkId=secondId,SettingsBatch=new(new("settings",Settings:deviceBefore.DeviceSettings!,ExpectedRevision:deviceBefore.DeviceSettingsRevision){Patch=new(DeviceName:"Must not commit")},
+                    [new(Local(secondBefore,444),secondId),new(Local(thirdBefore,555),thirdId)])
             };
-            var batchSaved=await Ui(batchRequest);Check(batchSaved.Ok,batchSaved.Error);
-            Check(batchSaved.Status!.Networks.Single(n=>n.Id==secondId).Status.Settings!.EntryRefreshSeconds==222&&batchSaved.Status.Networks.Single(n=>n.Id==thirdId).Status.Settings!.EntryRefreshSeconds==333&&store.Load().Ddns.Domain=="batch.example.test","one global settings transaction commits every network draft and shared configuration");
-            var batchReplay=await Ui(batchRequest);Check(batchReplay.Ok,"global settings response loss does not repeat writes");
-            secondBefore=(await Ui(new("status"){NetworkId=secondId})).Status!;thirdBefore=(await Ui(new("status"){NetworkId=thirdId})).Status!;
-            var bad=Local(thirdBefore,555) with{Settings=thirdBefore.Settings! with{SourcePort=thirdBefore.Settings.ListenPort,EntryRefreshSeconds=555}};
-            var rollback=await Ui(new("save-settings",OperationId:Guid.NewGuid()){NetworkId=secondId,SettingsBatch=new(null,[new(Local(secondBefore,444),secondId),new(bad,thirdId)])});
-            Check(!rollback.Ok&&rollback.Status!.Networks.Single(n=>n.Id==secondId).Status.Settings!.EntryRefreshSeconds==222&&rollback.Status.Networks.Single(n=>n.Id==thirdId).Status.Settings!.EntryRefreshSeconds==333,"a later invalid network rolls back all earlier settings in the global transaction");
+            var batchSaved=await Ui(batchRequest);
+            Check(!batchSaved.Ok&&batchSaved.Error.Contains("连接配置")&&store.Load().DeviceName=="Shared device"&&batchSaved.Status!.Networks.Single(n=>n.Id==secondId).Status.Settings!.EntryRefreshSeconds==222&&batchSaved.Status.Networks.Single(n=>n.Id==thirdId).Status.Settings!.EntryRefreshSeconds==333,"a legacy batch cannot bypass configuration references or partially update device settings");
+            var batchReplay=await Ui(deviceSave);Check(batchReplay.Ok&&store.Load().DeviceName=="Shared device","global settings response loss does not repeat writes");
+            var assigned=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("assign",configuration.Id,ExpectedRevision:configuration.Revision,ConfirmReconnect:true)){NetworkId=thirdId});Check(assigned.Ok,assigned.Error);
+            var portsBefore=assigned.Status!.Networks.ToDictionary(n=>n.Id,n=>n.Status.Settings!.SourcePort);
+            var rollback=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",configuration.Id,configuration.Name,configuration.Revision,configuration.Settings with{SourcePort=65535,EntryRefreshSeconds=444},true)));
+            Check(!rollback.Ok&&rollback.Status!.Configurations.Single(c=>c.Id==configuration.Id).Revision==configuration.Revision&&rollback.Status.Networks.All(n=>n.Status.Settings!.EntryRefreshSeconds==222&&n.Status.Settings.SourcePort==portsBefore[n.Id]),"a later consumer allocation failure preserves the shared revision and every earlier network setting");
         }finally{await worker.StopLocal();}
         Console.WriteLine($"PASS {checks} pair workspace checks");
     }

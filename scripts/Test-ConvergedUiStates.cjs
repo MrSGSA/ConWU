@@ -13,7 +13,7 @@ const clone=x=>JSON.parse(JSON.stringify(x)),commands=[],checks=[],errors=[];
 const check=(value,name)=>{if(!value)throw Error(name);checks.push(name);console.log('CHECK '+checks.length+' '+name)};
 const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {promise,resolve}};
 async function within(promise,name){let timer;try{return await Promise.race([promise,new Promise((_,reject)=>timer=setTimeout(()=>reject(Error('Timed out: '+name)),15000))]);}finally{clearTimeout(timer)}}
-let saveGate,saveStarted,editorGate,editorStarted,pollStarted=deferred(),probeId='',staleModel;
+let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollStarted=deferred(),probeId='',staleModel;
 (async()=>{
  const browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.on('pageerror',e=>errors.push(e.message));
@@ -32,6 +32,8 @@ let saveGate,saveStarted,editorGate,editorStarted,pollStarted=deferred(),probeId
    }else if(body.configuration?.action==='save'){
     editorStarted?.resolve();await editorGate?.promise;
     model={...model,configurations:model.configurations.map(c=>c.id===body.configuration.id?{...c,name:body.configuration.name,settings:body.configuration.settings,revision:c.revision+1}:c)};
+   }else if(body.method==='cancel'){
+    cancelStarted?.resolve();await cancelGate?.promise;
    }else if(body.network?.autoConfigure){
     model={...model,selectedNetworkId:'33333333333333333333333333333333',networks:[...model.networks,{id:'33333333333333333333333333333333',name:'连接 3',configurationId:'',status:{...base,pairing:{active:true,owner:false,direct:false,peerName:'新主机',verification:'123456',expires:Math.floor(Date.now()/1000)+300,state:'等待主机批准'}}}]};
    }else if(body.network?.action==='pair-poll'){
@@ -73,7 +75,9 @@ let saveGate,saveStarted,editorGate,editorStarted,pollStarted=deferred(),probeId
   check(await page.locator('[data-ui-action="choose-exit"]').isEnabled(),'exit remains available during a delayed pairing read');
   await page.locator('.nav[data-page="settings"]').click();await page.locator('#device-name').fill('新草稿');
   check(await page.locator('#save-device').isEnabled(),'background pairing does not lock unrelated settings');
-  await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="cancel-join"]').click();
+  await page.locator('.nav[data-page="join"]').click();cancelGate=deferred();cancelStarted=deferred();await page.locator('[data-ui-action="cancel-join"]').click();await within(cancelStarted.promise,'cancelling the old observation');
+  const reads=commands.filter(c=>c.network?.action==='pair-poll').length;await page.waitForTimeout(2500);
+  check(commands.filter(c=>c.network?.action==='pair-poll').length===reads,'a delayed foreground cancellation prevents new background observations from racing it');cancelGate.resolve();
   await page.locator('#join-code').waitFor();await page.waitForTimeout(1600);
   check(await page.locator('#join-code').isEnabled(),'cancelling restores pair-code input without a page reload');
   check(commands.some(c=>c.method==='cancel'&&c.cancelOperationId===probeId),'foreground cancel first cancels the old pairing operation by ID');
@@ -83,5 +87,5 @@ let saveGate,saveStarted,editorGate,editorStarted,pollStarted=deferred(),probeId
   fs.writeFileSync(path.join(output,'checks.json'),JSON.stringify({passed:true,checks,errors,scope:'Production assets with deterministic API delays; no real peers or public PKARR publication'},null,2));
   console.log('PASS '+checks.length+' production-UI slow-API checks');
  }catch(error){await page.screenshot({path:path.join(output,'failure.png'),fullPage:true});console.error(error.stack);console.error(errors);process.exitCode=1;}
- finally{saveGate?.resolve();editorGate?.resolve();await browser.close();}
+ finally{saveGate?.resolve();editorGate?.resolve();cancelGate?.resolve();await browser.close();}
 })();

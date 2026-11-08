@@ -44,7 +44,7 @@ static partial class Program
                 var replacing=CopyMesh(a);var replacement=MeshIdentity.Replace(replacing,b.Self);
                 var otherManager=CopyMesh(c);otherManager.Directory=replacing.Directory;
                 Check(MeshRejoin.Resolve(otherManager,proven,"123456",exchange.Commitment)==replacement.Member,"different manager recognizes prior rejoin lineage without a creator-local journal");
-                var binding=new DeviceProfile{Mesh=otherManager,SavedPeerEntryNetwork=otherManager.Pair.Network,SavedNetworkSettings=new(){ExistingEntries=[new(b.Self.Slot,"203.0.113.5:44680")]}};
+                var binding=new DeviceProfile{Mesh=otherManager,ConnectionSource="existing",SavedPeerEntryNetwork=otherManager.Pair.Network,SavedNetworkSettings=new(){ConnectionSource="existing",ExistingEntries=[new(b.Self.Slot,"203.0.113.5:44680")]}};
                 Check(ControlWorker.RuntimeEntries(binding).Single().PeerSlot==replacement.Member.Slot&&binding.SavedNetworkSettings.ExistingEntries.Single().PeerSlot==b.Self.Slot,"another manager's replacement updates runtime entry binding without editing saved settings");
                 MeshIdentity.Revoke(otherManager,replacement.Member.Slot);
                 Check(MeshRejoin.Resolve(otherManager,proven,"123456",exchange.Commitment)==null,"explicit removal invalidates cross-member rejoin lineage");

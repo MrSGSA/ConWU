@@ -16,7 +16,7 @@ static partial class Program
         Check(feedback.Observe(peer,null,true,86467100).Connection!.ElapsedMs==0,"a successful reconnection starts a fresh duration instead of inheriting the old one");
         var owner=MeshIdentity.Create("https://example.com/","","faketcp");var former=Guest(owner).Self;
         var saved=new ExistingEntry(former.Slot,"203.0.113.42:44680");
-        var profile=new DeviceProfile{Mesh=owner,SavedPeerEntryNetwork=owner.Pair.Network,SavedNetworkSettings=new(){ExistingEntries=[saved]}};
+        var profile=new DeviceProfile{Mesh=owner,ConnectionSource="existing",SavedPeerEntryNetwork=owner.Pair.Network,SavedNetworkSettings=new(){ConnectionSource="existing",ExistingEntries=[saved]}};
         string original=System.Text.Json.JsonSerializer.Serialize(profile.SavedNetworkSettings);
         _=MeshIdentity.Replace(owner,former);var current=owner.Directory!.Members.Single(m=>m.Slot!=1);
         profile.RejoinHistory=MeshRejoin.Remember(owner,[],former,current);

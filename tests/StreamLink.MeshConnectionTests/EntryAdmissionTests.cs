@@ -43,8 +43,8 @@ static partial class Program
         string pin=Convert.ToHexString(SHA256.HashData(cert.RawData));
         var owner=MeshIdentity.Create(direct?"":url,direct?"":pin,"faketcp",direct:direct);
         if(!direct){MeshGovernance.Enable(owner);using var client=new MeshDiscoveryClient(owner);await client.CommitMembership(new("",owner.Directory!),default);}
-        var store=new ProfileStore();const string credential="fixture-secret-cloudflare-token-12345";
-        store.Save(new DeviceProfile{Mesh=owner,Enabled=true,DirectMode=direct,ConnectionSource="existing",CloudflareDdnsToken=credential});store.AuthorizeUiUser(sid);
+        var store=new ProfileStore();string credential=owner.OwnerPrivate;
+        store.Save(new DeviceProfile{Mesh=owner,Enabled=true,DirectMode=direct,ConnectionSource="existing"});store.AuthorizeUiUser(sid);
         IPEndPoint? listener=null;int gatewayCalls=0;
         var services=new MeshRuntimeServices(m=>direct?new DirectMeshDiscovery(m):new MeshDiscoveryClient(m),_=>Task.FromResult<IPacketAdapter>(new MemoryAdapter()),
             (_,_,_)=>{gatewayCalls++;throw new IOException("gateway must not run");},r=>{if(r.Server)listener=r.Target;return new PairTransport(r.Target);},
@@ -72,10 +72,10 @@ static partial class Program
             var enrolled=NetworkEntryEnrollment.Import(PairKeyExchange.DecryptInvitation(shared,delivered.Ciphertext,joined.Room,joined.Candidate,DirectPairWire.MaximumCipher));
             Check(enrolled.Mesh.Pair.Direct==direct&&enrolled.Mesh.LocalIp==pending.ProposedIp&&enrolled.Mesh.IsDecentralized==!direct,"entry delivers the approved network type, address and permissions");
             Check(JsonSerializer.Serialize(approved.Status!.Settings)==JsonSerializer.Serialize(before.Settings)&&gatewayCalls==0,"entry admission preserves settings and never starts autonomous punching in strict mode");
-            Check(!JsonSerializer.Serialize(await Status()).Contains(credential),"DDNS credential is absent from every ordinary UI snapshot");
+            Check(!JsonSerializer.Serialize(await Status()).Contains(credential),"host private key is absent from every ordinary UI snapshot");
             var hidden=await worker.HandleUi(new("ddns-token",OperationId:Guid.NewGuid()),"S-1-5-21-1-2-3-9999",default);
             var shown=await worker.HandleUi(new("ddns-token",OperationId:Guid.NewGuid()),sid,default);
-            Check(!hidden.Ok&&hidden.Credential==null&&shown.Credential==credential&&shown.Status==null&&!shown.ToString().Contains(credential),"only an authorized explicit reveal can read the locally stored token");
+            Check(!hidden.Ok&&hidden.Credential==null&&!shown.Ok&&shown.Credential==null,"retired DNS-token operation cannot reveal credentials even to an authorized UI");
             using var refusedKey=new PairKeyExchange();using var refusedClient=new DirectPairClient(_=>new PairTransport(listener!),entryAdmission:true);
             var refusedTicket=await refusedClient.Join(DirectPairWire.EntryLocator,refusedKey,"declined entry",default);
             await Until(()=>Status().GetAwaiter().GetResult().Status!.Pairing?.Candidate==refusedTicket.Candidate,"next entry request is accepted after the previous authorization delivery");
@@ -120,7 +120,7 @@ static partial class Program
             var change=await Ui(new("settings",Settings:joined.Status.Settings,ExpectedRevision:joined.Status.SettingsRevision){Patch=new(DeviceName:"renamed after join")});
             Check(change.Ok&&store.Load().UsesExistingEntriesOnly&&store.Load().ExistingEntries.Any(e=>e.Source=="203.0.113.42:44680"),"saving unrelated settings retains the authenticated runtime seed and never enables punching");
             Check(JsonSerializer.Serialize(change.Status!.Settings)==saved,"effective runtime entry choices do not leak into persisted UI preferences");
-            var crowded=store.Load();crowded.SavedNetworkSettings=crowded.SavedNetworkSettings! with{ExistingEntries=Enumerable.Range(1,12).Select(i=>new ExistingEntry(ExistingEntry.Network,$"203.0.113.{i}:45000")).ToArray()};
+            var crowded=store.Load();crowded.SavedNetworkSettings=crowded.SavedNetworkSettings! with{ConnectionSource="existing",ExistingEntries=Enumerable.Range(1,12).Select(i=>new ExistingEntry(ExistingEntry.Network,$"203.0.113.{i}:45000")).ToArray()};
             Check(ControlWorker.RuntimeEntries(crowded).Length==12&&ControlWorker.RuntimeEntries(crowded).Any(e=>e.Source=="203.0.113.42:44680")&&crowded.SavedNetworkSettings.ExistingEntries.Length==12,"runtime source limit reserves the successfully used join seed without changing twelve saved sources");
             crowded.SavedNetworkSettings=crowded.SavedNetworkSettings with{ExistingEntries=[new(1,"203.0.113.42:44680"),new(ExistingEntry.Network,"203.0.113.42:44680")]};
             var duplicate=ControlWorker.RuntimeEntries(crowded);

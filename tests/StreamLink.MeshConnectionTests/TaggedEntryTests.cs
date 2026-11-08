@@ -39,7 +39,9 @@ static partial class Program
         Check((await Resolve()).All(r=>r.Endpoints.Length==1),"duplicate tagged records do not consume endpoint slots");
         documents=["streamlink=203.0.113.3:44680"];http.Body=documents[0];
         Check((await Resolve()).All(r=>r.Endpoints.SequenceEqual(new[]{"203.0.113.3:44680"})),"changed tagged subscriptions resolve fresh endpoints after a previous failure");
-        foreach(string bad in new[]{"txt://shared.example.com/streamlink","txt://shared.example.com#other","https://shared.example.com/#other","https://shared.example.com/#other#streamlink"}) {
+        ExistingEntryResolver.Validate([new(0,"txt://shared.example.com#other"),new(0,"https://shared.example.com/#other")]);
+        Check(true,"custom host labels are accepted by both TXT and HTTPS sources");
+        foreach(string bad in new[]{"txt://shared.example.com/streamlink","txt://shared.example.com#1other","https://shared.example.com/#other.tag","https://shared.example.com/#other#streamlink"}) {
             bool rejected=false;try{ExistingEntryResolver.Validate([new(0,bad)]);}catch(FormatException){rejected=true;}
             Check(rejected,"unsupported selectors are rejected without an outbound request");
         }
