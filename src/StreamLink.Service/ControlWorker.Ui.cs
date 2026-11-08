@@ -28,14 +28,9 @@ public sealed partial class ControlWorker
             {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,IsDecentralized=p.Mesh?.IsDecentralized==true,CanManageNetwork=p.Mesh?.CanManage==true,EntryTargetSlot=p.Mesh is {IsDecentralized:true,Directory:{} d} equal?MeshGovernance.CurrentSlot(d,equal.IntroducerSlot):p.Mesh?.IntroducerSlot??1,PendingMembership=p.PendingMembership!=null,NetworkClosed=p.Mesh?.Directory?.Closed==true,
              Settings=PublicSettings(p),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),NetworkDirect=p.Mesh?.Pair.Direct==true,
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
-             NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),Desktop=networkContext?null:StartupSettings.Read(),Coordinator=Volatile.Read(ref coordinatorStatus),
-             Ddns=PublicDdns(p),DdnsCredentialConfigured=p.CloudflareDdnsToken.Length>0,
+             NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),EntryPreparation=p.Enabled&&meshRunner?.EntryPreparation is {} entry?entry with{Detail=PublicText(entry.Detail,p,400)}:null,Desktop=networkContext?null:StartupSettings.Read(),Coordinator=Volatile.Read(ref coordinatorStatus),
+
              QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
-    }
-    CloudflareDdnsStatus PublicDdns(DeviceProfile p)
-    {
-        CloudflareDdnsStatus status=!p.Ddns.Enabled?new("未启用","",""):p.Mesh==null?new("等待创建或加入网络","建立网络身份后生成本机 DNS 记录","加入同一网络后读取已授权成员入口"):!p.Enabled?new("本机网络已停止","启动连接后恢复地址发布和续期","启动连接后读取成员入口"):meshRunner?.DdnsStatus??new("等待启动网络","网络运行后按已保存设置发布","网络运行后读取已授权成员入口");
-        return status with {ThirdPartyRecordName=p.Ddns.Enabled&&p.Mesh!=null?ThirdPartyDdns.Name(p.Ddns.Domain,p.Mesh.Pair.Network,p.Mesh.Self.Device):""};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
         progress with { Detail = PublicText(progress.Detail,profile,400) };
@@ -44,10 +39,6 @@ public sealed partial class ControlWorker
     internal async Task<UiControlReply> HandleSingleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
-        if(request.Method=="ddns-token"&&request.Patch==null&&request.Network==null&&request.OperationId!=Guid.Empty){
-            var current=Volatile.Read(ref snapshot)!.Profile!;
-            return new(true,"",null){Credential=current.CloudflareDdnsToken};
-        }
         if(request.Method=="status"&&request.Patch==null&&request.Network==null)return new(true,"",UiSnapshot(),Operation:PublicOperation(OperationState(request.OperationId),Volatile.Read(ref snapshot)!.Profile!));
         if(request.Method is not ("patch" or "start" or "stop" or "retry" or "network" or "check" or "quality" or "cancel")||request.Method!="patch"&&request.Patch!=null||request.Method!="network"&&request.Network!=null)return new(false,"此接口不允许该操作",UiSnapshot());
         if(request.Method=="patch"&&request.Patch==null)return new(false,"设置补丁为空",UiSnapshot());

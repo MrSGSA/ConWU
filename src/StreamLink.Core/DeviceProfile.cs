@@ -35,7 +35,7 @@ public sealed class DeviceProfile
     public string ManualEndpoint { get; set; } = "";
     public string ConnectionSource { get; set; } = "custom";
     [System.Text.Json.Serialization.JsonIgnore]
-    public bool UsesExistingEntriesOnly => ConnectionSource=="existing"||ManualEndpoint.Length>0||Mesh?.Pair.Direct==true;
+    public bool UsesExistingEntriesOnly => ConnectionSource=="existing"||ManualEndpoint.Length>0;
     public bool DirectMode { get; set; }
     public string CoordinationService { get; set; } = "";
     public string CoordinationPin { get; set; } = "";
@@ -137,8 +137,7 @@ public sealed class DeviceProfile
         if(NodeSigningPrivate is null||NodeSigningPrivate.Length>512)throw new FormatException("设备身份密钥无效");
         if(NodeSigningPrivate.Length>0&&MeshIdentity.NetworkId(MeshIdentity.PublicSigning(NodeSigningPrivate))!=Device)throw new FormatException("设备身份密钥与标识不符");
         if(Coordinator==null)throw new FormatException("协调角色设置不能为空");Coordinator.Validate();
-        if(Ddns==null)throw new FormatException("DDNS 设置不能为空");Ddns.Validate();CloudflareDdnsSettings.ValidateToken(CloudflareDdnsToken);
-        if(Ddns.Enabled&&Ddns.Publish&&CloudflareDdnsToken.Length==0)throw new FormatException("发布 DDNS 需要先保存 Cloudflare API Token，或关闭“发布本机入口”");
+        if(Ddns is {Enabled:true}||CloudflareDdnsToken.Length>0)throw new FormatException("内置 DNS 发布已移除，请先由新版配置迁移停用旧发布设置");
         if (ConnectionSource is not ("custom" or "existing")) throw new FormatException("公共协调服务尚未提供，请选择自建服务或已有入口");
         if (CoordinationService is null || CoordinationPin is null || RequestedVirtualIp is null) throw new FormatException("本机连接设置无效");
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();

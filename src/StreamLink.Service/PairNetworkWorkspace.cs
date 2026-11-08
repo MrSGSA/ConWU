@@ -10,7 +10,7 @@ internal sealed class NetworkAddressConflictException(string message):IOExceptio
 // workers run, and a failed/slow worker cannot hold the device status lock.
 internal sealed partial class PairNetworkWorkspace : IDisposable
 {
-    sealed record Information(string Id,string Name,bool Removed=false,Guid CreationOperation=default,bool PendingEnrollment=false);
+    sealed record Information(string Id,string Name,bool Removed=false,Guid CreationOperation=default,bool PendingEnrollment=false,string ConfigurationId="",long AppliedConfigurationRevision=0);
     sealed class Context(Information info,ControlWorker worker,ProfileStore store)
     {
         public Information Info=info;
@@ -22,6 +22,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
     readonly ProfileStore store;
     readonly MeshRuntimeServices? services;
     readonly SharedMeshReceiver receivers;
+    readonly SharedEntryResolver entryQueries=new();
     readonly ConcurrentDictionary<string,Context> networks=new(StringComparer.Ordinal);
     readonly ConcurrentDictionary<Guid,string> operationNetworks=new();
     readonly SemaphoreSlim creating=new(1,1);
@@ -50,7 +51,8 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         receivers=new(Path.Combine(store.DirectoryPath,"sessions","shared-receivers"));
         if(device.ProfileSnapshot().Mesh!=null||device.ProfileSnapshot().Pair!=null)
             throw new IOException("此版本使用双机多网络配置，请先按全新安装流程重新设置；旧配置尚未修改");
-        if(!Directory.Exists(Folder))return;
+        LoadConfigurations();
+        if(!Directory.Exists(Folder)){EnsureInitialConfiguration();return;}
         if((File.GetAttributes(Folder)&FileAttributes.ReparsePoint)!=0)throw new IOException("网络配置目录不能是链接");
         try{foreach(string folder in Directory.EnumerateDirectories(Folder).Order(StringComparer.Ordinal)){
             string id=Path.GetFileName(folder);if(!Guid.TryParseExact(id,"N",out _))continue;
@@ -65,28 +67,32 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 var context=opened=Open(info,folder);
                 if(info.PendingEnrollment){
                     bool completed=context.Worker.ProfileSnapshot().Mesh!=null;
-                    context.Info=info with{PendingEnrollment=false,Removed=!completed};WriteInfo(context);
+                    context.Info=context.Info with{PendingEnrollment=false,Removed=!completed};WriteInfo(context);
                     if(!completed){context.Worker.Dispose();opened=null;continue;}
                 }
-                networks[id]=context;if(info.CreationOperation!=Guid.Empty)operationNetworks[info.CreationOperation]=id;
+                EnsureConfiguration(context);networks[id]=context;if(info.CreationOperation!=Guid.Empty)operationNetworks[info.CreationOperation]=id;
                 opened=null;
             }catch{opened?.Worker.Dispose();throw;}
         }}catch{foreach(var context in networks.Values)context.Worker.Dispose();receivers.Dispose();throw;}
+        EnsureInitialConfiguration();
     }
     Context Open(Information info,string folder)
     {
         var networkStore=new ProfileStore(folder,store);
         var basis=services??MeshRuntimeServices.Default;ControlWorker? worker=null;
-        var runtime=basis with{SessionRoot=Path.Combine(folder,"sessions"),Transport=r=>receivers.Acquire(r,basis.Transport,p=>worker?.AcceptsDirectPairing(p)==true,p=>worker?.AuthenticatedNetworkFrame(p)==true,p=>worker?.DirectPairPriority(p)??0)};
+        var runtime=basis with{SessionRoot=Path.Combine(folder,"sessions"),ResolveEntries=basis.ResolveEntries??entryQueries.Resolve,Transport=r=>receivers.Acquire(r,basis.Transport,p=>worker?.AcceptsDirectPairing(p)==true,p=>worker?.AuthenticatedNetworkFrame(p)==true,p=>worker?.DirectPairPriority(p)??0)};
+        PrepareConfigurationAtStartup(info,networkStore);
+        if(info.ConfigurationId.Length>0&&configurations.TryGetValue(info.ConfigurationId,out var loaded))info=info with{AppliedConfigurationRevision=loaded.Revision};
         networkStore.ValidateNetworkProfile=p=>ValidateNetwork(info.Id,p);
-        worker=new ControlWorker(networkStore,runtime,isolatedNetwork:true);return new(info,worker,networkStore);
+        worker=new ControlWorker(networkStore,runtime,isolatedNetwork:true);var opened=new Context(info,worker,networkStore);try{WriteInfo(opened);return opened;}catch{worker.Dispose();throw;}
     }
     void ValidateNetwork(string id,DeviceProfile candidate)
     {
         if(candidate.Mesh is not {} mesh)return;
         if(mesh.Directory?.Pairwise!=true)throw new IOException("此版本仅接入新版双机网络，请让两端重新创建连接");
+        if(mesh.IsDecentralized)throw new IOException("本版双机网络由主机审批，不接入成员平等管理网络；原配置保留，请重新配对");
         if(mesh.Self.Device!=candidate.Device)throw new IOException("网络凭据不属于本机的设备身份，不能导入其他设备的配置");
-        var others=networks.Values.Where(n=>n.Info.Id!=id).Select(n=>n.Store.LoadForMaintenance()).ToArray();
+        var others=validatingConfigurations is {} planned?planned.Where(n=>n.Key!=id).Select(n=>n.Value).ToArray():networks.Values.Where(n=>n.Info.Id!=id).Select(n=>n.Store.LoadForMaintenance()).ToArray();
         if(candidate.Enabled&&others.Count(p=>p.Enabled&&p.Mesh!=null)>=8)throw new IOException("本机最多同时运行 8 条双机网络，请先暂停一条连接");
         foreach(var other in others){
             if(other.Mesh is not {} known)continue;
@@ -98,7 +104,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             if(other.Enabled&&candidate.Enabled&&other.ListenPort==candidate.ListenPort&&!CanShareListener(other,candidate))throw new IOException("此接收端口正被不兼容的网络策略使用，请为本网络设置独立端口");
         }
     }
-    static bool CanShareListener(DeviceProfile left,DeviceProfile right)=>left.TransportMode==right.TransportMode&&
+    static bool CanShareListener(DeviceProfile left,DeviceProfile right)=>left.TransportMode==right.TransportMode&&(left.SavedNetworkSettings?.ConnectionSource??left.ConnectionSource)==(right.SavedNetworkSettings?.ConnectionSource??right.ConnectionSource)&&
         (left.TransportMode!="udp"||left.UsesExistingEntriesOnly&&right.UsesExistingEntriesOnly)&&left.ManagedEgressMbps==0&&right.ManagedEgressMbps==0;
     static void ValidateName(string name){if(name is null||name.Length is <1 or >64||name.Any(char.IsControl))throw new FormatException("网络名称需为 1–64 个可见字符");}
     static void WriteInfo(Context context)
@@ -115,26 +121,26 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         await Task.WhenAll(networks.Values.Select(n=>n.Worker.StopLocal(token)));started=false;
     }
     public bool HasOutstandingOwnership=>mutations.Values.Any(m=>!m.Task.IsCompleted)||networks.Values.Any(n=>n.Worker.HasOutstandingOwnership);
-    public void Dispose(){lock(admissionGate)accepting=false;foreach(var context in networks.Values)context.Worker.Dispose();receivers.Dispose();}
+    public void Dispose(){lock(admissionGate)accepting=false;foreach(var context in networks.Values)context.Worker.Dispose();receivers.Dispose();entryQueries.Dispose();}
 
     public UiStatusDto Snapshot(string selected="")
     {
         var defaults=device.SingleUiSnapshot();
-        var rows=networks.Values.OrderBy(n=>n.Info.Id,StringComparer.Ordinal).Select(n=>new UiNetworkDto(n.Info.Id,n.Info.Name,n.Worker.SingleUiSnapshot())).ToArray();
+        var rows=networks.Values.OrderBy(n=>n.Info.Id,StringComparer.Ordinal).Select(n=>new UiNetworkDto(n.Info.Id,n.Info.Name,n.Worker.SingleUiSnapshot()){ConfigurationId=n.Info.ConfigurationId,AppliedConfigurationRevision=n.Info.AppliedConfigurationRevision}).ToArray();
         var chosen=rows.FirstOrDefault(n=>n.Id==selected)?.Status??defaults;
         var peers=rows.SelectMany(n=>n.Status.Peers.Select(p=>new UiAggregatePeerDto(n.Id,p.DeviceId,n.Status.IsOwner?"host":"guest",p,p.ConnectedSince))).ToArray();
         int connected=rows.Count(n=>n.Status.DirectPeers>0),connecting=rows.Count(n=>n.Status.DirectPeers==0&&n.Status.NetworkEnabled);
         var aggregate=new UiAggregateDto(rows.Length,connected,connecting,rows.Length-connected-connecting,
             peers.Select(p=>p.DeviceId.Length>0?p.DeviceId:p.NetworkId+":"+p.Peer.Slot).Distinct(StringComparer.Ordinal).Count(),
             peers.Sum(p=>p.Peer.SentBytes),peers.Sum(p=>p.Peer.ReceivedBytes),peers);
-        return chosen with{WorkspaceVersion=1,SelectedNetworkId=selected,Networks=rows,Aggregate=aggregate,
+        return chosen with{Configurations=ConfigurationSnapshot(),WorkspaceVersion=2,SelectedNetworkId=selected,Networks=rows,Aggregate=aggregate,
             DeviceSettings=defaults.Settings,DeviceSettingsRevision=defaults.SettingsRevision,Coordinator=defaults.Coordinator,Desktop=defaults.Desktop,
             DeviceName=defaults.DeviceName,LogLevel=defaults.LogLevel,ServiceReady=defaults.ServiceReady};
     }
     public async Task<UiControlReply> Handle(UiControlRequest request,string sid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=sid)return new(false,"当前用户没有本机控制权限",null);
-        if(request.Method is "status" or "ddns-token")return await HandleCore(request,sid,token);
+        if(request.Method=="status")return await HandleCore(request,sid,token);
         if(!accepting)return new(false,"后台正在停止，请稍后重试",Snapshot(),Operation:new(request.OperationId,request.Method,"未完成",true,false,"后台正在停止"));
         request=request.OperationId==Guid.Empty?request with{OperationId=Guid.NewGuid()}:request;
         string digest=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{request,sid})));
@@ -158,6 +164,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             return reply;
         }finally{
             lock(admissionGate){operation.Executing=false;operation.Stop.Dispose();mutations.TryRemove(id,out _);completion.TrySetResult();}
+            if(operationNetworks.Count>256)foreach(var retired in operationNetworks.Where(p=>!networks.ContainsKey(p.Value)&&(!controlOperations.TryGetValue(p.Key,out var savedOperation)||savedOperation.Result!=null)).ToArray())operationNetworks.TryRemove(retired.Key,out _);
             if(controlOperations.Count>256)foreach(var old in controlOperations.Where(p=>p.Key!=request.OperationId&&(p.Value.Result!=null||!p.Value.Executing&&p.Value.Delegated&&
                 (!operationNetworks.TryGetValue(p.Key,out var targetId)||!networks.TryGetValue(targetId,out var context)||context.Worker.IsOperationComplete(p.Key)))).Take(64))controlOperations.TryRemove(old.Key,out _);
         }
@@ -192,7 +199,9 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 selected=operationTarget;
             }
             selected??="";
+            if(request.Method=="configuration")return await HandleConfiguration(request with{NetworkId=selected},sid,token);
             if(request.Method=="save-settings")return await SaveBatch(request with{NetworkId=selected},sid,token);
+            if(request.Network!=null&&(request.Network.ConfigurationId==null||request.Network.RequestedVirtualIp==null))throw new FormatException("连接配置 ID 不能为空");
             bool enrollment=request.Method=="network"&&request.Network?.Action is "create" or "create-direct" or "join" or "join-entry" or "join-invitation" or "join-direct-short" or "join-direct";
             if(enrollment&&selected.Length==0){
                 await WaitGate(creating,request.OperationId,token);
@@ -205,35 +214,39 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         if(networks.Values.Count(n=>n.Worker.ProfileSnapshot() is {Enabled:true,Mesh:not null})>=8)throw new IOException("本机最多同时运行 8 条双机网络，请先暂停一条连接");
                         string name=request.Network!.Name.Trim();if(name.Length==0)name="连接 "+(networks.Count+1);ValidateName(name);
                         string id=Guid.NewGuid().ToString("N"),folder=Path.Combine(Folder,id);
+                        var configurationId=request.Network.ConfigurationId;
+                        if(configurationId.Length==0&&configurations.Count==1)configurationId=configurations.Keys.Single();
+                        if(!configurations.TryGetValue(configurationId,out var configuration))throw new IOException("请先选择或保存本次连接配置");
                         var template=device.ProfileSnapshot();
+                        ConnectionSettings.Apply(template,configuration.Settings);
+                        if(request.Network.RequestedVirtualIp.Length>0){MeshAddressing.ValidateAddress(request.Network.RequestedVirtualIp);template.RequestedVirtualIp=request.Network.RequestedVirtualIp;template.SavedNetworkSettings=template.SavedNetworkSettings! with{RequestedVirtualIp=template.RequestedVirtualIp};}
                         template.Mesh=null;template.Pair=null;template.Enabled=false;template.PendingMembership=null;template.RejoinCredential=null;template.RejoinHistory=[];
                         template.AdapterScope=id;
                         template.NetworkCreatedHere=false;template.NetworkEstablishedAt=0;template.JoinedEntryNetwork="";template.JoinedEntrySources=[];
                         template.Coordinator=new();
-                        if(request.Network.Action is "join-entry" or "join-invitation" or "join-direct-short" or "join-direct"){
-                            template.ConnectionSource="existing";template.DirectMode=true;
-                            if(template.SavedNetworkSettings is {} entrySettings)template.SavedNetworkSettings=entrySettings with{ConnectionSource="existing",DirectMode=true};
+                        if(request.Network.Action is "create-direct" or "join-entry" or "join-invitation" or "join-direct-short" or "join-direct"){
+                            if(!configuration.Settings.DirectMode)throw new IOException("此操作需要使用无协调的已有入口配置，请先选择并保存对应配置");
                         }
                         // A published address may be a fixed NAT mapping or an
                         // opaque subscription. Never silently move its receiver.
                         // Only the private outgoing source port may be allocated.
                         var used=networks.Values.Select(n=>n.Worker.ProfileSnapshot()).ToArray();
                         if(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&!CanShareListener(p,template)))
-                            throw new IOException($"接收端口 {template.ListenPort} 与另一条已保存的网络配置冲突；请先在设备默认设置中为新网络选择独立接收端口，并核对已有入口的映射或订阅。现有端口和入口未更改");
+                            throw new IOException($"接收端口 {template.ListenPort} 与另一条已保存的网络配置冲突；请先在连接配置中为新网络选择独立接收端口，并核对已有入口的映射或订阅。现有端口和入口未更改");
                         while(used.Any(p=>p.ListenPort==template.SourcePort||p.SourcePort==template.SourcePort)){
-                            if(template.SourcePort>65500)throw new IOException("没有空闲的网络源端口，请调整设备默认端口");
+                            if(template.SourcePort>65500)throw new IOException("没有空闲的网络源端口，请调整连接配置的源端口");
                             template.SourcePort+=2;
                         }
                         if(template.SavedNetworkSettings is {} saved)template.SavedNetworkSettings=saved with{ListenPort=template.ListenPort,SourcePort=template.SourcePort,Coordinator=new()};
                         var networkStore=new ProfileStore(folder,store);
                         // An unfinished reservation is never loaded as an active
                         // network after a crash between its configuration writes.
-                        var reservation=new Information(id,name,Removed:true,CreationOperation:request.OperationId);
+                        var reservation=new Information(id,name,Removed:true,CreationOperation:request.OperationId,ConfigurationId:configuration.Id,AppliedConfigurationRevision:configuration.Revision);
                         string marker=Path.Combine(folder,"network-info.json");
                         if(OperatingSystem.IsLinux())LinuxPlatform.PrivateWrite(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));else File.WriteAllBytes(marker,JsonSerializer.SerializeToUtf8Bytes(reservation));
                         networkStore.Save(template);
                         bool pending=request.Network.Action is not ("create" or "create-direct");
-                        var context=Open(new(id,name,CreationOperation:request.OperationId,PendingEnrollment:pending),folder);
+                        var context=Open(new(id,name,CreationOperation:request.OperationId,PendingEnrollment:pending,ConfigurationId:configuration.Id,AppliedConfigurationRevision:configuration.Revision),folder);
                         try{WriteInfo(context);if(!networks.TryAdd(id,context))throw new IOException("网络配置创建冲突");}
                         catch{context.Worker.Dispose();throw;}
                         selected=id;if(request.OperationId!=Guid.Empty)operationNetworks[request.OperationId]=id;
@@ -244,8 +257,11 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 }finally{creating.Release();}
             }
             if(request.Method=="status"){
-                if(selected.Length>0&&!networks.ContainsKey(selected))throw new IOException("此网络配置已被移除");
-                var worker=selected.Length==0?device:networks[selected].Worker;
+                if(selected.Length>0&&!networks.TryGetValue(selected,out _)){
+                    var tracked=controlOperations.GetValueOrDefault(request.OperationId);
+                    return new(true,"",Snapshot(),Operation:tracked?.State);
+                }
+                var worker=selected.Length>0&&networks.TryGetValue(selected,out var selectedContext)?selectedContext.Worker:device;
                 var status=await worker.HandleSingleUi(request with{NetworkId=""},sid,token);
                 if(request.OperationId!=Guid.Empty&&settingOperations.TryGetValue(request.OperationId,out var settingOperation)){
                     var current=settingOperation.State;return status with{Ok=!current.Completed||current.Error.Length==0,Error=current.Error,Operation=current,Status=Snapshot(selected) with{Operation=current}};
@@ -276,7 +292,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             try{
             if(!networks.TryGetValue(selected,out var live)||!ReferenceEquals(live,target))throw new IOException("此网络配置已被移除");
             ActiveOperation(request.OperationId);
-            if(request.Network?.Action=="settings")return await SaveSettings(target,request,sid,token);
+            if(request.Network?.Action=="settings"){if(target.Info.ConfigurationId.Length>0)throw new IOException("此网络使用已保存配置，请在设置中编辑该配置；保存会更新全部关联网络");return await SaveSettings(target,request,sid,token);}
             if(request.Network?.Action is "rename-network" or "remove-network"){
                 if(request.Network.ExpectedNetwork!=target.Worker.SingleUiSnapshot().NetworkId)throw new IOException("网络身份已变化，请刷新后重试");
                 if(request.Network.Action=="rename-network"){
@@ -284,7 +300,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 }else{
                     if(!request.Network.ConfirmReplace)throw new IOException("移除配置需要明确确认");
                     await target.Worker.StopLocal(token);target.Info=target.Info with{Removed=true};WriteInfo(target);
-                    networks.TryRemove(selected,out _);target.Worker.Dispose();selected="";
+                    networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);target.Worker.Dispose();selected="";
                 }
                 return new(true,"",Snapshot(selected),Operation:new(request.OperationId,request.Network.Action,"已完成",true,false));
             }
@@ -299,9 +315,9 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             var handling=target.Worker.HandleSingleUi(request with{NetworkId=""},sid,token);ActiveOperation(request.OperationId,delegated:true);
             var reply=await handling;
             if(target.Info.PendingEnrollment&&target.Worker.ProfileSnapshot().Mesh!=null){target.Info=target.Info with{PendingEnrollment=false};WriteInfo(target);}
-            if((enrollment&&!reply.Ok||request.Network?.Action=="pair-cancel"&&target.Worker.ProfileSnapshot().RejoinCredential==null)&&target.Worker.SingleUiSnapshot() is {NetworkId:"",Pairing:null or {Active:false}}){
+            if((enrollment&&!reply.Ok||request.Network?.Action is "forget-network" or "delete-network" or "leave"||request.Network?.Action=="pair-cancel"&&target.Worker.ProfileSnapshot().RejoinCredential==null)&&target.Worker.SingleUiSnapshot() is {NetworkId:"",Pairing:null or {Active:false}}){
                 await target.Worker.StopLocal(token);target.Info=target.Info with{Removed=true};WriteInfo(target);
-                networks.TryRemove(selected,out _);target.Worker.Dispose();selected="";
+                networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);target.Worker.Dispose();selected="";
             }
             return reply with{Status=Snapshot(selected)};
             }finally{target.Actions.Release();}

@@ -33,7 +33,6 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
     readonly Func<long> utcNow;
-    readonly Dictionary<string,DdnsAddressRecord> seenDdns = [];
     internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
     internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; public IPAddress? LastConnected; }
     readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
@@ -119,7 +118,7 @@ public sealed class ExistingEntryResolver : IDisposable
                 var bytes=new byte[MaximumBody+1];int size=0,read;
                 while(size<bytes.Length&&(read=await stream.ReadAsync(bytes.AsMemory(size),budget.Token))>0)size+=read;
                 if(size>MaximumBody)throw new EntryFetchException("更新内容超过 8 KiB");
-                progress.Stage="内容解析";return ParseDocuments([new UTF8Encoding(false,true).GetString(bytes,0,size)],RequiresTag(source));
+                progress.Stage="内容解析";return ParseDocuments([new UTF8Encoding(false,true).GetString(bytes,0,size)],RequiresTag(source),Selector(source));
             }catch(Exception ex)when(attempt==1&&!token.IsCancellationRequested&&Retryable(ex)) {await Task.Delay(200,token);}
         }
     }
@@ -149,22 +148,31 @@ public sealed class ExistingEntryResolver : IDisposable
         }catch(OperationCanceledException)when(!token.IsCancellationRequested){return failure;}
         catch(Exception ex)when(ex is IOException or JsonException){return failure;}
     }
-    public static string Kind(string source) => source.StartsWith(DdnsEntryLink.Scheme, StringComparison.OrdinalIgnoreCase) ? "DDNS" :
+    public static string NormalizeSource(string source)=>!source.Contains("://",StringComparison.Ordinal)&&source.Contains('#')?"txt://"+source:source;
+    public static string Kind(string source) => NormalizeSource(source).StartsWith("txt://", StringComparison.OrdinalIgnoreCase)?"TXT":
         source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";
-    static bool RequiresTag(string source)=>source.EndsWith("#streamlink",StringComparison.OrdinalIgnoreCase);
-    static string WithoutSelector(string source)=>RequiresTag(source)?source[..^11]:source;
+    static string? Selector(string source)
+    {
+        int hash=source.IndexOf('#');if(hash<0)return null;
+        string tag=source[(hash+1)..];
+        if(tag.Length is <1 or >32||!char.IsAsciiLetter(tag[0])||tag.Any(c=>!char.IsAsciiLetterOrDigit(c)&&c is not ('_' or '-')))throw new FormatException("入口标签需为 1–32 位字母、数字、下划线或短横线，以字母开头");
+        return tag;
+    }
+    static bool RequiresTag(string source)=>Selector(source)!=null;
+    static string WithoutSelector(string source){source=NormalizeSource(source);int hash=source.IndexOf('#');return hash<0?source:source[..hash];}
     public static void Validate(ExistingEntry[]? entries)
     {
         if (entries == null || entries.Length > MaximumSources) throw new FormatException("已有入口最多填写 12 项");
         foreach (var entry in entries) {
             if (entry == null || entry.PeerSlot is < ExistingEntry.Network or > 254 || entry.Source is not {Length: >0 and <=2048} s || s.Any(char.IsControl) || s != s.Trim())
                 throw new FormatException("入口归属或地址无效");
-            if (Kind(s) == "DDNS") { _ = DdnsEntryLink.Parse(s); }
-            else if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink 限定标签"); }
+            if(s.StartsWith("conwu-ddns:",StringComparison.OrdinalIgnoreCase))throw new FormatException("内置 DDNS 入口已停用，请改用普通地址或 HTTPS/TXT 订阅");
+            _=Selector(s);
+            if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink1 等标签"); }
             else if (Kind(s) is "HTTP" or "HTTPS") {
                 if (!Uri.TryCreate(WithoutSelector(s), UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !Host(uri.Host) || uri.IsLoopback)
-                    throw new FormatException("更新页面需为不含用户名的 HTTP(S) 公网地址，仅支持 #streamlink 标签选择");
+                    throw new FormatException("更新页面需为不含用户名的 HTTP(S) 公网地址，可使用 #streamlink1 选择对应标签");
                 if (IPAddress.TryParse(uri.Host, out var ip) && !PublicAddress(ip)) throw new FormatException("更新页面不能指向本机或内网服务");
             } else ParseEndpoint(s);
         }
@@ -214,30 +222,8 @@ public sealed class ExistingEntryResolver : IDisposable
         long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
         string kind=Kind(entry.Source);bool allowCached=true;
         try {
-            if(kind=="DDNS") {
-                var link=DdnsEntryLink.Parse(entry.Source);
-                var documents=await txt(link.RecordName,deadline.Token);
-                allowCached=false; // A completed but invalid answer is not a transient DNS failure.
-                DdnsAddressRecord? latest=null;
-                foreach(var document in documents.Take(8)) {
-                    try {
-                        var record=DdnsAddressRecords.Decode(document);
-                        if(DdnsAddressRecords.Verify(record,link.Domain,link.Network,link.Member,mode,utcNow()) &&
-                            (latest==null||record.IssuedAt>latest.IssuedAt)) latest=record;
-                    } catch(Exception ex)when(ex is FormatException or JsonException) { }
-                }
-                if(latest==null)throw new FormatException("DDNS 没有有效签名入口，可能已过期、协议不同或发布尚未完成");
-                string identity=link.RecordName+"/"+link.Key+"/"+mode;
-                lock(seenDdns) {
-                    if(seenDdns.TryGetValue(identity,out var prior) && (latest.IssuedAt<prior.IssuedAt || latest.IssuedAt==prior.IssuedAt&&latest.Signature!=prior.Signature))
-                        throw new FormatException("DDNS 返回旧版本或冲突记录，等待来源更新");
-                    if(seenDdns.Count>=256&&!seenDdns.ContainsKey(identity))throw new FormatException("本轮 DDNS 来源数量超过限制");
-                    seenDdns[identity]=latest;
-                }
-                return new(entry.PeerSlot,index,kind,latest.Endpoints,""){ExpiresAt=latest.ExpiresAt,AllowCached=false,ElapsedMs=Environment.TickCount64-began,Attempts=1};
-            }
             string[] values;
-            if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source));
+            if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
             progress.Stage="入口地址解析";
@@ -262,19 +248,20 @@ public sealed class ExistingEntryResolver : IDisposable
     }
     // Select across the entire TXT answer / HTTP document, before parsing any
     // addresses. A foreign app's record must never poison or join a tagged set.
-    internal static string[] ParseDocuments(IEnumerable<string> documents,bool requireTag=false)
+    internal static string[] ParseDocuments(IEnumerable<string> documents,bool requireTag=false,string? selectedTag=null)
     {
         var texts=documents.Select(s=>s.Trim()).ToArray();
         if(texts.Any(s=>s.Length>MaximumBody))throw new FormatException("更新内容超过 8 KiB");
-        static bool Tagged(string s)=>s.StartsWith("streamlink=",StringComparison.OrdinalIgnoreCase);
-        static bool TaggedJson(string s)=>Tagged(s)&&(s[11..].TrimStart().StartsWith('{')||s[11..].TrimStart().StartsWith('['));
-        static string[] Lines(string s)=>TaggedJson(s)?[s]:s.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
-        static IEnumerable<string> Tags(string record) {
-            if(TaggedJson(record))return [record[11..].Trim()];
+        string prefix=(selectedTag??"streamlink")+"=";
+        bool Tagged(string s)=>s.StartsWith(prefix,StringComparison.OrdinalIgnoreCase);
+        bool TaggedJson(string s)=>Tagged(s)&&(s[prefix.Length..].TrimStart().StartsWith('{')||s[prefix.Length..].TrimStart().StartsWith('['));
+        string[] Lines(string s)=>TaggedJson(s)?[s]:s.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);
+        IEnumerable<string> Tags(string record) {
+            if(TaggedJson(record))return [record[prefix.Length..].Trim()];
             // One label owns one whitespace-delimited field. This also handles a
             // shared TXT RR: tcp://EasyTier:port streamlink=StreamLink:port.
             // Unlabelled fields after a tag still belong to other applications.
-            return record.Split([' ','\t'],StringSplitOptions.RemoveEmptyEntries).Where(Tagged).Select(s=>s[11..]);
+            return record.Split([' ','\t'],StringSplitOptions.RemoveEmptyEntries).Where(Tagged).Select(s=>s[prefix.Length..]);
         }
         var records=texts.SelectMany(Lines).ToArray();
         // A separate TXT RR may be arbitrary verification data, even invalid JSON.
@@ -284,7 +271,7 @@ public sealed class ExistingEntryResolver : IDisposable
             records=texts.SelectMany(s=>s.StartsWith('{')||s.StartsWith('[')?ParseJson(s):Lines(s)).ToArray();
             tagged=records.SelectMany(Tags).ToArray();
         }
-        if(tagged.Length==0&&requireTag)throw new FormatException("订阅中没有 streamlink= 入口，请检查上报或 TXT 记录");
+        if(tagged.Length==0&&requireTag)throw new FormatException("订阅中没有 "+prefix+" 入口，请检查所选标签和更新内容");
         var values=new List<string>();
         foreach(var record in tagged.Length>0?tagged:records) {
             var parts=record.StartsWith('{')||record.StartsWith('[')?ParseJson(record):record.Split([' ',',',';','\t'],StringSplitOptions.RemoveEmptyEntries|StringSplitOptions.TrimEntries);

@@ -27,18 +27,26 @@ public sealed class WebPanel : IAsyncDisposable
     readonly Dictionary<string,Session> sessions = [];
     readonly SemaphoreSlim slots = new(8,8);
     readonly TimeProvider clock;
+    readonly RemoteAdminConfig? remote;
     readonly long clockStart;
     long Now => (long)clock.GetElapsedTime(clockStart).TotalMilliseconds;
     long rateStart;
     int rateCount;
+    long loginRateStart;
+    int loginRateCount;
     string origin = "";
     string cookieName="";
     static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { MaxDepth = 16 };
     static string Secret() => Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
     public string Origin => origin;
+    public string ListeningOrigin {get;private set;}="";
 
-    WebPanel(WebApplication application, Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string root, TimeProvider time) { app = application; call = backend; assets = root; clock=time;clockStart=clock.GetTimestamp(); }
+    WebPanel(WebApplication application, Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string root, TimeProvider time, RemoteAdminConfig? config=null) { app = application; call = backend; assets = root; clock=time;clockStart=clock.GetTimestamp();remote=config; }
     public static async Task<WebPanel> Start(Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend, string assets, TimeProvider? timeProvider=null, int port=0)
+        => await StartCore(backend,assets,timeProvider,port,null);
+    public static async Task<WebPanel> StartRemote(Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend,string assets,RemoteAdminConfig config,int port=47823,TimeProvider? timeProvider=null)
+        => await StartCore(backend,assets,timeProvider,port,config);
+    static async Task<WebPanel> StartCore(Func<UiControlRequest,CancellationToken,Task<UiControlReply>> backend,string assets,TimeProvider? timeProvider,int port,RemoteAdminConfig? config)
     {
         if(port!=0 && (port is <1024 or >65535)) throw new ArgumentOutOfRangeException(nameof(port));
         var builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { Args = [], ContentRootPath = AppContext.BaseDirectory });
@@ -50,16 +58,19 @@ public sealed class WebPanel : IAsyncDisposable
             o.Limits.RequestHeadersTimeout = TimeSpan.FromSeconds(5);
             o.Limits.KeepAliveTimeout = TimeSpan.FromSeconds(30);
         });
-        var app = builder.Build(); var panel = new WebPanel(app,backend,assets,timeProvider??TimeProvider.System);
+        var app = builder.Build(); var panel = new WebPanel(app,backend,assets,timeProvider??TimeProvider.System,config);
         app.Run(panel.Handle);
         try { await app.StartAsync(); }
         catch { await app.DisposeAsync(); throw; }
-        panel.origin = app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
-        panel.cookieName="StreamLinkSession-"+new Uri(panel.origin).Port;
+        string bound=app.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        panel.ListeningOrigin=bound;
+        panel.origin = config?.Origin??bound;
+        panel.cookieName=config==null?"StreamLinkSession-"+new Uri(bound).Port:"ConwuRemoteSession";
         return panel;
     }
     public string OpenLink()
     {
+        if(remote!=null)throw new InvalidOperationException("远程管理不使用本机票据");
         lock (gate) {
             Prune();
             if (tickets.Count >= 4) tickets.Remove(tickets.Keys.First());
@@ -82,13 +93,15 @@ public sealed class WebPanel : IAsyncDisposable
         response.Headers["X-Frame-Options"] = "DENY";
         response.Headers["Referrer-Policy"] = "no-referrer";
         response.Headers["Content-Security-Policy"] = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
-        if (origin.Length == 0 || context.Connection.RemoteIpAddress is not {} ip || !IPAddress.IsLoopback(ip) || request.Host.Value != new Uri(origin).Authority) { response.StatusCode = 403; return; }
+        if (origin.Length == 0 || context.Connection.RemoteIpAddress is not {} ip || !IPAddress.IsLoopback(ip) || !string.Equals(request.Host.Value,new Uri(origin).Authority,StringComparison.OrdinalIgnoreCase)) { response.StatusCode = 403; return; }
         if (request.Headers.Origin.Count > 1 || request.Headers.Origin.Count == 1 && request.Headers.Origin.ToString() != origin || request.Headers["Sec-Fetch-Site"] is var site && site.Count > 0 && site.ToString() is not ("same-origin" or "none")) { response.StatusCode = 403; return; }
         // Selectors do not grant access; the session and origin checks still apply.
         Guid operation = Guid.Empty;
         string networkId = "";
+        string path=request.Path.Value??"/";
+        if(remote!=null){if(!path.StartsWith("/admin/",StringComparison.Ordinal)){response.StatusCode=404;return;}path=path[6..];}
         if (request.QueryString.HasValue) {
-            if (request.Method != "GET" || request.Path != "/api/status" ||
+            if (request.Method != "GET" || path != "/api/status" ||
                 request.Query.Any(q => q.Key is not ("operation" or "networkId") || q.Value.Count != 1)) { response.StatusCode = 403; return; }
             if (request.Query.TryGetValue("operation", out var operationValue)) {
                 string selector = operationValue.ToString();
@@ -106,15 +119,27 @@ public sealed class WebPanel : IAsyncDisposable
         }
         if (!await slots.WaitAsync(0)) { response.StatusCode = 429; return; }
         try {
-            string path = request.Path.Value ?? "/";
-            if (request.Method == "GET" && path is "/" or "/app.js" or "/style.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
-                response.ContentType = path switch { "/app.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
+            if(remote!=null&&request.Method=="GET"&&path is "/login" or "/login.js") {
+                response.ContentType=path=="/login"?"text/html; charset=utf-8":"text/javascript; charset=utf-8";
+                await response.SendFileAsync(Path.Combine(assets,path=="/login"?"remote-login.html":"remote-login.js"),context.RequestAborted);return;
+            }
+            if (request.Method == "GET" && path is "/" or "/app.js" or "/workspace.js" or "/style.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
+                response.ContentType = path switch { "/app.js" or "/workspace.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
                 string file = path switch { "/" => "index.html", "/streamlink-tokyo-45.svg" => "icon.svg", _ => path[1..] };
+                if(remote!=null&&path=="/"){string html=await File.ReadAllTextAsync(Path.Combine(assets,file),context.RequestAborted);await response.WriteAsync(html.Replace("href=\"/icon.svg\"","href=\"/admin/icon.svg\"",StringComparison.Ordinal).Replace("href=\"/style.css\"","href=\"/admin/style.css\"",StringComparison.Ordinal).Replace("src=\"/app.js\"","src=\"/admin/app.js\"",StringComparison.Ordinal).Replace("src=\"/workspace.js\"","src=\"/admin/workspace.js\"",StringComparison.Ordinal),context.RequestAborted);return;}
                 await response.SendFileAsync(Path.Combine(assets,file),context.RequestAborted); return;
             }
             bool post = request.Method == "POST";
             if (post && (request.Headers.Origin.ToString() != origin || request.ContentType?.Split(';')[0].Trim() != "application/json" || request.ContentLength is > ServiceProtocol.MaximumUiMessageBytes)) { response.StatusCode = 403; return; }
-            if (post && path == "/api/session") {
+            if(post&&path=="/api/login"&&remote!=null){
+                lock(gate){long now=Now;if(now-loginRateStart>=60000){loginRateStart=now;loginRateCount=0;}if(++loginRateCount>5){response.StatusCode=429;return;}}
+                var credentials=await JsonSerializer.DeserializeAsync<RemoteLogin>(request.Body,Json,context.RequestAborted);
+                if(credentials?.Password is not {Length:>=16 and <=256} password||!remote.Verify(password)){response.StatusCode=401;return;}
+                Session logged;string id;lock(gate){Prune();if(sessions.Count>=8)sessions.Remove(sessions.Keys.First());id=Secret();logged=new(Secret(),Now);sessions[id]=logged;}
+                response.Cookies.Append(cookieName,id,new CookieOptions{HttpOnly=true,Secure=true,SameSite=SameSiteMode.Strict,IsEssential=true,Path="/admin/",MaxAge=TimeSpan.FromMinutes(30)});
+                await response.WriteAsJsonAsync(new{csrf=logged.Csrf},context.RequestAborted);return;
+            }
+            if (post && path == "/api/session" && remote==null) {
                 var boot = await JsonSerializer.DeserializeAsync<Bootstrap>(request.Body,Json,context.RequestAborted);
                 Session session; string id;
                 lock (gate) {
@@ -134,12 +159,13 @@ public sealed class WebPanel : IAsyncDisposable
                 lock(gate) {
                     long now=Now;current.Expires=Math.Min(current.AbsoluteExpires,now+IdleMs);
                     if(now-current.CookieIssued>=60000) {
-                        response.Cookies.Append(cookieName,sessionId!,new CookieOptions {HttpOnly=true,SameSite=SameSiteMode.Strict,IsEssential=true,Path="/",MaxAge=TimeSpan.FromMilliseconds(Math.Max(0,current.Expires-now))});
+                        response.Cookies.Append(cookieName,sessionId!,new CookieOptions {HttpOnly=true,Secure=remote!=null,SameSite=SameSiteMode.Strict,IsEssential=true,Path=remote==null?"/":"/admin/",MaxAge=TimeSpan.FromMilliseconds(Math.Max(0,current.Expires-now))});
                         current.CookieIssued=now;
                     }
                 }
             }
             if (request.Method == "GET" && path == "/api/session") { Touch();await response.WriteAsJsonAsync(new {csrf=current.Csrf},context.RequestAborted); return; }
+            if(post&&path=="/api/logout"&&remote!=null){if(!Equal(request.Headers["X-StreamLink-CSRF"].ToString(),current.Csrf)){response.StatusCode=403;return;}lock(gate)sessions.Remove(sessionId!);response.Cookies.Delete(cookieName,new CookieOptions{Secure=true,HttpOnly=true,SameSite=SameSiteMode.Strict,Path="/admin/"});response.StatusCode=204;return;}
             UiControlRequest command;
             if (request.Method == "GET" && path == "/api/status") {
                 command = new UiControlRequest("status",OperationId:operation) { NetworkId = networkId };
@@ -169,4 +195,6 @@ public sealed class WebPanel : IAsyncDisposable
     public async ValueTask DisposeAsync() { await app.StopAsync(); await app.DisposeAsync(); slots.Dispose(); }
     [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
     sealed record Bootstrap(string Ticket);
+    [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
+    sealed record RemoteLogin(string Password);
 }

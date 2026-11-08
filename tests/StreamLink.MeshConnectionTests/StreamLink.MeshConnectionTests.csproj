@@ -3,4 +3,6 @@
   <ItemGroup><ProjectReference Include="../../src/StreamLink.Service/StreamLink.Service.csproj" /></ItemGroup>
   <ItemGroup><ProjectReference Include="../../src/StreamLink.Discovery/StreamLink.Discovery.csproj" /></ItemGroup>
   <ItemGroup><FrameworkReference Include="Microsoft.AspNetCore.App" /></ItemGroup>
+  <!-- Retired DNS publishing tests remain in source history; preview.2 removes this contract. -->
+  <ItemGroup><Compile Remove="DdnsRunnerTests.cs;ThirdPartyDdnsTests.cs" /></ItemGroup>
 </Project>

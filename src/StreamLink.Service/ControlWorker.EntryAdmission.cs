@@ -12,7 +12,6 @@ public sealed partial class ControlWorker
     Task? acceptingEntries;
     bool uiEntryAdmission;
     ExistingEntry[] uiEntrySources=[];
-    DdnsEntryLink? uiEntryIdentity;
 
     byte[]? HandleDirectPairing(ReadOnlyMemory<byte> packet)
     {
@@ -128,7 +127,6 @@ public sealed partial class ControlWorker
         await CloseUiPair(operation.Stop.Token);
         uiPairOwner=false;uiEntryAdmission=true;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;
         uiPairKey=new(profile.NodeSigningPrivate);uiEntrySources=sources;
-        uiEntryIdentity=action.Entry.StartsWith(DdnsEntryLink.Scheme,StringComparison.OrdinalIgnoreCase)?DdnsEntryLink.Parse(action.Entry):null;
         var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
         var folder=Path.Combine(store.DirectoryPath,"sessions","entry-pair-"+Guid.NewGuid().ToString("N"));
         try{
@@ -136,7 +134,7 @@ public sealed partial class ControlWorker
             for(int index=0;index<endpoints.Length;index++){
                 SetOperation(operation,$"联系入口（{index+1}/{endpoints.Length}），等待设备回应",true);
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);attempt.CancelAfter(endpoints.Length>1?6000:12000);
-                string targetNetwork=uiEntryIdentity?.Network??"";
+                string targetNetwork="";
                 uiPairClient=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,System.Net.IPEndPoint.Parse(endpoints[index]),false,0,null,"error")),entryAdmission:true,targetNetwork:targetNetwork);
                 try{
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential,DirectPairWire.EntryLocator,uiPairKey);

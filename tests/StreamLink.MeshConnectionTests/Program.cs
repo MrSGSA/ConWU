@@ -24,6 +24,8 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--configuration-library"]){await ConfigurationLibrary();return;}
+        if(args is ["--seed-configuration-upgrade",var configurationInstance]){SeedConfigurationUpgrade(configurationInstance);return;}
         if(args is ["--pair-workspace-budgets"]){await PairWorkspaceBudgets();return;}
         if(args is ["--pair-workspace-recovery"]){await PairWorkspaceRecovery();return;}
         if(args is ["--pair-workspace-native",var pairNative,var pairNativeFolder]){await PairWorkspaceIntegration(Path.GetFullPath(pairNative),Path.GetFullPath(pairNativeFolder));return;}
@@ -40,8 +42,6 @@ static partial class Program
         if(args is ["--network-pause-only"]){await NetworkPause();return;}
         if(args is ["--explicit-reservation-only"]){await ExplicitReservationRecovery();return;}
         if(args is ["--strict-entry-only"]){await StrictExistingOnly();return;}
-        if(args is ["--ddns-runner-only"]){await DdnsRunner();return;}
-        if(args is ["--thirdparty-ddns-only"]){await ThirdPartyDdnsDiscovery();await ThirdPartyDdnsRunner();return;}
         if(args is ["--leave-timeout-only"]){await LeaveTimeouts();return;}
         if(args is ["--saved-settings-only"]){await SavedSettingsLifecycle();return;}
         if(args is ["--connection-view-only"]){ConnectionView();await ExistingRunner();return;}
@@ -100,7 +100,6 @@ static partial class Program
         await ExplicitReservationRecovery();
         await TcpTests.Run();
         await ExistingEntries();
-        await DdnsRunner();
         await DirectNetworks();
         await Decentralization();
         await EntryProbeReuse();

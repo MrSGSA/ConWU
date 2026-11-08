@@ -29,7 +29,6 @@ internal sealed record MeshRuntimeServices(
     // A null override lets the runner own one resolver for its whole lifetime.
     // Recreating it each refresh discards healthy HTTPS connections.
     public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>>? ResolveEntries {get;init;}
-    public Func<CancellationToken,MeshDdnsSession>? Ddns {get;init;}
 
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
     public Func<DeviceProfile,string,Action<string>,CancellationToken,EgressPacer?,Task<IMeshCandidateFactory?>>? CandidatesWithEgress{get;init;}

@@ -84,11 +84,12 @@ public sealed class ProfileStore
             acl.AddAccessRule(new FileSystemAccessRule(new SecurityIdentifier(sid, null), FileSystemRights.FullControl, InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
         new DirectoryInfo(DirectoryPath).SetAccessControl(acl); file = Path.Combine(DirectoryPath, "profile.dpapi");
     }
-    public DeviceProfile Load()
+    public DeviceProfile Load(){lock(persistenceGate)return LoadProfile();}
+    DeviceProfile LoadProfile()
     {
         if (!File.Exists(file)) return new();
         var profile = JsonSerializer.Deserialize<DeviceProfile>(ReadProtected()) ?? throw new IOException("配置为空");
-        HydrateShared(profile);
+        bool retiredDdns=MigrateRemovedDdns(profile);HydrateShared(profile);
         bool migrated=PersonalFeature.Enabled && profile.MigrateAutomaticTransport();
         profile.Validate();
         if(PersonalFeature.Enabled) profile.RequireFixedTransport();
@@ -96,6 +97,7 @@ public sealed class ProfileStore
             File.Copy(file, Path.Combine(DirectoryPath, "profile-before-fixed-transport-" + Guid.NewGuid().ToString("N") + ".dpapi"), false);
             Write(profile);
         }
+        if(retiredDdns&&!migrated)Write(profile);
         return profile;
     }
     // Maintenance identifies only the protected instance's signed mesh profile.
@@ -105,7 +107,7 @@ public sealed class ProfileStore
         if (!File.Exists(file)) return new();
         if ((File.GetAttributes(file) & FileAttributes.ReparsePoint) != 0) throw new IOException("配置文件不能是链接");
         var profile = JsonSerializer.Deserialize<DeviceProfile>(ReadProtected()) ?? throw new IOException("配置为空");
-        HydrateShared(profile);profile.Validate(); return profile;
+        MigrateRemovedDdns(profile,false);HydrateShared(profile);profile.Validate(); return profile;
     }
     public IReadOnlyList<(string ConfigurationId,DeviceProfile Profile)> NetworksForMaintenance()
     {
@@ -149,14 +151,26 @@ public sealed class ProfileStore
         if(OperatingSystem.IsLinux()){LinuxPlatform.PrivateWrite(file,JsonSerializer.SerializeToUtf8Bytes(saved));return;}
         File.WriteAllBytes(file + ".tmp", ProtectedData.Protect(JsonSerializer.SerializeToUtf8Bytes(saved), "StreamLink-profile-v2"u8.ToArray(), DataProtectionScope.LocalMachine)); File.Move(file + ".tmp", file, true);
     }
+    bool MigrateRemovedDdns(DeviceProfile profile,bool saveBackup=true)
+    {
+        if(profile.Ddns is not {Enabled:true}&&profile.CloudflareDdnsToken.Length==0&&!profile.ExistingEntries.Concat(profile.SavedNetworkSettings?.ExistingEntries??[]).Any(e=>e.Source.StartsWith("conwu-ddns:",StringComparison.OrdinalIgnoreCase)))return false;
+        string backup=Path.Combine(DirectoryPath,"profile-before-ddns-removal"+(OperatingSystem.IsLinux()?".json":".dpapi"));
+        if(saveBackup&&File.Exists(backup)&&(File.GetAttributes(backup)&FileAttributes.ReparsePoint)!=0)throw new IOException("旧设置备份不能是链接");
+        if(saveBackup&&!File.Exists(backup))File.Copy(file,backup,false);
+        profile.Ddns=new();profile.CloudflareDdnsToken="";
+        profile.ExistingEntries=profile.ExistingEntries.Where(e=>!e.Source.StartsWith("conwu-ddns:",StringComparison.OrdinalIgnoreCase)).ToArray();
+        if(profile.SavedNetworkSettings is {} saved)profile.SavedNetworkSettings=saved with{Ddns=null,ExistingEntries=saved.ExistingEntries.Where(e=>!e.Source.StartsWith("conwu-ddns:",StringComparison.OrdinalIgnoreCase)).ToArray()};
+        profile.MigrationNotice="内置 DNS 发布已停用；原设置已备份。请将旧 DDNS 入口改为普通地址或 HTTPS/TXT 订阅，外部 DNS 记录未修改。";
+        return true;
+    }
     void HydrateShared(DeviceProfile profile)
     {
         if(deviceStore==null)return;
         var device=deviceStore.Load();profile.Device=device.Device;profile.DeviceName=device.DeviceName;
         profile.NodeSigningPrivate=device.NodeSigningPrivate;
         profile.LogLevel=device.LogLevel;profile.AutoStart=device.AutoStart;profile.Coordinator=new();
-        profile.Ddns=device.Ddns;profile.CloudflareDdnsToken=device.CloudflareDdnsToken;
-        if(profile.SavedNetworkSettings is {} saved)profile.SavedNetworkSettings=saved with{Coordinator=new(),Ddns=device.Ddns};
+        profile.Ddns=new();profile.CloudflareDdnsToken="";
+        if(profile.SavedNetworkSettings is {} saved)profile.SavedNetworkSettings=saved with{Coordinator=new(),Ddns=null};
     }
     public void BackupLegacy(DeviceProfile profile)
     {

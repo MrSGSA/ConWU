@@ -6,7 +6,8 @@ public sealed partial class ControlWorker
 {
     internal static ExistingEntry[] RuntimeEntries(DeviceProfile profile)
     {
-        var saved=PublicSettings(profile).ExistingEntries;
+        var settings=PublicSettings(profile);
+        var saved=settings.ConnectionSource=="existing"?settings.ExistingEntries:Array.Empty<ExistingEntry>();
         if(profile.Mesh is not {} mesh)return saved.Where(e=>e.PeerSlot is 0 or ExistingEntry.NetworkOwner or ExistingEntry.Network).ToArray();
         var bound=new List<ExistingEntry>();
         foreach(var entry in saved){

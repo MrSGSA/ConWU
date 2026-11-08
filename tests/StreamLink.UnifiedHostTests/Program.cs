@@ -137,8 +137,6 @@ if(Array.IndexOf(args,"--native") is var nativeIndex && nativeIndex>=0) {
     Check(!LinuxPlatform.Run("nft","list","tables").Contains("sl_"),"parallel existing-entry teardown removes only owned guards");
 }
 await CoordinatorReliabilityTests.Run(Check);
-await CloudflareDdnsTests.Run(Check);
-await DdnsEntryTests.Run(Check);
 Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=count,scope=OperatingSystem.IsLinux()?"Linux isolated":"Windows loopback"}));
 
 sealed class EmptyAdapter:IPacketAdapter

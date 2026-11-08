@@ -11,6 +11,7 @@ internal sealed partial class PairNetworkWorkspace
         var batch=request.SettingsBatch??throw new FormatException("批量设置为空");
         if(request.Network!=null||request.Patch!=null||batch.Networks is not {Length:<=16}||batch.Device==null&&batch.Networks.Length==0)throw new FormatException("批量设置参数无效");
         if(batch.Networks.Any(n=>n==null||!Guid.TryParseExact(n.NetworkId,"N",out _)||n.Action?.Action!="settings"||n.Action.Settings==null)||batch.Networks.Select(n=>n.NetworkId).Distinct(StringComparer.Ordinal).Count()!=batch.Networks.Length)throw new FormatException("批量设置的网络目标无效或重复");
+        if(batch.Networks.Any(n=>networks.TryGetValue(n.NetworkId,out var linked)&&linked.Info.ConfigurationId.Length>0))throw new IOException("请通过连接配置保存网络设置，共用配置会更新全部关联网络");
         if(batch.Device is {} deviceAction&&(deviceAction.Action!="settings"||deviceAction.Settings==null))throw new FormatException("设备设置操作无效");
         Guid id=request.OperationId==Guid.Empty?Guid.NewGuid():request.OperationId;
         string digest=Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(request)));

@@ -14,7 +14,7 @@ public sealed partial class ControlWorker
         RequireSavedProtocol(invitation.Mode);
         if(action.Mode!=invitation.Mode)throw new IOException("邀请的连接协议与本机设置不同，请在连接设置中选择与主机相同的协议");
         var token=operation.Stop.Token;
-        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(18000);
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(30000);
         SetOperation(operation,"解析邀请中的主机入口",false);
         var resolutions=await uiEntryResolver.Value.Resolve(invitation.Entries,invitation.Mode,deadline.Token);
         var endpoints=resolutions.SelectMany(e=>e.Endpoints).Distinct().Take(8).ToArray();
@@ -27,7 +27,7 @@ public sealed partial class ControlWorker
             foreach(var endpoint in endpoints){
                 deadline.Token.ThrowIfCancellationRequested();
                 SetOperation(operation,"连接邀请中的主机入口",false);
-                using var attempt=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);attempt.CancelAfter(4000);
+                using var attempt=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);attempt.CancelAfter(endpoints.Length==1?12000:4000);
                 var client=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,IPEndPoint.Parse(endpoint),false,0,null,"error")),targetNetwork:invitation.Network);
                 try {
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential?.Network==invitation.Network?profile.RejoinCredential:null,invitation.Capability,uiPairKey);
