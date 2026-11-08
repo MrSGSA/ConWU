@@ -44,6 +44,11 @@ public sealed class DeviceProfile
     // Invitations and directory changes may update ExistingEntries, never this copy.
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public UiNetworkSettings? SavedNetworkSettings { get; set; }
+    public bool AutoConfigureJoin {get;set;}
+    public ApprovedNetworkSettings? ReceivedNetworkSettings {get;set;}
+    public bool PkarrPublish {get;set;}
+    public string PkarrSeed {get;set;}="";
+    public long PkarrSequence {get;set;}
     public string SavedPeerEntryNetwork { get; set; } = "";
     // Enrollment observations are not user settings. A join may learn a seed
     // without overwriting saved sources, and saves must not erase that seed.
@@ -143,6 +148,8 @@ public sealed class DeviceProfile
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();
         ExistingEntryResolver.Validate(ExistingEntries);
         ExistingEntryResolver.Validate(JoinedEntrySources);
+        if(PkarrSeed is null||PkarrSequence<0)throw new FormatException("PKARR 本机身份无效");
+        if(PkarrSeed.Length>0){try{if(Convert.FromBase64String(PkarrSeed).Length!=32)throw new FormatException();}catch(FormatException){throw new FormatException("PKARR 本机密钥格式无效");}}
         if(JoinedEntryNetwork==null||JoinedEntryNetwork.Length>0&&!Guid.TryParseExact(JoinedEntryNetwork,"N",out _))throw new FormatException("已加入网络的入口身份无效");
         if(EntryRefreshSeconds is <1 or >86400)throw new FormatException("订阅更新间隔需为 1 秒至 24 小时");
         if (RequestedVirtualIp.Length > 0) MeshAddressing.ValidateAddress(RequestedVirtualIp);

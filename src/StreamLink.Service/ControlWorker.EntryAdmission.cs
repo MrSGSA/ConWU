@@ -108,7 +108,7 @@ public sealed partial class ControlWorker
         try{if(acceptingEntries!=null)await acceptingEntries;if(retiredEntryPublishers.Count>0){await Task.WhenAll(retiredEntryPublishers);retiredEntryPublishers.Clear();}}
         finally{acceptingEntries=null;entryAdmissionStop?.Dispose();entryAdmissionStop=null;}
     }
-    ExistingEntry[] ApprovalEntryHints(MeshProfile mesh)=>profile.ExistingEntries.Where(e=>e.PeerSlot==0)
+    ExistingEntry[] ApprovalEntryHints(MeshProfile mesh)=>profile.ExistingEntries.Where(e=>e.PeerSlot==0).Concat(PkarrHints(profile))
         .Select(e=>e with{PeerSlot=mesh.Self.Slot}).Distinct().ToArray();
 
     async Task JoinUiEntry(UiNetworkAction action,Operation operation)
@@ -127,7 +127,7 @@ public sealed partial class ControlWorker
         if(endpoints.Length==0)throw new IOException("未取得可用入口。"+string.Join("；",resolved.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
         await CloseUiPair(operation.Stop.Token);
         uiPairOwner=false;uiEntryAdmission=true;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;
-        uiPairKey=new(profile.NodeSigningPrivate);uiEntrySources=sources;
+        uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiEntrySources=sources;
         var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
         var folder=Path.Combine(store.DirectoryPath,"sessions","entry-pair-"+Guid.NewGuid().ToString("N"));
         try{

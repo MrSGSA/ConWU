@@ -8,6 +8,7 @@ namespace StreamLink.Core;
 
 public sealed record DirectPairRequest(string Id,string Method,string Room="",string Token="",string Code="",string Commitment="",string Name="",string PublicKey="",int Offset=0)
 {
+    public int NetworkSettingsVersion {get;init;}
     public string TargetNetwork {get;init;}="";
     public NodeIdentityProof? Identity {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
@@ -127,11 +128,11 @@ public sealed class DirectPairHost : IShortPairClient
             if(entryAdmission&&state!.Approved)throw new EntryBusy(false,"设备正在交付上一项授权，请稍后重试");
             if(state!.Approved||state.Outcome.Length>0)throw new IOException();
             if(r.Identity!=null&&!NodeIdentityProof.Valid(r.Identity,r.Commitment))throw new IOException("设备身份签名无效");
-            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name||state.RequestedIp!=r.RequestedIp||state.Rejoin!=r.Rejoin||state.GuestIdentity!=r.Identity){if(entryAdmission)throw new EntryBusy(false,"设备正在处理另一项加入申请，请稍后重试");throw new IOException();}return new(r.Id,Ticket:guest);}
+            if(guest!=null){if(state.GuestCommitment!=r.Commitment||state.GuestName!=r.Name||state.RequestedIp!=r.RequestedIp||state.Rejoin!=r.Rejoin||state.GuestIdentity!=r.Identity||state.NetworkSettingsVersion!=r.NetworkSettingsVersion){if(entryAdmission)throw new EntryBusy(false,"设备正在处理另一项加入申请，请稍后重试");throw new IOException();}return new(r.Id,Ticket:guest);}
             if(r.Rejoin is {} proof && !MeshRejoin.WellFormed(proof))throw new IOException("重新加入证明格式无效");
-            if(r.RequestedIp is null)throw new IOException();if(r.RequestedIp.Length>0)MeshAddressing.ValidateAddress(r.RequestedIp);
+            if(r.NetworkSettingsVersion is <0 or >1||r.RequestedIp is null)throw new IOException();if(r.RequestedIp.Length>0)MeshAddressing.ValidateAddress(r.RequestedIp);
             guest=new(ticket!.Room,"",Token(),ticket.HostCommitment,ticket.HostName,ticket.Expires,Guid.NewGuid().ToString("N")){Identity=ticket.Identity};
-            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name,Rejoin=r.Rejoin,RequestedIp=r.RequestedIp,Governance=entryAdmission?1:state.Governance,GuestIdentity=r.Identity};return new(r.Id,Ticket:guest);
+            state=state with{Candidate=guest.Candidate,GuestCommitment=r.Commitment,GuestName=r.Name,Rejoin=r.Rejoin,RequestedIp=r.RequestedIp,Governance=entryAdmission?1:state.Governance,GuestIdentity=r.Identity,NetworkSettingsVersion=r.NetworkSettingsVersion};return new(r.Id,Ticket:guest);
         }
         if(guest==null||r.Room!=guest.Room||!Equal(r.Token,guest.Token))throw new IOException();
         switch(r.Method){
@@ -196,7 +197,7 @@ public sealed class DirectPairClient : IShortPairClient
     {
         if(entryAdmission?code!=DirectPairWire.EntryLocator:!(code.Length==6&&code.All(char.IsAsciiDigit))&&!(code.Length==64&&code.All(char.IsAsciiHexDigit)))throw new FormatException("直连配对凭据无效");
         if(requestedIp.Length>0)MeshAddressing.ValidateAddress(requestedIp);
-        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name,Rejoin=rejoin,RequestedIp=requestedIp,Identity=key.Identity},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
+        var ticket=(await Send(Request("join") with{Code=code,Commitment=key.Commitment,Name=name,Rejoin=rejoin,RequestedIp=requestedIp,Identity=key.Identity,NetworkSettingsVersion=key.ReceiveNetworkSettings?1:0},cancel)).Ticket??throw new IOException("主机没有返回配对申请");
         if(!Guid.TryParseExact(ticket.Room,"N",out _)||!Guid.TryParseExact(ticket.Candidate,"N",out _)||ticket.Token.Length!=64||!PairKeyExchange.ValidCommitment(ticket.HostCommitment)||ticket.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||ticket.Expires>DateTimeOffset.UtcNow.AddMinutes(6).ToUnixTimeSeconds()||ticket.HostName.Length>64)throw new IOException("主机配对响应无效");return ticket;
     }
     async Task<PairRoomState> State(DirectPairRequest request,CancellationToken cancel)

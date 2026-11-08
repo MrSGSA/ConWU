@@ -20,7 +20,7 @@ public sealed partial class ControlWorker
         var endpoints=resolutions.SelectMany(e=>e.Endpoints).Distinct().Take(8).ToArray();
         if(endpoints.Length==0)throw new IOException("邀请中的主机入口未解析成功，请检查订阅或让主机重新生成邀请。"+string.Join("；",resolutions.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
         await CloseUiPair(token);
-        uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new(profile.NodeSigningPrivate);
+        uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);
         var temporary=MeshIdentity.Create("","",invitation.Mode,direct:true);
         var folder=Path.Combine(store.DirectoryPath,"sessions","pair-"+Guid.NewGuid().ToString("N"));
         try {

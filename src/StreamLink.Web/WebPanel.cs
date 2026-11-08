@@ -132,10 +132,10 @@ public sealed class WebPanel : IAsyncDisposable
                 bool authenticated;lock(gate){Prune();authenticated=request.Cookies.TryGetValue(cookieName,out var remoteSession)&&sessions.ContainsKey(remoteSession);}
                 if(!authenticated){response.Redirect("/admin/login");return;}
             }
-            if (request.Method == "GET" && path is "/" or "/app.js" or "/workspace.js" or "/style.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
-                response.ContentType = path switch { "/app.js" or "/workspace.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
+            if (request.Method == "GET" && path is "/" or "/app.js" or "/workspace.js" or "/experience.js" or "/style.css" or "/experience.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
+                response.ContentType = path switch { "/app.js" or "/workspace.js" or "/experience.js" => "text/javascript; charset=utf-8", "/style.css" or "/experience.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };
                 string file = path switch { "/" => "index.html", "/streamlink-tokyo-45.svg" => "icon.svg", _ => path[1..] };
-                if(remote!=null&&path=="/"){string html=await File.ReadAllTextAsync(Path.Combine(assets,file),context.RequestAborted);await response.WriteAsync(html.Replace("href=\"/icon.svg\"","href=\"/admin/icon.svg\"",StringComparison.Ordinal).Replace("href=\"/style.css\"","href=\"/admin/style.css\"",StringComparison.Ordinal).Replace("src=\"/app.js\"","src=\"/admin/app.js\"",StringComparison.Ordinal).Replace("src=\"/workspace.js\"","src=\"/admin/workspace.js\"",StringComparison.Ordinal),context.RequestAborted);return;}
+                if(remote!=null&&path=="/"){string html=await File.ReadAllTextAsync(Path.Combine(assets,file),context.RequestAborted);await response.WriteAsync(html.Replace("href=\"/icon.svg\"","href=\"/admin/icon.svg\"",StringComparison.Ordinal).Replace("href=\"/style.css\"","href=\"/admin/style.css\"",StringComparison.Ordinal).Replace("src=\"/app.js\"","src=\"/admin/app.js\"",StringComparison.Ordinal).Replace("src=\"/workspace.js\"","src=\"/admin/workspace.js\"",StringComparison.Ordinal).Replace("src=\"/experience.js\"","src=\"/admin/experience.js\"",StringComparison.Ordinal).Replace("href=\"/experience.css\"","href=\"/admin/experience.css\"",StringComparison.Ordinal),context.RequestAborted);return;}
                 await response.SendFileAsync(Path.Combine(assets,file),context.RequestAborted); return;
             }
             bool post = request.Method == "POST";

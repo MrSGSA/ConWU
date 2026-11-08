@@ -24,6 +24,11 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}
+        if(args is ["--pkarr-only"]){await PkarrDiscoveryTests();return;}
+        if(args is ["--pkarr-publisher"]){await PkarrPublishingTests();return;}
+        if(args is ["--auto-entry-backup"]){await PairWorkspaceCoordination(automatic:true,directEntries:true);return;}
+        if(args is ["--auto-coordination"]){await PairWorkspaceCoordination(automatic:true);return;}
         if(args is ["--configuration-library"]){await ConfigurationLibrary();return;}
         if(args is ["--entry-backup-integration"]){await EntryBackupIntegration();return;}
         if(args is ["--seed-configuration-upgrade",var configurationInstance]){SeedConfigurationUpgrade(configurationInstance);return;}

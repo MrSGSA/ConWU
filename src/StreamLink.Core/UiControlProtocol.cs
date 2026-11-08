@@ -39,6 +39,8 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool PendingMembership {get;init;}
     public bool NetworkClosed {get;init;}
     public UiNetworkSettings? Settings {get;init;}
+    public ApprovedNetworkSettings? ReceivedNetworkSettings {get;init;}
+    public PkarrStatus? Pkarr {get;init;}
     public string SettingsRevision {get;init;}="";
     public string MigrationNotice {get;init;}="";
     public UiPairingDto? Pairing {get;init;}
@@ -92,6 +94,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public string ConnectionSource {get;init;}="custom";
     public bool DirectMode {get;init;}
     public bool CoordinatorBackup {get;init;}
+    public bool PkarrPublish {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];
     public int EntryRefreshSeconds {get;init;}=60;
     public string[]? TcpStun {get;init;}
@@ -104,6 +107,7 @@ public sealed record UiNetworkAction(string Action,string Service="",string Cert
     public string Name {get;init;}="";
     public string ConfigurationId {get;init;}="";
     public string RequestedVirtualIp {get;init;}="";
+    public bool AutoConfigure {get;init;}
     public string ExpectedDeviceRevision {get;init;}="";
     public string Entry {get;init;}="";
     public bool Background {get;init;}

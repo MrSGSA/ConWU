@@ -6,6 +6,7 @@ namespace StreamLink.Service;
 
 public sealed partial class ControlWorker
 {
+    internal string NetworkDisplayName {get;set;}="";
     PairRoomTicket? uiRoom;
     PairRoomState? uiRoomState;
     PairKeyExchange? uiPairKey;
@@ -29,7 +30,7 @@ public sealed partial class ControlWorker
         ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
         DirectMode=p.Mesh?.Pair.Direct??p.DirectMode,
         ExistingEntries=p.ExistingEntries.Length>0?p.ExistingEntries:p.ManualEndpoint.Length>0?[new(0,p.ManualEndpoint)]:[],
-        Coordinator=p.Coordinator,Ddns=p.Ddns,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
+        Coordinator=p.Coordinator,PkarrPublish=p.PkarrPublish,Ddns=p.Ddns,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
     };
     static string SettingsRevision(DeviceProfile p) => Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new{Settings=PublicSettings(p),DdnsCredential=p.CloudflareDdnsToken})));
     void RequireUiNetwork(string expected)
@@ -114,13 +115,13 @@ public sealed partial class ControlWorker
         await CloseUiPair(token);
         uiPairOwner = true; uiPairService = service; uiPairPin = pin;
         uiExpectedNetwork = expectedNetwork??profile.Mesh!.Pair.Network;
-        uiPairKey = new(profile.NodeSigningPrivate); var client = new ShortPairClient(service,pin);uiPairClient=client;
+        uiPairKey = new(profile.NodeSigningPrivate,profile.AutoConfigureJoin); var client = new ShortPairClient(service,pin);uiPairClient=client;
         try { if(!verified)await client.RequireMeshSupport(token,true,requirePairwise:networkContext);uiRoom = await uiPairClient.Create(uiPairKey, profile.DeviceName, token); if(expectedNetwork==null)PairSnapshot("等待另一台设备输入配对码"); }
         catch { ResetUiPair("创建配对码未完成，请重试邀请"); throw; }
     }
     async Task OpenDirectShortPair(CancellationToken token)
     {
-        await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=profile.Mesh!.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate);uiPairClient=uiDirectHost;
+        await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=profile.Mesh!.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
         try{uiRoom=await uiPairClient.Create(uiPairKey,profile.DeviceName,token);StartEntryBackupPublication(uiRoom);PairSnapshot("请另一台设备填写目标主机入口和六位配对码，双方核对校验码后批准");}
         catch{ResetUiPair("配对码生成未完成，请稍后重试");throw;}
     }
@@ -230,13 +231,21 @@ public sealed partial class ControlWorker
                 } else {
                     await CloseUiPair(token);
                     uiPairOwner = false; uiPairService = action.Service; uiPairPin = action.CertificatePin;
-                    uiExpectedNetwork = action.ExpectedNetwork; uiPairKey = new(profile.NodeSigningPrivate); uiPairClient = new ShortPairClient(action.Service, action.CertificatePin);
+                    uiExpectedNetwork = action.ExpectedNetwork; uiPairKey = new(profile.NodeSigningPrivate,profile.AutoConfigureJoin); uiPairClient = new ShortPairClient(action.Service, action.CertificatePin);
                     SetOperation(operation,"向 HTTPS 协调服务发送加入申请",true);
                     try { uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential,action.Code,uiPairKey);uiRoom = await uiPairClient.Join(action.Code, uiPairKey, profile.DeviceName, token,profile.RequestedVirtualIp,uiExpectedRejoin); PairSnapshot("正在等待主机同意，请核对双方校验码"); }
+                    catch(PairRoomUnavailableException)when(profile.AutoConfigureJoin){
+                        ResetUiPair("正在查询主机入口");
+                        var pendingSettings=ProfileChanges.Copy(profile);
+                        ConnectionSettings.Apply(pendingSettings,PublicSettings(profile) with{ConnectionSource="existing",DirectMode=true,CoordinatorBackup=true,Service=action.Service,CertificatePin=action.CertificatePin});
+                        lock(sync){store.Save(pendingSettings);profile=pendingSettings;}
+                        await JoinUiDirectShort(action with{Action="join-direct-short"},operation);
+                    }
                     catch { ResetUiPair("加入申请未完成"); throw; }
                 }
                 break;
             case "invite":
+                EnsurePkarrIdentity();
                 RequireUiNetwork(action.ExpectedNetwork);
                 var network = profile.Mesh ?? throw new IOException("请先创建网络");
                 if (!network.CanManage) throw new IOException("本机没有当前网络的邀请权限");
@@ -250,11 +259,11 @@ public sealed partial class ControlWorker
                             SetOperation(operation,"等待本机接收入口准备，再生成邀请",true);await Task.Delay(100,token);
                         }
                     }else if(meshRunner==null)throw new IOException("请先连接本机网络，再生成直连邀请");
-                    await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate);uiPairClient=uiDirectHost;
+                    await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
                     try{var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;var invitationEntries=profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray();
                         if(invitationEntries.Length==0)invitationEntries=meshRunner?.PreparedInvitationEntries??[];
                         if(invitationEntries.Length==0)throw new IOException("尚未取得可分享的主机入口。请等待入口准备，或改用协调服务器／已有入口；STUN 观测不代表入站可达");
-                        uiApprovalCode=DirectPairInvitation.Issue(network,invitationEntries,uiRoom,opened.Capability);PairSnapshot("等待设备申请；核对校验码后由主机批准");}
+                        uiApprovalCode=DirectPairInvitation.Issue(network,invitationEntries.Concat(PkarrHints(profile)).Distinct().ToArray(),uiRoom,opened.Capability);PairSnapshot("等待设备申请；核对校验码后由主机批准");}
                     catch{await CloseUiPair(token);throw;}
                     break;
                 }
@@ -262,6 +271,7 @@ public sealed partial class ControlWorker
             case "pair-poll":
                 await PollUiPair(operation); break;
             case "approve":
+                EnsurePkarrIdentity();
                 RequireUiNetwork(uiExpectedNetwork);
                 if (!uiPairOwner || uiRoom == null || uiRoomState == null || uiExchange == null || profile.Mesh?.CanManage != true ||
                     action.Candidate != uiRoomState.Candidate || action.Verification != PairKeyExchange.Verification(uiExchange))
@@ -282,7 +292,8 @@ public sealed partial class ControlWorker
                         admitted.ExistingEntries=admitted.ExistingEntries.Select(e=>e.PeerSlot==prior.Slot?e with{PeerSlot=nextSlot}:e).Distinct().ToArray();
                         admitted.RejoinHistory=MeshRejoin.Remember(admitted.Mesh,admitted.RejoinHistory,prior,admitted.Mesh.Directory.Members.Single(m=>m.Slot==nextSlot));
                     }
-                    if(uiEntryAdmission)issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh));
+                    if(networkContext&&uiRoomState.NetworkSettingsVersion==1)issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh),ApprovedNetworkSettings.Create(admitted.Mesh,PublicSettings(admitted) with{ExistingEntries=PublicSettings(admitted).ExistingEntries.Concat(PkarrHints(admitted)).Distinct().ToArray()},NetworkDisplayName));
+                    else if(uiEntryAdmission)issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh));
                     string pendingCipher=PairKeyExchange.EncryptInvitation(uiExchange,issued,uiRoom.Room,uiRoomState.Candidate);
                     store.Save(admitted);profile=admitted;uiPendingInvite=issued;uiPendingCipher=pendingCipher;
                     meshRunner?.UpdateDirectory(admitted.Mesh.Directory!);meshRunner?.UpdateEntries(admitted);
@@ -313,6 +324,7 @@ public sealed partial class ControlWorker
                 }
                 break;
             case "settings":
+                if(profile.AutoConfigureJoin&&profile.Mesh is {IsOwner:false})throw new IOException("此网络设置由主机提供，本机仅供查看，不能修改");
                 var settings = action.Settings ?? throw new FormatException("设置为空");
                 var updated = action.Patch?.ApplyTo(profile)??ProfileChanges.Copy(profile);
                 if (action.ExpectedRevision != SettingsRevision(profile)) throw new IOException("连接设置已改变；草稿已保留，请刷新后核对");
@@ -322,7 +334,7 @@ public sealed partial class ControlWorker
                 updated.ManualEndpoint = settings.ManualEndpoint; updated.SelectTransport(settings.PathSelection);
                 updated.ConnectionSource=updated.Mesh!=null&&!routeChanged?profile.ConnectionSource:settings.ConnectionSource;updated.ExistingEntries=settings.ExistingEntries;
                 updated.EntryRefreshSeconds=settings.EntryRefreshSeconds;
-                updated.Coordinator=settings.Coordinator;
+                updated.Coordinator=settings.Coordinator;updated.PkarrPublish=settings.PkarrPublish;
                 updated.Ddns=new();updated.CloudflareDdnsToken="";
                 updated.DirectMode=updated.Mesh?.Pair.Direct??settings.DirectMode;
                 ExistingEntryResolver.Validate(settings.ExistingEntries);
@@ -463,13 +475,15 @@ public sealed partial class ControlWorker
             ResetUiPair("已确认设备获准加入"); return;
         }
         if(operation==null)return;
-        MeshProfile mesh;ExistingEntry[] enrollmentEntries;
-        if(uiEntryAdmission)(mesh,enrollmentEntries)=NetworkEntryEnrollment.Import(invitation);
+        MeshProfile mesh;ExistingEntry[] enrollmentEntries;ApprovedNetworkSettings? receivedSettings=null;
+        if(invitation.StartsWith("SL7."))(mesh,enrollmentEntries,receivedSettings)=NetworkEntryEnrollment.ImportSettings(invitation);
+        else if(uiEntryAdmission)(mesh,enrollmentEntries)=NetworkEntryEnrollment.Import(invitation);
         else if(directPair){var importedDirect=DirectInvitation.Import(invitation);mesh=importedDirect.Mesh;enrollmentEntries=importedDirect.Entries;}
         else{mesh=MeshIdentity.Import(invitation);enrollmentEntries=[];}
         if(networkContext&&mesh.Directory?.Pairwise!=true)throw new IOException("目标不是新版双机网络，请在两端新版重新创建连接");
         if(networkContext&&(!NodeIdentityProof.Valid(uiRoom.Identity,uiRoom.HostCommitment)||mesh.Self.Device!=profile.Device||mesh.Directory!.Members.Single(m=>m.Slot==1).Device!=uiRoom.Identity!.DeviceId))throw new CryptographicException("批准的网络设备身份与本次配对不符");
-        RequireSavedProtocol(mesh.Pair.Mode);
+        if(profile.AutoConfigureJoin){if(receivedSettings==null)throw new IOException("主机或协调服务版本暂不支持自动获取网络设置，请更新后重新申请");}
+        else RequireSavedProtocol(mesh.Pair.Mode);
         if(mesh.IsDecentralized){
             using var confirmation=new MeshDiscoveryClient(mesh);var accepted=await confirmation.Read(token)??throw new IOException("邀请所属网络尚未由协调服务确认");
             MeshIdentity.ValidateSuccessor(accepted.Directory,mesh.Directory!);
@@ -486,7 +500,7 @@ public sealed partial class ControlWorker
         next.CoordinationService=directPair&&profile.SavedNetworkSettings is {CoordinatorBackup:true} backupSettings?backupSettings.Service:uiPairService;
         next.CoordinationPin=directPair&&profile.SavedNetworkSettings is {CoordinatorBackup:true} backupPinSettings?backupPinSettings.CertificatePin:uiPairPin;
         next.DirectMode=mesh.Pair.Direct;if(directPair&&!networkContext)next.ConnectionSource="existing";
-        if(networkContext&&mesh.Pair.Direct&&next.ConnectionSource!="existing")throw new IOException("此邀请使用已有入口，请将该网络改为只使用已有入口后再确认");
+        if(networkContext&&!profile.AutoConfigureJoin&&mesh.Pair.Direct&&next.ConnectionSource!="existing")throw new IOException("此邀请使用已有入口，请将该网络改为只使用已有入口后再确认");
         if(networkContext&&next.SavedNetworkSettings is {} initialSettings)next.SavedNetworkSettings=initialSettings with{
             DirectMode=mesh.Pair.Direct,ConnectionSource=next.ConnectionSource,Service=initialSettings.CoordinatorBackup?initialSettings.Service:mesh.Pair.Service,CertificatePin=initialSettings.CoordinatorBackup?initialSettings.CertificatePin:mesh.Pair.CertificatePin
         };
@@ -494,6 +508,12 @@ public sealed partial class ControlWorker
         next.ExistingEntries=ExistingEntry.ForJoinedNetwork(PublicSettings(profile).ExistingEntries);
         next.JoinedEntryNetwork=mesh.Pair.Network;
         next.JoinedEntrySources=directPair?uiEntrySources.Select(e=>e with{PeerSlot=ExistingEntry.Network}).Concat(enrollmentEntries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray():[];
+        if(profile.AutoConfigureJoin){
+            var inherited=receivedSettings!.ForGuest(mesh,PublicSettings(profile));
+            ConnectionSettings.Apply(next,inherited);next.ReceivedNetworkSettings=receivedSettings;
+            next.CoordinationService=inherited.Service;next.CoordinationPin=inherited.CertificatePin;
+            next.JoinedEntrySources=next.JoinedEntrySources.Concat(receivedSettings.Entries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray();
+        }
         next.ExistingEntries=RuntimeEntries(next);
         next.Validate(); await PersonalPacketAdapters.Preflight(next, token);
         SetOperation(operation, "保存配对并启动网络", false); await End(token);

@@ -17,7 +17,7 @@ static partial class Program
         public int Servers,Probes;
         readonly string sid;
         public WorkspaceNode(string folder,string name,WorkspaceNode? target=null,string coordination="",string pin="",CoordinatorSettings? coordinator=null,
-            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false)
+            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false,Func<PkarrClient>? pkarrFactory=null)
         {
             sid=WindowsIdentity.GetCurrent().User!.Value;
             Store=new ProfileStore(folder);if(!reuseProfile)Store.Save(new(){DeviceName=name,ConnectionSource="existing",DirectMode=coordination.Length==0,ListenPort=listenPort,SourcePort=listenPort+1,CoordinationService=coordination,CoordinationPin=pin,Coordinator=coordinator??new(),
@@ -29,7 +29,7 @@ static partial class Program
                 if(request.Server){NativeTarget=request.Target;Interlocked.Increment(ref Servers);return transportOverride?.Invoke(request)??new StubTransport(null);}
                 return transportOverride?.Invoke(request)??new ForwardingTransport(target?.NativeTarget??request.Target,toleratePeerOffline:true);
             },(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},Path.Combine(folder,"sessions")){
-                Candidates=(_,_,_,_)=>throw new IOException("autonomous candidates forbidden"),NetworkWake=()=>new MeshNetworkWake(false),
+                Candidates=(_,_,_,_)=>throw new IOException("autonomous candidates forbidden"),NetworkWake=()=>new MeshNetworkWake(false),PkarrClientFactory=pkarrFactory,
                 ResolveEntries=async (entries,_,ct)=>{
                     if(target!=null)while(target.NativeTarget==null)await Task.Delay(20,ct);
                     return entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,"地址",[target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"")).ToArray();

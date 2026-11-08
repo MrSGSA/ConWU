@@ -150,6 +150,7 @@ public sealed class ExistingEntryResolver : IDisposable
     }
     public static string NormalizeSource(string source)=>!source.Contains("://",StringComparison.Ordinal)&&source.Contains('#')?"txt://"+source:source;
     public static string Kind(string source) => NormalizeSource(source).StartsWith("txt://", StringComparison.OrdinalIgnoreCase)?"TXT":
+        source.StartsWith("pkarr://",StringComparison.Ordinal)?"PKARR":
         source.StartsWith("txt://", StringComparison.OrdinalIgnoreCase) ? "TXT" :
         source.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "HTTPS" : source.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ? "HTTP" : "地址";
     static string? Selector(string source)
@@ -169,7 +170,8 @@ public sealed class ExistingEntryResolver : IDisposable
                 throw new FormatException("入口归属或地址无效");
             if(s.StartsWith("conwu-ddns:",StringComparison.OrdinalIgnoreCase))throw new FormatException("内置 DDNS 入口已停用，请改用普通地址或 HTTPS/TXT 订阅");
             _=Selector(s);
-            if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink1 等标签"); }
+            if(Kind(s)=="PKARR"){PkarrPacket.KeyFromSource(s);}
+            else if (Kind(s) == "TXT") { if (!Host(WithoutSelector(s)[6..])) throw new FormatException("TXT 地址格式为 txt://完整域名，可加 #streamlink1 等标签"); }
             else if (Kind(s) is "HTTP" or "HTTPS") {
                 if (!Uri.TryCreate(WithoutSelector(s), UriKind.Absolute, out var uri) || uri.UserInfo.Length != 0 || uri.Fragment.Length != 0 || !Host(uri.Host) || uri.IsLoopback)
                     throw new FormatException("更新页面需为不含用户名的 HTTP(S) 公网地址，可使用 #streamlink1 选择对应标签");
@@ -223,7 +225,8 @@ public sealed class ExistingEntryResolver : IDisposable
         string kind=Kind(entry.Source);bool allowCached=true;
         try {
             string[] values;
-            if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
+            if(kind=="PKARR"){using var pkarr=new PkarrClient();progress.Stage="PKARR 公告查询";values=await pkarr.Resolve(entry.Source,mode,deadline.Token);}
+            else if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
             progress.Stage="入口地址解析";

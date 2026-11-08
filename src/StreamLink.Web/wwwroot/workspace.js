@@ -8,7 +8,7 @@ let renderedPage='overview',renderedConfiguration='';
 const legacy={render,controls,settingsPage,createPage,joinPage,overviewPage,updateShell,api,baseSectionFields,refreshSettingsTools};
 const configurationGroups=['network','coordination','port','certificate','stun'];
 const deviceGroups=['system','identity','logging','host'];
-defaults.network.coordinatorBackup=false;
+defaults.network.coordinatorBackup=false;defaults.network.pkarrPublish=false;
 sectionNames.host='本机协调服务';sectionIcons.host='server';
 defaults.host={enabled:false,listenUrl:'http://127.0.0.1:47822',publicUrl:'',publicCertificatePin:'',certificateFile:'',certificateKeyFile:'',trustCloudflare:false};
 function configuration(){return workspaceState?.configurations?.find(c=>c.id===selectedConfiguration);}
@@ -66,9 +66,9 @@ baseSectionFields=function(){
 };
 entryOwnerOptions=function(d){return [['local','本机入口 · 供其他设备连接'],['target','目标主机的入口 · 用于连接到目标主机。']].map(([v,n])=>`<option value="${v}" ${d.owner===v?'selected':''}>${n}</option>`).join('');};
 const originalConfigFromStatus=configFromStatus;
-configFromStatus=function(s){const c=originalConfigFromStatus(s);c.host={...defaults.host,...(s.settings?.coordinator||{})};c.network.coordinatorBackup=!!s.settings?.coordinatorBackup;return c;};
+configFromStatus=function(s){const c=originalConfigFromStatus(s);c.host={...defaults.host,...(s.settings?.coordinator||{})};c.network.coordinatorBackup=!!s.settings?.coordinatorBackup;c.network.pkarrPublish=!!s.settings?.pkarrPublish;return c;};
 const originalSettingsDto=settingsDto;
-settingsDto=function(){const p=originalSettingsDto();return {...p,coordinator:{...defaults.host},ddns:null,coordinatorBackup:drafts.network.mode==='existing'&&!!drafts.network.coordinatorBackup,directMode:drafts.network.mode==='existing'||drafts.network.route==='direct',sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',existingEntries:p.existingEntries.filter(e=>e.peerSlot===0||e.peerSlot===-1)};};
+settingsDto=function(){const p=originalSettingsDto();return {...p,coordinator:{...defaults.host},ddns:null,pkarrPublish:!!drafts.network.pkarrPublish,coordinatorBackup:drafts.network.mode==='existing'&&!!drafts.network.coordinatorBackup,directMode:drafts.network.mode==='existing'||drafts.network.route==='direct',sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',existingEntries:p.existingEntries.filter(e=>e.peerSlot===0||e.peerSlot===-1)};};
 const originalValidateSection=validateSection;
 validateSection=function(key,configuration=drafts){if(key==='coordination'&&configuration.network.mode==='existing'){if(configuration.network.coordinatorBackup&&!configuration.coordination.url.trim())return '启用备用协调后，请填写 HTTPS 协调服务器。';if(!configuration.network.coordinatorBackup)return '';}if(key==='host')return '';const wasActive=networkActive;networkActive=false;try{return originalValidateSection(key,configuration);}finally{networkActive=wasActive;}};
 const entryNetworkFields=networkFields;
@@ -97,7 +97,7 @@ api=async function(path,body,valid,sessionRetried){
  if(path.startsWith('/api/status')&&selectedNetwork&&!path.includes('networkId='))path+=(path.includes('?')?'&':'?')+'networkId='+encodeURIComponent(selectedNetwork);
  if(body&&path==='/api/command'){
   body={networkId:selectedNetwork,...body};
-  if(body.method==='network'&&['create','create-direct','join','join-direct-short','join-invitation','join-entry'].includes(body.network?.action))body={...body,networkId:'',network:{...body.network,configurationId:selectedConfiguration,requestedVirtualIp:newNetworkIp.trim(),name:body.network.name||newNetworkName}};
+  if(body.method==='network'&&['create','create-direct','join','join-direct-short','join-invitation','join-entry'].includes(body.network?.action))body={...body,networkId:'',network:{...body.network,configurationId:body.network.autoConfigure?'':selectedConfiguration,requestedVirtualIp:body.network.autoConfigure?'':newNetworkIp.trim(),name:body.network.name||newNetworkName}};
  }
  if(location.pathname.startsWith('/admin/')&&path.startsWith('/api/'))path='/admin'+path;
  const response=await legacy.api(path,body,valid,sessionRetried);
@@ -198,4 +198,3 @@ pollPair=async function(){
  try{await command('network',{networkId:target.id,network:{action:'pair-poll'}},true);if(noticeSource==='pair')notice('');}
  catch(error){if(error.message!==lastPairError){lastPairError=error.message;notice(target.name+'：'+error.message,true,'pair');}}
 };
-boot();

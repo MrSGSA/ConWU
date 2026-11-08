@@ -32,6 +32,7 @@ internal sealed partial class PairNetworkWorkspace
     };
     void EnsureConfiguration(Context context)
     {
+        if(context.Worker.ProfileSnapshot().AutoConfigureJoin)return;
         if(context.Info.ConfigurationId.Length>0){if(!configurations.ContainsKey(context.Info.ConfigurationId))throw new IOException("网络引用的连接配置不存在："+context.Info.Name);return;}
         var settings=ConnectionSettings.Normalize(MigrateConfiguration(context.Worker.SingleUiSnapshot().Settings!));
         // Stable migration key makes interrupted migration repeatable. Equal

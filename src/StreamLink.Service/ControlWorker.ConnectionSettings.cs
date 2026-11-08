@@ -10,6 +10,7 @@ public sealed partial class ControlWorker
     }
     internal static DeviceProfile PrepareConnectionSettings(DeviceProfile before,UiNetworkSettings settings)
     {
+        if(before.AutoConfigureJoin)throw new IOException("此网络设置由主机提供，本机仅供查看，不能改用本机配置");
         settings=ConnectionSettings.Normalize(settings);
         var previous=PublicSettings(before);
         if(before.Mesh is {} mesh&&(settings.DirectMode!=mesh.Pair.Direct||!mesh.Pair.Direct&&(settings.Service!=previous.Service||settings.CertificatePin!=previous.CertificatePin)))

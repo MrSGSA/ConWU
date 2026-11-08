@@ -23,6 +23,7 @@ public static class ProfileChanges
         comparable.RequestedVirtualIp=before.RequestedVirtualIp; // next enrollment only; never silently renumber a live network
         comparable.AutoStart=before.AutoStart;
         comparable.Coordinator=before.Coordinator; // independent host role; never rebuild healthy data paths
+        comparable.PkarrPublish=before.PkarrPublish;comparable.PkarrSeed=before.PkarrSeed;comparable.PkarrSequence=before.PkarrSequence;
         comparable.Ddns=before.Ddns;comparable.CloudflareDdnsToken=before.CloudflareDdnsToken;
         comparable.EntryRefreshSeconds=before.EntryRefreshSeconds;
         // Runtime observations and opaque future options are not network start

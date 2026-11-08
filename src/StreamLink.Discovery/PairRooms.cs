@@ -11,10 +11,10 @@ public sealed class PairRooms(TimeProvider? time = null)
         public long Expires = DateTimeOffset.UtcNow.AddMinutes(5).ToUnixTimeSeconds();
         public bool Approved;
         public string Outcome="", RequestedIp="";
-        public int Addressing, Governance;
+        public int Addressing, Governance, NetworkSettingsVersion;
         public MeshRejoinProof? Rejoin;
         public NodeIdentityProof? HostIdentity,GuestIdentity;
-        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires) {Outcome=Outcome,RequestedIp=RequestedIp,Addressing=Addressing,Rejoin=Rejoin,Governance=Governance,GuestIdentity=GuestIdentity};
+        public PairRoomState State() => new(Candidate, GuestCommit, GuestName, HostPublic, GuestPublic, Cipher, Approved, Expires) {Outcome=Outcome,RequestedIp=RequestedIp,Addressing=Addressing,Rejoin=Rejoin,Governance=Governance,GuestIdentity=GuestIdentity,NetworkSettingsVersion=NetworkSettingsVersion};
     }
     readonly Dictionary<string, Room> rooms = new();
     readonly object gate = new();
@@ -41,18 +41,18 @@ public sealed class PairRooms(TimeProvider? time = null)
     }
     public IResult Join(PairRoomJoin input)
     {
-        try { if(input.RequestedIp.Length>0)MeshAddressing.ValidateAddress(input.RequestedIp);if(input.Addressing is <0 or >1 || input.Governance is <0 or >1)return Results.BadRequest(); }catch{return Results.BadRequest();}
+        try { if(input.RequestedIp.Length>0)MeshAddressing.ValidateAddress(input.RequestedIp);if(input.Addressing is <0 or >1 || input.Governance is <0 or >1 || input.NetworkSettingsVersion is <0 or >1)return Results.BadRequest(); }catch{return Results.BadRequest();}
         if (!PairKeyExchange.ValidCommitment(input.Commitment) || !NameOk(input.Name) || input.Code is null || input.Code.Length != 6 || input.Code.Any(c => c is < '0' or > '9')) return Results.BadRequest();
         if(input.Rejoin is {} proof && !MeshRejoin.WellFormed(proof))return Results.BadRequest();
         if(input.Identity!=null&&!NodeIdentityProof.Valid(input.Identity,input.Commitment))return Results.BadRequest();
         lock (gate) {
             Prune(); var room = rooms.Values.FirstOrDefault(r => r.Code == input.Code && !r.Approved && r.Outcome.Length==0);
             if (room == null) return Results.NotFound();
-            if (room.Candidate.Length > 0) return room.GuestCommit==input.Commitment&&room.GuestName==input.Name&&room.RequestedIp==input.RequestedIp&&room.Addressing==input.Addressing&&room.Governance==input.Governance&&room.Rejoin==input.Rejoin&&room.GuestIdentity==input.Identity
+            if (room.Candidate.Length > 0) return room.GuestCommit==input.Commitment&&room.GuestName==input.Name&&room.RequestedIp==input.RequestedIp&&room.Addressing==input.Addressing&&room.Governance==input.Governance&&room.Rejoin==input.Rejoin&&room.GuestIdentity==input.Identity&&room.NetworkSettingsVersion==input.NetworkSettingsVersion
                 ? Results.Json(new PairRoomTicket(room.Id,"",room.Guest,room.HostCommit,room.HostName,room.Expires,room.Candidate){Identity=room.HostIdentity}) : Results.Conflict();
             room.Candidate = Guid.NewGuid().ToString("N"); room.Guest = NewToken(); room.GuestCommit = input.Commitment; room.GuestName = input.Name;
             room.RequestedIp=input.RequestedIp;room.Addressing=input.Addressing;room.Governance=input.Governance;
-            room.Rejoin=input.Rejoin;room.GuestIdentity=input.Identity;
+            room.Rejoin=input.Rejoin;room.GuestIdentity=input.Identity;room.NetworkSettingsVersion=input.NetworkSettingsVersion;
             return Results.Json(new PairRoomTicket(room.Id, "", room.Guest, room.HostCommit, room.HostName, room.Expires, room.Candidate){Identity=room.HostIdentity});
         }
     }

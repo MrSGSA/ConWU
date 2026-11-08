@@ -7,6 +7,7 @@
 <title>创建网络 · ConWU</title>
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/experience.css">
 </head>
 <body>
 <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -45,7 +46,9 @@
   <button class="nav" data-page="overview" title="概况"><svg class="icon"><use href="#i-overview"/></svg><span class="nav-text">概况</span></button>
   <button class="nav active" data-page="create" title="创建网络"><svg class="icon"><use href="#i-create"/></svg><span class="nav-text">创建网络</span></button>
   <button class="nav" data-page="join" title="加入网络"><svg class="icon"><use href="#i-join"/></svg><span class="nav-text">加入网络</span><span class="count-dot" id="request-dot" hidden></span></button>
-  <button class="nav exit" data-action="leave" title="退出网络"><svg class="icon"><use href="#i-exit"/></svg><span class="nav-text">退出网络</span></button>
+  <button class="nav exit" data-ui-action="choose-exit" title="退出网络"><svg class="icon"><use href="#i-exit"/></svg><span class="nav-text">退出网络</span></button>
+  <button class="nav" data-page="requests" title="加入申请"><svg class="icon"><use href="#i-shield"/></svg><span class="nav-text">加入申请</span><span class="nav-count" id="requests-count" hidden></span></button>
+  <button class="nav" data-page="coordinator" title="协调服务器"><svg class="icon"><use href="#i-server"/></svg><span class="nav-text">协调服务器</span></button>
   <button class="nav" data-page="logs" title="日志"><svg class="icon"><use href="#i-log"/></svg><span class="nav-text">日志</span></button>
   <button class="nav" data-page="settings" title="设置"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-text">设置</span><span id="settings-dirty-dot" class="count-dot" hidden></span></button>
  </nav>
@@ -53,12 +56,16 @@
 </aside>
 <div class="workspace">
  <header class="topbar"><div class="breadcrumb"><span>设备网络</span><span>/</span><strong id="breadcrumb">创建网络</strong></div><div class="row"><span id="backend-state" class="small muted" role="status">正在读取后台</span><button class="btn ghost icon-button" data-action="theme" id="theme-button" aria-label="切换浅色外观"><svg class="icon"><use href="#i-sun"/></svg></button></div></header>
- <div id="notice" class="live-notice" role="status" hidden></div><main id="content" tabindex="-1"></main>
+ <div id="notice" class="live-notice" role="status" hidden></div><main class="content" id="content" tabindex="-1"></main>
  <footer class="footer"><span>ConWU · 让设备连起来</span><span><span id="app-version"></span></span></footer>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <dialog id="confirm-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description"><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="row"><button class="btn" id="dialog-cancel">取消</button><button class="btn danger" id="dialog-confirm">确认</button></div></dialog>
 <script src="/app.js" defer></script>
 <script src="/workspace.js" defer></script>
+<script src="/experience.js" defer></script>
+<dialog class="network-dialog" id="network-dialog" aria-labelledby="network-dialog-title"><div class="modal-header"><div><h2 id="network-dialog-title">网络设置</h2><p id="network-dialog-subtitle"></p></div><button class="btn icon-only" data-ui-action="close-editor" aria-label="关闭网络设置"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="modal-grid"><nav class="modal-nav" id="network-settings-nav" aria-label="网络设置分区"></nav><div class="modal-body" id="network-settings-body"></div></div><div class="modal-footer"><span class="save-state" id="network-save-state" role="status"></span><div class="row" id="network-edit-actions"><button class="btn compact" data-ui-action="restore-editor">恢复刚才设置</button><button class="btn primary compact" data-ui-action="save-editor">保存设置</button></div><button class="btn compact" id="network-readonly-close" data-ui-action="close-editor" hidden>关闭</button></div></dialog>
+<dialog class="small-dialog" id="lookup-dialog" aria-labelledby="lookup-title"><div class="pad"><h2 id="lookup-title">查找目标主机</h2><p class="hint">没有可用的协调服务器、仍要使用短配对码时，请指定主机入口；使用直连邀请无需填写。</p><label class="field"><span>查找方式</span><select id="lookup-kind"><option value="coordinator">通过协调服务器</option><option value="entry">直接联系主机入口</option></select></label><label class="field"><span id="lookup-address-label">HTTPS 协调地址</span><input id="lookup-address" spellcheck="false" autocomplete="off"></label><div id="lookup-error" class="error" role="status"></div></div><div class="dialog-actions"><button class="btn" data-ui-action="close-lookup">取消</button><button class="btn primary" data-ui-action="save-lookup">使用此地址</button></div></dialog>
+<dialog class="small-dialog" id="exit-dialog" aria-labelledby="exit-title"><div class="pad"><h2 id="exit-title">退出网络</h2><label class="field"><span>选择网络</span><select id="exit-network-select"></select></label><p id="exit-description" class="hint"></p></div><div class="dialog-actions"><button class="btn" data-ui-action="close-exit">取消</button><button class="btn danger" id="exit-confirm" data-ui-action="confirm-exit">确认退出</button></div></dialog>
 </body>
 </html>

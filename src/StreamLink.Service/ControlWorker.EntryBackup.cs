@@ -28,7 +28,7 @@ public sealed partial class ControlWorker
         var entries=settings.ExistingEntries.Where(e=>e.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
         if(entries.Length==0&&!settings.CoordinatorBackup)throw new IOException("短配对码需要目标主机入口，请先在设置中填写；也可启用备用协调查询主机入口");
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(settings.CoordinatorBackup?55000:30000);
-        await CloseUiPair(token);uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new(profile.NodeSigningPrivate);
+        await CloseUiPair(token);uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);
         var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
         var folder=Path.Combine(store.DirectoryPath,"sessions","pair-"+Guid.NewGuid().ToString("N"));
         Exception? last=null;

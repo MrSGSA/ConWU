@@ -25,6 +25,7 @@ public static class ConnectionSettings
     {
         profile.SelectTransport(settings.PathSelection);profile.AllowManualQualityRequests=settings.AllowManualQualityRequests;
         profile.ConnectionSource=settings.ConnectionSource;profile.DirectMode=settings.DirectMode;
+        profile.PkarrPublish=settings.PkarrPublish;
         profile.CoordinationService=settings.Service;profile.CoordinationPin=settings.CertificatePin;
         profile.ExistingEntries=settings.ExistingEntries.ToArray();profile.ManualEndpoint=settings.ManualEndpoint;
         profile.ListenPort=settings.ListenPort;profile.SourcePort=settings.SourcePort;

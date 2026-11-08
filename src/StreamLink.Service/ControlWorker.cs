@@ -75,7 +75,7 @@ public sealed partial class ControlWorker : BackgroundService
     }
     internal DeviceProfile ProfileSnapshot()=>ProfileChanges.Copy(Volatile.Read(ref snapshot)!.Profile!);
     internal bool IsOperationComplete(Guid id)=>OperationState(id)?.Completed!=false;
-    internal bool HasOutstandingOwnership{get{lock(operationGate)return Volatile.Read(ref resourceShutdownUnproven)||running?.IsCompleted==false||measuring?.IsCompleted==false||acceptingEntries?.IsCompleted==false||operations.Values.Any(o=>!o.Completed);}}
+    internal bool HasOutstandingOwnership{get{lock(operationGate)return Volatile.Read(ref resourceShutdownUnproven)||running?.IsCompleted==false||measuring?.IsCompleted==false||acceptingEntries?.IsCompleted==false||publishingPkarr?.IsCompleted==false||operations.Values.Any(o=>!o.Completed);}}
     internal void BeginApplicationStop()=>Volatile.Write(ref applicationStopping,true);
     internal async Task RestoreSettings(DeviceProfile before,CancellationToken token)
     {
@@ -381,14 +381,14 @@ public sealed partial class ControlWorker : BackgroundService
     {
         Volatile.Write(ref applicationStopping,false);
         Recovery.Recover(Log, Path.Combine(store.DirectoryPath, "sessions"));
-        if(!networkContext)StartCoordinator();
+        if(!networkContext)StartCoordinator();else StartPkarr();
         Log("ConWU 已启动");
         if(workspace!=null)workspace.Start();
         else{if (profile.Enabled) Begin();StartEntryAdmission();}
         initialized=true;
         PublishReply();
     }
-    public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
+    public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopPkarr();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
     public override void Dispose() {BeginApplicationStop();if(workspace?.HasOutstandingOwnership==true)Volatile.Write(ref resourceShutdownUnproven,true);workspace?.Dispose();base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
