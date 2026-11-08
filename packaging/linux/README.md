@@ -21,7 +21,9 @@ sudo conwu remote-admin set https://manage.example.com < /root/conwu-admin-passw
 sudo systemctl restart streamlink
 ```
 
-密码需为 16–256 个非控制字符，文件内容不会回显。然后将 HTTPS 反向代理／Tunnel 的 `/admin/` 路径转到 `http://127.0.0.1:47823`，保留外部 Host，访问 `https://manage.example.com/admin/login`。远程管理和协调分别监听，不要把整个协调地址转到管理端口。
+密码需为 16–256 个非控制字符，文件内容不会回显。若此设备已经通过 HTTPS 域名提供协调服务，使用同一个域名设置远程管理，重启后即可访问该域名下的 `/admin/`，无需另改 Tunnel 路由；未登录时会进入密码登录页。协调路径继续工作。
+
+需要独立管理域名时，也可以将 HTTPS 反向代理／Tunnel 的 `/admin/` 路径转到 `http://127.0.0.1:47823`，保留外部 Host，访问 `https://manage.example.com/admin/login`。不要把整个协调地址转到管理端口。
 
 登录使用密码、Secure/HttpOnly Cookie、CSRF 和来源校验；协调请求不能获得管理权限。`conwu remote-admin disable` 后重启服务可关闭远程管理。未配置密码时不启动该监听。
 

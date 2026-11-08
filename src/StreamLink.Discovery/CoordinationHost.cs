@@ -14,6 +14,9 @@ namespace StreamLink.Discovery;
 public sealed record CoordinationHostOptions(string DataDirectory, string? ListenUrl = null,
     string CertificateFile = "", string CertificateKeyFile = "", bool TrustCloudflare = false, string? TcpObserverPoints = null)
 {
+    // Supplied only by a host that has explicitly enabled password-protected
+    // remote management. Keep its origin/session checks in the WebPanel.
+    public Func<HttpContext,Task>? ManagementHandler {get;init;}
     public void Validate() {
         if (string.IsNullOrWhiteSpace(DataDirectory)) throw new ArgumentException("协调数据目录不能为空");
         if (ListenUrl == null) return; // Standalone compatibility: ASP.NET hosting configuration.
@@ -83,6 +86,14 @@ if (options.ListenUrl != null) {
 }
 var app = builder.Build(); built = app; app.UseRateLimiter();
 app.Use(async (context, next) => { context.Response.Headers.CacheControl = "no-store"; await next(context); });
+app.Use(async (context,next)=>{
+    if(options.ManagementHandler!=null&&context.Request.Path.StartsWithSegments("/admin",StringComparison.Ordinal)){
+        var size=context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if(size is {IsReadOnly:false})size.MaxRequestBodySize=ServiceProtocol.MaximumUiMessageBytes;
+        await options.ManagementHandler(context);return;
+    }
+    await next(context);
+});
 app.Use(async (context, next) => {
     try { await next(context); }
     catch (Exception ex) when (!context.Response.HasStarted && (ex is CoordinationWriteException or CoordinationCapacityException)) {
@@ -156,12 +167,14 @@ app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatc
 app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch input) => meshRegistry.Traversal(c, network, input)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/directory", (HttpContext c, string network, MeshDirectory directory) => meshRegistry.Directory(c, network, directory)).RequireRateLimiting("mesh");
 app.MapPut("/v3/mesh/{network}/nodes/{slot:int}", (HttpContext c, string network, int slot, MeshEnvelope envelope) => meshRegistry.Publish(c, network, slot, envelope)).RequireRateLimiting("mesh");
+app.MapPut("/v3/mesh/{network}/entry",(HttpContext c,string network,EntryAdvertisement entry)=>meshRegistry.PublishEntry(c,network,entry)).RequireRateLimiting("mesh");
+app.MapPost("/v3/entry-lookup",(EntryLookupQuery query)=>meshRegistry.FindEntry(query)).RequireRateLimiting("pair-join");
 app.MapPut("/v4/mesh/{network}/membership", (HttpContext c,string network,MeshMembershipRequest request)=>meshRegistry.Membership(c,network,request)).RequireRateLimiting("mesh");
 string instanceId = Guid.NewGuid().ToString("N");
 app.MapGet("/health", (HttpContext context) => {
     string challenge = context.Request.Query["challenge"].ToString();
     if (challenge.Length != 0 && !Regex.IsMatch(challenge, "^[a-f0-9]{32}$")) return Results.BadRequest();
-    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, pairNetworks=1,nodeIdentity=1,integratedCoordinator = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false });
+    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, pairNetworks=1,nodeIdentity=1,integratedCoordinator = 1, entryLookup = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false });
 });
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");

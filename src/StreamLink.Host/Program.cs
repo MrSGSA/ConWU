@@ -98,7 +98,7 @@ ConWU · Linux
                 worker.OpenLocalPanel=panel.OpenLink;
             }
             var remoteConfig=RemoteAdminConfig.Load(ProfileStore.Root);
-            if(remoteConfig!=null)remotePanel=await WebPanel.StartRemote(worker.HandleLocalUi,Path.Combine(AppContext.BaseDirectory,"wwwroot"),remoteConfig);
+            if(remoteConfig!=null){remotePanel=await WebPanel.StartRemote(worker.HandleLocalUi,Path.Combine(AppContext.BaseDirectory,"wwwroot"),remoteConfig);worker.RemoteManagement=remotePanel.HandleRemoteRequest;}
             await worker.StartAsync(stop.Token);
             Console.WriteLine("ConWU 已启动。使用 conwu web 获取登录链接；使用 conwu status 查看状态。");
             try{await await Task.WhenAny(worker.ExecuteTask!,Task.Delay(Timeout.Infinite,stop.Token));}catch(OperationCanceledException)when(stop.IsCancellationRequested){}

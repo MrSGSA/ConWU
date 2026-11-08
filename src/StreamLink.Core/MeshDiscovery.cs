@@ -82,14 +82,16 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     public bool SupportsPathDiagnostics { get; private set; }
     public bool SupportsAutoQuality { get; private set; }
     public bool SupportsDiagnosticTiming { get; private set; }
-    public MeshDiscoveryClient(MeshProfile profile)
+    public MeshDiscoveryClient(MeshProfile profile,string? serviceOverride=null,string? pinOverride=null)
     {
         profile.Validate(); this.profile = profile;
+        string service=serviceOverride??profile.Pair.Service,pin=pinOverride??profile.Pair.CertificatePin;
+        Pairing.Create(service,pin).Validate();
         var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
-        if (profile.Pair.CertificatePin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(profile.Pair.CertificatePin));
-        http = new(handler, disposeHandler: false) { BaseAddress = new(profile.Pair.Service), Timeout = TimeSpan.FromSeconds(8), MaxResponseContentBufferSize = MeshGovernance.MaximumDirectoryBytes + 131072 };
+        if (pin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(pin));
+        http = new(handler, disposeHandler: false) { BaseAddress = new(service), Timeout = TimeSpan.FromSeconds(serviceOverride==null?8:5), MaxResponseContentBufferSize = MeshGovernance.MaximumDirectoryBytes + 131072 };
         http.DefaultRequestHeaders.Authorization = new("Bearer", profile.Pair.Auth);
-        watchHttp = new(handler) { BaseAddress = new(profile.Pair.Service), Timeout = TimeSpan.FromSeconds(TraversalLimits.LongPollTimeoutSeconds), MaxResponseContentBufferSize = MeshTraversal.MaxWatchBytes };
+        watchHttp = new(handler) { BaseAddress = new(service), Timeout = TimeSpan.FromSeconds(TraversalLimits.LongPollTimeoutSeconds), MaxResponseContentBufferSize = MeshTraversal.MaxWatchBytes };
         watchHttp.DefaultRequestHeaders.Authorization = new("Bearer", profile.Pair.Auth);
     }
     public async Task SaveDirectory(MeshDirectory directory, CancellationToken token) { using var response = await http.PutAsJsonAsync($"v3/mesh/{profile.Pair.Network}/directory", directory, token); response.EnsureSuccessStatusCode(); }

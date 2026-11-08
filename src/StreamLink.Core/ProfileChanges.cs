@@ -16,7 +16,7 @@ public static class ProfileChanges
     }
     public static ProfileChangeImpact Impact(DeviceProfile before, DeviceProfile after)
     {
-        if(before.UsesExistingEntriesOnly!=after.UsesExistingEntriesOnly)return ProfileChangeImpact.RestartNetwork;
+        if(before.UsesExistingEntriesOnly!=after.UsesExistingEntriesOnly||(before.SavedNetworkSettings?.CoordinatorBackup??false)!=(after.SavedNetworkSettings?.CoordinatorBackup??false))return ProfileChangeImpact.RestartNetwork;
         var comparable=Copy(after);
         comparable.DeviceName=before.DeviceName;comparable.LogLevel=before.LogLevel;comparable.LogDirectory=before.LogDirectory;
         comparable.AllowManualQualityRequests=before.AllowManualQualityRequests;

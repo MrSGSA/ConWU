@@ -103,8 +103,9 @@ public sealed partial class ControlWorker
     }
     async Task StopEntryAdmission()
     {
+        StopEntryBackupPublication();
         entryAdmissionStop?.Cancel();
-        try{if(acceptingEntries!=null)await acceptingEntries;}
+        try{if(acceptingEntries!=null)await acceptingEntries;if(retiredEntryPublishers.Count>0){await Task.WhenAll(retiredEntryPublishers);retiredEntryPublishers.Clear();}}
         finally{acceptingEntries=null;entryAdmissionStop?.Dispose();entryAdmissionStop=null;}
     }
     ExistingEntry[] ApprovalEntryHints(MeshProfile mesh)=>profile.ExistingEntries.Where(e=>e.PeerSlot==0)

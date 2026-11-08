@@ -8,6 +8,7 @@ let renderedPage='overview',renderedConfiguration='';
 const legacy={render,controls,settingsPage,createPage,joinPage,overviewPage,updateShell,api,baseSectionFields,refreshSettingsTools};
 const configurationGroups=['network','coordination','port','certificate','stun'];
 const deviceGroups=['system','identity','logging','host'];
+defaults.network.coordinatorBackup=false;
 sectionNames.host='本机协调服务';sectionIcons.host='server';
 defaults.host={enabled:false,listenUrl:'http://127.0.0.1:47822',publicUrl:'',publicCertificatePin:'',certificateFile:'',certificateKeyFile:'',trustCloudflare:false};
 function configuration(){return workspaceState?.configurations?.find(c=>c.id===selectedConfiguration);}
@@ -65,11 +66,18 @@ baseSectionFields=function(){
 };
 entryOwnerOptions=function(d){return [['local','本机入口 · 供其他设备连接'],['target','目标主机的入口 · 用于连接到目标主机。']].map(([v,n])=>`<option value="${v}" ${d.owner===v?'selected':''}>${n}</option>`).join('');};
 const originalConfigFromStatus=configFromStatus;
-configFromStatus=function(s){const c=originalConfigFromStatus(s);c.host={...defaults.host,...(s.settings?.coordinator||{})};return c;};
+configFromStatus=function(s){const c=originalConfigFromStatus(s);c.host={...defaults.host,...(s.settings?.coordinator||{})};c.network.coordinatorBackup=!!s.settings?.coordinatorBackup;return c;};
 const originalSettingsDto=settingsDto;
-settingsDto=function(){const p=originalSettingsDto();return {...p,coordinator:{...defaults.host},ddns:null,directMode:drafts.network.mode==='existing'||drafts.network.route==='direct',sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',existingEntries:p.existingEntries.filter(e=>e.peerSlot===0||e.peerSlot===-1)};};
+settingsDto=function(){const p=originalSettingsDto();return {...p,coordinator:{...defaults.host},ddns:null,coordinatorBackup:drafts.network.mode==='existing'&&!!drafts.network.coordinatorBackup,directMode:drafts.network.mode==='existing'||drafts.network.route==='direct',sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',existingEntries:p.existingEntries.filter(e=>e.peerSlot===0||e.peerSlot===-1)};};
 const originalValidateSection=validateSection;
-validateSection=function(key,configuration=drafts){if(key==='coordination'&&configuration.network.mode==='existing')return '';if(key==='host')return '';const wasActive=networkActive;networkActive=false;try{return originalValidateSection(key,configuration);}finally{networkActive=wasActive;}};
+validateSection=function(key,configuration=drafts){if(key==='coordination'&&configuration.network.mode==='existing'){if(configuration.network.coordinatorBackup&&!configuration.coordination.url.trim())return '启用备用协调后，请填写 HTTPS 协调服务器。';if(!configuration.network.coordinatorBackup)return '';}if(key==='host')return '';const wasActive=networkActive;networkActive=false;try{return originalValidateSection(key,configuration);}finally{networkActive=wasActive;}};
+const entryNetworkFields=networkFields;
+networkFields=function(){
+ const html=entryNetworkFields(),d=drafts.network;if(d.mode!=='existing')return html;
+ const backup=`<div class="switch-row"><div><h3>备用协调服务器</h3><p class="hint">优先使用已填写的入口；失败后查询主机最新地址。两端需开启并填写同一个协调地址，不执行自主打洞。</p></div>${switchControl('coordinatorBackup',!!d.coordinatorBackup,'备用协调服务器')}</div>${d.coordinatorBackup?`<button class="text-btn" data-section="coordination">填写备用协调地址${icon('chevron')}</button>`:''}`;
+ return html.replace('<label class="field"><span>这些入口属于</span>',backup+'<label class="field"><span>这些入口属于</span>');
+};
+coordinationFields=function(){return `<label class="field"><span>HTTPS 协调服务器</span><input data-key="url" value="${esc(drafts.coordination.url)}" placeholder="https://conwu.space4sgsa.com/" spellcheck="false" autocomplete="off"><span class="hint">${drafts.network.mode==='existing'?(drafts.network.coordinatorBackup?'双方填写相同地址。主机发布已有入口，入口连接失败时从这里查询；串流仍由两端直接传输。':'已有入口当前未开启备用协调。填写的地址会保存，开启备用协调后使用。'):'自主打洞采用服务器配对时，两端填写相同地址。'}</span></label>`;};
 let aggregateTraffic=null;
 overviewPage=function(){
  const all=workspaceState?.networks||[],a=workspaceState?.aggregate,connected=all.filter(n=>n.status.directPeers>0).length;

@@ -14,6 +14,7 @@ public static class ConnectionSettings
     {
         if(settings is null||settings.Coordinator is null||settings.ExistingEntries is null||settings.ExistingEntries.Any(e=>e==null||e.Source==null))throw new FormatException("连接配置内容无效");
         if(settings.Ddns is {Enabled:true}||settings.Coordinator is {Enabled:true})throw new FormatException("连接配置不包含 DNS 发布或本机协调服务设置");
+        if(settings.CoordinatorBackup&&(settings.ConnectionSource!="existing"||!settings.DirectMode||string.IsNullOrWhiteSpace(settings.Service)))throw new FormatException("备用协调仅用于已有入口直连，请填写 HTTPS 协调服务器");
         if(settings.ExistingEntries.Any(e=>e.PeerSlot is not (0 or ExistingEntry.NetworkOwner)))throw new FormatException("共用配置的入口须明确属于本机或目标主机");
         var normalized=settings with{Coordinator=new(),Ddns=null,ManualEndpoint="",TcpStun=settings.TcpStun is {Length:>0}?settings.TcpStun.ToArray():Stun.TcpServers.ToArray(),UdpStun=settings.UdpStun is {Length:>0}?settings.UdpStun.ToArray():Stun.UdpServers.ToArray(),ExistingEntries=settings.ExistingEntries.Select(e=>e with{Source=ExistingEntryResolver.NormalizeSource(e.Source)}).Distinct().ToArray()};
         if(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(normalized).Length>16384)throw new FormatException("单份连接配置超过 16 KiB，请减少来源或 STUN 列表");

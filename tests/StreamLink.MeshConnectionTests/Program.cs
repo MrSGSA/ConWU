@@ -25,6 +25,7 @@ static partial class Program
     public static async Task Main(string[] args)
     {
         if(args is ["--configuration-library"]){await ConfigurationLibrary();return;}
+        if(args is ["--entry-backup-integration"]){await EntryBackupIntegration();return;}
         if(args is ["--seed-configuration-upgrade",var configurationInstance]){SeedConfigurationUpgrade(configurationInstance);return;}
         if(args is ["--pair-workspace-budgets"]){await PairWorkspaceBudgets();return;}
         if(args is ["--pair-workspace-recovery"]){await PairWorkspaceRecovery();return;}

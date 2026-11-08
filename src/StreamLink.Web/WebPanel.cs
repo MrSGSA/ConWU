@@ -78,6 +78,11 @@ public sealed class WebPanel : IAsyncDisposable
             return origin + "/#" + ticket;
         }
     }
+    public Task HandleRemoteRequest(HttpContext context)
+    {
+        if(remote==null)throw new InvalidOperationException("本机票据面板不能通过协调入口公开");
+        return Handle(context);
+    }
     void Prune()
     {
         long now = Now;
@@ -99,7 +104,7 @@ public sealed class WebPanel : IAsyncDisposable
         Guid operation = Guid.Empty;
         string networkId = "";
         string path=request.Path.Value??"/";
-        if(remote!=null){if(!path.StartsWith("/admin/",StringComparison.Ordinal)){response.StatusCode=404;return;}path=path[6..];}
+        if(remote!=null){if(path=="/admin"){response.Redirect("/admin/login");return;}if(!path.StartsWith("/admin/",StringComparison.Ordinal)){response.StatusCode=404;return;}path=path[6..];}
         if (request.QueryString.HasValue) {
             if (request.Method != "GET" || path != "/api/status" ||
                 request.Query.Any(q => q.Key is not ("operation" or "networkId") || q.Value.Count != 1)) { response.StatusCode = 403; return; }
@@ -122,6 +127,10 @@ public sealed class WebPanel : IAsyncDisposable
             if(remote!=null&&request.Method=="GET"&&path is "/login" or "/login.js") {
                 response.ContentType=path=="/login"?"text/html; charset=utf-8":"text/javascript; charset=utf-8";
                 await response.SendFileAsync(Path.Combine(assets,path=="/login"?"remote-login.html":"remote-login.js"),context.RequestAborted);return;
+            }
+            if(remote!=null&&request.Method=="GET"&&path=="/"){
+                bool authenticated;lock(gate){Prune();authenticated=request.Cookies.TryGetValue(cookieName,out var remoteSession)&&sessions.ContainsKey(remoteSession);}
+                if(!authenticated){response.Redirect("/admin/login");return;}
             }
             if (request.Method == "GET" && path is "/" or "/app.js" or "/workspace.js" or "/style.css" or "/icon.svg" or "/streamlink-tokyo-45.svg") {
                 response.ContentType = path switch { "/app.js" or "/workspace.js" => "text/javascript; charset=utf-8", "/style.css" => "text/css; charset=utf-8", "/icon.svg" or "/streamlink-tokyo-45.svg"=>"image/svg+xml", _ => "text/html; charset=utf-8" };

@@ -3,11 +3,31 @@ using System.Net.Http.Json;
 using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Web;
+using StreamLink.Discovery;
 
 internal static class RemoteAdminTests
 {
     public static async Task Run(string root,Action<bool,string> check)
     {
+        var integratedConfig=RemoteAdminConfig.Create("https://conwu.example.test/","integrated test password 123456");
+        await using(var remote=await WebPanel.StartRemote((_,_)=>Task.FromResult(new UiControlReply(true,"",null)),root,integratedConfig,0)){
+            string data=Path.Combine(Path.GetTempPath(),"conwu-management-route-"+Guid.NewGuid().ToString("N"));
+            await using var coordinator=CoordinationHost.Create(new(data,"http://127.0.0.1:0"){ManagementHandler=remote.HandleRemoteRequest});await coordinator.Start();
+            using var transport=new HttpClient(new HttpClientHandler{UseCookies=false,AllowAutoRedirect=false}){BaseAddress=new(coordinator.Addresses.Single())};
+            async Task<HttpResponseMessage> Request(string path,HttpMethod? method=null,object? value=null,string? cookie=null,string host="conwu.example.test"){
+                using var r=new HttpRequestMessage(method??HttpMethod.Get,path);r.Headers.Host=host;
+                if(method==HttpMethod.Post){r.Headers.Add("Origin",integratedConfig.Origin);r.Content=JsonContent.Create(value);}
+                if(cookie!=null)r.Headers.Add("Cookie",cookie);return await transport.SendAsync(r);
+            }
+            check((await Request("/health")).IsSuccessStatusCode,"integrated management preserves coordinator health route");
+            check((await Request("/admin/login")).IsSuccessStatusCode,"same coordination domain serves remote login");
+            check((await Request("/admin/")).StatusCode==HttpStatusCode.Redirect,"remote management root redirects unauthenticated visitors to login");
+            check((await Request("/admin/api/status")).StatusCode==HttpStatusCode.Unauthorized,"integrated management requires its own password session");
+            using var integratedLogin=await Request("/admin/api/login",HttpMethod.Post,new{password="integrated test password 123456"});
+            string integratedCookie=integratedLogin.Headers.GetValues("Set-Cookie").Single().Split(';')[0];
+            check(integratedLogin.IsSuccessStatusCode&&(await Request("/admin/api/status",cookie:integratedCookie)).IsSuccessStatusCode,"password login works through the existing coordinator listener");
+            check((await Request("/admin/api/status",cookie:integratedCookie,host:"evil.test")).StatusCode==HttpStatusCode.Forbidden,"integrated route retains remote origin validation");
+        }
         var config=RemoteAdminConfig.Create("https://manage.example.test/","test password 123456789");int calls=0;
         await using var panel=await WebPanel.StartRemote((_,_)=>{calls++;return Task.FromResult(new UiControlReply(true,"",null));},root,config,0);
         using var client=new HttpClient(new HttpClientHandler{UseCookies=false,AllowAutoRedirect=false}){BaseAddress=new Uri(panel.ListeningOrigin)};

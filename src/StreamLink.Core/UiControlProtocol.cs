@@ -91,6 +91,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public CloudflareDdnsSettings? Ddns {get;init;}
     public string ConnectionSource {get;init;}="custom";
     public bool DirectMode {get;init;}
+    public bool CoordinatorBackup {get;init;}
     public ExistingEntry[] ExistingEntries {get;init;}=[];
     public int EntryRefreshSeconds {get;init;}=60;
     public string[]? TcpStun {get;init;}

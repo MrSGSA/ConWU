@@ -115,6 +115,13 @@ public sealed class MeshRunner
         CancellationToken stop = cancellation.Token;
         using var sharedEgress=profile.LegacyEgressPacing?new EgressPacer(profile.ManagedEgressMbps):null;
         using var discovery = services.Discovery(mesh);
+        bool coordinatorBackup=existingOnly&&mesh.Pair.Direct&&profile.SavedNetworkSettings is {CoordinatorBackup:true};
+        long primaryAttemptAt=Environment.TickCount64;
+        if(coordinatorBackup&&discovery is DirectMeshDiscovery directBackup){
+            var backupSettings=profile.SavedNetworkSettings!;
+            directBackup.UseCoordinatorBackup(services.CoordinatorBackup(mesh,backupSettings.Service,backupSettings.CertificatePin),
+                ()=>Environment.TickCount64-primaryAttemptAt>=12000&&router!=null&&mesh.Directory!.Members.Any(m=>m.Slot!=mesh.Self.Slot&&!router.HasHealthyPath(m.Slot)),log);
+        }
         using var peerSynchronization = discovery is DirectMeshDiscovery ? null : new MeshPeerSynchronization(mesh);
         var synchronization = (discovery as DirectMeshDiscovery)?.Synchronization ?? peerSynchronization!;
         long synchronizedVersion = -1;
@@ -146,6 +153,7 @@ public sealed class MeshRunner
             return paths;
         }
         var existingPlans=new Dictionary<int,ExistingEntryPlan>();
+        var coordinatorEntryPlans=new Dictionary<int,ExistingCoordinatorPlan>();
         var reconnectPlans=new Dictionary<int,PeerReconnectPolicy>();
         int refreshSeconds=profile.EntryRefreshSeconds;
         string resolutionState="";
@@ -212,7 +220,7 @@ public sealed class MeshRunner
         }
         try {
             if(!existingOnly)gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
-            else log("仅使用已有入口：不执行 STUN、自动映射或自主打洞；入口不可用时请检查入口，或手动切换到自选服务器模式");
+            else log(coordinatorBackup?"已有入口优先，备用协调仅提供地址；不执行 STUN、自动映射或自主打洞":"仅使用已有入口：不执行 STUN、自动映射或自主打洞；入口不可用时请检查入口，或手动切换到自选服务器模式");
             timeline.Mark("原生网络开始启动");
             report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, existingOnly?"正在准备虚拟网卡与已有入口":"正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus,Connection=new("StartingAdapter","正在准备虚拟网卡与本机入口。")});
             opening = services.ProfileAdapter is {} create ? create(profile, phase => {
@@ -487,8 +495,9 @@ public sealed class MeshRunner
                     bool hasDiscoveryHint=networkHints.Length>0;
                     bool strictEntry=existingOnly||fresh&&remote!.ExistingEntryOnly||!fresh&&hasDiscoveryHint&&!router.HasHealthyPath(member.Slot);
                     if(strictEntry){onlyEntryPeers.Add(member.Slot);selectedEntries[member.Slot]="";}
-                    string[] hints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints)
-                        .Concat(networkHints).Concat(fresh?remote!.ExistingEndpoints??[]:[]).Distinct().Take(8).ToArray();
+                    string[] primaryHints=resolved.Where(r=>r.PeerSlot==member.Slot).SelectMany(r=>r.Endpoints).Concat(networkHints).Distinct().Take(8).ToArray();
+                    string[] remoteHints=fresh?remote!.ExistingEndpoints??[]:[];
+                    string[] hints=primaryHints.Concat(remoteHints).Distinct().Take(8).ToArray();
                     if(!reconnectPlans.TryGetValue(member.Slot,out var reconnect))reconnectPlans[member.Slot]=reconnect=new();
                     if(!reconnect.Allow(mesh.Pair.Direct||hasDiscoveryHint,router.HasHealthyPath(member.Slot),fresh,hints,now)){
                         quietPeers.Add(member.Slot);selectedEntries[member.Slot]="";traversal?.PauseOffline(member.Slot);continue;
@@ -498,7 +507,12 @@ public sealed class MeshRunner
                     bool fellBack=plan.FellBack;
                     string fallback=fresh && !(remote!.ExistingEndpoints??[]).Contains(remote.Endpoint)?remote.Endpoint:"";
                     if(mesh.Pair.Direct){
-                        selectedEntries[member.Slot]=router.HasHealthyPath(member.Slot)||hints.Length==0?"":hints[(int)((now-began)/15000%hints.Length)];
+                        if(coordinatorBackup){
+                            if(!coordinatorEntryPlans.TryGetValue(member.Slot,out var backupPlan))coordinatorEntryPlans[member.Slot]=backupPlan=new();
+                            bool wasBackup=backupPlan.UsingBackup;
+                            selectedEntries[member.Slot]=backupPlan.Select(primaryHints,remoteHints,router.HasHealthyPath(member.Slot),now);
+                            if(!wasBackup&&backupPlan.UsingBackup)log($"设备 {member.Slot} 的已配置入口尚未通过认证，改用备用协调提供的已有入口；不执行自主打洞");
+                        }else selectedEntries[member.Slot]=router.HasHealthyPath(member.Slot)||hints.Length==0?"":hints[(int)((now-began)/15000%hints.Length)];
                         if(!router.HasHealthyPath(member.Slot))priorityPeers.Add(member.Slot);
                         continue;
                     }

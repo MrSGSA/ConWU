@@ -5,6 +5,7 @@ namespace StreamLink.Service;
 
 public sealed partial class ControlWorker
 {
+    public Func<Microsoft.AspNetCore.Http.HttpContext,Task>? RemoteManagement {get;set;}
     CoordinatorStatus coordinatorStatus = new(false, false, "未启用", []);
     Task? coordinating;
     CancellationTokenSource? coordinatorStop;
@@ -59,7 +60,7 @@ public sealed partial class ControlWorker
                         desired.Validate();
                         Volatile.Write(ref coordinatorStatus, new(true, false, "正在启动", []));
                         host = CoordinationHost.Create(new(Path.Combine(ProfileStore.Root, "coordination"), desired.ListenUrl,
-                            desired.CertificateFile, desired.CertificateKeyFile, desired.TrustCloudflare));
+                            desired.CertificateFile, desired.CertificateKeyFile, desired.TrustCloudflare){ManagementHandler=RemoteManagement});
                         await host.Start(token);
                         Log("本机协调服务已启动；成员身份与数据连接独立运行");
                     } catch (Exception ex) when (!token.IsCancellationRequested) { await CloseHost(); Failed(ex); }
