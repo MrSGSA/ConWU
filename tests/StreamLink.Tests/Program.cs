@@ -8,6 +8,10 @@ using StreamLink.Core;
 using System.Diagnostics;
 
 if(args.Length>0 && args[0]=="--child") { await Task.Delay(60000); return; }
+if(args.Length>0 && args[0]=="--child-output") {
+    for(int i=0;i<64;i++){Console.Out.WriteLine("stdout "+i+" CHILD_TEST_SECRET");Console.Error.WriteLine("stderr "+i+" CHILD_TEST_SECRET");}
+    Console.Out.WriteLine("stdout final");Console.Error.WriteLine("stderr final");return;
+}
 
 int passed=0;
 void Check(bool yes,string message) { if(!yes) throw new Exception(message); passed++; }
@@ -86,8 +90,63 @@ if(OperatingSystem.IsWindows())
     bool exited;
     try {using var p=Process.GetProcessById(pid);exited=p.HasExited;}catch(ArgumentException){exited=true;}
     Check(exited,"Job did not terminate owned process");
+    using(var exclusive=File.Open(Path.Combine(directory,"child.log"),FileMode.Open,FileAccess.ReadWrite,FileShare.None))
+        Check(exclusive.CanWrite,"Owned-process shutdown kept the log locked");
     File.Delete(Path.Combine(directory,"child.log"));Directory.Delete(directory);
     Console.WriteLine("PASS owned-process shutdown");
+    for(int round=0;round<8;round++) {
+        string outputLog=Path.Combine(Path.GetTempPath(),"streamlink-child-output-"+Guid.NewGuid().ToString("N")+".log");
+        var outputJob=new ChildJob();
+        try {
+            var outputChild=outputJob.Start(Environment.ProcessPath!,["--child-output"],outputLog,secrets:["CHILD_TEST_SECRET"]);
+            Check(outputChild.WaitForExit(10000),"Output child did not exit within its deadline");
+            outputJob.Dispose();outputJob.Dispose();
+            using(var exclusive=File.Open(outputLog,FileMode.Open,FileAccess.ReadWrite,FileShare.None))
+                Check(exclusive.CanWrite,"ChildJob.Dispose returned before releasing the output file");
+            string lines=File.ReadAllText(outputLog);
+            Check(lines.Contains("stdout final")&&lines.Contains("stderr final")&&lines.Split('\n').Length==131,
+                "ChildJob shutdown lost buffered stdout/stderr tail lines");
+            Check(!lines.Contains("CHILD_TEST_SECRET")&&lines.Contains("[redacted]"),"Drained child output bypassed credential redaction");
+            try{outputJob.Start(Environment.ProcessPath!,["--child"],null);throw new Exception("Disposed ChildJob accepted another process");}
+            catch(ObjectDisposedException){passed++;}
+        } finally {outputJob.Dispose();File.Delete(outputLog);}
+    }
+    Console.WriteLine("PASS bounded output drain, immediate log release and repeated shutdown");
+    int[] LiveChildren() {
+        var live=new List<int>();
+        foreach(var candidate in Process.GetProcessesByName(Path.GetFileNameWithoutExtension(Environment.ProcessPath!))) {
+            using(candidate)try{if(!candidate.HasExited)live.Add(candidate.Id);}catch(InvalidOperationException){}
+        }
+        return live.ToArray();
+    }
+    for(int round=0;round<4;round++) {
+        var beforeChildren=LiveChildren();
+        string concurrentLog=Path.Combine(Path.GetTempPath(),"streamlink-child-race-"+Guid.NewGuid().ToString("N")+".log");
+        using var entered=new ManualResetEventSlim();using var resume=new ManualResetEventSlim();using var closing=new CountdownEvent(2);
+        var concurrentJob=new ChildJob();
+        var verifyLog=new object();Task closer=Task.CompletedTask,secondCloser=Task.CompletedTask;
+        IEnumerable<string> DeferredArguments(){entered.Set();if(!resume.Wait(10000))throw new TimeoutException("Child startup barrier timed out");yield return "--child";}
+        Task starter=Task.Run(()=>concurrentJob.Start(Environment.ProcessPath!,DeferredArguments(),concurrentLog));
+        try {
+            Check(entered.Wait(10000),"Concurrent child did not enter startup");
+            void CloseAndCheck(){closing.Signal();concurrentJob.Dispose();lock(verifyLog){using var exclusive=File.Open(concurrentLog,FileMode.Open,FileAccess.ReadWrite,FileShare.None);Check(exclusive.CanWrite,"Concurrent Dispose returned with the child log still open");}}
+            closer=Task.Run(CloseAndCheck);secondCloser=Task.Run(CloseAndCheck);
+            Check(closing.Wait(10000),"Concurrent child shutdown did not start");resume.Set();
+            await Task.WhenAll(starter,closer,secondCloser).WaitAsync(TimeSpan.FromSeconds(15));
+            Check(!LiveChildren().Except(beforeChildren).Any(),"Start racing with Dispose left an unowned child process");
+            using(var exclusive=File.Open(concurrentLog,FileMode.Open,FileAccess.ReadWrite,FileShare.None))
+                Check(exclusive.CanWrite,"Start racing with Dispose left its log open");
+        } finally {resume.Set();try{await Task.WhenAll(starter,closer,secondCloser);}finally{concurrentJob.Dispose();File.Delete(concurrentLog);}}
+    }
+    string failedLog=Path.Combine(Path.GetTempPath(),"streamlink-child-failed-"+Guid.NewGuid().ToString("N")+".log");
+    try {
+        using var failedJob=new ChildJob();
+        try{failedJob.Start(Path.Combine(Path.GetTempPath(),Guid.NewGuid().ToString("N")+".exe"),[],failedLog);throw new Exception("Missing child executable accepted");}
+        catch(System.ComponentModel.Win32Exception){passed++;}
+        using(var exclusive=File.Open(failedLog,FileMode.Open,FileAccess.ReadWrite,FileShare.None))
+            Check(exclusive.CanWrite,"Failed process startup kept its log locked");
+    } finally {File.Delete(failedLog);}
+    Console.WriteLine("PASS concurrent startup/shutdown and failed-start log cleanup");
     if(WindowsHost.IsAdmin)
     {
         string folder=Path.Combine(Recovery.Root,Guid.NewGuid().ToString("N"));Directory.CreateDirectory(folder);

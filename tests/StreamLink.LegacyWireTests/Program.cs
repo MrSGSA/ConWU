@@ -30,7 +30,7 @@ using(var job=new ChildJob()){
  string line="SLW1 "+resource.ResourceId.ToString("N")+" 1 127.0.0.1:40002 0 1 60 0 0 0 0 0 0 0 0 0 1 60 0 0 0";
  string shell=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),"WindowsPowerShell","v1.0","powershell.exe");
  var child=job.StartObserved(shell,["-NoProfile","-NonInteractive","-Command","Write-Output '"+line+"'"],null,null,null,resource.WireLine);resource.Started(child);
- if(!child.WaitForExit(10000))throw new IOException("owned test emitter did not exit");child.WaitForExit();
+ if(!child.WaitForExit(10000))throw new IOException("owned test emitter did not exit");job.Dispose();
  Check(observed.Snapshot().Resources.Single().Wire?.HandshakePackets==1,"actual ChildJob stdout observer receives counters when file logging is disabled");
 }
 Check(!observed.Snapshot().CompleteWireAudit,"injection observations never claim NIC delivery or unknown kernel peer overhead");
