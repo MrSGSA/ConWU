@@ -65,6 +65,16 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check((await page.locator('#content').innerText()).includes('默认协调服务器为自身'),'provider explains default self coordination');
   model={...model,deviceSettings:{...initialDevice,coordinator:{...initialDevice.coordinator,enabled:true,publicUrl:'https://own-coord.example.com/'}},deviceSettingsRevision:'external-again'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-again');
   check(await page.locator('[data-ui-key="server"]').inputValue()===initialDevice.service,'an existing selected external coordinator is preserved even when a usable local provider is available');
+  const clientPin='a'.repeat(64),providerPin='b'.repeat(64);
+  model={...model,deviceSettings:{...initialDevice,certificatePin:clientPin,coordinator:{...initialDevice.coordinator,publicUrl:initialDevice.service}},deviceSettingsRevision:'pin-preserve'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='pin-preserve');
+  check(!await page.locator('[data-ui-scope="host"][data-ui-key="enabled"]').isChecked(),'a clean provider form refreshes changed backend fields even when the selected server address is unchanged');
+  if(!await page.locator('#coordinator-certificates').evaluate(e=>e.open))await page.locator('#coordinator-certificates summary').click();
+  await page.locator('[data-ui-key="trustCloudflare"]').check();await page.locator('#save-coord').click();await page.waitForFunction(()=>!busy&&workspaceState.deviceSettings.coordinator.trustCloudflare);
+  check(model.deviceSettings.certificatePin===clientPin,'saving provider settings keeps the selected coordinator certificate pin even when it is the local provider');
+  model={...model,deviceSettings:{...initialDevice,service:'',certificatePin:clientPin,coordinator:{...initialDevice.coordinator,enabled:true,publicUrl:'https://own-coord.example.com/',publicCertificatePin:providerPin}},deviceSettingsRevision:'pin-default'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='pin-default');
+  if(!await page.locator('#coordinator-certificates').evaluate(e=>e.open))await page.locator('#coordinator-certificates summary').click();
+  await page.locator('[data-ui-key="trustCloudflare"]').check();await page.locator('#save-coord').click();await page.waitForFunction(()=>!busy&&workspaceState.deviceSettings.coordinator.trustCloudflare);
+  check(model.deviceSettings.certificatePin===providerPin,'default self coordination uses its own known certificate pin instead of an orphaned pin from a removed server');
   model={...model,deviceSettings:initialDevice,deviceSettingsRevision:'external-restored'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-restored');
   await page.locator('.nav[data-page="create"]').click();await page.locator('#owned-networks [data-ui-action="open-editor"]').click();
   check(await page.locator('[data-ui-section="coordination"],[data-ui-section="pkarr"],[data-ui-section="stun"]').count()===0,'existing-entry editor excludes all autonomous discovery controls');
