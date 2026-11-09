@@ -2,7 +2,7 @@
 
 在外面用 Moonlight 连自己的电脑，碰上 UDP 限速时，可以试试 ConWU。它在两台设备间建立直连通道，默认使用 FakeTCP＋HTTP，支持 Windows 和 Linux。
 
-原名 StreamLink。当前开发候选为 `1.1.0-preview.4`，整理了界面和双机多网络流程，加入审批后自动获取设置，并提供可选的 PKARR 入口发现实验。候选包与已发布版本分开，实际串流由使用者确认。
+原名 StreamLink。当前开发候选为 `1.1.0-preview.5`，按连接方式精简了设置，并完善 PKARR 的入口更新与重新发现。第一次加入仍由主机批准，设置自动获取。候选包与已发布版本分开，实际串流由使用者确认。
 
 [已发布版本](https://github.com/MrSGSA/StreamLink/releases) · [入口与配置](docs/ConWU-入口与配置.md) · [Linux 安装与使用](packaging/linux/README.md)
 

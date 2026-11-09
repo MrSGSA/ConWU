@@ -58,7 +58,10 @@ public sealed class MeshRunner
             announcements.TryGetValue(m.Slot, out var node) && node.Device == m.Device && node.Expires > now);
     internal static ExistingEntry[] EntrySources(DeviceProfile profile, MeshProfile mesh) {
         // Local ingress publication is independent of how peers are discovered.
-        var sources=profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly)
+        // A serverless autonomous guest learns authenticated host hints during
+        // approval. These must remain resolvable, including the PKARR public key,
+        // without treating old LOCAL third-party inputs as autonomous entries.
+        var sources=profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly||mesh.Pair.Direct&&e.PeerSlot!=0)
             .Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray();
         return sources.Length==0&&profile.ManualEndpoint.Length>0?[new(0,profile.ManualEndpoint)]:sources;
     }
@@ -127,7 +130,7 @@ public sealed class MeshRunner
         long synchronizedVersion = -1;
         long rememberedDirectory = 0;
         using var networkWake = services.NetworkWake();
-        using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver() : null;
+        using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver(services.PkarrClientFactory) : null;
         Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> resolveEntries = services.ResolveEntries ?? entryResolver!.Resolve;
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
@@ -254,7 +257,7 @@ public sealed class MeshRunner
                     resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);
                     // Long user intervals for ordinary subscriptions must not
                     // leave a short-lived signed locator dormant for hours.
-                    int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="DDNS")?Math.Min(refreshSeconds,60):refreshSeconds;
+                    int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source) is "DDNS" or "PKARR")?Math.Min(refreshSeconds,60):refreshSeconds;
                     nextResolve=now+interval*1000L;
                 }
                 if(resolving?.IsCompleted==true){
@@ -373,6 +376,10 @@ public sealed class MeshRunner
                 }
                 if (mapping is TcpMapping tcp && profile.LastStun != tcp.StunServer) {
                     profile.LastStun = tcp.StunServer; rememberStun(tcp.StunServer);
+                }
+                if(mapping is {IsValid:true}){
+                    var preparedCandidate=new ExistingEntry(0,mapping.PublicEndpoint.ToString());
+                    if(!Volatile.Read(ref preparedInvitationEntries).SequenceEqual([preparedCandidate]))Volatile.Write(ref preparedInvitationEntries,[preparedCandidate]);
                 }
                 if (maintain?.IsCompleted == true) {
                     // Previously valid ingress is a resource to restore, even

@@ -33,15 +33,16 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
     readonly Func<long> utcNow;
+    readonly Func<PkarrClient>? pkarrFactory;
     internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
     internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; public IPAddress? LastConnected; }
     readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
-    public ExistingEntryResolver() : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query) { }
+    public ExistingEntryResolver(Func<PkarrClient>? pkarrFactory=null) : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query,pkarrFactory:pkarrFactory) { }
     internal ExistingEntryResolver(Func<string,CancellationToken,Task<IPAddress[]>> addresses,
         Func<string,CancellationToken,Task<string[]>> txt, HttpMessageHandler? handler = null,
-        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null, Func<long>? utcNow = null)
+        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null, Func<long>? utcNow = null,Func<PkarrClient>? pkarrFactory=null)
     {
-        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());this.pkarrFactory=pkarrFactory;
         this.addresses = addresses; this.txt = txt; this.connect = connect ?? ConnectSocket;
         http = new(handler ?? new SocketsHttpHandler {
             UseProxy=false, AllowAutoRedirect=false, UseCookies=false, MaxConnectionsPerServer=2,
@@ -222,10 +223,10 @@ public sealed class ExistingEntryResolver : IDisposable
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(14000);
         long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
-        string kind=Kind(entry.Source);bool allowCached=true;
+        string kind=Kind(entry.Source);bool allowCached=kind!="PKARR";long expires=0;
         try {
             string[] values;
-            if(kind=="PKARR"){using var pkarr=new PkarrClient();progress.Stage="PKARR 公告查询";values=await pkarr.Resolve(entry.Source,mode,deadline.Token);}
+            if(kind=="PKARR"){using var pkarr=pkarrFactory?.Invoke()??new PkarrClient();progress.Stage="PKARR 公告查询";var record=await pkarr.ResolveRecord(entry.Source,mode,deadline.Token);values=record.Announcement.Endpoints;expires=record.Announcement.Expires;}
             else if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
@@ -241,7 +242,7 @@ public sealed class ExistingEntryResolver : IDisposable
                 if(endpoints.Count>MaximumEndpoints)throw new FormatException("解析结果超过 8 个入口");
             }
             if(endpoints.Count==0)throw new IOException("没有可用的 IPv4 入口");
-            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt};
+            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt,ExpiresAt=expires,AllowCached=allowCached};
         } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or UnauthorizedAccessException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
             string reason=FetchFailure(ex)?.Message??(ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>progress.Stage+"超时",HttpRequestException {HttpRequestError:HttpRequestError.SecureConnectionError}=>"TLS 安全连接失败",HttpRequestException=>progress.Stage+"失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" });

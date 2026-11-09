@@ -24,7 +24,7 @@ public sealed partial class ControlWorker
             DeviceProfile current;lock(sync)current=ProfileChanges.Copy(profile);
             if(!current.PkarrPublish||current.Mesh?.IsOwner!=true||!current.Enabled){Volatile.Write(ref pkarrStatus,new(current.PkarrPublish,current.PkarrPublish?"等待主机网络启动":"未启用"));nextPublish=0;}
             else{
-                var sources=current.ExistingEntries.Where(e=>e.PeerSlot==0&&ExistingEntryResolver.Kind(e.Source)!="PKARR").ToArray();
+                var sources=current.UsesExistingEntriesOnly?current.ExistingEntries.Where(e=>e.PeerSlot==0&&ExistingEntryResolver.Kind(e.Source)!="PKARR").ToArray():[];
                 if(sources.Length==0)sources=(meshRunner?.PreparedInvitationEntries??[]).Where(e=>ExistingEntryResolver.Kind(e.Source)!="PKARR").ToArray();
                 string observed=current.Mesh.Pair.Network+"/"+current.TransportMode+"/"+current.EntryRefreshSeconds+"/"+string.Join("\n",sources.Select(e=>e.Source));
                 if(observed!=fingerprint){fingerprint=observed;cached=[];nextPublish=0;}

@@ -66,7 +66,7 @@ baseSectionFields=function(){
 };
 entryOwnerOptions=function(d){return [['local','本机入口 · 供其他设备连接'],['target','目标主机的入口 · 用于连接到目标主机。']].map(([v,n])=>`<option value="${v}" ${d.owner===v?'selected':''}>${n}</option>`).join('');};
 const originalConfigFromStatus=configFromStatus;
-configFromStatus=function(s){const c=originalConfigFromStatus(s);c.host={...defaults.host,...(s.settings?.coordinator||{})};c.network.coordinatorBackup=!!s.settings?.coordinatorBackup;c.network.pkarrPublish=!!s.settings?.pkarrPublish;return c;};
+configFromStatus=function(s){const c=originalConfigFromStatus(s),p=s.settings||{};c.host={...defaults.host,...p.coordinator};c.network.coordinatorBackup=!!p.coordinatorBackup;c.network.pkarrPublish=!!p.pkarrPublish;if(p.connectionSource!=='existing'&&(p.discoveryMode==='pkarr'||!p.discoveryMode&&p.directMode&&p.pkarrPublish))c.network.route='pkarr';return c;};
 const originalSettingsDto=settingsDto;
 settingsDto=function(){const p=originalSettingsDto();return {...p,coordinator:{...defaults.host},ddns:null,pkarrPublish:!!drafts.network.pkarrPublish,coordinatorBackup:drafts.network.mode==='existing'&&!!drafts.network.coordinatorBackup,directMode:drafts.network.mode==='existing'||drafts.network.route==='direct',sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',existingEntries:p.existingEntries.filter(e=>e.peerSlot===0||e.peerSlot===-1)};};
 const originalValidateSection=validateSection;

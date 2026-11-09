@@ -95,6 +95,9 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public bool DirectMode {get;init;}
     public bool CoordinatorBackup {get;init;}
     public bool PkarrPublish {get;init;}
+    // Empty preserves legacy settings. New clients choose exactly one discovery
+    // policy; publishing authority is separate from a guest's lookup policy.
+    public string DiscoveryMode {get;init;}="";
     public ExistingEntry[] ExistingEntries {get;init;}=[];
     public int EntryRefreshSeconds {get;init;}=60;
     public string[]? TcpStun {get;init;}

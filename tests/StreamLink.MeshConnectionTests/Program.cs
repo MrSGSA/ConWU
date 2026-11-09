@@ -27,6 +27,8 @@ static partial class Program
         if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}
         if(args is ["--pkarr-only"]){await PkarrDiscoveryTests();return;}
         if(args is ["--pkarr-publisher"]){await PkarrPublishingTests();return;}
+        if(args is ["--pkarr-pairing"]){await PkarrPairingTests();return;}
+        if(args is ["--pkarr-public",var pkarrReport]){await PkarrPublicTests(pkarrReport);return;}
         if(args is ["--auto-entry-backup"]){await PairWorkspaceCoordination(automatic:true,directEntries:true);return;}
         if(args is ["--auto-coordination"]){await PairWorkspaceCoordination(automatic:true);return;}
         if(args is ["--configuration-library"]){await ConfigurationLibrary();return;}

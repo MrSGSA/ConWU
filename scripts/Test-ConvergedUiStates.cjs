@@ -28,7 +28,7 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
    const body=route.request().postDataJSON();commands.push(body);
    if(body.method==='save-settings'){
     saveStarted?.resolve();await saveGate?.promise;
-    model={...model,deviceName:body.settingsBatch.device.patch.deviceName,deviceSettingsRevision:'dev2'};
+    model={...model,deviceName:body.settingsBatch.device.patch?.deviceName||model.deviceName,deviceSettings:body.settingsBatch.device.settings||model.deviceSettings,deviceSettingsRevision:'dev'+commands.length};
    }else if(body.configuration?.action==='save'){
     editorStarted?.resolve();await editorGate?.promise;
     model={...model,configurations:model.configurations.map(c=>c.id===body.configuration.id?{...c,name:body.configuration.name,settings:body.configuration.settings,revision:c.revision+1}:c)};
@@ -53,6 +53,29 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(await page.locator('#network-edit-actions').isHidden(),'received settings have no mutation controls');
   check(await page.locator('#network-settings-body input,#network-settings-body textarea,#network-settings-body select').count()===0,'guest settings are read-only in every visible field');
   await page.screenshot({path:path.join(output,'readonly.png'),fullPage:true});await page.locator('#network-readonly-close').click();
+  const initialDevice=clone(model.deviceSettings);
+  model={...model,deviceSettings:{...initialDevice,service:'',directMode:true},deviceSettingsRevision:'no-coord'};
+  await page.locator('#join-invite').waitFor();check(await page.locator('#join-code').count()===0,'no coordinator means invitation-only joining, even when other networks retain server preferences');
+  model={...model,deviceSettings:{...model.deviceSettings,coordinator:{...settings.coordinator,enabled:true}},deviceSettingsRevision:'provider-only'};
+  await page.waitForTimeout(1400);check(await page.locator('#join-code').count()===0,'enabling a loopback-only provider does not pretend that a usable HTTPS address was inferred');
+  model={...model,deviceSettings:{...model.deviceSettings,coordinator:{...settings.coordinator,enabled:true,publicUrl:'https://own-coord.example.com/'}},deviceSettingsRevision:'self-provider'};
+  await page.locator('#join-code').waitFor();await page.locator('.nav[data-page="coordinator"]').click();
+  check(await page.locator('[data-ui-key="server"]').inputValue()==='https://own-coord.example.com/'&&await page.locator('[data-ui-key="discover"]').isChecked(),'a provider with a known canonical HTTPS address is the default when no other server was selected');
+  check(await page.locator('[data-ui-key="publicUrl"]').count()===0,'provider page has no redundant external HTTPS input');
+  check((await page.locator('#content').innerText()).includes('默认协调服务器为自身'),'provider explains default self coordination');
+  model={...model,deviceSettings:initialDevice,deviceSettingsRevision:'external-again'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-again');
+  await page.locator('.nav[data-page="create"]').click();await page.locator('#owned-networks [data-ui-action="open-editor"]').click();
+  check(await page.locator('[data-ui-section="coordination"],[data-ui-section="pkarr"],[data-ui-section="stun"]').count()===0,'existing-entry editor excludes all autonomous discovery controls');
+  await page.locator('[data-ui-section="entry"]').click();const originalEntry=await page.locator('[data-entry-index="0"]').inputValue();await page.locator('[data-entry-index="0"]').fill('https://remember.example.com/#streamlink2');
+  await page.locator('[data-ui-section="network"]').click();await page.locator('[data-key="mode"][value="custom"]').check();
+  await page.locator('[data-key="route"]').selectOption('server');check(await page.locator('[data-ui-section="coordination"]').count()===1&&await page.locator('[data-ui-section="pkarr"],[data-ui-section="entry"]').count()===0,'coordinated autonomous mode exposes only its server discovery controls');
+  await page.locator('[data-ui-section="coordination"]').click();await page.locator('[data-key="url"]').fill('https://remember-coord.example.com/');await page.locator('[data-ui-section="network"]').click();await page.locator('[data-key="route"]').selectOption('pkarr');
+  check(await page.locator('[data-ui-section="coordination"],[data-ui-section="entry"]').count()===0,'PKARR mode hides server and existing-entry controls');await page.locator('[data-ui-section="pkarr"]').click();
+  check(await page.locator('[data-key="pkarrPublish"]').count()===0&&(await page.locator('#network-settings-body').innerText()).includes('始终启用'),'PKARR mode has no independent disable switch and explains its limits');
+  await page.locator('[data-ui-section="network"]').click();await page.locator('[data-key="route"]').selectOption('direct');check(await page.locator('[data-ui-section="invitation"]').count()===1&&await page.locator('[data-ui-section="pkarr"],[data-ui-section="entry"]').count()===0,'manual autonomous mode replaces entry settings with direct invitation instructions');
+  await page.locator('[data-key="mode"][value="existing"]').check();await page.locator('[data-ui-section="entry"]').click();check(await page.locator('[data-entry-index="0"]').inputValue()==='https://remember.example.com/#streamlink2','switching policies preserves dormant entry drafts');
+  await page.locator('[data-ui-section="network"]').click();await page.locator('[data-key="mode"][value="custom"]').check();await page.locator('[data-key="route"]').selectOption('server');await page.locator('[data-ui-section="coordination"]').click();check(await page.locator('[data-key="url"]').inputValue()==='https://remember-coord.example.com/','switching policies preserves dormant coordinator drafts');
+  await page.locator('[data-ui-action="restore-editor"]').click();await page.locator('[data-ui-action="close-editor"]').first().click();
   await page.locator('.nav[data-page="settings"]').click();await page.locator('#device-name').fill('保存后的设备名');
   saveGate=deferred();saveStarted=deferred();await page.locator('#save-device').click();await within(saveStarted.promise,'device save request');
   check(await page.locator('#device-name').isDisabled(),'device fields are locked while their save is in flight');

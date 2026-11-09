@@ -148,7 +148,7 @@ public sealed class DeviceProfile
         if (CoordinationService.Length > 0) Pairing.Create(CoordinationService, CoordinationPin).Validate();
         ExistingEntryResolver.Validate(ExistingEntries);
         ExistingEntryResolver.Validate(JoinedEntrySources);
-        if(PkarrPublish&&ExistingEntries.Count(e=>e.PeerSlot==0)>=ExistingEntryResolver.MaximumSources)throw new FormatException("启用 PKARR 时最多填写 11 项本机入口，请为自动发现地址保留一项空间");
+        if(PkarrPublish&&UsesExistingEntriesOnly&&ExistingEntries.Count(e=>e.PeerSlot==0)>=ExistingEntryResolver.MaximumSources)throw new FormatException("启用 PKARR 时最多填写 11 项本机入口，请为自动发现地址保留一项空间");
         if(PkarrSeed is null||PkarrSequence<0)throw new FormatException("PKARR 本机身份无效");
         if(PkarrSeed.Length>0){try{if(Convert.FromBase64String(PkarrSeed).Length!=32)throw new FormatException();}catch(FormatException){throw new FormatException("PKARR 本机密钥格式无效");}}
         if(JoinedEntryNetwork==null||JoinedEntryNetwork.Length>0&&!Guid.TryParseExact(JoinedEntryNetwork,"N",out _))throw new FormatException("已加入网络的入口身份无效");

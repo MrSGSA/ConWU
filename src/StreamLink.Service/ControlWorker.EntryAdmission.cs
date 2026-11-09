@@ -108,7 +108,7 @@ public sealed partial class ControlWorker
         try{if(acceptingEntries!=null)await acceptingEntries;if(retiredEntryPublishers.Count>0){await Task.WhenAll(retiredEntryPublishers);retiredEntryPublishers.Clear();}}
         finally{acceptingEntries=null;entryAdmissionStop?.Dispose();entryAdmissionStop=null;}
     }
-    ExistingEntry[] ApprovalEntryHints(MeshProfile mesh)=>profile.ExistingEntries.Where(e=>e.PeerSlot==0).Concat(PkarrHints(profile))
+    ExistingEntry[] ApprovalEntryHints(MeshProfile mesh)=>profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly&&e.PeerSlot==0).Concat(PkarrHints(profile))
         .Select(e=>e with{PeerSlot=mesh.Self.Slot}).Distinct().ToArray();
 
     async Task JoinUiEntry(UiNetworkAction action,Operation operation)

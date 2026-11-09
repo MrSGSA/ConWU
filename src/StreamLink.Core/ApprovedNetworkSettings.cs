@@ -8,11 +8,12 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
     bool CoordinatorBackup,string Service,string CertificatePin,int HostListenPort)
 {
     public string NetworkName {get;init;}="";
+    public string DiscoveryMode {get;init;}="";
     public static ApprovedNetworkSettings Create(MeshProfile host,UiNetworkSettings settings,string networkName="")
         =>new(settings.PathSelection,settings.ConnectionSource,
-            settings.ExistingEntries.Where(e=>e.PeerSlot==0).Select(e=>e with{PeerSlot=host.Self.Slot}).ToArray(),
+            settings.ExistingEntries.Where(e=>e.PeerSlot==0&&(settings.ConnectionSource=="existing"||ExistingEntryResolver.Kind(e.Source)=="PKARR")).Select(e=>e with{PeerSlot=host.Self.Slot}).ToArray(),
             settings.EntryRefreshSeconds,settings.TcpStun??[],settings.UdpStun??[],settings.CoordinatorBackup,
-            host.Pair.Direct?settings.Service:host.Pair.Service,host.Pair.Direct?settings.CertificatePin:host.Pair.CertificatePin,settings.ListenPort){NetworkName=networkName};
+            host.Pair.Direct?settings.Service:host.Pair.Service,host.Pair.Direct?settings.CertificatePin:host.Pair.CertificatePin,settings.ListenPort){NetworkName=networkName,DiscoveryMode=settings.DiscoveryMode};
 
     public UiNetworkSettings ForGuest(MeshProfile mesh,UiNetworkSettings local)
     {
@@ -22,11 +23,12 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
             throw new FormatException("主机提供的网络设置与获准身份不符");
         if(!mesh.Pair.Direct&&(Service!=mesh.Pair.Service||!CertificatePin.Equals(mesh.Pair.CertificatePin,StringComparison.OrdinalIgnoreCase)))
             throw new FormatException("主机设置中的协调身份与入网凭据不符");
+        if(DiscoveryMode=="pkarr"&&!Entries.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR"))throw new FormatException("主机未提供 PKARR 发现公钥");
         var settings=local with{PathSelection=PathSelection,ConnectionSource=ConnectionSource,DirectMode=mesh.Pair.Direct,
             ExistingEntries=Entries.Select(e=>e with{PeerSlot=ExistingEntry.NetworkOwner}).ToArray(),ManualEndpoint="",
             EntryRefreshSeconds=EntryRefreshSeconds,TcpStun=TcpStun.ToArray(),UdpStun=UdpStun.ToArray(),
             CoordinatorBackup=CoordinatorBackup,Service=Service,CertificatePin=CertificatePin,RequestedVirtualIp="",
-            Coordinator=new(),Ddns=null,PkarrPublish=false};
-        return ConnectionSettings.Normalize(settings);
+            Coordinator=new(),Ddns=null,PkarrPublish=false,DiscoveryMode=DiscoveryMode};
+        return ConnectionSettings.Normalize(settings,forGuest:true);
     }
 }

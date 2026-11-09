@@ -37,7 +37,7 @@ public sealed partial class ControlWorker : BackgroundService
     public ControlWorker(bool pairNetworks):this(new ProfileStore(),enableWorkspace:pairNetworks){}
     internal ControlWorker(ProfileStore profileStore,MeshRuntimeServices? services=null,bool isolatedNetwork=false,bool enableWorkspace=false)
     {
-        store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;
+        store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;uiEntryResolver=new(()=>new(meshRuntime?.PkarrClientFactory));
         lease = new FileStream(Path.Combine(store.DirectoryPath, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try {
             if(enableWorkspace&&store.LoadForMaintenance() is { } old&&(old.Mesh!=null||old.Pair!=null))throw new IOException("旧版网络配置与双机多网络不兼容，请使用全新安装流程重新设置；配置尚未迁移");

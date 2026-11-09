@@ -17,7 +17,7 @@ static partial class Program
         public int Servers,Probes;
         readonly string sid;
         public WorkspaceNode(string folder,string name,WorkspaceNode? target=null,string coordination="",string pin="",CoordinatorSettings? coordinator=null,
-            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false,Func<PkarrClient>? pkarrFactory=null)
+            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false,Func<PkarrClient>? pkarrFactory=null,Func<IMapping>? mappingFactory=null)
         {
             sid=WindowsIdentity.GetCurrent().User!.Value;
             Store=new ProfileStore(folder);if(!reuseProfile)Store.Save(new(){DeviceName=name,ConnectionSource="existing",DirectMode=coordination.Length==0,ListenPort=listenPort,SourcePort=listenPort+1,CoordinationService=coordination,CoordinationPin=pin,Coordinator=coordinator??new(),
@@ -25,14 +25,17 @@ static partial class Program
             });Store.AuthorizeUiUser(sid);
             var services=new MeshRuntimeServices(m=>m.Pair.Direct?new DirectMeshDiscovery(m):new MeshDiscoveryClient(m),mesh=>{
                 var adapter=new MemoryAdapter();Adapters[mesh.Pair.Network]=adapter;return Task.FromResult<IPacketAdapter>(adapter);
-            },(_,_,_)=>{Interlocked.Increment(ref Probes);throw new IOException("autonomous probe forbidden");},request=>{
+            },(_,_,_)=>{Interlocked.Increment(ref Probes);return mappingFactory==null?throw new IOException("autonomous probe forbidden"):Task.FromResult(mappingFactory());},request=>{
                 if(request.Server){NativeTarget=request.Target;Interlocked.Increment(ref Servers);return transportOverride?.Invoke(request)??new StubTransport(null);}
                 return transportOverride?.Invoke(request)??new ForwardingTransport(target?.NativeTarget??request.Target,toleratePeerOffline:true);
             },(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},Path.Combine(folder,"sessions")){
-                Candidates=(_,_,_,_)=>throw new IOException("autonomous candidates forbidden"),NetworkWake=()=>new MeshNetworkWake(false),PkarrClientFactory=pkarrFactory,
-                ResolveEntries=async (entries,_,ct)=>{
+                Candidates=(_,_,_,_)=>mappingFactory==null?throw new IOException("autonomous candidates forbidden"):Task.FromResult<IMeshCandidateFactory?>(null),NetworkWake=()=>new MeshNetworkWake(false),PkarrClientFactory=pkarrFactory,
+                ResolveEntries=async (entries,mode,ct)=>{
                     if(target!=null)while(target.NativeTarget==null)await Task.Delay(20,ct);
-                    return entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,"地址",[target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"")).ToArray();
+                    return await Task.WhenAll(entries.Select(async(e,i)=>{if(ExistingEntryResolver.Kind(e.Source)=="PKARR"){
+                        using var client=pkarrFactory?.Invoke()??throw new IOException("fixture requires an isolated PKARR gateway");
+                        var record=await client.ResolveRecord(e.Source,mode,ct);return new EntryResolution(e.PeerSlot,i,"PKARR",record.Announcement.Endpoints,""){ExpiresAt=record.Announcement.Expires,AllowCached=false};
+                    }return new EntryResolution(e.PeerSlot,i,"地址",[target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"");}));
                 }
             };
             Worker=new ControlWorker(Store,services);Worker.EnablePairNetworks();Worker.StartLocal();

@@ -39,17 +39,8 @@ public sealed partial class ControlWorker
     static void RestoreSavedNetworkSettings(DeviceProfile profile)
     {
         var saved=PublicSettings(profile);
-        profile.ManualEndpoint=saved.ManualEndpoint;
-        profile.SelectTransport(saved.PathSelection);
-        profile.AllowManualQualityRequests=saved.AllowManualQualityRequests;
-        profile.ListenPort=saved.ListenPort;profile.SourcePort=saved.SourcePort;
-        profile.ConnectionSource=saved.ConnectionSource;profile.DirectMode=saved.DirectMode;
-        profile.CoordinationService=saved.Service;profile.CoordinationPin=saved.CertificatePin;
+        ConnectionSettings.Apply(profile,saved);
         profile.ExistingEntries=RuntimeEntries(profile);
-        profile.EntryRefreshSeconds=saved.EntryRefreshSeconds;
-        profile.RequestedVirtualIp=saved.RequestedVirtualIp;
-        profile.TcpStun=saved.TcpStun?.ToArray()??profile.TcpStun;
-        profile.UdpStun=saved.UdpStun?.ToArray()??profile.UdpStun;
     }
 
     void RequireSavedProtocol(string mode)

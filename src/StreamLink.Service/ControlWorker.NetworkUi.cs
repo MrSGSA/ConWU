@@ -17,7 +17,7 @@ public sealed partial class ControlWorker
     string uiPairService = "", uiPairPin = "", uiPendingInvite = "", uiExpectedNetwork = "";
     UiPairingDto? uiPairSnapshot;
     EntryResolution[] uiEntryResolutions=[];
-    readonly Lazy<ExistingEntryResolver> uiEntryResolver=new(()=>new());
+    readonly Lazy<ExistingEntryResolver> uiEntryResolver;
     string uiApprovalCode="";
     string uiRejoinLocator="";
     string uiPendingCipher="";
@@ -260,7 +260,7 @@ public sealed partial class ControlWorker
                         }
                     }else if(meshRunner==null)throw new IOException("请先连接本机网络，再生成直连邀请");
                     await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
-                    try{var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;var invitationEntries=profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray();
+                    try{var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;var invitationEntries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
                         if(invitationEntries.Length==0)invitationEntries=meshRunner?.PreparedInvitationEntries??[];
                         if(invitationEntries.Length==0)throw new IOException("尚未取得可分享的主机入口。请等待入口准备，或改用协调服务器／已有入口；STUN 观测不代表入站可达");
                         uiApprovalCode=DirectPairInvitation.Issue(network,invitationEntries.Concat(PkarrHints(profile)).Distinct().ToArray(),uiRoom,opened.Capability);PairSnapshot("等待设备申请；核对校验码后由主机批准");}
@@ -326,6 +326,9 @@ public sealed partial class ControlWorker
             case "settings":
                 if(profile.AutoConfigureJoin&&profile.Mesh is {IsOwner:false})throw new IOException("此网络设置由主机提供，本机仅供查看，不能修改");
                 var settings = action.Settings ?? throw new FormatException("设置为空");
+                if(settings.DiscoveryMode is null)throw new FormatException("请选择有效的主机发现方式");
+                bool explicitDiscovery=networkContext&&settings.DiscoveryMode.Length>0;
+                if(explicitDiscovery)settings=ConnectionSettings.Normalize(settings);
                 var updated = action.Patch?.ApplyTo(profile)??ProfileChanges.Copy(profile);
                 if (action.ExpectedRevision != SettingsRevision(profile)) throw new IOException("连接设置已改变；草稿已保留，请刷新后核对");
                 var previousSettings=PublicSettings(profile);
@@ -337,20 +340,21 @@ public sealed partial class ControlWorker
                 updated.Coordinator=settings.Coordinator;updated.PkarrPublish=settings.PkarrPublish;
                 updated.Ddns=new();updated.CloudflareDdnsToken="";
                 updated.DirectMode=updated.Mesh?.Pair.Direct??settings.DirectMode;
-                ExistingEntryResolver.Validate(settings.ExistingEntries);
+                if(!explicitDiscovery)ExistingEntryResolver.Validate(settings.ExistingEntries);
                 if(updated.Mesh!=null && settings.ExistingEntries.Any(e=>e.PeerSlot!=0 && e.PeerSlot!=ExistingEntry.Network && e.PeerSlot!=ExistingEntry.NetworkOwner && updated.Mesh.Directory?.Members.Any(m=>m.Slot==e.PeerSlot&&m.Slot!=updated.Mesh.Self.Slot)!=true&&!PublicSettings(profile).ExistingEntries.Contains(e)))throw new FormatException("入口归属设备已不在当前网络中");
                 if(updated.Mesh==null||updated.Mesh.Pair.Direct){updated.CoordinationService=settings.Service;updated.CoordinationPin=settings.CertificatePin;}
                 updated.RequestedVirtualIp=settings.RequestedVirtualIp;
                 updated.TcpStun=settings.TcpStun is {Length:0}?Stun.TcpServers.ToArray():settings.TcpStun??updated.TcpStun;updated.UdpStun=settings.UdpStun is {Length:0}?Stun.UdpServers.ToArray():settings.UdpStun??updated.UdpStun;
                 updated.AllowManualQualityRequests = settings.AllowManualQualityRequests;
                 updated.ListenPort = settings.ListenPort; updated.SourcePort = settings.SourcePort;
+                if(explicitDiscovery)ConnectionSettings.Apply(updated,settings);
                 if((action.AutoStart==null)!=(action.ExpectedAutoStart==null))throw new FormatException("启动设置需要对应的前置值");
                 if(action.ExpectedAutoStart!=null&&StartupSettings.Read().AutoStart!=action.ExpectedAutoStart)throw new IOException("开机启动设置已改变；草稿已保留，请核对后重试");
                 if(action.AutoStart!=null)updated.AutoStart=action.AutoStart.Value;
                 updated.Validate();
                 var savedEntries=SavedEntries(settings.ExistingEntries,updated.Mesh!=null&&updated.Mesh.IntroducerSlot!=updated.Mesh.Self.Slot,updated.Mesh?.IntroducerSlot??1);
                 if(!savedEntries.Where(e=>e.PeerSlot>0).SequenceEqual(PublicSettings(profile).ExistingEntries.Where(e=>e.PeerSlot>0)))updated.SavedPeerEntryNetwork=updated.Mesh?.Pair.Network??"";
-                updated.SavedNetworkSettings=settings with {Ddns=null,ExistingEntries=savedEntries,TcpStun=updated.TcpStun.ToArray(),UdpStun=updated.UdpStun.ToArray()};
+                updated.SavedNetworkSettings=settings with {Ddns=null,ExistingEntries=savedEntries,TcpStun=explicitDiscovery?settings.TcpStun?.ToArray():updated.TcpStun.ToArray(),UdpStun=explicitDiscovery?settings.UdpStun?.ToArray():updated.UdpStun.ToArray()};
                 updated.ExistingEntries=RuntimeEntries(updated);
                 store.ValidateNetworkProfile?.Invoke(updated);
                 bool changeStartup=action.AutoStart!=null&&updated.AutoStart!=StartupSettings.Read().AutoStart;
@@ -511,7 +515,6 @@ public sealed partial class ControlWorker
         if(profile.AutoConfigureJoin){
             var inherited=receivedSettings!.ForGuest(mesh,PublicSettings(profile));
             ConnectionSettings.Apply(next,inherited);next.ReceivedNetworkSettings=receivedSettings;
-            next.CoordinationService=inherited.Service;next.CoordinationPin=inherited.CertificatePin;
             next.JoinedEntrySources=next.JoinedEntrySources.Concat(receivedSettings.Entries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray();
         }
         next.ExistingEntries=RuntimeEntries(next);
