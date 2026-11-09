@@ -22,6 +22,25 @@ static partial class Program
             bool rejected=false;try{ConnectionSettings.Normalize(preferences with{PairingService=invalid});}catch(FormatException){rejected=true;}
             Check(rejected,"pairing service rejects a non-HTTPS or credential-bearing URL");
         }
+        int targetProbes=0;
+        Task<CoordinatorDiagnostic> Detect(string address,string trust,CancellationToken token){targetProbes++;return Task.FromResult(new CoordinatorDiagnostic("reachable","ok",DateTimeOffset.UtcNow,true));}
+        var targetAction=new UiNetworkAction("join-target",Code:"123456"){AutoConfigure=true,Entry="https://coord.example.com/"};
+        var detected=await JoinTarget.Resolve(targetAction,Detect,CancellationToken.None);
+        Check(detected.Action=="join"&&detected.Service==targetAction.Entry&&targetProbes==1,"one target field identifies a compatible coordinator before sending any code");
+        foreach(string source in new[]{"203.0.113.1:44680","https://entry.example.com/current?token=subscription#streamlink1","txt://entry.example.com#streamlink1"}){
+            targetProbes=0;detected=await JoinTarget.Resolve(targetAction with{Entry=source},Detect,CancellationToken.None);
+            Check(detected.Action=="join-direct-short"&&detected.Entry==source&&detected.Service.Length==0&&targetProbes==0,"plain endpoints and selected subscriptions reach direct short pairing without a coordinator probe");
+        }
+        detected=await JoinTarget.Resolve(targetAction with{Entry="https://entry.example.com/current"},(_,_,_)=>Task.FromResult(new CoordinatorDiagnostic("http-404","not a coordinator",DateTimeOffset.UtcNow,false)),CancellationToken.None);
+        Check(detected.Action=="join-direct-short","an HTTPS source with no coordinator health is treated as an entry subscription");
+        foreach(string failure in new[]{"tls","timeout","http-403"}){
+            bool rejected=false;try{await JoinTarget.Resolve(targetAction,(_,_,_)=>Task.FromResult(new CoordinatorDiagnostic(failure,"unreachable",DateTimeOffset.UtcNow,false)),CancellationToken.None);}catch(IOException){rejected=true;}
+            Check(rejected,"failed trust or connection does not downgrade to an unpinned entry fetch");
+        }
+        detected=await JoinTarget.Resolve(targetAction with{Entry="udp://203.0.113.1:44680"},Detect,CancellationToken.None);
+        Check(detected.Mode=="udp"&&detected.Action=="join-direct-short","an explicitly UDP-prefixed entry selects UDP without an automatic protocol fallback");
+        bool pinRejected=false;try{await JoinTarget.Resolve(targetAction with{CertificatePin=new string('a',64)},(_,_,_)=>Task.FromResult(new CoordinatorDiagnostic("protocol","different service",DateTimeOffset.UtcNow,false)),CancellationToken.None);}catch(IOException){pinRejected=true;}
+        Check(pinRejected,"an explicit coordinator certificate pin is never ignored during source detection");
         string folder=Path.Combine(ProfileStore.Root,"pairing-options");Directory.CreateDirectory(folder);
         using var key=RSA.Create(2048);
         var request=new CertificateRequest("CN=localhost",key,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
@@ -34,8 +53,8 @@ static partial class Program
         try{
             bool ready=false;for(int attempt=0;attempt<100;attempt++){ready=(await coordinator.State()).Coordinator?.Running==true;if(ready)break;await Task.Delay(30);}
             Check(ready,"pairing choices use the ordinary integrated ConWU HTTPS coordinator");
-            foreach(string scenario in new[]{"autonomous-invitation","existing-code","existing-invitation-offline"}){
-                bool existing=scenario.StartsWith("existing"),code=scenario=="existing-code";
+            foreach(string scenario in new[]{"autonomous-invitation","existing-code","existing-code-via-entry","existing-local-code","existing-invitation-offline"}){
+                bool existing=scenario.StartsWith("existing"),coordinatedCode=scenario=="existing-code",entryWithCoordinator=scenario=="existing-code-via-entry",localCode=scenario is "existing-local-code" or "existing-code-via-entry",code=coordinatedCode||localCode;
                 using var blackhole=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);blackhole.Bind(new IPEndPoint(IPAddress.Loopback,0));
                 WorkspaceNode? guestTarget=null;
                 IMeshTransport HostTransport(MeshTransportRequest r)=>r.Server?new StubTransport(null):new ForwardingTransport(guestTarget?.NativeTarget??(IPEndPoint)blackhole.LocalEndPoint!,toleratePeerOffline:true);
@@ -48,7 +67,7 @@ static partial class Program
                     var config=(await host.State()).Configurations.Single();
                     var settings=config.Settings with{
                         ConnectionSource=existing?"existing":"custom",DirectMode=existing,DiscoveryMode=existing?"existing":"coordinator",
-                        Service=existing?"":url,CertificatePin=existing?"":pin,PairingService=existing?url:"",PairingCertificatePin=existing?pin:"",CoordinatorBackup=false
+                        Service=existing?"":url,CertificatePin=existing?"":pin,PairingService=existing&&scenario!="existing-local-code"?url:"",PairingCertificatePin=existing&&scenario!="existing-local-code"?pin:"",CoordinatorBackup=false
                     };
                     var configured=await host.Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",config.Id,config.Name,config.Revision,settings)));Check(configured.Ok,configured.Error);
                     var created=await host.Action("",new(existing?"create-direct":"create",Service:settings.Service,CertificatePin:settings.CertificatePin){Name=scenario,ConfigurationId=config.Id});Check(created.Ok,created.Error);
@@ -57,12 +76,13 @@ static partial class Program
                     var invited=await host.Action(hostId,new(code?"invite-code":"invite-direct",ExpectedNetwork:network));Check(invited.Ok,invited.Error);
                     if(!existing)Check(host.Probes>0,"generating a coordinated direct invitation prepares its autonomous entry on demand");
                     string locator=invited.Status!.Pairing!.Code;
-                    if(code){
-                        Check(locator.Length==6&&invited.Status.Pairing.Method=="code"&&invited.Status.Pairing.Service==url,"existing-entry owner generates six digits on the selected HTTPS service");
+                    if(coordinatedCode){
+                        Check(locator.Length==6&&invited.Status.Pairing.Method=="entry-code"&&invited.Status.Pairing.Service==url,"existing-entry owner generates six digits on the selected HTTPS service");
                         var active=(await host.State()).Configurations.Single();
                         var changed=await host.Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",active.Id,active.Name,active.Revision,active.Settings with{PairingService="https://future-pairing.example.invalid/"})));Check(changed.Ok,changed.Error);
                         Check((await host.State()).Networks.Single().Status.Pairing?.Service==url,"a live code retains its original service when future pairing preferences change");
                     }
+                    else if(localCode){Check(locator.Length==6&&invited.Status.Pairing.Method=="entry-code"&&invited.Status.Pairing.Service==(entryWithCoordinator?url:""),"local short code is available through the entry even when its optional coordinator is configured or offline");}
                     else{
                         var invitation=DirectPairInvitation.Import(locator);
                         Check((invitation.Service==null)==existing,"direct invitation preserves whether its network uses coordinated runtime discovery");
@@ -75,7 +95,7 @@ static partial class Program
                             Check(rejected,"stripping coordinated identity cannot downgrade a signed invitation to a serverless network");
                         }
                     }
-                    var joined=await guest.Action("",new(code?"join":"join-invitation",Service:code?url:"",CertificatePin:code?pin:"",Code:locator){AutoConfigure=true});Check(joined.Ok,joined.Error);
+                    var joined=await guest.Action("",new(code?"join-target":"join-invitation",CertificatePin:coordinatedCode?pin:"",Code:locator){AutoConfigure=true,Entry=code?(localCode?"203.0.113.54:45460":url):""});Check(joined.Ok,joined.Error);
                     string guestId=joined.Status!.SelectedNetworkId;UiPairingDto? pair=null;
                     for(int attempt=0;attempt<100;attempt++){
                         var hp=await host.Action(hostId,new("pair-poll"));Check(hp.Ok,hp.Error);
@@ -89,16 +109,16 @@ static partial class Program
                     var saved=new ProfileStore(Path.Combine(guest.Store.DirectoryPath,"networks",guestId),guest.Store).LoadForMaintenance();
                     Check(saved.Mesh!.Pair.Direct==existing&&saved.ReceivedNetworkSettings!.ConnectionSource==settings.ConnectionSource,"pairing choice never rewrites the network's data discovery strategy");
                     if(existing)Check(host.Probes==0&&guest.Probes==0&&saved.CoordinationService.Length==0&&saved.Mesh.Pair.Service.Length==0&&!saved.SavedNetworkSettings!.CoordinatorBackup,"short-code coordination for existing entries starts no autonomous probe or runtime coordinator fallback");
-                    if(code)Check(saved.SavedNetworkSettings!.PairingService==url,"approval binds the recipient to the service that actually carried its code rather than a newly edited preference");
+                    if(code)Check(saved.SavedNetworkSettings!.PairingService==(localCode&&!entryWithCoordinator?"":url),"approval binds the recipient to the service that actually carried its code rather than a newly edited preference");
                     var hs=await PairReady(host,18000,guest);var gs=(await guest.State()).Networks.Single();var hn=hs.Networks.Single();
                     guest.Adapters[network].Outgoing.Add(Packet(gs.Status.VirtualIp,hn.Status.VirtualIp));
                     bool delivered=false;for(int attempt=0;attempt<100;attempt++){delivered=(await host.State()).Aggregate!.ReceivedBytes==1280;if(delivered)break;await Task.Delay(30);}
                     Check(delivered,"approved network carries the single inner packet over its authenticated loopback data channel");
-                    if(code){await coordinator.Worker.StopLocal();Check((await coordinator.State()).Networks.Length==0,"pairing coordinator does not enroll itself as a network member");}
+                    if(coordinatedCode){await coordinator.Worker.StopLocal();Check((await coordinator.State()).Networks.Length==0,"pairing coordinator does not enroll itself as a network member");}
                     if(scenario.EndsWith("offline")){
                         var current=(await host.State()).Configurations.Single();int receivers=host.Servers;
                         var cleared=await host.Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",current.Id,current.Name,current.Revision,current.Settings with{PairingService=""})));Check(cleared.Ok,cleared.Error);
-                        var unavailable=await host.Action(hostId,new("invite-code",ExpectedNetwork:network));Check(!unavailable.Ok&&unavailable.Error.Contains("协调服务器"),"without a configured pairing service the owner cannot advertise an undiscoverable six-digit code");
+                        var unavailable=await host.Action(hostId,new("invite-code",ExpectedNetwork:network));Check(unavailable.Ok&&unavailable.Status!.Pairing!.Method=="entry-code"&&unavailable.Status.Pairing.Code.Length==6,"clearing coordination retains local short pairing through the existing entry");
                         Check(host.Servers==receivers&&(await host.State()).Networks.Single().Status.DirectPeers==1,"changing pairing-only settings preserves the healthy data receiver and connection");
                         var noServer=await host.Action("",new("create-direct"){Name="Invitation only",ConfigurationId=current.Id});Check(noServer.Ok,noServer.Error);
                         Check(noServer.Status!.Pairing?.Active!=true&&string.IsNullOrEmpty(noServer.Status.Pairing?.Code),"new explicit serverless configurations create no hidden numeric pairing room");

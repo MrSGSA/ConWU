@@ -15,8 +15,11 @@ public sealed partial class ControlWorker
     void StartEntryBackupPublication(PairRoomTicket ticket)
     {
         StopEntryBackupPublication();var settings=PublicSettings(profile);
-        if(settings.CoordinatorBackup&&profile.Mesh is {IsOwner:true,Pair.Direct:true} owner)
-            entryBackupPublisher=new(ProfileChanges.Copy(profile).Mesh!,ticket,settings,profile.TransportMode,Log,disposing.Token);
+        if(profile.Mesh is {IsOwner:true,Pair.Direct:true}){
+            var pairing=ConnectionSettings.PairingCoordinator(settings);
+            if(profile.UsesExistingEntriesOnly&&pairing.Service.Length>0)settings=settings with{Service=pairing.Service,CertificatePin=pairing.Pin,CoordinatorBackup=true};
+            if(settings.CoordinatorBackup)entryBackupPublisher=new(ProfileChanges.Copy(profile).Mesh!,ticket,settings,profile.TransportMode,Log,disposing.Token);
+        }
     }
     async Task JoinUiDirectShort(UiNetworkAction action,Operation operation)
     {
@@ -64,8 +67,9 @@ public sealed partial class ControlWorker
                 Log("主机入口未完成配对，正在查询备用协调；只获取地址，不启动自主打洞");
                 using var lookup=new EntryLookupClient(settings.Service,settings.CertificatePin);
                 EntryLookupRecord? found=null;
-                for(int query=0;query<3&&found==null;query++){
-                    if(query>0)await Task.Delay(500*query,deadline.Token);
+                for(int query=0;query<16&&found==null;query++){
+                    if(query>0)await Task.Delay(Math.Min(1000,500*query),deadline.Token);
+                    SetOperation(operation,$"等待配对协调登记主机入口（{query+1}/16）",true);
                     found=await lookup.Find(action.Code,deadline.Token);
                 }
                 if(found==null)throw new IOException("备用协调没有此配对码的有效主机入口，请确认主机也已启用备用协调并重新生成配对码");

@@ -215,6 +215,11 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             if(request.Method=="configuration")return await HandleConfiguration(request with{NetworkId=selected},sid,token);
             if(request.Method=="save-settings")return await SaveBatch(request with{NetworkId=selected},sid,token);
             if(request.Network!=null&&(request.Network.ConfigurationId==null||request.Network.RequestedVirtualIp==null))throw new FormatException("连接配置 ID 不能为空");
+            if(request.Method=="network"&&request.Network is {Action:"join-target"} joinTargetAction){
+                using var lookupStop=CancellationTokenSource.CreateLinkedTokenSource(token,controlOperations[request.OperationId].Stop.Token);
+                var resolvedJoin=await JoinTarget.Resolve(joinTargetAction,(url,pin,ct)=>MeshCoordinatorPreflight.Probe(url,pin,null,ct),lookupStop.Token);
+                request=request with{Network=resolvedJoin};
+            }
             bool enrollment=request.Method=="network"&&request.Network?.Action is "create" or "create-direct" or "join" or "join-entry" or "join-invitation" or "join-direct-short" or "join-direct";
             if(enrollment&&selected.Length==0){
                 await WaitGate(creating,request.OperationId,token);

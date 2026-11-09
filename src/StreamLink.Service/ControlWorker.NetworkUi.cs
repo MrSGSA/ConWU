@@ -63,7 +63,7 @@ public sealed partial class ControlWorker
     {
         Volatile.Write(ref uiPairSnapshot, new(uiRoom != null, uiPairOwner, uiPairOwner&&!uiEntryAdmission ? (uiApprovalCode.Length>0?uiApprovalCode:uiRoom?.Code??"") : "",
             uiExchange == null ? "" : PairKeyExchange.Verification(uiExchange), uiRoomState?.Candidate ?? "",
-            uiPairOwner ? uiRoomState?.GuestName ?? "" : uiRoom?.HostName ?? "", uiRoom?.Expires ?? 0, state) {ProposedIp=ProposedUiIp(),ReplacingSlot=RejoiningSlot(),Direct=uiPairClient is DirectPairHost or DirectPairClient,Service=uiPairService,Method=uiEntryAdmission?"entry":uiPairClient is DirectPairHost or DirectPairClient?"direct":"code"});
+            uiPairOwner ? uiRoomState?.GuestName ?? "" : uiRoom?.HostName ?? "", uiRoom?.Expires ?? 0, state) {ProposedIp=ProposedUiIp(),ReplacingSlot=RejoiningSlot(),Direct=uiPairClient is DirectPairHost or DirectPairClient,Service=uiPairService,Method=uiEntryAdmission?"entry":uiPairClient is DirectPairHost or DirectPairClient?uiApprovalExpected!=null||uiApprovalCode.StartsWith("SL6.",StringComparison.Ordinal)?"direct":"entry-code":"code"});
     }
     int RejoiningSlot(){try{return uiPairOwner?RejoiningMember()?.Slot??0:0;}catch(CryptographicException){return 0;}}
     MeshMember? RejoiningMember()
@@ -122,6 +122,7 @@ public sealed partial class ControlWorker
     async Task OpenDirectShortPair(CancellationToken token)
     {
         await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=profile.Mesh!.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
+        (uiPairService,uiPairPin)=ConnectionSettings.PairingCoordinator(PublicSettings(profile));
         try{uiRoom=await uiPairClient.Create(uiPairKey,profile.DeviceName,token);StartEntryBackupPublication(uiRoom);PairSnapshot("请另一台设备填写目标主机入口和六位配对码，双方核对校验码后批准");}
         catch{ResetUiPair("配对码生成未完成，请稍后重试");throw;}
     }
@@ -256,8 +257,18 @@ public sealed partial class ControlWorker
                     await OpenUiDirectInvitation(network,operation);
                     break;
                 }
+                if(profile.UsesExistingEntriesOnly&&profile.ExistingEntries.Any(e=>e.PeerSlot==0)){
+                    if(!profile.Enabled||meshRunner==null)throw new IOException("请先连接本机网络，再生成配对码");
+                    await OpenDirectShortPair(token);break;
+                }
                 var pairing=network.Pair.Direct?ConnectionSettings.PairingCoordinator(PublicSettings(profile)):(network.Pair.Service,network.Pair.CertificatePin);
-                if(pairing.Item1.Length==0)throw new IOException("此网络未配置用于短配对码的协调服务器，请生成直连邀请");
+                if(pairing.Item1.Length==0){
+                    if(profile.UsesExistingEntriesOnly&&profile.ExistingEntries.Any(e=>e.PeerSlot==0)){
+                        if(!profile.Enabled||meshRunner==null)throw new IOException("请先连接本机网络，再生成配对码");
+                        await OpenDirectShortPair(token);break;
+                    }
+                    throw new IOException("此网络未配置协调服务器或已有入口，请生成直连邀请");
+                }
                 await OpenUiRoom(pairing.Item1,pairing.Item2,token);break;
             case "pair-poll":
                 await PollUiPair(operation); break;
@@ -288,7 +299,7 @@ public sealed partial class ControlWorker
                         // An already issued room keeps the identity of the
                         // service used for this exchange, even if the owner
                         // edited pairing preferences while the code was live.
-                        if(uiPairClient is ShortPairClient&&admitted.Mesh.Pair.Direct)sharing=sharing with{PairingService=uiPairService,PairingCertificatePin=uiPairPin};
+                        if(admitted.Mesh.Pair.Direct&&uiPairService.Length>0)sharing=sharing with{PairingService=uiPairService,PairingCertificatePin=uiPairPin};
                         issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh),ApprovedNetworkSettings.Create(admitted.Mesh,sharing,NetworkDisplayName));
                     }
                     else if(uiEntryAdmission)issued=NetworkEntryEnrollment.Encode(issued,ApprovalEntryHints(admitted.Mesh));
