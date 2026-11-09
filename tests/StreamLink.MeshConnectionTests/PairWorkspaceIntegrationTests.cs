@@ -35,7 +35,7 @@ static partial class Program
                     return await Task.WhenAll(entries.Select(async(e,i)=>{if(ExistingEntryResolver.Kind(e.Source)=="PKARR"){
                         using var client=pkarrFactory?.Invoke()??throw new IOException("fixture requires an isolated PKARR gateway");
                         var record=await client.ResolveRecord(e.Source,mode,ct);return new EntryResolution(e.PeerSlot,i,"PKARR",record.Announcement.Endpoints,""){ExpiresAt=record.Announcement.Expires,AllowCached=false};
-                    }return new EntryResolution(e.PeerSlot,i,"地址",[target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"");}));
+                    }return new EntryResolution(e.PeerSlot,i,"地址",[mappingFactory!=null&&IPEndPoint.TryParse(e.Source,out var literal)?literal.ToString():target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"");}));
                 }
             };
             Worker=new ControlWorker(Store,services);Worker.EnablePairNetworks();Worker.StartLocal();

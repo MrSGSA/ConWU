@@ -33,7 +33,7 @@ public sealed partial class ControlWorker
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential?.Network==invitation.Network?profile.RejoinCredential:null,invitation.Capability,uiPairKey);
                     var room=await client.Join(invitation.Capability,uiPairKey,profile.DeviceName,attempt.Token,profile.RequestedVirtualIp,uiExpectedRejoin);
                     if(room.Room!=invitation.Room||room.HostCommitment!=invitation.HostCommitment||room.Expires!=invitation.Expires)throw new CryptographicException("主机回应与邀请不符");
-                    uiRoom=room;uiPairClient=client;uiApprovalExpected=invitation;
+                    uiRoom=room;uiPairClient=client;uiApprovalExpected=invitation;uiEntrySources=invitation.Entries.ToArray();
                     PairSnapshot("申请已发送，等待主机同意；请核对双方校验码");return;
                 }catch(Exception ex)when(ex is IOException or CryptographicException or OperationCanceledException){
                     client.Dispose();if(deadline.IsCancellationRequested)throw;
