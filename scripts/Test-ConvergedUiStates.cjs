@@ -36,7 +36,9 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
     cancelStarted?.resolve();await cancelGate?.promise;
    }else if(body.network?.autoConfigure){
     model={...model,selectedNetworkId:'33333333333333333333333333333333',networks:[...model.networks,{id:'33333333333333333333333333333333',name:'连接 3',configurationId:'',status:{...base,pairing:{active:true,owner:false,direct:false,peerName:'新主机',verification:'123456',expires:Math.floor(Date.now()/1000)+300,state:'等待主机批准'}}}]};
-   }else if(body.network?.action==='pair-poll'){
+   }else if(body.network?.action==='invite-code'||body.network?.action==='invite-direct'){
+    const direct=body.network.action==='invite-direct';model={...model,networks:model.networks.map(n=>n.id===body.networkId?{...n,status:{...n.status,pairing:{active:true,owner:true,method:direct?'direct':'code',service:direct?'':n.status.settings.directMode?n.status.settings.pairingService:n.status.settings.service,direct,code:direct?'SL6.preview-only-invitation':'123456',verification:'',candidate:'',expires:Math.floor(Date.now()/1000)+300}}}:n)};
+   }else if(body.network?.action==='pair-poll'&&!model.networks.find(n=>n.id===body.networkId)?.status.pairing?.owner){
     probeId=body.operationId;staleModel=clone(model);pollStarted.resolve();
     return route.fulfill({json:{ok:true,status:model,operation:{id:probeId,completed:false}}});
    }else if(body.network?.action==='pair-cancel')model={...model,selectedNetworkId:'',networks:model.networks.filter(n=>n.id!==body.networkId)};
@@ -53,6 +55,26 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(await page.locator('#network-edit-actions').isHidden(),'received settings have no mutation controls');
   check(await page.locator('#network-settings-body input,#network-settings-body textarea,#network-settings-body select').count()===0,'guest settings are read-only in every visible field');
   await page.screenshot({path:path.join(output,'readonly.png'),fullPage:true});await page.locator('#network-readonly-close').click();
+  const beforeHostChoices=clone(model);
+  await page.locator('.nav[data-page="create"]').click();await page.locator('[data-ui-action="select-host"]').click();
+  check(await page.locator('[data-ui-action="host-code-mode"]').count()===0&&await page.locator('#host-invitation').isVisible(),'an existing-entry host without pairing coordination offers only a direct invitation');
+  const pairedSettings={...model.networks[0].status.settings,pairingService:'https://host-pairing.example.com/'};
+  model={...model,networks:model.networks.map((n,i)=>i? n:{...n,status:{...n.status,settings:pairedSettings,settingsRevision:'pairing-added'}})};
+  await page.locator('[data-ui-action="host-code-mode"]').waitFor();await page.locator('[data-ui-action="host-code-mode"]').click();await page.locator('[data-ui-action="generate"]').click();
+  await page.waitForFunction(()=>[...document.querySelectorAll('.code-control .digit.filled')].map(e=>e.textContent).join('')==='123456');
+  check(commands.some(c=>c.network?.action==='invite-code')&&await page.locator('.code-control .digit.filled').count()===6,'host short-code choice requests a server room and displays its six digits');
+  await page.screenshot({path:path.join(output,'host-pair-code.png'),fullPage:true});
+  model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,settings:{...pairedSettings,pairingService:'https://changed-pairing.example.com/'},settingsRevision:'pairing-changed'}})};
+  await page.waitForFunction(()=>workspaceState.networks[0].status.settingsRevision==='pairing-changed');check(await page.locator('.code-control .digit.filled').count()===0&&await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'changing the pairing service prevents copying a code registered on the old server');
+  model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,settings:pairedSettings,settingsRevision:'pairing-restored'}})};await page.waitForFunction(()=>workspaceState.networks[0].status.settingsRevision==='pairing-restored');
+  await page.locator('[data-ui-action="host-invite-mode"]').click();
+  check(await page.locator('#host-invitation').inputValue()===''&&await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'switching to invitation mode cannot copy the previous numeric room code');
+  await page.locator('[data-ui-action="generate"]').click();await page.waitForFunction(()=>document.getElementById('host-invitation')?.value==='SL6.preview-only-invitation');check(await page.locator('#host-invitation').inputValue()==='SL6.preview-only-invitation'&&commands.some(c=>c.network?.action==='invite-direct'),'host invitation choice uses its separate approval invitation action');
+  await page.screenshot({path:path.join(output,'host-pair-invitation.png'),fullPage:true});
+  await page.locator('[data-ui-action="host-code-mode"]').click();check(await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'switching back to numeric mode cannot copy the previous invitation');
+  model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,settings:{...pairedSettings,pairingService:''},settingsRevision:'pairing-cleared'}})};
+  await page.locator('[data-ui-action="host-code-mode"]').waitFor({state:'hidden'});check(await page.locator('#host-invitation').isVisible(),'clearing host pairing coordination immediately restores invitation-only creation');
+  model=beforeHostChoices;await page.locator('.nav[data-page="join"]').click();
   const initialDevice=clone(model.deviceSettings);
   check(await page.locator('#join-code').isEnabled(),'upgrade retains a previously configured coordination address for joining');
   const selectCoordinator=async address=>{await page.locator('[data-ui-action="open-lookup"]').click();await page.locator('#lookup-address').fill(address);await page.locator('[data-ui-action="save-lookup"]').click();await page.locator('#lookup-dialog').waitFor({state:'hidden'});};
@@ -98,8 +120,10 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   model={...model,deviceSettings:initialDevice,deviceSettingsRevision:'external-restored'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-restored');
   await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="open-lookup"]').click();check(await page.locator('#lookup-address').inputValue()==='https://selected-coord.example.com/','provider saves cannot replace the join-specific address');await page.locator('[data-ui-action="close-lookup"]').click();
   await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="open-lookup"]').click();check(await page.locator('#lookup-address').inputValue()==='https://selected-coord.example.com/','join-specific address persists across a full page reload');await page.locator('[data-ui-action="close-lookup"]').click();
+  await page.locator('[data-ui-action="open-lookup"]').click();await page.locator('#lookup-certificate summary').click();await page.locator('#lookup-pin').fill('bad');await page.locator('[data-ui-action="save-lookup"]').click();check(await page.locator('#lookup-error').innerText()==='证书指纹需要 64 位十六进制字符。','invalid join-specific certificate fingerprints are rejected without changing server selection');
+  const joinPin='c'.repeat(64);await page.locator('#lookup-pin').fill(joinPin);await page.locator('[data-ui-action="save-lookup"]').click();await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="open-lookup"]').click();check(await page.locator('#lookup-pin').inputValue()===joinPin.toUpperCase(),'join-specific certificate trust survives reload and stays separate from provider trust');await page.locator('[data-ui-action="close-lookup"]').click();
   await page.locator('.nav[data-page="create"]').click();await page.locator('#owned-networks [data-ui-action="open-editor"]').click();
-  check(await page.locator('[data-ui-section="coordination"],[data-ui-section="pkarr"],[data-ui-section="stun"]').count()===0,'existing-entry editor excludes all autonomous discovery controls');
+  check(await page.locator('[data-ui-section="pkarr"],[data-ui-section="stun"]').count()===0&&await page.locator('[data-ui-section="coordination"]').count()===1,'existing-entry editor offers pairing coordination while excluding autonomous discovery controls');
   await page.locator('[data-ui-section="entry"]').click();const originalEntry=await page.locator('[data-entry-index="0"]').inputValue();await page.locator('[data-entry-index="0"]').fill('https://remember.example.com/#streamlink2');
   await page.locator('[data-ui-section="network"]').click();await page.locator('[data-key="mode"][value="custom"]').check();
   await page.locator('[data-key="route"]').selectOption('server');check(await page.locator('[data-ui-section="coordination"]').count()===1&&await page.locator('[data-ui-section="pkarr"],[data-ui-section="entry"]').count()===0,'coordinated autonomous mode exposes only its server discovery controls');
@@ -127,6 +151,7 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(model.configurations[0].settings.existingEntries[0].source==='https://new-entry.example.com/#streamlink1','network draft reaches the backend save request');
   await page.locator('.nav[data-page="join"]').click();await page.locator('#join-code').fill('657483');await page.locator('#join-submit').click();
   check(commands.find(c=>c.network?.autoConfigure)?.network.service==='https://selected-coord.example.com/','short-code request uses the join-specific coordinator rather than the previous device default');
+  check(commands.find(c=>c.network?.autoConfigure)?.network.certificatePin===joinPin.toUpperCase(),'short-code request uses the certificate fingerprint configured for its selected coordinator');
   await page.getByRole('heading',{name:'等待主机同意',exact:true}).waitFor();await within(pollStarted.promise,'background pairing observation');
   check(await page.evaluate(()=>!busy),'passive pairing observation does not take the foreground busy flag');
   check(await page.locator('[data-ui-action="cancel-join"]').isEnabled(),'cancel remains available during a delayed pairing read');

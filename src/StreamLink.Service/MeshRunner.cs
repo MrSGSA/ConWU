@@ -24,7 +24,7 @@ public sealed class MeshRunner
     internal MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string> rememberStun, MeshRuntimeServices services)
     { this.profile = profile; mesh = profile.Mesh!; this.log = log; this.report = report; this.remember = remember; this.rememberStun = rememberStun; this.services = services; }
     readonly object gate = new();
-    int retryRequested, runStarted;
+    int retryRequested, invitationEntryRequested, runStarted;
     sealed record EntrySettings(string Source,string Manual,ExistingEntry[] Entries) {
         public override string ToString()=>"EntrySettings (credentials hidden)";
     }
@@ -34,6 +34,7 @@ public sealed class MeshRunner
     public ExistingEntry[] PreparedInvitationEntries=>Volatile.Read(ref preparedInvitationEntries).ToArray();
     bool stopping;
     public void RequestRetry() => Interlocked.Exchange(ref retryRequested,1);
+    public void RequestInvitationEntry(){if(!profile.UsesExistingEntriesOnly&&mesh.IsOwner)Interlocked.Exchange(ref invitationEntryRequested,1);}
     public async Task NotifyDirectClosure(MeshDirectory closed,CancellationToken token)
     {
         MeshIdentity.ValidateDirectory(closed,mesh.Pair.Network,mesh.OwnerKey,mesh.Directory?.Revision??0);
@@ -342,6 +343,7 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
+                if(Interlocked.Exchange(ref invitationEntryRequested,0)!=0&&!existingOnly){entryProbeRequested=mapping==null&&probe==null;nextProbe=0;}
                 if (!existingOnly && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
                     (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];

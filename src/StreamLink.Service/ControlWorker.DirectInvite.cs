@@ -6,6 +6,35 @@ namespace StreamLink.Service;
 
 public sealed partial class ControlWorker
 {
+    async Task OpenUiDirectInvitation(MeshProfile network,Operation operation)
+    {
+        var token=operation.Stop.Token;
+        if(!profile.Enabled)throw new IOException("请先连接本机网络，再生成直连邀请");
+        if(networkContext){
+            long deadline=Environment.TickCount64+15000;
+            while(meshRunner?.ReceiverReady!=true){
+                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("本机接收入口仍在启动，请查看连接状态后再次生成邀请");
+                SetOperation(operation,"等待本机接收入口准备，再生成邀请",true);await Task.Delay(100,token);
+            }
+        }else if(meshRunner==null)throw new IOException("请先连接本机网络，再生成直连邀请");
+        if(!profile.UsesExistingEntriesOnly&&meshRunner is {} autonomous&&autonomous.PreparedInvitationEntries.Length==0){
+            autonomous.RequestInvitationEntry();long deadline=Environment.TickCount64+30000;
+            while(autonomous.PreparedInvitationEntries.Length==0){
+                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("暂未取得可分享的主机入口，当前网络仍保留。请使用配对码，或待入口准备后重试直连邀请");
+                SetOperation(operation,"正在准备直连邀请所需的主机入口",true);await Task.Delay(100,token);
+            }
+        }
+        await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
+        try{
+            var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;
+            var entries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
+            if(entries.Length==0)entries=meshRunner?.PreparedInvitationEntries??[];
+            if(entries.Length==0)throw new IOException("尚未取得可分享的主机入口。请等待入口准备，或使用配对码；STUN 观测不代表入站可达");
+            uiApprovalCode=DirectPairInvitation.Issue(network,entries.Concat(PkarrHints(profile)).Distinct().ToArray(),uiRoom,opened.Capability);
+            PairSnapshot("等待设备申请；核对校验码后由主机批准");
+        }catch{await CloseUiPair(token);throw;}
+    }
+
     async Task JoinUiInvitation(UiNetworkAction action,Operation operation)
     {
         RequireUiNetwork(action.ExpectedNetwork);

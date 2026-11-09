@@ -70,6 +70,7 @@ try {
   Run $newCase 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',"--$newCase") 300
  }
  Run 'saved-settings' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')
+ Run 'pairing-options' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pairing-options')
  Run 'control-lifecycle' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--control-lifecycle-only')
  Run 'pair-poll-priority' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-poll-priority-only')
  Run 'connection-view' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--connection-view-only')

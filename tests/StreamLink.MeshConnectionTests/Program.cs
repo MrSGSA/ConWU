@@ -25,7 +25,9 @@ static partial class Program
     public static async Task Main(string[] args)
     {
         if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}
+        if(args is ["--pairing-options"]){await PairingOptions();return;}
         if(args is ["--pkarr-only"]){await PkarrDiscoveryTests();return;}
+        if(args is ["--pkarr-short-code-feasibility",var shortCodeReport]){await PkarrShortCodeFeasibility(shortCodeReport);return;}
         if(args is ["--pkarr-publisher"]){await PkarrPublishingTests();return;}
         if(args is ["--pkarr-pairing"]){await PkarrPairingTests();return;}
         if(args is ["--autonomous-invitation"]){await PkarrPairingTests(pkarr:false);return;}

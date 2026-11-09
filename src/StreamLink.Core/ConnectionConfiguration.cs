@@ -10,11 +10,20 @@ public sealed record UiConfigurationAction(string Action,string Id="",string Nam
 
 public static class ConnectionSettings
 {
+    public static (string Service,string Pin) PairingCoordinator(UiNetworkSettings settings)=>settings.DirectMode
+        ?settings.ConnectionSource=="existing"?(settings.PairingService,settings.PairingCertificatePin):("","")
+        :(settings.Service,settings.CertificatePin);
     public static string Discovery(UiNetworkSettings settings)=>settings.DiscoveryMode.Length>0?settings.DiscoveryMode:
         settings.ConnectionSource=="existing"?"existing":settings.DirectMode?(settings.PkarrPublish?"pkarr":"direct"):"coordinator";
     public static UiNetworkSettings Normalize(UiNetworkSettings settings,bool forGuest=false)
     {
-        if(settings is null||settings.Service is null||settings.CertificatePin is null||settings.ManualEndpoint is null||settings.RequestedVirtualIp is null||settings.Coordinator is null||settings.ExistingEntries is null||settings.ExistingEntries.Any(e=>e==null||e.Source==null))throw new FormatException("连接配置内容无效");
+        if(settings is null||settings.Service is null||settings.CertificatePin is null||settings.PairingService is null||settings.PairingCertificatePin is null||settings.ManualEndpoint is null||settings.RequestedVirtualIp is null||settings.Coordinator is null||settings.ExistingEntries is null||settings.ExistingEntries.Any(e=>e==null||e.Source==null))throw new FormatException("连接配置内容无效");
+        if(settings.PairingService.Length>2048||settings.PairingCertificatePin.Length>128||settings.PairingService.Any(char.IsControl))throw new FormatException("配对协调地址或证书指纹无效");
+        if(settings.ConnectionSource=="existing"&&settings.PairingService.Length>0){
+            if(!Uri.TryCreate(settings.PairingService,UriKind.Absolute,out var uri)||uri.Scheme!="https"||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0)throw new FormatException("短配对码需要有效的 HTTPS 协调地址");
+            if(settings.PairingCertificatePin.Length>0&&(settings.PairingCertificatePin.Length!=64||!settings.PairingCertificatePin.All(char.IsAsciiHexDigit)))throw new FormatException("配对协调证书指纹需要 64 位十六进制字符");
+            settings=settings with{PairingService=uri.AbsoluteUri.EndsWith('/')?uri.AbsoluteUri:uri.AbsoluteUri+"/",PairingCertificatePin=settings.PairingCertificatePin.ToUpperInvariant()};
+        }
         if(settings.Ddns is {Enabled:true}||settings.Coordinator is {Enabled:true})throw new FormatException("连接配置不包含 DNS 发布或本机协调服务设置");
         if(settings.DiscoveryMode is null||settings.DiscoveryMode is not ("" or "existing" or "coordinator" or "direct" or "pkarr"))throw new FormatException("请选择有效的主机发现方式");
         if(settings.DiscoveryMode.Length>0){

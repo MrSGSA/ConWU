@@ -81,6 +81,7 @@ public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats?
 public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State)
 {
     public string Method {get;init;}="";
+    public string Service {get;init;}="";
     public string ProposedIp {get;init;}="";
     public bool Direct {get;init;}
     public int ReplacingSlot {get;init;}
@@ -95,6 +96,10 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public bool DirectMode {get;init;}
     public bool CoordinatorBackup {get;init;}
     public bool PkarrPublish {get;init;}
+    // Optional rendezvous for existing-entry enrollment only. Never a data
+    // discovery fallback or an instruction to start autonomous traversal.
+    public string PairingService {get;init;}="";
+    public string PairingCertificatePin {get;init;}="";
     // Empty preserves legacy settings. New clients choose exactly one discovery
     // policy; publishing authority is separate from a guest's lookup policy.
     public string DiscoveryMode {get;init;}="";

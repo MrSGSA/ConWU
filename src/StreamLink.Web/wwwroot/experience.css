@@ -74,3 +74,5 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 
 /* Disabled controls keep their prohibition cursor over text and icons. */
 #join-submit:disabled,#join-submit:disabled *{cursor:not-allowed}
+
+.host-pair-tabs{margin:2px 0 22px}
