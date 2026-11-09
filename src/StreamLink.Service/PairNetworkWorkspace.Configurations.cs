@@ -105,6 +105,14 @@ internal sealed partial class PairNetworkWorkspace
             if(action.Id.Length>0){ValidateConfigurationId(action.Id);previous=configurations.GetValueOrDefault(action.Id)??throw new IOException("连接配置已被删除");if(previous.Revision!=action.ExpectedRevision)throw new IOException("此配置已被其他窗口修改，草稿保留，请核对后重试");}
             if(action.Action is not "save"&&previous==null)throw new FormatException("请选择一份已保存配置");
             var users=held.Where(n=>networks.ContainsKey(n.Info.Id)&&n.Info.ConfigurationId==action.Id).ToArray();
+            // New WebUI edits are scoped to one network. Check references under
+            // the same gates as the write: another window may add a reference
+            // after the editor inspected the configuration or showed a prompt.
+            // Legacy CLI requests keep their explicit shared-profile semantics.
+            if(action.Independent&&action.Action is ("save" or "assign")){
+                if(request.NetworkId is {Length:>0}&&!held.Any(n=>n.Info.Id==request.NetworkId&&networks.ContainsKey(n.Info.Id)))throw new IOException("目标网络已被移除，本次未修改设置");
+                if(previous!=null&&users.Any(n=>n.Info.Id!=request.NetworkId))throw new IOException("此设置已被其它网络引用，本次未修改。请重新保存以生成独立设置。");
+            }
             if(action.Action=="delete"){
                 if(users.Length>0)throw new IOException("配置仍用于："+string.Join("、",users.Select(n=>n.Info.Name))+"；请先更换配置或移除网络");
                 configurations.TryRemove(action.Id,out _);try{PersistConfigurations();}catch{configurations[action.Id]=previous!;throw;}

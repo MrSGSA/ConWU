@@ -6,7 +6,7 @@ public sealed record ConnectionConfiguration(string Id,string Name,long Revision
 public sealed record UiConfigurationUse(string NetworkId,string Name,bool Enabled,string State,string Error);
 public sealed record UiConfigurationDto(string Id,string Name,long Revision,UiNetworkSettings Settings,UiConfigurationUse[] Networks);
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
-public sealed record UiConfigurationAction(string Action,string Id="",string Name="",long ExpectedRevision=0,UiNetworkSettings? Settings=null,bool ConfirmReconnect=false);
+public sealed record UiConfigurationAction(string Action,string Id="",string Name="",long ExpectedRevision=0,UiNetworkSettings? Settings=null,bool ConfirmReconnect=false,bool Independent=false);
 
 public static class ConnectionSettings
 {

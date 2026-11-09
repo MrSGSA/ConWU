@@ -25,15 +25,28 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
    return route.fulfill({json:{ok:true,status:model}});
   }
   if(u.pathname==='/api/command'){
-   const body=route.request().postDataJSON();commands.push(body);
+   const body=route.request().postDataJSON();commands.push(body);let configurationId='';
+   if(body.configuration?.independent&&['save','assign'].includes(body.configuration.action)){
+    const target=body.networkId||'',id=body.configuration.id,users=id?model.networks.filter(n=>n.configurationId===id):[];
+    if(target&&!model.networks.some(n=>n.id===target)||users.some(n=>n.id!==target))return route.fulfill({json:{ok:false,status:model,error:'此设置已被其它网络引用，本次未修改。请重新保存以生成独立设置。'}});
+   }
    if(body.method==='save-settings'){
     saveStarted?.resolve();await saveGate?.promise;
     model={...model,deviceName:body.settingsBatch.device.patch?.deviceName||model.deviceName,deviceSettings:body.settingsBatch.device.settings||model.deviceSettings,deviceSettingsRevision:'dev'+commands.length};
    }else if(body.configuration?.action==='save'){
     editorStarted?.resolve();await editorGate?.promise;
-    model={...model,configurations:model.configurations.map(c=>c.id===body.configuration.id?{...c,name:body.configuration.name,settings:body.configuration.settings,revision:c.revision+1}:c)};
+    configurationId=body.configuration.id||String(9000+commands.length).padStart(32,'0');
+    const prior=model.configurations.find(c=>c.id===configurationId),next={id:configurationId,name:body.configuration.name,settings:body.configuration.settings,revision:(prior?.revision||0)+1,networks:prior?.networks||[]};
+    model={...model,configurations:prior?model.configurations.map(c=>c.id===configurationId?next:c):[...model.configurations,next],networks:model.networks.map(n=>n.configurationId===configurationId?{...n,status:{...n.status,settings:next.settings}}:n)};
+   }else if(body.configuration?.action==='assign'){
+    const c=model.configurations.find(c=>c.id===body.configuration.id),n=model.networks.find(n=>n.id===body.networkId);if(!c||!n)throw Error('Unknown assignment');
+    model={...model,networks:model.networks.map(x=>x.id===n.id?{...x,configurationId:c.id,status:{...x.status,settings:clone(c.settings)}}:x),configurations:model.configurations.map(x=>({...x,networks:[...x.networks.filter(v=>v.networkId!==n.id),...(x.id===c.id?[{networkId:n.id,name:n.name,state:'applied'}]:[])]}))};
    }else if(body.method==='cancel'){
     cancelStarted?.resolve();await cancelGate?.promise;
+   }else if(['create','create-direct'].includes(body.network?.action)){
+    const c=model.configurations.find(c=>c.id===body.network.configurationId);if(!c)throw Error('Creation used an unknown configuration');
+    const id=String(8000+commands.length).padStart(32,'0'),n={id,name:body.network.name,configurationId:c.id,status:{...base,settings:clone(c.settings),networkId:id,isOwner:true,networkEnabled:true,virtualIp:body.network.requestedVirtualIp||'10.199.1.1',pairing:{active:false}}};
+    model={...model,selectedNetworkId:id,networks:[...model.networks,n],configurations:model.configurations.map(x=>x.id===c.id?{...x,networks:[...x.networks,{networkId:id,name:n.name,state:'applied'}]}:x)};
    }else if(body.network?.autoConfigure){
     model={...model,selectedNetworkId:'33333333333333333333333333333333',networks:[...model.networks,{id:'33333333333333333333333333333333',name:'连接 3',configurationId:'',status:{...base,pairing:{active:true,owner:false,direct:false,peerName:'新主机',verification:'123456',expires:Math.floor(Date.now()/1000)+300,state:'等待主机批准'}}}]};
    }else if(body.network?.action==='invite-code'||body.network?.action==='invite-direct'){
@@ -42,7 +55,7 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
     probeId=body.operationId;staleModel=clone(model);pollStarted.resolve();
     return route.fulfill({json:{ok:true,status:model,operation:{id:probeId,completed:false}}});
    }else if(body.network?.action==='pair-cancel')model={...model,selectedNetworkId:'',networks:model.networks.filter(n=>n.id!==body.networkId)};
-   return route.fulfill({json:{ok:true,status:model}});
+   return route.fulfill({json:{ok:true,status:model,configurationId}});
   }
   const file=path.join(assets,u.pathname==='/'?'index.html':u.pathname);
   return route.fulfill({path:file,contentType:u.pathname.endsWith('.css')?'text/css':u.pathname.endsWith('.js')?'application/javascript':u.pathname.endsWith('.svg')?'image/svg+xml':'text/html'});
@@ -55,6 +68,55 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(await page.locator('#network-edit-actions').isHidden(),'received settings have no mutation controls');
   check(await page.locator('#network-settings-body input,#network-settings-body textarea,#network-settings-body select').count()===0,'guest settings are read-only in every visible field');
   await page.screenshot({path:path.join(output,'readonly.png'),fullPage:true});await page.locator('#network-readonly-close').click();
+  const beforeCreation=clone(model),originalConfiguration=clone(model.configurations[0]),originalHost=clone(model.networks[0]);
+  await page.locator('.nav[data-page="create"]').click();await page.locator('[data-ui-action="select-host"]').click();await page.locator('[data-ui-action="new-create"]').click();
+  await page.locator('#new-network-name').fill('第二个独立网络');await page.locator('#open-network-settings').click();
+  check(await page.locator('#editor-configuration-select').inputValue()==='','creating another network never silently selects the first network configuration');
+  await page.screenshot({path:path.join(output,'independent-network-settings.png'),fullPage:true});
+  await page.locator('[data-key="mode"][value="existing"]').check();await page.locator('[data-ui-section="entry"]').click();await page.locator('[data-entry-index="0"]').fill('https://second-entry.example.com/current#streamlink2');
+  await page.locator('[data-ui-section="virtual"]').click();await page.locator('#new-network-ip').fill('10.199.2.1');await page.locator('[data-ui-action="save-editor"]').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  const secondConfiguration=model.configurations.find(c=>c.id!==originalConfiguration.id);
+  check(!!secondConfiguration&&JSON.stringify(model.configurations[0])===JSON.stringify(originalConfiguration)&&JSON.stringify(model.networks[0])===JSON.stringify(originalHost),'saving new-network settings creates a new configuration and preserves every old-network field');
+  check(commands.filter(c=>c.configuration?.action==='save').at(-1)?.configuration.independent===true,'new configuration writes request backend enforcement of independent ownership');
+  await page.locator('#create-network').click();await page.locator('[data-ui-action="new-create"]').waitFor();
+  const secondNetwork=model.networks.find(n=>n.configurationId===secondConfiguration.id);
+  check(secondNetwork?.status.virtualIp==='10.199.2.1'&&secondNetwork.status.settings.existingEntries[0].source==='https://second-entry.example.com/current#streamlink2','new network uses its saved configuration and its own virtual IP');
+  check(commands.filter(c=>['create','create-direct'].includes(c.network?.action)).at(-1)?.network.configurationId===secondConfiguration.id,'creation sends the new configuration ID even when a previous network was selected');
+  await page.locator('[data-ui-action="new-create"]').click();await page.locator('#new-network-name').fill('第三个网络');await page.locator('#open-network-settings').click();
+  check(await page.locator('#editor-configuration-select').inputValue()===''&&await page.locator('[data-key="mode"][value="custom"]').isChecked(),'each new creation starts independently instead of reusing the last saved configuration');
+  await page.locator('#editor-configuration summary').click();await page.locator('#editor-configuration-select').selectOption(originalConfiguration.id);
+  check(await page.evaluate(()=>selectedConfiguration)===''&&(await page.locator('#editor-ownership-note').innerText()).includes('独立设置'),'selecting existing settings copies their values without selecting their writable configuration ID');
+  await page.locator('[data-ui-section="entry"]').click();await page.locator('[data-entry-index="0"]').fill('https://copied-entry.example.com/current#streamlink3');await page.locator('[data-ui-action="save-editor"]').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  check(JSON.stringify(model.configurations[0])===JSON.stringify(originalConfiguration)&&model.networks.find(n=>n.id===secondNetwork.id).status.settings.existingEntries[0].source==='https://second-entry.example.com/current#streamlink2','saving copied values preserves both their source network and the previously created network');
+  await page.locator('#create-network').click();await page.locator('[data-ui-action="new-create"]').waitFor();
+  check(new Set(model.networks.filter(n=>n.status.isOwner).map(n=>n.configurationId)).size===3,'three created host networks have three independent configuration identities');
+  const legacyId='44444444444444444444444444444444';
+  model={...model,networks:[...model.networks,{...clone(originalHost),id:legacyId,name:'旧共用网络',status:{...clone(originalHost.status),networkId:legacyId,virtualIp:'10.171.2.1'}}],configurations:model.configurations.map(c=>c.id===originalConfiguration.id?{...c,networks:[...c.networks,{networkId:legacyId,name:'旧共用网络',state:'applied'}]}:c)};
+  await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="create"]').click();
+  await page.locator(`#owned-networks [data-ui-action="open-editor"][data-network="${originalHost.id}"]`).click();
+  check(await page.evaluate(()=>selectedConfiguration)==='','editing a legacy shared configuration prepares an independent target instead of modifying the shared record');
+  await page.locator('[data-ui-section="entry"]').click();await page.locator('[data-entry-index="0"]').fill('https://first-only.example.com/current');await page.locator('[data-ui-action="save-editor"]').click();
+  check((await page.locator('#dialog-description').innerText()).includes(originalHost.name)&&!(await page.locator('#dialog-description').innerText()).includes('旧共用网络'),'save confirmation names only the network being edited');
+  await page.locator('#dialog-cancel').click();check(model.networks[0].configurationId===originalConfiguration.id,'cancelling migration leaves the legacy binding unchanged');
+  await page.locator('[data-ui-action="save-editor"]').click();await page.locator('#dialog-confirm').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  check(model.networks[0].configurationId!==originalConfiguration.id&&model.networks.find(n=>n.id===legacyId).configurationId===originalConfiguration.id&&JSON.stringify(model.configurations.find(c=>c.id===originalConfiguration.id).settings)===JSON.stringify(originalConfiguration.settings),'saving a legacy shared network detaches only that network and preserves its former co-user');
+  check(model.networks[0].status.settings.existingEntries[0].source==='https://first-only.example.com/current'&&model.networks.find(n=>n.id===legacyId).status.settings.existingEntries[0].source===originalConfiguration.settings.existingEntries[0].source,'only the detached network receives the changed entry');
+  const currentId=model.networks[0].configurationId,lateId='55555555555555555555555555555555';
+  await page.locator(`#owned-networks [data-ui-action="open-editor"][data-network="${originalHost.id}"]`).click();await page.locator('[data-ui-section="entry"]').click();await page.locator('[data-entry-index="0"]').fill('https://after-concurrent-reference.example.com/current');
+  await page.locator('[data-ui-action="save-editor"]').click();await page.locator('#confirm-dialog').waitFor();
+  model={...model,networks:[...model.networks,{...clone(model.networks[0]),id:lateId,name:'后加入的旧引用',status:{...clone(model.networks[0].status),networkId:lateId}}],configurations:model.configurations.map(c=>c.id===currentId?{...c,networks:[...c.networks,{networkId:lateId,name:'后加入的旧引用',state:'applied'}]}:c)};
+  await page.waitForFunction(id=>workspaceState.configurations.find(c=>c.id===id)?.networks.length===2,currentId);await page.locator('#dialog-confirm').click();await page.waitForFunction(()=>!busy);
+  check(await page.locator('#network-dialog').isVisible()&&await page.locator('[data-entry-index="0"]').inputValue()==='https://after-concurrent-reference.example.com/current'&&model.networks[0].status.settings.existingEntries[0].source==='https://first-only.example.com/current','a reference added during confirmation is rejected atomically and preserves the editor draft');
+  await page.locator('[data-ui-action="save-editor"]').click();await page.locator('#dialog-confirm').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  check(model.networks[0].configurationId!==currentId&&model.networks.find(n=>n.id===lateId).status.settings.existingEntries[0].source==='https://first-only.example.com/current','a reference added while the editor is open is detected again at save and cannot receive another network draft');
+  await page.locator(`#owned-networks [data-ui-action="open-editor"][data-network="${originalHost.id}"]`).click();await page.locator('[data-ui-section="entry"]').click();await page.locator('[data-entry-index="0"]').fill('https://must-not-be-written.example.com/current');
+  model={...model,networks:model.networks.filter(n=>n.id!==originalHost.id)};await page.waitForFunction(id=>!workspaceState.networks.some(n=>n.id===id),originalHost.id);const commandsBeforeRemovalSave=commands.length;
+  await page.locator('[data-ui-action="save-editor"]').click();check(commands.length===commandsBeforeRemovalSave,'a network removed in another window cannot redirect a pending save to another configuration');
+  await page.locator('[data-ui-action="close-editor"]').first().click();await page.locator('#dialog-confirm').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="create"]').click();await page.locator('#open-network-settings').click();
+  check(await page.locator('#editor-configuration-select').inputValue()==='','reloading a page with existing networks cannot silently restore the first shared configuration');
+  await page.locator('[data-ui-action="close-editor"]').first().click();await page.locator('#dialog-confirm').click();await page.locator('#network-dialog').waitFor({state:'hidden'});
+  model=beforeCreation;await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();
   const beforeHostChoices=clone(model);
   await page.locator('.nav[data-page="create"]').click();await page.locator('[data-ui-action="select-host"]').click();
   check(await page.locator('[data-ui-action="host-code-mode"]').count()===0&&await page.locator('#host-invitation').isVisible(),'an existing-entry host without pairing coordination offers only a direct invitation');
