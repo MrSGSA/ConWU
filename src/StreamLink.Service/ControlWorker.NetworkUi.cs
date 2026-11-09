@@ -511,7 +511,9 @@ public sealed partial class ControlWorker
         next.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();next.NetworkCreatedHere=false;
         next.ExistingEntries=ExistingEntry.ForJoinedNetwork(PublicSettings(profile).ExistingEntries);
         next.JoinedEntryNetwork=mesh.Pair.Network;
-        next.JoinedEntrySources=directPair?uiEntrySources.Select(e=>e with{PeerSlot=ExistingEntry.Network}).Concat(enrollmentEntries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray():[];
+        // A verified SL6 invitation already binds its entries to the issuer.
+        // Only a bare bootstrap entry needs the generic network locator role.
+        next.JoinedEntrySources=directPair?uiEntrySources.Select(e=>uiApprovalExpected==null?e with{PeerSlot=ExistingEntry.Network}:e).Concat(enrollmentEntries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray():[];
         if(profile.AutoConfigureJoin){
             var inherited=receivedSettings!.ForGuest(mesh,PublicSettings(profile));
             ConnectionSettings.Apply(next,inherited);next.ReceivedNetworkSettings=receivedSettings;

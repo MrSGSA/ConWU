@@ -63,7 +63,9 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(await page.locator('[data-ui-key="server"]').inputValue()==='https://own-coord.example.com/'&&await page.locator('[data-ui-key="discover"]').isChecked(),'a provider with a known canonical HTTPS address is the default when no other server was selected');
   check(await page.locator('[data-ui-key="publicUrl"]').count()===0,'provider page has no redundant external HTTPS input');
   check((await page.locator('#content').innerText()).includes('默认协调服务器为自身'),'provider explains default self coordination');
-  model={...model,deviceSettings:initialDevice,deviceSettingsRevision:'external-again'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-again');
+  model={...model,deviceSettings:{...initialDevice,coordinator:{...initialDevice.coordinator,enabled:true,publicUrl:'https://own-coord.example.com/'}},deviceSettingsRevision:'external-again'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-again');
+  check(await page.locator('[data-ui-key="server"]').inputValue()===initialDevice.service,'an existing selected external coordinator is preserved even when a usable local provider is available');
+  model={...model,deviceSettings:initialDevice,deviceSettingsRevision:'external-restored'};await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='external-restored');
   await page.locator('.nav[data-page="create"]').click();await page.locator('#owned-networks [data-ui-action="open-editor"]').click();
   check(await page.locator('[data-ui-section="coordination"],[data-ui-section="pkarr"],[data-ui-section="stun"]').count()===0,'existing-entry editor excludes all autonomous discovery controls');
   await page.locator('[data-ui-section="entry"]').click();const originalEntry=await page.locator('[data-entry-index="0"]').inputValue();await page.locator('[data-entry-index="0"]').fill('https://remember.example.com/#streamlink2');

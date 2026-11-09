@@ -1,5 +1,6 @@
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using System.Reflection;
 using System.Text.Json;
 using StreamLink;
 using StreamLink.Core;
@@ -7,7 +8,11 @@ using StreamLink.Core;
 static class Program
 {
     static int checks;
-    static void Key(TrayMenu menu,Keys key){var m=Message.Create(menu.Handle,0x100,(nint)key,0);menu.PreProcessMessage(ref m);}
+    // PreProcessMessage combines synthetic WM_KEYDOWN with the real desktop's
+    // ModifierKeys. Exercise the actual WinForms dialog-key handler with an
+    // explicit key context, without releasing or synthesizing the user's keys.
+    static readonly MethodInfo dialogKey=typeof(TrayMenu).GetMethod("ProcessDialogKey",BindingFlags.Instance|BindingFlags.NonPublic,null,[typeof(Keys)],null)!;
+    static void Key(TrayMenu menu,Keys key){if(dialogKey.Invoke(menu,[key]) is not true)throw new Exception("Menu did not handle explicit key: "+key);}
     static void Check(bool ok,string message){if(!ok)throw new Exception(message);checks++;}
     [STAThread]static void Main(string[] args)
     {
@@ -40,7 +45,7 @@ static class Program
         using(var notify=new NotifyIcon()){notify.Text=bounded;Check(notify.Text==bounded,"Actual NotifyIcon accepts the bounded multiline tooltip");}
         var types=typeof(TrayMenu).Assembly.GetTypes();
         Check(!types.Any(t=>typeof(Form).IsAssignableFrom(t)),"The product assembly contains no desktop business forms");
-        File.WriteAllText(output,JsonSerializer.Serialize(new{status="Pass",checks,dpi=menu.DeviceDpi,width=menu.Width,height=menu.Height,tip,scope="Actual native menu rendering, keyboard and pointer targets plus bounded shell tooltip. Does not start the service or network."},new JsonSerializerOptions{WriteIndented=true}));
+        File.WriteAllText(output,JsonSerializer.Serialize(new{status="Pass",checks,dpi=menu.DeviceDpi,width=menu.Width,height=menu.Height,tip,keyContext="explicit WinForms dialog keys, independent of ambient desktop modifiers",scope="Actual native menu rendering, dialog-key handler and pointer targets plus bounded shell tooltip. Does not start the service or network, or inject system input."},new JsonSerializerOptions{WriteIndented=true}));
         Console.WriteLine($"PASS {checks} native tray checks");
     }
 }
