@@ -59,3 +59,18 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 :root{--panel:var(--surface);--orange:var(--amber)}.heading{margin-bottom:24px}.sidebar-state{padding-bottom:18px;border-bottom:1px solid var(--line);margin-bottom:18px;font-size:12px}.sidebar-device{display:flex;align-items:center;gap:10px}.network-dialog #settings-fields .field{margin-top:0}.network-dialog .settings-title{margin:0 0 18px}.network-dialog #settings-fields{margin:0}.network-dialog details{margin-top:18px}.network-dialog .modal-body .row{justify-content:initial}.network-dialog .modal-nav button{min-width:0}.network-dialog .field-error{font-size:12px;color:var(--red)}.network-dialog .hint{font-weight:400}.network-dialog .settings-usage{margin-bottom:18px}.settings-dialog-configuration{margin-bottom:20px}.network-dialog .modal-header p{margin:4px 0 0}.small-dialog p{margin:8px 0 14px}.network-columns .settings-launch small{overflow-wrap:anywhere}.heading-actions .save-state{display:block}.settings-section .switch-row{padding:0;border:0}.network-list-card .list-row strong{overflow-wrap:anywhere}.traffic-chart{height:125px}.traffic-chart text{font-size:9px}.network-dialog .result-list .test-result{align-items:flex-start}.network-dialog .result-list p{margin:3px 0 0}.network-dialog .read-value{user-select:text}.settings-page .intro{max-width:190px}.nav-count{margin-left:auto}.network-list-card .network-row-meta{line-height:1.8}
 
 .settings-section .field,.create-form>.pad>.field:first-child{margin-top:0}.settings-section .field+.field{margin-top:18px}
+
+/* Join-specific discovery and the local coordination provider. */
+
+.join-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:25px;align-items:stretch}
+.join-actions>.btn{width:100%;min-width:0;min-height:60px;white-space:normal;justify-content:center;text-align:center;line-height:1.65;padding:12px 10px}
+.join-coordinator-button{border-color:color-mix(in srgb,var(--accent) 45%,var(--line));color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,transparent);font-size:12px}
+.join-coordinator-button:hover{background:color-mix(in srgb,var(--accent) 12%,transparent);border-color:var(--accent)}
+.join-coordinator-button .icon{flex-shrink:0}
+.join-connection-note{margin-top:17px;display:grid;gap:8px}.join-connection-note p{margin:0;line-height:1.9}.join-connection-note .mono{overflow-wrap:anywhere}
+.code-control[aria-disabled=true]{cursor:not-allowed}.code-control[aria-disabled=true] .digit{opacity:.4;color:var(--dim)}.code-control input:disabled{cursor:not-allowed}
+.coordinator-provider{max-width:960px}.coordinator-provider .switch-row{margin-top:30px;margin-bottom:0}.provider-note{margin-top:24px;padding-top:20px;border-top:1px solid var(--line);max-width:760px}.provider-note .hint{line-height:1.95}.coordinator-provider .provider-listen{max-width:760px;margin-top:24px}.provider-status{margin-top:20px}.coordinator-provider #coordinator-certificates{margin-top:25px}
+@media(max-width:620px){.join-actions{gap:9px}.join-actions>.btn{min-height:66px;padding:10px 7px;font-size:11px}.join-coordinator-button .icon{display:none}}
+
+/* Disabled controls keep their prohibition cursor over text and icons. */
+#join-submit:disabled,#join-submit:disabled *{cursor:not-allowed}
