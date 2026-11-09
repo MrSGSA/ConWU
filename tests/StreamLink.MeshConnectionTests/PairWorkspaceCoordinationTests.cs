@@ -46,8 +46,7 @@ static partial class Program
                 return guestId;
             }
             string firstId=await Connect(first,"First HTTPS pair"),secondId=await Connect(second,"Second HTTPS pair");
-            UiStatusDto hs=await host.State();for(int attempt=0;attempt<180&&hs.Aggregate!.ConnectedNetworks!=2;attempt++){await Task.Delay(100);hs=await host.State();}
-            if(hs.Aggregate!.ConnectedNetworks!=2)foreach(var network in hs.Networks)foreach(var log in network.Status.Logs)Console.WriteLine(log);
+            UiStatusDto hs=await PairReady(host,18000,first,second);
             Check(hs.Aggregate.ConnectedNetworks==2&&host.Servers==1,"one shared coordination service establishes two direct links on one shared receiver");
             Check((await coordinator.State()).Networks.Length==0&&coordinator.Adapters.IsEmpty,"coordination alone never joins client networks or allocates a virtual adapter");
             var firstState=(await first.State()).Networks.Single(n=>n.Id==firstId);var hostFirst=hs.Networks.Single(n=>n.Status.NetworkId==firstState.Status.NetworkId);

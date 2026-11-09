@@ -45,6 +45,20 @@ static partial class Program
         public async Task<UiControlReply> Action(string id,UiNetworkAction action)=>await Ui(new("network",OperationId:Guid.NewGuid(),Network:action){NetworkId=id});
         public void Dispose()=>Worker.Dispose();
     }
+    static async Task<UiStatusDto> PairReady(WorkspaceNode host,int timeoutMs,params WorkspaceNode[] guests)
+    {
+        var clock=System.Diagnostics.Stopwatch.StartNew();UiStatusDto? hs=null;UiStatusDto[] gs=[];
+        while(clock.ElapsedMilliseconds<timeoutMs){
+            hs=await host.State();gs=await Task.WhenAll(guests.Select(g=>g.State()));
+            if(hs.Aggregate?.ConnectedNetworks==guests.Length&&gs.All(g=>g.Aggregate?.ConnectedNetworks==1))return hs;
+            await Task.Delay(50);
+        }
+        foreach(var state in new[]{hs}.OfType<UiStatusDto>().Concat(gs))Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new{
+            state.DeviceName,Networks=state.Networks.Select(n=>new{n.Name,n.Status.State,n.Status.VirtualIp,
+                Peers=n.Status.Peers.Select(p=>new{p.Slot,p.Connected,p.SentBytes,p.ReceivedBytes}),Logs=n.Status.Logs.TakeLast(5)})
+        }));
+        throw new Exception("both ends of every pair must confirm readiness before single-packet business assertions");
+    }
     static async Task PairWorkspaceIntegration(string? nativeBinary=null,string? nativeFolder=null)
     {
         WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
@@ -88,9 +102,7 @@ static partial class Program
             string firstId=await Join(first,"First relation");
             var preparedSecond=await host.Action("",new("create-direct"){Name="Host to second"});Check(preparedSecond.Ok,preparedSecond.Error);
             string secondId=await Join(second,"Second relation");
-            UiStatusDto current=await host.State();
-            for(int attempt=0;attempt<150&&current.Aggregate!.ConnectedNetworks!=2;attempt++){await Task.Delay(100);current=await host.State();}
-            if(current.Aggregate!.ConnectedNetworks!=2){foreach(var node in new[]{host,first,second})foreach(var network in (await node.State()).Networks){Console.WriteLine(network.Name+" "+network.Status.State+" "+network.Status.Connection?.Detail);foreach(var line in network.Status.Logs)Console.WriteLine(line);}}
+            UiStatusDto current=await PairReady(host,15000,first,second);
             Check(current.Aggregate.ConnectedNetworks==2,"two independently approved encrypted networks connect through a single physical entry");
             var a=(await first.State()).Networks.Single(n=>n.Id==firstId);var b=(await second.State()).Networks.Single(n=>n.Id==secondId);
             var hostA=current.Networks.Single(n=>n.Status.NetworkId==a.Status.NetworkId);var hostB=current.Networks.Single(n=>n.Status.NetworkId==b.Status.NetworkId);

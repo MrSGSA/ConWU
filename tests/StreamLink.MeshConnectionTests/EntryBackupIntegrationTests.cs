@@ -57,7 +57,7 @@ static partial class Program
             Check(guestState.NetworkDirect&&guestState.NetworkId==created.Status.NetworkId,"fallback changes address source without creating a second or coordinated network");
             var guestSettings=(await guest.State()).Configurations.Single().Settings;
             Check(guestSettings.CoordinatorBackup&&guestSettings.Service==url&&guestSettings.CertificatePin==pin,"direct enrollment retains the saved backup settings");
-            for(int i=0;i<150&&(await host.State()).Aggregate!.ConnectedNetworks==0;i++)await Task.Delay(100);
+            await PairReady(host,15000,guest);
             Check((await host.State()).Aggregate!.ConnectedNetworks==1,"approved pair authenticates a direct data path after backup lookup");
             var hostState=(await host.State()).Networks.Single().Status;
             guest.Adapters[guestState.NetworkId].Outgoing.Add(Packet(guestState.VirtualIp,hostState.VirtualIp));

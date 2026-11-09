@@ -82,7 +82,7 @@ static partial class Program
             Check(after.Peers.Length==1&&after.Peers.Single().Slot!=oldSlot&&after.Peers.Single().VirtualIp==oldAddress,"fresh approval revokes the lost membership and preserves its virtual address without a duplicate device");
             var secondCreated=await host.Action("",new("create-direct"){Name="Second recovery network"});Check(secondCreated.Ok,secondCreated.Error);
             var secondPending=await PendingPair(host,second);await ApprovePending(host,secondPending);await ReceiveApproval(second,secondPending.Id);
-            async Task Connected(){for(int i=0;i<200;i++){if((await host.State()).Aggregate?.ConnectedNetworks==2)return;await Task.Delay(50);}throw new Exception("two restored networks did not connect");}
+            Task Connected()=>PairReady(host,10000,first,second);
             await Connected();
             string[] identities=(await host.State()).Networks.Select(n=>n.Status.NetworkId).Order().ToArray();
             string settings=JsonSerializer.Serialize((await host.State()).DeviceSettings);
