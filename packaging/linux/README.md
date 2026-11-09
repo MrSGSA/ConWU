@@ -38,13 +38,15 @@ sudo conwu profile export <配置ID> > connection.json
 sudo conwu profile update <配置ID> connection.json --reconnect
 sudo conwu network create <配置ID> "主机—笔记本"
 sudo conwu network list
-sudo conwu network invite <网络操作ID>
+sudo conwu network invite <网络操作ID>  # 生成 16 位直连码
+sudo conwu network join-code XXXX-XXXX-XXXX-XXXX  # 批准后自动获取设置
+sudo conwu network pair-code <网络操作ID>  # 生成原六位配对码
 sudo conwu network join <配置ID> 123456
 sudo conwu network poll <网络操作ID>
 sudo conwu network approve <网络操作ID> <双方校验码>
 ```
 
-`profiles` 列出配置 ID 和关联网络。`network list` 的 `id` 是本机操作用的网络 ID，`profileId` 为所引用的配置；不需要手工编辑认证网络身份。创建和加入时始终选择配置。
+`profiles` 列出配置 ID 和关联网络。`network list` 的 `id` 是本机操作用的网络 ID，`profileId` 为所引用的配置；不需要手工编辑认证网络身份。创建时选择配置；`network join-code` 直接输入主机的 16 位直连码，批准后自动获取设置，不需要预建配置。原配置式 `network join` 和 SL6 加入保留兼容。
 
 `profile create <名称> connection.json` 新建配置；`profile copy <ID> <名称>` 显式复制；`profile assign <配置ID> <网络操作ID> --reconnect` 更换引用；`profile delete <ID>` 只删除未关联配置。保存的设置会更新全部引用者，停止的网络在下次启动应用。
 

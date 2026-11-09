@@ -97,11 +97,11 @@ api=async function(path,body,valid,sessionRetried){
  if(path.startsWith('/api/status')&&selectedNetwork&&!path.includes('networkId='))path+=(path.includes('?')?'&':'?')+'networkId='+encodeURIComponent(selectedNetwork);
  if(body&&path==='/api/command'){
   body={networkId:selectedNetwork,...body};
-  if(body.method==='network'&&['create','create-direct','join','join-target','join-direct-short','join-invitation','join-entry'].includes(body.network?.action))body={...body,networkId:'',network:{...body.network,configurationId:body.network.autoConfigure?'':selectedConfiguration,requestedVirtualIp:body.network.autoConfigure?'':newNetworkIp.trim(),name:body.network.name||newNetworkName}};
+  if(body.method==='network'&&['create','create-direct','join','join-target','join-direct-short','join-invitation','join-compact','join-entry'].includes(body.network?.action))body={...body,networkId:'',network:{...body.network,configurationId:body.network.autoConfigure?'':selectedConfiguration,requestedVirtualIp:body.network.autoConfigure?'':newNetworkIp.trim(),name:body.network.name||newNetworkName}};
  }
  if(location.pathname.startsWith('/admin/')&&path.startsWith('/api/'))path='/admin'+path;
  const response=await legacy.api(path,body,valid,sessionRetried);
- if(body?.method==='network'&&['create','create-direct','join','join-target','join-direct-short','join-invitation','join-entry'].includes(body.network?.action)&&response.status?.selectedNetworkId)selectedNetwork=response.status.selectedNetworkId;
+ if(body?.method==='network'&&['create','create-direct','join','join-target','join-direct-short','join-invitation','join-compact','join-entry'].includes(body.network?.action)&&response.status?.selectedNetworkId)selectedNetwork=response.status.selectedNetworkId;
  return response;
 };
 render=function(next){

@@ -71,8 +71,11 @@ ConWU · Linux
   network status <网络ID>         查看指定网络状态
   network create <配置ID> [名称]   使用已保存配置创建网络
   network join <配置ID> <配对码/邀请> 申请加入
+  network join-code <16位直连码>  无需预设配置，批准后自动获取设置
   创建和加入可在末尾加 --ip <虚拟IPv4>，留空自动分配
-  network invite|poll|reject|cancel|leave|withdraw|close|resume <网络ID>
+  network invite <网络ID>         生成 16 位直连码
+  network pair-code <网络ID>      生成六位配对码
+  network poll|reject|cancel|leave|withdraw|close|resume <网络ID>
   network approve <网络ID> <校验码>
   network rename <网络ID> <名称>  修改本机显示名称
   network remove-config <网络ID>  移除本机网络记录
@@ -157,6 +160,10 @@ ConWU · Linux
         string verb=args[1];
         if(verb=="list"&&args.Length==2){Print(state.Networks.Select(n=>new{id=n.Id,profileId=n.ConfigurationId,name=n.Name,networkId=n.Status.NetworkId,role=n.Status.IsOwner?"host":"guest",enabled=n.Status.NetworkEnabled,virtualIp=n.Status.VirtualIp,state=n.Status.State}));return;}
         if(verb=="status"&&args.Length==3){Print(await SelectNetwork(args[2]));return;}
+        if(verb=="join-code"&&args.Length==3){
+            var compact=CompactDirectCode.Import(args[2]);
+            Print(await Mutate(new UiControlRequest("network",Network:new("join-compact",Code:args[2],Mode:compact.Mode){AutoConfigure=true,RequestedVirtualIp=virtualIp})));return;
+        }
         if(verb is "create" or "join"){
             if(args.Length<3||args.Length>4||verb=="join"&&args.Length!=4)throw new ArgumentException("用法：network create <配置ID> [名称] 或 network join <配置ID> <配对码/邀请>");
             var config=state.Configurations.SingleOrDefault(c=>c.Id==args[2])??throw new IOException("请选择已保存的连接配置");var template=config.Settings;
@@ -170,7 +177,7 @@ ConWU · Linux
         bool needsValue=verb is "approve" or "rename" or "remove";
         if(args.Length!=(needsValue?4:3))throw new ArgumentException("请填写明确的网络配置 ID 和所需参数");
         string id=args[2],valueArg=needsValue?args[3]:"";var chosen=await SelectNetwork(id);
-        string command=verb switch{"invite"=>chosen.NetworkDirect&&chosen.Settings?.ConnectionSource=="existing"?"invite-short":"invite","poll"=>"pair-poll","approve"=>"approve","reject"=>"reject","cancel"=>"pair-cancel","leave"=>"forget-network","withdraw"=>"leave","close"=>"delete-network","remove"=>"revoke","resume"=>"membership-resume","rename"=>"rename-network","remove-config"=>"remove-network",_=>throw new ArgumentException("未知网络操作")};
+        string command=verb switch{"invite"=>"invite-compact","pair-code"=>"invite-code","poll"=>"pair-poll","approve"=>"approve","reject"=>"reject","cancel"=>"pair-cancel","leave"=>"forget-network","withdraw"=>"leave","close"=>"delete-network","remove"=>"revoke","resume"=>"membership-resume","rename"=>"rename-network","remove-config"=>"remove-network",_=>throw new ArgumentException("未知网络操作")};
         if(verb=="approve"&&(chosen.Pairing?.Verification!=valueArg||valueArg.Length==0))throw new IOException("校验码不匹配，请先查询该网络申请并与对端核对");
         int slot=0;if(verb=="remove"&&(!int.TryParse(valueArg,out slot)||slot<1))throw new ArgumentException("请填写成员 Slot");
         var action=new UiNetworkAction(command,ExpectedNetwork:chosen.NetworkId,ConfirmReplace:true,Verification:verb=="approve"?valueArg:"",Candidate:chosen.Pairing?.Candidate??"",PeerSlot:slot,ProposedIp:chosen.Pairing?.ProposedIp??""){Name=verb=="rename"?valueArg:""};

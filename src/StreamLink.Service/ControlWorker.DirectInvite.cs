@@ -8,6 +8,35 @@ public sealed partial class ControlWorker
 {
     async Task OpenUiDirectInvitation(MeshProfile network,Operation operation)
     {
+        var entries=await PrepareUiInvitationEntries(operation);var token=operation.Stop.Token;
+        await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
+        try{
+            var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;
+            uiApprovalCode=DirectPairInvitation.Issue(network,entries.Concat(PkarrHints(profile)).Distinct().ToArray(),uiRoom,opened.Capability);
+            PairSnapshot("等待设备申请；核对校验码后由主机批准");
+        }catch{await CloseUiPair(token);throw;}
+    }
+    async Task OpenUiCompactInvitation(Operation operation)
+    {
+        var entries=await PrepareUiInvitationEntries(operation);
+        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(operation.Stop.Token);deadline.CancelAfter(30000);
+        SetOperation(operation,"解析当前主机入口，生成可手输的直连码",true);
+        EntryResolution[] resolutions;
+        var sources=entries.Where(e=>ExistingEntryResolver.Kind(e.Source)!="PKARR").ToArray();
+        try{resolutions=meshRuntime?.ResolveEntries is {} resolve?await resolve(sources,profile.TransportMode,deadline.Token):await uiEntryResolver.Value.Resolve(sources,profile.TransportMode,deadline.Token);}
+        catch(OperationCanceledException)when(!operation.Stop.IsCancellationRequested){throw new IOException("解析当前主机入口超时，请检查地址或订阅后重试；原配对会话保持不变");}
+        var endpoint=resolutions.SelectMany(r=>r.Endpoints).FirstOrDefault();
+        if(endpoint==null)throw new IOException("暂未取得可编码的 IPv4 入口，请检查主机地址或订阅后重试。"+string.Join("；",resolutions.Select(r=>r.Error).Where(e=>e.Length>0).Distinct().Take(2)));
+        // Resolve before replacing the old room. A failed source fetch cannot
+        // invalidate an invitation that is already in use.
+        _=CompactDirectCode.Issue(endpoint,profile.TransportMode,"000000");
+        await OpenDirectShortPair(operation.Stop.Token,publish:false);
+        uiCompactInvitation=true;uiEntrySources=entries;
+        uiApprovalCode=CompactDirectCode.Issue(endpoint,profile.TransportMode,uiRoom!.Code);
+        PairSnapshot("直连码有效 5 分钟；另一台输入后仍需核对双方校验码并由主机批准");
+    }
+    async Task<ExistingEntry[]> PrepareUiInvitationEntries(Operation operation)
+    {
         var token=operation.Stop.Token;
         if(!profile.Enabled)throw new IOException("请先连接本机网络，再生成直连邀请");
         if(networkContext){
@@ -24,15 +53,10 @@ public sealed partial class ControlWorker
                 SetOperation(operation,"正在准备直连邀请所需的主机入口",true);await Task.Delay(100,token);
             }
         }
-        await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=network.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
-        try{
-            var opened=await uiDirectHost.CreateInvitation(uiPairKey,profile.DeviceName,token);uiRoom=opened.Ticket;uiRejoinLocator=opened.Capability;
-            var entries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
-            if(entries.Length==0)entries=meshRunner?.PreparedInvitationEntries??[];
-            if(entries.Length==0)throw new IOException("尚未取得可分享的主机入口。请等待入口准备，或使用配对码；STUN 观测不代表入站可达");
-            uiApprovalCode=DirectPairInvitation.Issue(network,entries.Concat(PkarrHints(profile)).Distinct().ToArray(),uiRoom,opened.Capability);
-            PairSnapshot("等待设备申请；核对校验码后由主机批准");
-        }catch{await CloseUiPair(token);throw;}
+        var entries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
+        if(entries.Length==0)entries=meshRunner?.PreparedInvitationEntries??[];
+        if(entries.Length==0)throw new IOException("尚未取得可分享的主机入口，请等待入口准备或使用配对码");
+        return entries;
     }
 
     async Task JoinUiInvitation(UiNetworkAction action,Operation operation)
@@ -71,5 +95,13 @@ public sealed partial class ControlWorker
             throw new IOException("主机入口未回应，请确认主机已连接网络、邀请有效且映射指向 ConWU");
         }catch(OperationCanceledException)when(!token.IsCancellationRequested){ResetUiPair("本轮邀请连接超时");throw new IOException("本轮主机入口检查已超时，请稍后重试；未授予成员权限");}
         catch{ResetUiPair("加入申请未完成，请检查主机入口后重试");throw;}
+    }
+    async Task JoinUiCompactInvitation(UiNetworkAction action,Operation operation)
+    {
+        RequireUiNetwork(action.ExpectedNetwork);
+        if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("需要退出当前网络后才能申请加入");
+        var compact=CompactDirectCode.Import(action.Code);RequireSavedProtocol(compact.Mode);
+        if(action.Mode!=compact.Mode)throw new IOException("直连码协议与本机设置不同，请使用相同协议");
+        await JoinUiDirectShort(action with{Code=compact.RoomCode,Mode=compact.Mode},operation,[new(ExistingEntry.NetworkOwner,compact.Endpoint)],invitation:true);
     }
 }

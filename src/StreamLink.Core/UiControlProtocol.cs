@@ -80,6 +80,7 @@ public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats?
 }
 public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Verification,string Candidate,string PeerName,long Expires,string State)
 {
+    public string Format {get;init;}="";
     public string Method {get;init;}="";
     public string Service {get;init;}="";
     public string ProposedIp {get;init;}="";

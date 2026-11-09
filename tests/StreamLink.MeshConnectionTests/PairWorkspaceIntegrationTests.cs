@@ -14,6 +14,7 @@ static partial class Program
         public readonly ConcurrentDictionary<string,MemoryAdapter> Adapters=new();
         public IPEndPoint? NativeTarget;
         public string? EntryOverride;
+        public string? ResolutionError;
         public int Servers,Probes;
         readonly string sid;
         public WorkspaceNode(string folder,string name,WorkspaceNode? target=null,string coordination="",string pin="",CoordinatorSettings? coordinator=null,
@@ -31,6 +32,7 @@ static partial class Program
             },(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},Path.Combine(folder,"sessions")){
                 Candidates=(_,_,_,_)=>mappingFactory==null?throw new IOException("autonomous candidates forbidden"):Task.FromResult<IMeshCandidateFactory?>(null),NetworkWake=()=>new MeshNetworkWake(false),PkarrClientFactory=pkarrFactory,
                 ResolveEntries=async (entries,mode,ct)=>{
+                    if(ResolutionError is {} error)return entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,"地址",[],error)).ToArray();
                     if(target!=null)while(target.NativeTarget==null)await Task.Delay(20,ct);
                     return await Task.WhenAll(entries.Select(async(e,i)=>{if(ExistingEntryResolver.Kind(e.Source)=="PKARR"){
                         using var client=pkarrFactory?.Invoke()??throw new IOException("fixture requires an isolated PKARR gateway");

@@ -48,9 +48,10 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
     const id=String(8000+commands.length).padStart(32,'0'),n={id,name:body.network.name,configurationId:c.id,status:{...base,settings:clone(c.settings),networkId:id,isOwner:true,networkEnabled:true,virtualIp:body.network.requestedVirtualIp||'10.199.1.1',pairing:{active:false}}};
     model={...model,selectedNetworkId:id,networks:[...model.networks,n],configurations:model.configurations.map(x=>x.id===c.id?{...x,networks:[...x.networks,{networkId:id,name:n.name,state:'applied'}]}:x)};
    }else if(body.network?.autoConfigure){
-    model={...model,selectedNetworkId:'33333333333333333333333333333333',networks:[...model.networks,{id:'33333333333333333333333333333333',name:'连接 3',configurationId:'',status:{...base,pairing:{active:true,owner:false,direct:body.network.action==='join-target',method:body.network.action==='join-target'?'entry-code':'code',peerName:'新主机',verification:'123456',expires:Math.floor(Date.now()/1000)+300,state:'等待主机批准'}}}]};
-   }else if(body.network?.action==='invite-code'||body.network?.action==='invite-direct'){
-    const direct=body.network.action==='invite-direct';model={...model,networks:model.networks.map(n=>n.id===body.networkId?{...n,status:{...n.status,pairing:{active:true,owner:true,method:direct?'direct':'code',service:direct?'':n.status.settings.directMode?n.status.settings.pairingService:n.status.settings.service,direct,code:direct?'SL6.preview-only-invitation':'123456',verification:'',candidate:'',expires:Math.floor(Date.now()/1000)+300}}}:n)};
+    const invitation=['join-compact','join-invitation'].includes(body.network.action);
+    model={...model,selectedNetworkId:'33333333333333333333333333333333',networks:[...model.networks,{id:'33333333333333333333333333333333',name:'连接 3',configurationId:'',status:{...base,pairing:{active:true,owner:false,direct:invitation||body.network.action==='join-target',method:invitation?'direct':body.network.action==='join-target'?'entry-code':'code',format:body.network.action==='join-compact'?'compact':invitation?'full':'code',peerName:'新主机',verification:'123456',expires:Math.floor(Date.now()/1000)+300,state:'等待主机批准'}}}]};
+   }else if(['invite-code','invite-direct','invite-compact'].includes(body.network?.action)){
+    const compact=body.network.action==='invite-compact',direct=compact||body.network.action==='invite-direct';model={...model,networks:model.networks.map(n=>n.id===body.networkId?{...n,status:{...n.status,pairing:{active:true,owner:true,method:direct?'direct':'code',format:compact?'compact':direct?'full':'code',service:direct?'':n.status.settings.directMode?n.status.settings.pairingService:n.status.settings.service,direct,code:compact?'5JR0-E45A-840Y-4G12':direct?'SL6.preview-only-invitation':'123456',verification:'',candidate:'',expires:Math.floor(Date.now()/1000)+300}}}:n)};
    }else if(body.network?.action==='pair-poll'&&!model.networks.find(n=>n.id===body.networkId)?.status.pairing?.owner){
     probeId=body.operationId;staleModel=clone(model);pollStarted.resolve();
     return route.fulfill({json:{ok:true,status:model,operation:{id:probeId,completed:false}}});
@@ -132,8 +133,15 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,settings:pairedSettings,settingsRevision:'pairing-restored'}})};await page.waitForFunction(()=>workspaceState.networks[0].status.settingsRevision==='pairing-restored');
   await page.locator('[data-ui-action="host-invite-mode"]').click();
   check(await page.locator('#host-invitation').inputValue()===''&&await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'switching to invitation mode cannot copy the previous numeric room code');
-  await page.locator('[data-ui-action="generate"]').click();await page.waitForFunction(()=>document.getElementById('host-invitation')?.value==='SL6.preview-only-invitation');check(await page.locator('#host-invitation').inputValue()==='SL6.preview-only-invitation'&&commands.some(c=>c.network?.action==='invite-direct'),'host invitation choice uses its separate approval invitation action');
+  await page.locator('[data-ui-action="generate"]').click();await page.waitForFunction(()=>document.getElementById('host-invitation')?.value==='5JR0-E45A-840Y-4G12');check(await page.locator('#host-invitation').inputValue()==='5JR0-E45A-840Y-4G12'&&commands.some(c=>c.network?.action==='invite-compact'),'host direct-code choice generates sixteen grouped symbols through its separate action');
   await page.screenshot({path:path.join(output,'host-pair-invitation.png'),fullPage:true});
+  await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="create"]').click();await page.locator('[data-ui-action="select-host"]').click();
+  check(await page.locator('#host-invitation').inputValue()==='5JR0-E45A-840Y-4G12','reloading restores the active compact-code carrier instead of misclassifying it as a numeric code');
+  await page.evaluate(()=>{navigator.clipboard.writeText=async value=>{window.copiedPair=value;};});await page.locator('[data-ui-action="copy-pair"]').click();
+  check(await page.evaluate(()=>window.copiedPair)==='5JR0-E45A-840Y-4G12','copy uses the displayed grouped compact code');
+  const beforeExpiry=clone(model);model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,pairing:{...n.status.pairing,expires:Math.floor(Date.now()/1000)-1}}})};
+  await page.waitForFunction(()=>workspaceState.networks[0].status.pairing.expires*1000<Date.now());check(await page.locator('#host-invitation').inputValue()===''&&await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'an expired compact invitation cannot remain displayed or be copied');
+  model=beforeExpiry;await page.waitForFunction(()=>workspaceState.networks[0].status.pairing.expires*1000>Date.now());
   await page.locator('[data-ui-action="host-code-mode"]').click();check(await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'switching back to numeric mode cannot copy the previous invitation');
   model={...model,networks:model.networks.map((n,i)=>i?n:{...n,status:{...n.status,settings:{...pairedSettings,pairingService:''},settingsRevision:'pairing-cleared'}})};
   await page.waitForFunction(()=>workspaceState.networks[0].status.settings.pairingService==='');check(await page.locator('[data-ui-action="host-code-mode"]').isVisible()&&await page.locator('[data-ui-action="copy-pair"]').isDisabled(),'clearing coordination retains local short-code choice and never copies an old server code');
@@ -147,9 +155,9 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   check(await page.locator('#join-submit').evaluate(e=>getComputedStyle(e).cursor)==='not-allowed','disabled code submission keeps a prohibition cursor');
   await page.locator('[data-ui-action="join-invite-mode"]').click();await page.locator('#join-invite').fill('SL6.saved-invitation-draft');
   check(await page.locator('[data-ui-action="open-lookup"],#join-coordinator-state').count()===0,'invitation mode has no coordinator settings or coordinator status');
-  check((await page.locator('.join-connection-note').innerText()).includes('直连邀请下')&&!(await page.locator('.join-connection-note').innerText()).includes('首次连接配对需要经由协调服务器'),'invitation explanation does not include the short-code explanation');
+  check((await page.locator('.join-connection-note').innerText()).includes('直连码下')&&!(await page.locator('.join-connection-note').innerText()).includes('首次连接配对需要经由协调服务器'),'invitation explanation does not include the short-code explanation');
   await page.locator('[data-ui-action="join-code-mode"]').click();
-  check((await page.locator('.join-connection-note').innerText()).includes('首次连接配对需要经由协调服务器')&&!(await page.locator('.join-connection-note').innerText()).includes('直连邀请下'),'short-code explanation does not include the invitation explanation');
+  check((await page.locator('.join-connection-note').innerText()).includes('首次连接配对需要经由协调服务器')&&!(await page.locator('.join-connection-note').innerText()).includes('直连码下'),'short-code explanation does not include the invitation explanation');
   model={...model,deviceSettings:{...initialDevice,service:'',directMode:true},deviceSettingsRevision:'no-coord'};
   await page.waitForFunction(()=>workspaceState.deviceSettingsRevision==='no-coord');check(await page.locator('#join-code').isDisabled(),'backend default changes do not select invitation mode');
   model={...model,deviceSettings:{...model.deviceSettings,coordinator:{...settings.coordinator,enabled:true}},deviceSettingsRevision:'provider-only'};
@@ -232,6 +240,24 @@ let saveGate,saveStarted,editorGate,editorStarted,cancelGate,cancelStarted,pollS
   await selectCoordinator('203.0.113.42:44680');check(await page.locator('#join-code').isEnabled(),'one target field accepts an existing endpoint and enables short pairing');
   await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="open-lookup"]').click();check(await page.locator('#lookup-address').inputValue()==='203.0.113.42:44680','an existing target entry survives page reload without becoming a coordinator URL');check(await page.locator('#lookup-dialog input:not(#lookup-pin)').count()===1,'coordinator and existing entry share exactly one address input');await page.locator('[data-ui-action="close-lookup"]').click();
   await selectCoordinator('https://entry.example.com/current?token=subscriber#streamlink1');await page.locator('[data-ui-action="open-lookup"]').click();check(await page.locator('#lookup-address').inputValue()==='https://entry.example.com/current?token=subscriber#streamlink1','subscription queries and selectors are retained verbatim in the unified field');await page.locator('[data-ui-action="close-lookup"]').click();
+  const beforeCompactJoin=clone(model);
+  await selectCoordinator('');await page.locator('[data-ui-action="join-invite-mode"]').click();
+  check(await page.locator('[role="tablist"][aria-label="加入方式"] [role="tab"]').count()===2,'joining keeps just pairing-code and direct-code tabs');
+  await page.locator('#join-invite').fill('1234');const beforeInvalid=commands.length;await page.locator('#join-submit').click();
+  await page.locator('#join-error').filter({hasText:'16 位'}).waitFor();check(commands.length===beforeInvalid,'incomplete direct codes show a local error without contacting any peer');
+  await page.locator('#join-invite').fill(' 5jro e45a-84oy-4gi2 ');check(await page.locator('#join-error').innerText()==='','editing a direct code clears the previous validation error');
+  await page.locator('[data-ui-action="join-code-mode"]').click();await page.locator('[data-ui-action="join-invite-mode"]').click();
+  check(await page.locator('#join-invite').inputValue()===' 5jro e45a-84oy-4gi2 ','switching between pairing modes preserves the independently typed compact-code draft');
+  await page.setViewportSize({width:390,height:844});check(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'compact direct-code input fits a narrow viewport without page overflow');await page.screenshot({path:path.join(output,'compact-mobile.png'),fullPage:true});await page.setViewportSize({width:1440,height:1050});
+  await page.locator('#join-submit').click();await page.getByRole('heading',{name:'等待主机同意',exact:true}).waitFor();
+  const compactCommand=commands.filter(c=>c.network?.action==='join-compact').at(-1)?.network;
+  check(compactCommand?.code==='5JR0E45A840Y4G12'&&compactCommand.autoConfigure&&compactCommand.entry===''&&compactCommand.service==='','compact input normalizes aliases and grouping and joins without an external lookup address');
+  check((await page.locator('#join-method').innerText()).includes('直连码'),'passive pairing status retains the direct-code carrier');
+  model=beforeCompactJoin;staleModel=null;probeId='';await page.reload();await page.getByRole('heading',{name:'概况',exact:true}).waitFor();await page.locator('.nav[data-page="join"]').click();await page.locator('[data-ui-action="join-invite-mode"]').click();
+  const legacy='SL6.aBcDeF0123456789+/='.repeat(250).replace(/SL6\./g,(m,offset)=>offset===0?m:'');
+  await page.locator('#join-invite').fill(legacy);check(await page.locator('#join-invite').inputValue()===legacy,'the direct-code input does not truncate an older full invitation or change its Base64 case');
+  await page.locator('#join-submit').click();await page.getByRole('heading',{name:'等待主机同意',exact:true}).waitFor();
+  check(commands.filter(c=>c.network?.action==='join-invitation').at(-1)?.network.code===legacy,'pasted legacy SL6 invitations still use their original verified enrollment path');
   check(errors.length===0,'slow-API state checks have no browser script errors');
   fs.writeFileSync(path.join(output,'checks.json'),JSON.stringify({passed:true,checks,errors,scope:'Production assets with deterministic API delays; no real peers or public PKARR publication'},null,2));
   console.log('PASS '+checks.length+' production-UI slow-API checks');

@@ -24,6 +24,8 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--compact-code"]){CompactCodeTests();return;}
+        if(args is ["--compact-integration"]){await CompactInvitationIntegration();return;}
         if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}
         if(args is ["--pairing-options"]){await PairingOptions();return;}
         if(args is ["--pkarr-only"]){await PkarrDiscoveryTests();return;}

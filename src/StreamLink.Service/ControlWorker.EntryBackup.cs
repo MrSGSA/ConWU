@@ -21,17 +21,18 @@ public sealed partial class ControlWorker
             if(settings.CoordinatorBackup)entryBackupPublisher=new(ProfileChanges.Copy(profile).Mesh!,ticket,settings,profile.TransportMode,Log,disposing.Token);
         }
     }
-    async Task JoinUiDirectShort(UiNetworkAction action,Operation operation)
+    async Task JoinUiDirectShort(UiNetworkAction action,Operation operation,ExistingEntry[]? invitationEntries=null,bool invitation=false)
     {
         var token=operation.Stop.Token;RequireUiNetwork(action.ExpectedNetwork);
         if((profile.Mesh!=null||profile.Pair!=null)&&!action.ConfirmReplace)throw new IOException("替换网络需要明确确认");
         if(action.Mode is not ("faketcp" or "udp"))throw new FormatException("网络承载无效");
         RequireSavedProtocol(action.Mode);
-        var settings=PublicSettings(profile);
-        var entries=settings.ExistingEntries.Where(e=>e.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
+        var settings=PublicSettings(profile);if(invitation)settings=settings with{CoordinatorBackup=false};
+        var entries=invitationEntries??settings.ExistingEntries.Where(e=>e.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
         if(entries.Length==0&&!settings.CoordinatorBackup)throw new IOException("短配对码需要目标主机入口，请先在设置中填写；也可启用备用协调查询主机入口");
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(settings.CoordinatorBackup?55000:30000);
         await CloseUiPair(token);uiPairOwner=false;uiPairService=uiPairPin="";uiExpectedNetwork=action.ExpectedNetwork;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);
+        uiCompactInvitation=invitation;if(invitationEntries!=null)uiEntrySources=invitationEntries;
         var temporary=MeshIdentity.Create("","",action.Mode,direct:true);
         var folder=Path.Combine(store.DirectoryPath,"sessions","pair-"+Guid.NewGuid().ToString("N"));
         Exception? last=null;

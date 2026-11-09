@@ -14,6 +14,7 @@ public sealed partial class ControlWorker
     readonly DirectPairHost uiDirectHost=new();
     byte[]? uiExchange;
     bool uiPairOwner, uiRevealed;
+    bool uiCompactInvitation;
     string uiPairService = "", uiPairPin = "", uiPendingInvite = "", uiExpectedNetwork = "";
     UiPairingDto? uiPairSnapshot;
     EntryResolution[] uiEntryResolutions=[];
@@ -63,7 +64,7 @@ public sealed partial class ControlWorker
     {
         Volatile.Write(ref uiPairSnapshot, new(uiRoom != null, uiPairOwner, uiPairOwner&&!uiEntryAdmission ? (uiApprovalCode.Length>0?uiApprovalCode:uiRoom?.Code??"") : "",
             uiExchange == null ? "" : PairKeyExchange.Verification(uiExchange), uiRoomState?.Candidate ?? "",
-            uiPairOwner ? uiRoomState?.GuestName ?? "" : uiRoom?.HostName ?? "", uiRoom?.Expires ?? 0, state) {ProposedIp=ProposedUiIp(),ReplacingSlot=RejoiningSlot(),Direct=uiPairClient is DirectPairHost or DirectPairClient,Service=uiPairService,Method=uiEntryAdmission?"entry":uiPairClient is DirectPairHost or DirectPairClient?uiApprovalExpected!=null||uiApprovalCode.StartsWith("SL6.",StringComparison.Ordinal)?"direct":"entry-code":"code"});
+            uiPairOwner ? uiRoomState?.GuestName ?? "" : uiRoom?.HostName ?? "", uiRoom?.Expires ?? 0, state) {ProposedIp=ProposedUiIp(),ReplacingSlot=RejoiningSlot(),Direct=uiPairClient is DirectPairHost or DirectPairClient,Service=uiPairService,Method=uiEntryAdmission?"entry":uiPairClient is DirectPairHost or DirectPairClient?uiCompactInvitation||uiApprovalExpected!=null||uiApprovalCode.StartsWith("SL6.",StringComparison.Ordinal)?"direct":"entry-code":"code",Format=uiCompactInvitation?"compact":uiApprovalExpected!=null||uiApprovalCode.StartsWith("SL6.",StringComparison.Ordinal)?"full":"code"});
     }
     int RejoiningSlot(){try{return uiPairOwner?RejoiningMember()?.Slot??0:0;}catch(CryptographicException){return 0;}}
     MeshMember? RejoiningMember()
@@ -87,7 +88,7 @@ public sealed partial class ControlWorker
         StopEntryBackupPublication();
         uiBackupExpected=null;
         uiRoom = null; uiRoomState = null; uiRevealed = false; uiPendingInvite = ""; uiPendingCipher=""; uiApprovalCode=""; uiRejoinLocator=""; uiApprovalExpected=null;uiExpectedRejoin=null;
-        uiEntryAdmission=false;uiEntrySources=[];
+        uiEntryAdmission=false;uiEntrySources=[];uiCompactInvitation=false;
         uiPairKey?.Dispose(); uiPairKey = null; uiPairClient?.Dispose(); uiPairClient = null;
         if (uiExchange != null) CryptographicOperations.ZeroMemory(uiExchange);
         uiExchange = null; PairSnapshot(state);
@@ -119,17 +120,17 @@ public sealed partial class ControlWorker
         try { if(!verified)await client.RequireMeshSupport(token,true,requirePairwise:networkContext);uiRoom = await uiPairClient.Create(uiPairKey, profile.DeviceName, token); if(expectedNetwork==null)PairSnapshot("等待另一台设备输入配对码"); }
         catch { ResetUiPair("创建配对码未完成，请重试邀请"); throw; }
     }
-    async Task OpenDirectShortPair(CancellationToken token)
+    async Task OpenDirectShortPair(CancellationToken token,bool publish=true)
     {
         await CloseUiPair(token);uiPairOwner=true;uiPairService=uiPairPin="";uiExpectedNetwork=profile.Mesh!.Pair.Network;uiPairKey=new(profile.NodeSigningPrivate,profile.AutoConfigureJoin);uiPairClient=uiDirectHost;
-        (uiPairService,uiPairPin)=ConnectionSettings.PairingCoordinator(PublicSettings(profile));
-        try{uiRoom=await uiPairClient.Create(uiPairKey,profile.DeviceName,token);StartEntryBackupPublication(uiRoom);PairSnapshot("请另一台设备填写目标主机入口和六位配对码，双方核对校验码后批准");}
+        if(publish)(uiPairService,uiPairPin)=ConnectionSettings.PairingCoordinator(PublicSettings(profile));
+        try{uiRoom=await uiPairClient.Create(uiPairKey,profile.DeviceName,token);if(publish)StartEntryBackupPublication(uiRoom);PairSnapshot("请另一台设备填写目标主机入口和六位配对码，双方核对校验码后批准");}
         catch{ResetUiPair("配对码生成未完成，请稍后重试");throw;}
     }
     async Task ApplyUiNetwork(UiNetworkAction action, Operation operation)
     {
         var token = operation.Stop.Token;
-        if (action.Service is null || action.Service.Length > 2048 || action.CertificatePin is null || action.CertificatePin.Length > 128 || action.Code is null || action.Code.Length > (action.Action is "join-direct" or "join-invitation"?DirectInvitation.MaximumCode:6) || action.Verification is null || action.Verification.Length > 6 || action.Candidate is null || action.Candidate.Length > 32)
+        if (action.Service is null || action.Service.Length > 2048 || action.CertificatePin is null || action.CertificatePin.Length > 128 || action.Code is null || action.Code.Length > (action.Action is "join-direct" or "join-invitation"?DirectInvitation.MaximumCode:action.Action=="join-compact"?CompactDirectCode.MaximumTextLength:6) || action.Verification is null || action.Verification.Length > 6 || action.Candidate is null || action.Candidate.Length > 32)
             throw new FormatException("网络操作参数无效");
         if(action.Action!="settings"&&(action.Patch!=null||action.AutoStart!=null||action.ExpectedAutoStart!=null))throw new FormatException("全局设置字段只能用于保存设置");
         if(action.Action!="settings"&&(action.DdnsToken!=null||action.ClearDdnsToken))throw new FormatException("DDNS 凭据只能通过保存设置修改");
@@ -151,6 +152,8 @@ public sealed partial class ControlWorker
                 StageMembership(originalEqual,equal.Directory!,"enable");await ResumeMembership(operation);break;
             case "join-invitation":
                 await JoinUiInvitation(action,operation);break;
+            case "join-compact":
+                await JoinUiCompactInvitation(action,operation);break;
             case "join-entry":
                 await JoinUiEntry(action,operation);break;
             case "join-direct-short":
@@ -248,11 +251,13 @@ public sealed partial class ControlWorker
             case "invite":
             case "invite-code":
             case "invite-direct":
+            case "invite-compact":
                 EnsurePkarrIdentity();
                 RequireUiNetwork(action.ExpectedNetwork);
                 var network = profile.Mesh ?? throw new IOException("请先创建网络");
                 if (!network.CanManage) throw new IOException("本机没有当前网络的邀请权限");
                 if(network.IsDecentralized)await RefreshMembership(token);
+                if(action.Action=="invite-compact"){await OpenUiCompactInvitation(operation);break;}
                 if(action.Action=="invite-direct"||action.Action=="invite"&&network.Pair.Direct){
                     await OpenUiDirectInvitation(network,operation);
                     break;

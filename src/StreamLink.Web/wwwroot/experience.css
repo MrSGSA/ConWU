@@ -82,3 +82,7 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 #confirm-dialog p{margin:0 0 24px;line-height:1.85;overflow-wrap:anywhere}
 #confirm-dialog>.row{justify-content:flex-end;gap:12px;flex-wrap:wrap}
 @media(max-width:620px){#confirm-dialog{padding:22px}#confirm-dialog h2{font-size:18px}#confirm-dialog>.row .btn{min-width:0;white-space:normal}}
+
+.compact-direct-code{font-size:21px;letter-spacing:.055em;min-height:72px;text-align:center;font-weight:600}
+.compact-direct-code::placeholder{font-size:18px;letter-spacing:.015em}
+@media(max-width:620px){.compact-direct-code{font-size:17px;letter-spacing:.015em}.compact-direct-code::placeholder{font-size:15px}}

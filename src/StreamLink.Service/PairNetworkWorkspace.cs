@@ -109,6 +109,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         bool direct=action.Action!="join";string mode=action.Mode;
         ExistingEntry[] entries=[];
         if(action.Action=="join-invitation")mode=DirectPairInvitation.Import(action.Code).Mode;
+        else if(action.Action=="join-compact"){var compact=CompactDirectCode.Import(action.Code);mode=compact.Mode;entries=[new(ExistingEntry.NetworkOwner,compact.Endpoint)];}
         else if(direct){
             if(string.IsNullOrWhiteSpace(action.Entry))throw new FormatException("请提供目标主机入口，或使用包含入口的直连邀请");
             entries=[new(ExistingEntry.NetworkOwner,action.Entry)];
@@ -220,7 +221,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 var resolvedJoin=await JoinTarget.Resolve(joinTargetAction,(url,pin,ct)=>MeshCoordinatorPreflight.Probe(url,pin,null,ct),lookupStop.Token);
                 request=request with{Network=resolvedJoin};
             }
-            bool enrollment=request.Method=="network"&&request.Network?.Action is "create" or "create-direct" or "join" or "join-entry" or "join-invitation" or "join-direct-short" or "join-direct";
+            bool enrollment=request.Method=="network"&&request.Network?.Action is "create" or "create-direct" or "join" or "join-entry" or "join-invitation" or "join-compact" or "join-direct-short" or "join-direct";
             if(enrollment&&selected.Length==0){
                 await WaitGate(creating,request.OperationId,token);
                 try{
@@ -233,14 +234,14 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         string name=request.Network!.Name.Trim();if(name.Length==0)name="连接 "+(networks.Count+1);ValidateName(name);
                         string id=Guid.NewGuid().ToString("N"),folder=Path.Combine(Folder,id);
                         bool automatic=request.Network.AutoConfigure;
-                        if(automatic&&request.Network.Action is not ("join" or "join-direct-short" or "join-entry" or "join-invitation"))throw new FormatException("自动获取设置仅用于申请加入网络");
+                        if(automatic&&request.Network.Action is not ("join" or "join-direct-short" or "join-entry" or "join-invitation" or "join-compact"))throw new FormatException("自动获取设置仅用于申请加入网络");
                         var configurationId=request.Network.ConfigurationId;
                         if(!automatic&&configurationId.Length==0&&configurations.Count==1)configurationId=configurations.Keys.Single();
                         ConnectionConfiguration? configuration=null;
                         if(!automatic&&!configurations.TryGetValue(configurationId,out configuration))throw new IOException("请先选择或保存本次连接配置");
                         var template=device.ProfileSnapshot();
                         var settings=automatic?AutoJoinSettings(request.Network,template):configuration!.Settings;
-                        if(automatic&&request.Network.Action=="join-invitation")request=request with{Network=request.Network with{Mode=settings.PathSelection=="udp-only"?"udp":"faketcp"}};
+                        if(automatic&&request.Network.Action is ("join-invitation" or "join-compact"))request=request with{Network=request.Network with{Mode=settings.PathSelection=="udp-only"?"udp":"faketcp"}};
                         ConnectionSettings.Apply(template,settings);
                         template.AutoConfigureJoin=automatic;template.ReceivedNetworkSettings=null;template.PkarrSeed="";template.PkarrSequence=0;
                         if(request.Network.RequestedVirtualIp.Length>0){MeshAddressing.ValidateAddress(request.Network.RequestedVirtualIp);template.RequestedVirtualIp=request.Network.RequestedVirtualIp;template.SavedNetworkSettings=template.SavedNetworkSettings! with{RequestedVirtualIp=template.RequestedVirtualIp};}
@@ -248,7 +249,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         template.AdapterScope=id;
                         template.NetworkCreatedHere=false;template.NetworkEstablishedAt=0;template.JoinedEntryNetwork="";template.JoinedEntrySources=[];
                         template.Coordinator=new();
-                        if(request.Network.Action is "create-direct" or "join-entry" or "join-invitation" or "join-direct-short" or "join-direct"){
+                        if(request.Network.Action is "create-direct" or "join-entry" or "join-invitation" or "join-compact" or "join-direct-short" or "join-direct"){
                             if(!settings.DirectMode)throw new IOException("此操作需要使用无协调的已有入口配置，请先选择并保存对应配置");
                         }
                         // A published address may be a fixed NAT mapping or an
@@ -300,7 +301,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 return status with{Status=Snapshot(selected)};
             }
             if(selected.Length==0){
-                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "approve" or "reject")
+                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "invite-compact" or "approve" or "reject")
                     throw new IOException("请先选择要操作的网络");
                 bool saving=request.Method=="patch"||request.Network?.Action=="settings";
                 if(saving)await WaitGate(sharedSettings,request.OperationId,token);
