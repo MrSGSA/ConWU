@@ -61,8 +61,13 @@ static partial class Program
                 UiStatusDto? state=null;
                 for(int i=0;i<200;i++){state=(await worker.HandleUi(new("status"),sid,default)).Status;if(state?.Coordinator?.Running==true)break;await Task.Delay(25);}
                 Check(state?.Coordinator is {Enabled:true,Running:true}&&localStore.LoadForMaintenance().CoordinatorRoleVersion==1,"the installed-host path enables and persists the independent role automatically");
+                Check(state!.DeviceSettings?.Coordinator is {Enabled:true} visible&&visible.ListenUrl==state.Coordinator!.Addresses.Single(),"the settings page reflects the actual independently provisioned listener");
                 Check(localStore.LoadForMaintenance().Coordinator.ListenUrl==$"http://127.0.0.1:{port}"&&localStore.LoadForMaintenance().Coordinator.TrustCloudflare,"automatic role migration preserves configured listener and proxy trust");
                 Check(state!.Networks.Length==0&&state.ServiceReady&&state.NetworkDefaults!.TcpStun.SequenceEqual(Stun.TcpServers),"providing discovery creates no network and supplies authoritative UI defaults");
+                var edit=new UiNetworkAction("settings",Settings:state.DeviceSettings,ExpectedRevision:state.DeviceSettingsRevision,ConfirmReplace:true){Patch=new(DeviceName:"Saved after migration",ExpectedDeviceName:state.DeviceName)};
+                Guid editId=Guid.NewGuid();var saved=await worker.HandleUi(new("save-settings",OperationId:editId){SettingsBatch=new(edit,[])},sid,default);
+                for(int i=0;i<200&&saved.Operation is {Completed:false};i++){await Task.Delay(25);saved=await worker.HandleUi(new("status",OperationId:editId),sid,default);}
+                Check(saved.Ok&&saved.Operation?.Completed!=false&&localStore.LoadForMaintenance() is {DeviceName:"Saved after migration",Coordinator.Enabled:true},"saving an unrelated device preference cannot disable the migrated coordinator");
             }finally{await worker.StopLocal();}
         }
         var off=localStore.Load();off.Coordinator=off.Coordinator with{Enabled=false};localStore.Save(off);

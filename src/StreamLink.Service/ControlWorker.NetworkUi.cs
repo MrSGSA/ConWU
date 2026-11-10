@@ -25,7 +25,10 @@ public sealed partial class ControlWorker
     MeshRejoinProof? uiExpectedRejoin;
     DirectPairInvitation? uiApprovalExpected;
 
-    static UiNetworkSettings PublicSettings(DeviceProfile p) => (p.SavedNetworkSettings??LegacyPublicSettings(p)) with{Ddns=null};
+    // The listener belongs to the device, not to the saved connection policy.
+    // Provisioning and recovery may update it independently. Returning the old
+    // policy copy would let an unrelated preference save disable the real role.
+    static UiNetworkSettings PublicSettings(DeviceProfile p) => (p.SavedNetworkSettings??LegacyPublicSettings(p)) with{Ddns=null,Coordinator=p.Coordinator};
     static ExistingEntry[] SavedEntries(ExistingEntry[] entries,bool guest,int introducer=1) => entries.Select(e=>guest&&e.PeerSlot==introducer?e with{PeerSlot=ExistingEntry.NetworkOwner}:e).Distinct().ToArray();
     static UiNetworkSettings LegacyPublicSettings(DeviceProfile p) => new(p.Mesh is {Pair.Direct:false} m?m.Pair.Service:p.CoordinationService, p.Mesh is {Pair.Direct:false} n?n.Pair.CertificatePin:p.CoordinationPin, p.ManualEndpoint, p.PathSelection, p.AllowManualQualityRequests, p.ListenPort, p.SourcePort) {
         ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
