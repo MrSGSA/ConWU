@@ -4,7 +4,7 @@
 
 原名 StreamLink。使用可手输的 16 位直连码。每个网络独立保存设置，第一次加入由主机批准，设置自动获取。候选包与已发布版本分开，实际串流由使用者确认。
 
-[已发布版本](https://github.com/MrSGSA/StreamLink/releases) · [入口与配置](docs/ConWU-入口与配置.md) · [Linux 安装与使用](packaging/linux/README.md)
+[下载 1.1.0-rc.1](https://github.com/MrSGSA/StreamLink/releases/tag/v1.1.0-rc.1) · [版本说明](docs/releases/1.1.0-rc.1.md) · [入口与配置](docs/ConWU-入口与配置.md) · [Linux 安装与使用](packaging/linux/README.md)
 
 ## 怎么连接
 
