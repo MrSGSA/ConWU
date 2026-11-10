@@ -19,6 +19,8 @@ internal sealed record PairSettingsTransaction(string ConfigurationId,DeviceProf
         restored.PkarrPeers=current.PkarrPeers;
         restored.PkarrStateVersion=current.PkarrStateVersion;
         restored.CoordinatorRoleVersion=current.CoordinatorRoleVersion;
+        if(current.CoordinatorRoleVersion>before.CoordinatorRoleVersion)
+            restored.Coordinator=current.Coordinator;
         restored.LastStun=current.LastStun;restored.LastEntry=current.LastEntry;
         restored.ExistingEntries=ControlWorker.RuntimeEntries(restored);return restored;
     }

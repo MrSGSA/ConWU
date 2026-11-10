@@ -143,10 +143,10 @@ static partial class Program
             var isolatedSaved=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",isolatedCopy.ConfigurationId,"Isolated editor",1,configuration.Settings with{EntryRefreshSeconds=556},true,Independent:true)){NetworkId=thirdId});Check(isolatedSaved.Ok,isolatedSaved.Error);
             Check(isolatedSaved.Status!.Networks.Single(n=>n.Id==thirdId).Status.Settings!.EntryRefreshSeconds==556&&isolatedSaved.Status.Networks.Single(n=>n.Id==secondId).Status.Settings!.EntryRefreshSeconds==222,"an existing independent network remains editable without affecting another network");
             assigned=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("assign",configuration.Id,ExpectedRevision:configuration.Revision,ConfirmReconnect:true)){NetworkId=thirdId});Check(assigned.Ok,assigned.Error);
-            var deleteIsolated=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("delete",isolatedCopy.ConfigurationId,ExpectedRevision:2)));Check(deleteIsolated.Ok,deleteIsolated.Error);
             var portsBefore=assigned.Status!.Networks.ToDictionary(n=>n.Id,n=>n.Status.Settings!.SourcePort);
             var rollback=await Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",configuration.Id,configuration.Name,configuration.Revision,configuration.Settings with{SourcePort=65535,EntryRefreshSeconds=444},true)));
             Check(!rollback.Ok&&rollback.Status!.Configurations.Single(c=>c.Id==configuration.Id).Revision==configuration.Revision&&rollback.Status.Networks.All(n=>n.Status.Settings!.EntryRefreshSeconds==222&&n.Status.Settings.SourcePort==portsBefore[n.Id]),"a later consumer allocation failure preserves the shared revision and every earlier network setting");
+            Check(!rollback.Status!.Configurations.Any(c=>c.Id==isolatedCopy.ConfigurationId),"detaching the last network retires independent settings while explicit shared templates remain");
         }finally{await worker.StopLocal();}
         Console.WriteLine($"PASS {checks} pair workspace checks");
     }

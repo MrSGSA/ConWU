@@ -32,6 +32,11 @@ static partial class Program
             Check(certificate.HasPrivateKey&&automatic.PublicCertificatePin==Convert.ToHexString(SHA256.HashData(certificate.RawData)),"the advertised coordinator pin matches its real certificate and key");
         var repeated=CoordinatorProvisioning.Enable(store,new());
         Check(repeated==automatic,"a repeated provisioning attempt keeps the same certificate identity");
+        var beforeRole=new DeviceProfile();var afterRole=ProfileChanges.Copy(beforeRole);afterRole.Coordinator=automatic;afterRole.CoordinatorRoleVersion=1;
+        var recoveredRole=PairSettingsTransaction.SettingsOnly(afterRole,beforeRole);
+        Check(recoveredRole.CoordinatorRoleVersion==1&&recoveredRole.Coordinator==automatic,"settings rollback cannot undo an independently completed coordinator migration");
+        var editedRole=ProfileChanges.Copy(afterRole);editedRole.Coordinator=automatic with{ListenUrl="https://0.0.0.0:47824"};
+        Check(PairSettingsTransaction.SettingsOnly(editedRole,afterRole).Coordinator==automatic,"ordinary listener edits still roll back when no independent migration completed");
         var proxy=new CoordinatorSettings(true,"http://127.0.0.1:1145",TrustCloudflare:true,PublicUrl:"https://coord.example.invalid/");
         Check(CoordinatorProvisioning.Enable(store,proxy)==proxy,"existing HTTPS reverse-proxy and origin-trust settings remain unchanged");
 

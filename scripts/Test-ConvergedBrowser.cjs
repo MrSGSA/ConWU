@@ -71,6 +71,12 @@ const check=(value,text)=>{if(!value)throw Error(text);checks.push(text);};
  await page.locator('#open-network-settings').click();await page.locator('[data-ui-section="entry"]').click();
  check(await page.locator('[data-entry-index="0"]').inputValue()==='txt://entry.example.com#streamlink1','discard restores the actual saved source');await page.locator('[data-ui-action="close-editor"]').first().click();
  const baseline=await page.evaluate(()=>workspaceState.configurations);
+ await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();await page.locator('.nav[data-page="create"]').click();await page.locator('#open-network-settings').click();
+ check(await page.locator('[data-key="mode"][value="existing"]').isChecked(),'reloading retains the saved uncreated network draft');
+ await page.locator('[data-ui-action="close-editor"]').first().click();
+ // A fresh browser has no selected creation draft. Clearing only these keys
+ // models that state without creating a real native network in this fixture.
+ await page.evaluate(()=>{localStorage.removeItem('conwu-create-configuration-draft');localStorage.removeItem('conwu-create-ip-draft');});
  await page.reload();await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();await page.locator('.nav[data-page="create"]').click();await page.locator('#new-network-name').fill('第二份独立设置');await page.locator('#open-network-settings').click();
  check(await page.evaluate(()=>selectedConfiguration)===''&&await page.locator('[data-key="mode"][value="custom"]').isChecked(),'a fresh creation starts independently of earlier saved settings');
  check(await page.locator('#editor-configuration,#editor-configuration-select,#configuration-name').count()===0,'shared-profile controls are absent');

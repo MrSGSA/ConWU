@@ -50,10 +50,19 @@ public sealed partial class ControlWorker
                     CoordinatorSettings? pending;lock(sync)pending=profile.CoordinatorRoleVersion<1?profile.Coordinator:null;
                     if(pending!=null){
                         try{
+                            // Use the same gate as device preference writes so
+                            // neither side can commit an older profile over the
+                            // other's completed listener/version migration.
+                            await requests.WaitAsync(token);
+                            try{
+                            lock(sync)pending=profile.CoordinatorRoleVersion<1?profile.Coordinator:null;
+                            if(pending!=null){
                             var prepared=CoordinatorProvisioning.Enable(store,pending);
                             lock(sync){if(profile.CoordinatorRoleVersion<1&&profile.Coordinator==pending){
                                 var next=ProfileChanges.Copy(profile);next.Coordinator=prepared;next.CoordinatorRoleVersion=1;store.Save(next);profile=next;PublishReply();
                             }}
+                            }
+                            }finally{requests.Release();}
                         }catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or FormatException){
                             Failed(ex);await Task.Delay(15000,token);continue;
                         }
