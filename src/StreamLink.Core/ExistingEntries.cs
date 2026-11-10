@@ -16,6 +16,8 @@ public sealed record ExistingEntry(int PeerSlot, string Source)
 }
 public sealed record EntryResolution(int PeerSlot, int Index, string Kind, string[] Endpoints, string Error)
 {
+    [System.Text.Json.Serialization.JsonIgnore]
+    public PkarrRecord? Pkarr {get;init;}
     public long ElapsedMs {get;init;}
     public int Attempts {get;init;}
     // Zero is legacy unbounded hint data. Signed DDNS records carry
@@ -223,10 +225,10 @@ public sealed class ExistingEntryResolver : IDisposable
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(14000);
         long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
-        string kind=Kind(entry.Source);bool allowCached=kind!="PKARR";long expires=0;
+        string kind=Kind(entry.Source);bool allowCached=kind!="PKARR";long expires=0;PkarrRecord? signedPkarr=null;
         try {
             string[] values;
-            if(kind=="PKARR"){using var pkarr=pkarrFactory?.Invoke()??new PkarrClient();progress.Stage="PKARR 公告查询";var record=await pkarr.ResolveRecord(entry.Source,mode,deadline.Token);values=record.Announcement.Endpoints;expires=record.Announcement.Expires;}
+            if(kind=="PKARR"){using var pkarr=pkarrFactory?.Invoke()??new PkarrClient();progress.Stage="PKARR 公告查询";var record=await pkarr.ResolveRecord(entry.Source,mode,deadline.Token);signedPkarr=record;values=record.Announcement.Endpoints;expires=record.Announcement.Expires;}
             else if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
@@ -242,7 +244,7 @@ public sealed class ExistingEntryResolver : IDisposable
                 if(endpoints.Count>MaximumEndpoints)throw new FormatException("解析结果超过 8 个入口");
             }
             if(endpoints.Count==0)throw new IOException("没有可用的 IPv4 入口");
-            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt,ExpiresAt=expires,AllowCached=allowCached};
+            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt,ExpiresAt=expires,AllowCached=allowCached,Pkarr=signedPkarr};
         } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or UnauthorizedAccessException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
             string reason=FetchFailure(ex)?.Message??(ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>progress.Stage+"超时",HttpRequestException {HttpRequestError:HttpRequestError.SecureConnectionError}=>"TLS 安全连接失败",HttpRequestException=>progress.Stage+"失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" });

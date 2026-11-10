@@ -49,13 +49,13 @@ public sealed partial class ControlWorker
         if(!profile.UsesExistingEntriesOnly&&meshRunner is {} autonomous&&autonomous.PreparedInvitationEntries.Length==0){
             autonomous.RequestInvitationEntry();long deadline=Environment.TickCount64+30000;
             while(autonomous.PreparedInvitationEntries.Length==0){
-                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("暂未取得可分享的主机入口，当前网络仍保留。请使用配对码，或待入口准备后重试直连邀请");
+                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("暂未取得可分享的主机入口，当前网络仍保留。请等待入口准备，或检查入口设置后重新生成直连码");
                 SetOperation(operation,"正在准备直连邀请所需的主机入口",true);await Task.Delay(100,token);
             }
         }
         var entries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
         if(entries.Length==0)entries=meshRunner?.PreparedInvitationEntries??[];
-        if(entries.Length==0)throw new IOException("尚未取得可分享的主机入口，请等待入口准备或使用配对码");
+        if(entries.Length==0)throw new IOException("尚未取得可分享的主机入口，请等待入口准备后重新生成直连码");
         return entries;
     }
 

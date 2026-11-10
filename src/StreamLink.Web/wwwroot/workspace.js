@@ -17,7 +17,7 @@ function localConfigurationStatus(raw){
  const config=configuration(),p=config?.settings||configurationDrafts.get('new')?.settings||newConfigurationSettings();
  return {...raw,networkId:'',networkEnabled:false,isOwner:false,peers:[],pairing:null,settings:p,settingsRevision:String(config?.revision||0)};
 }
-function newConfigurationSettings(){return {service:'',certificatePin:'',manualEndpoint:'',pathSelection:'faketcp-only',listenPort:44680,sourcePort:44691,connectionSource:'custom',directMode:false,existingEntries:[],entryRefreshSeconds:60,tcpStun:[],udpStun:[],requestedVirtualIp:''};}
+function newConfigurationSettings(){return clone(workspaceState?.networkDefaults||{service:'',certificatePin:'',manualEndpoint:'',pathSelection:'faketcp-only',listenPort:44680,sourcePort:44691,connectionSource:'custom',directMode:true,discoveryMode:'pkarr',pkarrPublish:true,coordinatorBackup:false,existingEntries:[],entryRefreshSeconds:60,tcpStun:workspaceState?.deviceSettings?.tcpStun||[],udpStun:workspaceState?.deviceSettings?.udpStun||[],pkarrGateways:['https://pkarr.pubky.app','https://pkarr.pubky.org'],requestedVirtualIp:''});}
 function rememberDraft(){
  if(!settingsHydrated)return;
  configurationDrafts.set(settingsScope==='device'?'device':selectedConfiguration||'new',{saved:clone(saved),drafts:clone(drafts),name:configurationName,baseName:baseConfigurationName,revision:configurationRevision,history:history?clone(history):null});

@@ -26,6 +26,8 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public UiAggregateDto? Aggregate {get;init;}
     public UiConfigurationDto[] Configurations {get;init;}=[];
     public UiNetworkSettings? DeviceSettings {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public UiNetworkSettings? NetworkDefaults {get;init;}
     public string DeviceSettingsRevision {get;init;}="";
     public ConnectionProgress? Connection {get;init;}
     public AdapterRuntimeStatus? Adapter {get;init;}
@@ -97,6 +99,7 @@ public sealed record UiNetworkSettings(string Service="",string CertificatePin="
     public bool DirectMode {get;init;}
     public bool CoordinatorBackup {get;init;}
     public bool PkarrPublish {get;init;}
+    public string[] PkarrGateways {get;init;}=PkarrClient.DefaultGateways.ToArray();
     // Optional rendezvous for existing-entry enrollment only. Never a data
     // discovery fallback or an instruction to start autonomous traversal.
     public string PairingService {get;init;}="";
@@ -117,6 +120,9 @@ public sealed record UiNetworkAction(string Action,string Service="",string Cert
     public string ConfigurationId {get;init;}="";
     public string RequestedVirtualIp {get;init;}="";
     public bool AutoConfigure {get;init;}
+    // Modern creation signs the network locally and uses the coordinator only
+    // for discovery. Omitted by legacy clients that still expect short rooms.
+    public bool LocalEnrollment {get;init;}
     public string ExpectedDeviceRevision {get;init;}="";
     public string Entry {get;init;}="";
     public bool Background {get;init;}

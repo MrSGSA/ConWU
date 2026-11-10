@@ -8,6 +8,9 @@ public static class ProfileChanges
     public static DeviceProfile Copy(DeviceProfile value) => JsonSerializer.Deserialize<DeviceProfile>(JsonSerializer.Serialize(value))!;
     public static void PreserveLatestDirectory(DeviceProfile current,DeviceProfile draft)
     {
+        if(draft.Mesh is {} target&&current.Mesh is {} source&&target.Pair.Network==source.Pair.Network&&target.OwnerKey==source.OwnerKey&&target.Self.Device==source.Self.Device&&target.Self.Slot==source.Self.Slot&&target.Self.SigningKey==source.Self.SigningKey){
+            draft.PkarrSeed=current.PkarrSeed;draft.PkarrSequence=current.PkarrSequence;draft.PkarrPeers=current.PkarrPeers;draft.PkarrStateVersion=current.PkarrStateVersion;
+        }
         if(draft.Mesh is {} next && current.Mesh is {} live && next.Pair.Network==live.Pair.Network &&
            next.OwnerKey==live.OwnerKey && live.Directory is {} latest && latest.Revision>(next.Directory?.Revision??0)){
             MeshIdentity.ValidateDirectory(latest,next.Pair.Network,next.OwnerKey);
@@ -23,7 +26,10 @@ public static class ProfileChanges
         comparable.RequestedVirtualIp=before.RequestedVirtualIp; // next enrollment only; never silently renumber a live network
         comparable.AutoStart=before.AutoStart;
         comparable.Coordinator=before.Coordinator; // independent host role; never rebuild healthy data paths
+        comparable.CoordinatorRoleVersion=before.CoordinatorRoleVersion;
         comparable.PkarrPublish=before.PkarrPublish;comparable.PkarrSeed=before.PkarrSeed;comparable.PkarrSequence=before.PkarrSequence;
+        comparable.PkarrPeers=before.PkarrPeers;
+        comparable.PkarrStateVersion=before.PkarrStateVersion;
         comparable.Ddns=before.Ddns;comparable.CloudflareDdnsToken=before.CloudflareDdnsToken;
         comparable.EntryRefreshSeconds=before.EntryRefreshSeconds;
         // Runtime observations and opaque future options are not network start

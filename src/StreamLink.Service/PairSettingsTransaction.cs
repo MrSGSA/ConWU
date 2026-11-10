@@ -16,6 +16,9 @@ internal sealed record PairSettingsTransaction(string ConfigurationId,DeviceProf
         restored.JoinedEntryNetwork=current.JoinedEntryNetwork;restored.JoinedEntrySources=current.JoinedEntrySources;
         restored.AutoConfigureJoin=current.AutoConfigureJoin;restored.ReceivedNetworkSettings=current.ReceivedNetworkSettings;
         restored.PkarrSeed=current.PkarrSeed;restored.PkarrSequence=current.PkarrSequence;
+        restored.PkarrPeers=current.PkarrPeers;
+        restored.PkarrStateVersion=current.PkarrStateVersion;
+        restored.CoordinatorRoleVersion=current.CoordinatorRoleVersion;
         restored.LastStun=current.LastStun;restored.LastEntry=current.LastEntry;
         restored.ExistingEntries=ControlWorker.RuntimeEntries(restored);return restored;
     }

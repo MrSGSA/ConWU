@@ -9,6 +9,7 @@ public sealed partial class ControlWorker : BackgroundService
     readonly ProfileStore store;
     readonly bool networkContext;
     PairNetworkWorkspace? workspace;
+    bool automaticCoordinator;
     readonly object sync = new();
     readonly Queue<string> logs = new();
     DeviceProfile profile;
@@ -37,7 +38,9 @@ public sealed partial class ControlWorker : BackgroundService
     public ControlWorker(bool pairNetworks):this(new ProfileStore(),enableWorkspace:pairNetworks){}
     internal ControlWorker(ProfileStore profileStore,MeshRuntimeServices? services=null,bool isolatedNetwork=false,bool enableWorkspace=false)
     {
-        store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;uiEntryResolver=new(()=>new(meshRuntime?.PkarrClientFactory));
+        store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;
+        pkarrCheckpoints=new(()=>new(()=>store.ReadPrivate<PkarrCheckpoint[]>("pkarr-checkpoints.protected")??[],value=>store.WritePrivate("pkarr-checkpoints.protected",value)));
+        uiEntryResolver=new(()=>new(CreatePkarrClient));
         lease = new FileStream(Path.Combine(store.DirectoryPath, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         try {
             if(enableWorkspace&&store.LoadForMaintenance() is { } old&&(old.Mesh!=null||old.Pair!=null))throw new IOException("旧版网络配置与双机多网络不兼容，请使用全新安装流程重新设置；配置尚未迁移");
@@ -72,6 +75,9 @@ public sealed partial class ControlWorker : BackgroundService
         PairSettingsTransaction.Recover(store);PairBatchSettingsTransaction.Recover(store);profile=store.Load();PublishReply();
         if(profile.NodeSigningPrivate.Length==0){profile.NodeSigningPrivate=NodeIdentityProof.GeneratePrivate();profile.Device=MeshIdentity.NetworkId(MeshIdentity.PublicSigning(profile.NodeSigningPrivate));store.Save(profile);PublishReply();}
         workspace=new(this,store,meshRuntime);
+        // Injected transport fixtures own their listener explicitly. The
+        // installed device host provisions its independent coordinator once.
+        automaticCoordinator=meshRuntime==null;
     }
     internal DeviceProfile ProfileSnapshot()=>ProfileChanges.Copy(Volatile.Read(ref snapshot)!.Profile!);
     internal bool IsOperationComplete(Guid id)=>OperationState(id)?.Completed!=false;
@@ -84,7 +90,9 @@ public sealed partial class ControlWorker : BackgroundService
             DeviceProfile restored;bool restart;
             lock(sync){restored=PairSettingsTransaction.SettingsOnly(profile,before);restart=ProfileChanges.Impact(profile,restored)==ProfileChangeImpact.RestartNetwork;}
             if(restart)await End(token);
-            lock(sync){store.Save(restored);profile=restored;PublishReply();}
+            // Shutdown may await resources while discovery independently commits
+            // a newer identity, binding or sequence. Merge again at the write.
+            lock(sync){restored=PairSettingsTransaction.SettingsOnly(profile,before);store.Save(restored);profile=restored;PublishReply();}
             if(restart&&restored.Enabled&&!Volatile.Read(ref applicationStopping))Begin();else meshRunner?.UpdateEntries(restored);
         }finally{requests.Release();}
     }
@@ -145,7 +153,7 @@ public sealed partial class ControlWorker : BackgroundService
                         Connection=new("StartingAdapter","正在准备网卡、入口与设备发现。",Attempt:attempt) };
                     PublishReply();
                 }
-                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);if(remembered.Mesh!.Directory is {} priorDirectory)MeshIdentity.ValidateSuccessor(directory,priorDirectory);remembered.Mesh.Directory=directory;remembered.RejoinHistory=remembered.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();if(remembered.Mesh.IsDecentralized)remembered.ExistingEntries=RuntimeEntries(remembered);store.Save(remembered);profile=remembered;if(remembered.Mesh.IsDecentralized)meshRunner?.UpdateEntries(remembered);PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },meshRuntime??MeshRuntimeServices.Default){DirectPairing=HandleDirectPairing};
+                if (copy.Mesh != null) meshRunner = new(copy, Log, ReportRuntimeStatus, directory => { lock (sync) { if (profile.Mesh != null && directory.Network==profile.Mesh.Pair.Network && directory.OwnerKey==profile.Mesh.OwnerKey && directory.Revision > (profile.Mesh.Directory?.Revision ?? 0)) { var remembered=ProfileChanges.Copy(profile);if(remembered.Mesh!.Directory is {} priorDirectory)MeshIdentity.ValidateSuccessor(directory,priorDirectory);remembered.Mesh.Directory=directory;remembered.RejoinHistory=remembered.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();if(remembered.Mesh.IsDecentralized)remembered.ExistingEntries=RuntimeEntries(remembered);store.Save(remembered);profile=remembered;if(remembered.Mesh.IsDecentralized)meshRunner?.UpdateEntries(remembered);PublishReply();} } }, stun => { lock (sync) { profile.LastStun = stun; store.Save(profile); PublishReply();} },(meshRuntime??MeshRuntimeServices.Default) with{PkarrClientFactory=CreatePkarrClient}){DirectPairing=HandleDirectPairing,PkarrCheckpoints=pkarrCheckpoints.Value,RememberPkarrPeer=RememberPkarrPeer};
                 else runner = new(copy, Log, ReportRuntimeStatus, (entry, stun) => { lock (sync) { profile.LastEntry = entry; profile.LastStun = stun; store.Save(profile); PublishReply();} });
                 try { if (meshRunner != null) await meshRunner.Run(token); else await runner!.Run(token); }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { break; }
@@ -358,6 +366,7 @@ public sealed partial class ControlWorker : BackgroundService
                     long retryNow=Environment.TickCount64;
                     if(lastManualRetry!=0 && retryNow-lastManualRetry<10000)throw new IOException("已请求重新探测，请稍候 10 秒再试");
                     lastManualRetry=retryNow;
+                    Interlocked.Exchange(ref pkarrRefreshRequested,1);
                     meshRunner?.RequestRetry();lock(sync)retryWake?.TrySetResult();
                     Log("用户请求重新探测；健康直连与虚拟网卡保持运行");break;
                 case "quality":

@@ -10,6 +10,8 @@ public sealed record MeshAnnouncement(int Slot, string Device, long Revision, lo
     MeshTraversalCapabilities? Traversal = null)
 {
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? PkarrSource {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public string[]? ExistingEndpoints {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool ExistingEntryOnly {get;init;}
@@ -47,6 +49,7 @@ public static class MeshMetadata
     }
     static void Validate(MeshAnnouncement node)
     {
+        if(node.PkarrSource!=null)PkarrPacket.KeyFromSource(node.PkarrSource);
         if (node.Slot is < 1 or > 254 || !Guid.TryParseExact(node.Device, "N", out _) || node.Revision <= 0 || node.Name is null || node.Name.Length is < 1 or > 64 || node.Name.Any(char.IsControl)) throw new FormatException("公告内容无效");
         if (node.Endpoint is null || node.Endpoint.Length > 64 || node.Endpoint.Length > 0 && (!IPEndPoint.TryParse(node.Endpoint, out var ep) || ep.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork || ep.Address.Equals(IPAddress.Any) || ep.Port == 0)) throw new FormatException("端点无效");
         MeshTraversal.ValidateCapabilities(node.Traversal);

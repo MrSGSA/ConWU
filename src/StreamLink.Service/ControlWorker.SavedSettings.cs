@@ -24,7 +24,8 @@ public sealed partial class ControlWorker
             int slot=mesh.IsDecentralized?MeshGovernance.CurrentSlot(mesh.Directory!,hint.PeerSlot):hint.PeerSlot;
             if(slot!=mesh.Self.Slot&&mesh.Directory?.Members.Any(m=>m.Slot==slot)==true)learned.Add(hint with{PeerSlot=slot});
         }
-        return learned.Take(1).Concat(bound).Concat(learned.Skip(1)).DistinctBy(e=>e.Source,StringComparer.Ordinal).Take(ExistingEntryResolver.MaximumSources).ToArray();
+        var pkarr=PkarrRendezvous.Uses(profile)&&profile.PkarrStateVersion==1?profile.PkarrPeers.Where(p=>PkarrRendezvous.Matches(p,mesh)).Select(p=>new ExistingEntry(p.Slot,p.Source)):[];
+        return pkarr.Concat(learned.Take(1)).Concat(bound).Concat(learned.Skip(1)).DistinctBy(e=>e.Source,StringComparer.Ordinal).Take(ExistingEntryResolver.MaximumSources).ToArray();
     }
 
     static int ActiveSavedPeerSlot(DeviceProfile profile,int slot)

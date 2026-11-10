@@ -60,7 +60,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             string path=Path.Combine(folder,"network-info.json");if(!File.Exists(path))continue;
             if(new FileInfo(path).Length>4096||(File.GetAttributes(path)&FileAttributes.ReparsePoint)!=0)throw new IOException("网络索引无效");
             var info=JsonSerializer.Deserialize<Information>(File.ReadAllBytes(path))??throw new IOException("网络索引为空");
-            ValidateName(info.Name);if(info.Id!=id)throw new IOException("网络配置身份不符");if(info.Removed)continue;
+            ValidateName(info.Name);if(info.Id!=id)throw new IOException("网络配置身份不符");if(info.Removed){if(info.ConfigurationId.Length>0)retiredConfigurations[info.ConfigurationId]=0;continue;}
             if(networks.Count>=MaximumNetworks)throw new IOException("本机网络数量超过限制");
             Context? opened=null;
             try{
@@ -74,7 +74,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 opened=null;
             }catch{opened?.Worker.Dispose();throw;}
         }}catch{foreach(var context in networks.Values)context.Worker.Dispose();receivers.Dispose();throw;}
-        EnsureInitialConfiguration();
+        PruneRetiredConfigurations();EnsureInitialConfiguration();
     }
     Context Open(Information info,string folder)
     {
@@ -148,6 +148,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             peers.Select(p=>p.DeviceId.Length>0?p.DeviceId:p.NetworkId+":"+p.Peer.Slot).Distinct(StringComparer.Ordinal).Count(),
             peers.Sum(p=>p.Peer.SentBytes),peers.Sum(p=>p.Peer.ReceivedBytes),peers);
         return chosen with{Configurations=ConfigurationSnapshot(),WorkspaceVersion=2,SelectedNetworkId=selected,Networks=rows,Aggregate=aggregate,
+            NetworkDefaults=new(){DirectMode=true,DiscoveryMode="pkarr",PkarrPublish=true,TcpStun=Stun.TcpServers.ToArray(),UdpStun=Stun.UdpServers.ToArray()},
             DeviceSettings=defaults.Settings,DeviceSettingsRevision=defaults.SettingsRevision,Coordinator=defaults.Coordinator,Desktop=defaults.Desktop,
             DeviceName=defaults.DeviceName,LogLevel=defaults.LogLevel,ServiceReady=defaults.ServiceReady};
     }
@@ -244,6 +245,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         if(automatic&&request.Network.Action is ("join-invitation" or "join-compact"))request=request with{Network=request.Network with{Mode=settings.PathSelection=="udp-only"?"udp":"faketcp"}};
                         ConnectionSettings.Apply(template,settings);
                         template.AutoConfigureJoin=automatic;template.ReceivedNetworkSettings=null;template.PkarrSeed="";template.PkarrSequence=0;
+                        template.PkarrPeers=[];template.PkarrStateVersion=0;
                         if(request.Network.RequestedVirtualIp.Length>0){MeshAddressing.ValidateAddress(request.Network.RequestedVirtualIp);template.RequestedVirtualIp=request.Network.RequestedVirtualIp;template.SavedNetworkSettings=template.SavedNetworkSettings! with{RequestedVirtualIp=template.RequestedVirtualIp};}
                         template.Mesh=null;template.Pair=null;template.Enabled=false;template.PendingMembership=null;template.RejoinCredential=null;template.RejoinHistory=[];
                         template.AdapterScope=id;
@@ -301,7 +303,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 return status with{Status=Snapshot(selected)};
             }
             if(selected.Length==0){
-                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "invite-compact" or "approve" or "reject")
+                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "invite-compact" or "refresh-pkarr" or "approve" or "reject")
                     throw new IOException("请先选择要操作的网络");
                 bool saving=request.Method=="patch"||request.Network?.Action=="settings";
                 if(saving)await WaitGate(sharedSettings,request.OperationId,token);
@@ -328,7 +330,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 }else{
                     if(!request.Network.ConfirmReplace)throw new IOException("移除配置需要明确确认");
                     await target.Worker.StopLocal(token);target.Info=target.Info with{Removed=true};WriteInfo(target);
-                    networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);target.Worker.Dispose();selected="";
+                    networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);if(target.Info.ConfigurationId.Length>0)retiredConfigurations[target.Info.ConfigurationId]=0;target.Worker.Dispose();selected="";
                 }
                 return new(true,"",Snapshot(selected),Operation:new(request.OperationId,request.Network.Action,"已完成",true,false));
             }
@@ -350,7 +352,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             }
             if((enrollment&&!reply.Ok||request.Network?.Action is "forget-network" or "delete-network" or "leave"||request.Network?.Action=="pair-cancel"&&target.Worker.ProfileSnapshot().RejoinCredential==null)&&target.Worker.SingleUiSnapshot() is {NetworkId:"",Pairing:null or {Active:false}}){
                 await target.Worker.StopLocal(token);target.Info=target.Info with{Removed=true};WriteInfo(target);
-                networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);target.Worker.Dispose();selected="";
+                networks.TryRemove(selected,out _);configurationErrors.TryRemove(selected,out _);if(target.Info.ConfigurationId.Length>0)retiredConfigurations[target.Info.ConfigurationId]=0;target.Worker.Dispose();selected="";
             }
             return reply with{Status=Snapshot(selected)};
             }finally{target.Actions.Release();}

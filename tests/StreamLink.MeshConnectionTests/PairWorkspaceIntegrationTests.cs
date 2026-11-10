@@ -36,7 +36,8 @@ static partial class Program
                     if(target!=null)while(target.NativeTarget==null)await Task.Delay(20,ct);
                     return await Task.WhenAll(entries.Select(async(e,i)=>{if(ExistingEntryResolver.Kind(e.Source)=="PKARR"){
                         using var client=pkarrFactory?.Invoke()??throw new IOException("fixture requires an isolated PKARR gateway");
-                        var record=await client.ResolveRecord(e.Source,mode,ct);return new EntryResolution(e.PeerSlot,i,"PKARR",record.Announcement.Endpoints,""){ExpiresAt=record.Announcement.Expires,AllowCached=false};
+                        try{var record=await client.ResolveRecord(e.Source,mode,ct);return new EntryResolution(e.PeerSlot,i,"PKARR",record.Announcement.Endpoints,""){ExpiresAt=record.Announcement.Expires,AllowCached=false,Pkarr=record};}
+                        catch(Exception ex)when(!ct.IsCancellationRequested&&ex is IOException or System.Security.Cryptography.CryptographicException or FormatException){return new EntryResolution(e.PeerSlot,i,"PKARR",[],"PKARR fixture lookup failed"){AllowCached=false};}
                     }return new EntryResolution(e.PeerSlot,i,"地址",[mappingFactory!=null&&IPEndPoint.TryParse(e.Source,out var literal)?literal.ToString():target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"");}));
                 }
             };

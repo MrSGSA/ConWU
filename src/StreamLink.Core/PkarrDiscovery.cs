@@ -9,9 +9,22 @@ using Org.BouncyCastle.Crypto.Signers;
 
 namespace StreamLink.Core;
 
-public sealed record PkarrAnnouncement(int Version,string Mode,long Expires,string[] Endpoints);
+public sealed record PkarrAnnouncement(int Version,string Mode,long Expires,string[] Endpoints)
+{
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? State {get;init;}
+}
 public sealed record PkarrRecord(long Sequence,PkarrAnnouncement Announcement,byte[] Packet);
-public sealed record PkarrStatus(bool Enabled,string State,string Source="",long PublishedAt=0,string Error=""){public string[] Endpoints {get;init;}=[];}
+public sealed record PkarrStatus(bool Enabled,string State,string Source="",long PublishedAt=0,string Error="")
+{
+    public string[] Endpoints {get;init;}=[];
+    public int AcceptedGateways {get;init;}
+    public int TotalGateways {get;init;}
+    public long PeerSeenAt {get;init;}
+    public long PeerExpires {get;init;}
+    public bool PeerAcknowledged {get;init;}
+    public string QueryError {get;init;}="";
+}
 
 // PKARR HTTP gateways carry discovery records only. The payload is a real
 // BEP44-signed DNS TXT answer; no member credentials or network secrets occur.
@@ -74,6 +87,7 @@ public static class PkarrPacket
     }
     static void Validate(PkarrAnnouncement value,long sequence,DateTimeOffset now)
     {
+        if(value.State is {Length:>512})throw new FormatException("PKARR 对端状态超过大小限制");
         if(value.Version!=1||value.Mode is not ("faketcp" or "udp")||value.Endpoints is not {Length:>0 and <=8}||value.Expires<=now.ToUnixTimeSeconds()||value.Expires>sequence/1_000_000+7200||sequence/1_000_000<now.AddHours(-2).ToUnixTimeSeconds())throw new FormatException("PKARR 公告已过期或格式无效");
         foreach(string endpoint in value.Endpoints)if(!IPEndPoint.TryParse(endpoint,out var address)||!ExistingEntryResolver.EndpointAddress(address.Address)||address.Port==0)throw new FormatException("PKARR 公告包含无效入口");
     }
@@ -85,25 +99,53 @@ public sealed class PkarrClient:IDisposable
     // gateway in protocol tests. Redirects never turn signed lookup into an
     // arbitrary URL fetch or forward a publication body elsewhere.
     public static readonly string[] DefaultGateways=["https://pkarr.pubky.app","https://pkarr.pubky.org"];
-    readonly HttpClient http;readonly bool owned;readonly string[] gateways;readonly TimeSpan requestTimeout;
-    static readonly object cacheGate=new();static readonly Dictionary<string,PkarrRecord> newest=new(StringComparer.Ordinal);
-    public PkarrClient(HttpClient? http=null,string[]? gateways=null,TimeSpan? requestTimeout=null){owned=http==null;this.http=http??new(new SocketsHttpHandler{AllowAutoRedirect=false,ConnectTimeout=TimeSpan.FromSeconds(5)}){Timeout=Timeout.InfiniteTimeSpan};this.gateways=(gateways??DefaultGateways).ToArray();this.requestTimeout=requestTimeout??TimeSpan.FromSeconds(8);if(this.requestTimeout<=TimeSpan.Zero||this.requestTimeout>TimeSpan.FromSeconds(30))throw new ArgumentException("PKARR 请求超时无效");if(this.gateways.Length is <1 or >4||this.gateways.Any(g=>!Uri.TryCreate(g,UriKind.Absolute,out var uri)||uri.Scheme!="https"||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0))throw new ArgumentException("PKARR 网关地址无效");}
+    static readonly HttpClient SharedHttp=new(new SocketsHttpHandler{AllowAutoRedirect=false,UseCookies=false,ConnectTimeout=TimeSpan.FromSeconds(5),PooledConnectionLifetime=TimeSpan.FromMinutes(5),PooledConnectionIdleTimeout=TimeSpan.FromMinutes(2),MaxConnectionsPerServer=4}){Timeout=Timeout.InfiniteTimeSpan};
+    // The shared resolver is a bounded connection/cache helper. Each active
+    // network additionally enforces its non-evicting protected checkpoint.
+    static readonly PkarrCheckpoints MemoryCheckpoints=new(allowVolatileEviction:true);
+    readonly HttpClient http;readonly string[] gateways;readonly TimeSpan requestTimeout;readonly Func<string[]>? gatewayProvider;
+    PkarrCheckpoints checkpoints;
+    public PkarrClient(HttpClient? http=null,string[]? gateways=null,TimeSpan? requestTimeout=null,PkarrCheckpoints? checkpoints=null,Func<string[]>? gatewayProvider=null){this.http=http??SharedHttp;this.checkpoints=checkpoints??MemoryCheckpoints;this.gateways=NormalizeGateways(gateways??DefaultGateways);this.gatewayProvider=gatewayProvider;this.requestTimeout=requestTimeout??TimeSpan.FromSeconds(8);if(this.requestTimeout<=TimeSpan.Zero||this.requestTimeout>TimeSpan.FromSeconds(30))throw new ArgumentException("PKARR 请求超时无效");}
+    public static string[] NormalizeGateways(string[] values){
+        if(values is null||values.Length is <1 or >4||values.Any(g=>g is null||g.Length>2048||g.Any(char.IsControl)||!Uri.TryCreate(g,UriKind.Absolute,out var uri)||uri.Scheme!="https"||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0))throw new ArgumentException("PKARR 网关地址无效");
+        return values.Select(g=>new Uri(g).AbsoluteUri.TrimEnd('/')).Distinct(StringComparer.Ordinal).ToArray();
+    }
+    string[] CurrentGateways()=>gatewayProvider==null?gateways:NormalizeGateways(gatewayProvider());
+    public void UseCheckpoints(PkarrCheckpoints value)=>checkpoints=value;
+    public int GatewayCount=>CurrentGateways().Length;
     public async Task<string[]> Resolve(string source,string mode,CancellationToken token)=>(await ResolveRecord(source,mode,token)).Announcement.Endpoints.Distinct().ToArray();
     public async Task<PkarrRecord> ResolveRecord(string source,string mode,CancellationToken token)
     {
         if(mode is not ("faketcp" or "udp"))throw new FormatException("PKARR 查询协议无效");
-        string key=PkarrPacket.KeyFromSource(source);var reads=await Task.WhenAll(gateways.Select(async gateway=>{
-            using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(requestTimeout);
+        string key=PkarrPacket.KeyFromSource(source);bool reconcile=checkpoints.Reconcile(key);
+        using var round=CancellationTokenSource.CreateLinkedTokenSource(token);round.CancelAfter(requestTimeout);
+        var reads=CurrentGateways().Select(async gateway=>{
+            var budget=round;
             try{using var response=await http.GetAsync(gateway.TrimEnd('/')+"/"+key,HttpCompletionOption.ResponseHeadersRead,budget.Token);response.EnsureSuccessStatusCode();await using var stream=await response.Content.ReadAsStreamAsync(budget.Token);byte[] bytes=new byte[1073];int used=0,n;while(used<bytes.Length&&(n=await stream.ReadAsync(bytes.AsMemory(used),budget.Token))>0)used+=n;if(used>1072)throw new IOException("PKARR 公告过大");return PkarrPacket.Read(key,bytes.AsSpan(0,used),DateTimeOffset.UtcNow);}catch(Exception ex)when(ex is HttpRequestException or IOException or FormatException or JsonException or CryptographicException or OperationCanceledException){return null;}
-        }));token.ThrowIfCancellationRequested();var record=reads.Where(r=>r!=null).OrderByDescending(r=>r!.Sequence).FirstOrDefault()??throw new IOException("PKARR 暂未取得有效公告，请检查主机发布状态或稍后重试");
-        if(reads.Any(r=>r!=null&&r.Sequence==record.Sequence&&!r.Packet.SequenceEqual(record.Packet)))throw new IOException("PKARR 网关返回相同序列号的冲突公告");
-        lock(cacheGate){if(newest.TryGetValue(key,out var prior)&&(record.Sequence<prior.Sequence||record.Sequence==prior.Sequence&&!record.Packet.SequenceEqual(prior.Packet)))throw new IOException("PKARR 网关返回了旧公告或冲突公告");if(newest.Count>=256&&!newest.ContainsKey(key))newest.Remove(newest.Keys.First());newest[key]=record;}
-        if(record.Announcement.Mode!=mode)throw new IOException("PKARR 公告协议与当前网络不一致，不自动切换协议");return record;
+        }).ToList();
+        var all=reads.ToArray();var found=new List<PkarrRecord>();long settle=long.MaxValue;
+        try{
+            while(reads.Count>0){
+                var remaining=settle==long.MaxValue?requestTimeout:TimeSpan.FromMilliseconds(Math.Max(1,settle-Environment.TickCount64));
+                Task<PkarrRecord?> ready;
+                try{ready=await Task.WhenAny(reads).WaitAsync(remaining,round.Token);}catch(OperationCanceledException)when(!token.IsCancellationRequested){break;}catch(TimeoutException){break;}
+                reads.Remove(ready);var record=await ready;
+                if(record==null)continue;
+                found.Add(record);
+                if(record.Announcement.Mode==mode&&checkpoints.Accepts(key,record)&&(!reconcile||checkpoints.Advances(key,record))&&settle==long.MaxValue)settle=Environment.TickCount64+250;
+                if(Environment.TickCount64>=settle)break;
+            }
+        }finally{round.Cancel();await Task.WhenAll(all);}
+        token.ThrowIfCancellationRequested();
+        var best=found.Where(r=>r.Announcement.Mode==mode&&checkpoints.Accepts(key,r)).OrderByDescending(r=>r.Sequence).FirstOrDefault();
+        if(best==null)throw new IOException(found.Any(r=>r.Announcement.Mode!=mode)?"PKARR 公告协议与当前网络不一致，不自动切换协议":"PKARR 暂未取得有效的新公告，请检查主机发布状态或稍后重试");
+        if(found.Any(r=>r.Sequence==best.Sequence&&!r.Packet.SequenceEqual(best.Packet)))throw new IOException("PKARR 网关返回相同序列号的冲突公告");
+        checkpoints.Remember(key,best);return best;
     }
     public async Task<int> Publish(string seed,byte[] packet,CancellationToken token)
     {
         string key=PkarrPacket.PublicKey(seed);PkarrPacket.Read(key,packet,DateTimeOffset.UtcNow);
-        var results=await Task.WhenAll(gateways.Select(async gateway=>{using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(requestTimeout);try{using var request=new HttpRequestMessage(HttpMethod.Put,gateway.TrimEnd('/')+"/"+key){Content=new ByteArrayContent(packet)};request.Content.Headers.ContentType=new("application/octet-stream");using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);return response.IsSuccessStatusCode;}catch(Exception ex)when(ex is HttpRequestException or IOException or OperationCanceledException){return false;}}));token.ThrowIfCancellationRequested();int accepted=results.Count(v=>v);if(accepted==0)throw new IOException("PKARR 公告暂未发布成功，现有入口与连接保留");return accepted;
+        var results=await Task.WhenAll(CurrentGateways().Select(async gateway=>{using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(requestTimeout);try{using var request=new HttpRequestMessage(HttpMethod.Put,gateway.TrimEnd('/')+"/"+key){Content=new ByteArrayContent(packet)};request.Content.Headers.ContentType=new("application/octet-stream");using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);return response.IsSuccessStatusCode;}catch(Exception ex)when(ex is HttpRequestException or IOException or OperationCanceledException){return false;}}));token.ThrowIfCancellationRequested();int accepted=results.Count(v=>v);if(accepted==0)throw new IOException("PKARR 公告暂未发布成功，现有入口与连接保留");return accepted;
     }
-    public void Dispose(){if(owned)http.Dispose();}
+    public void Dispose(){}
 }

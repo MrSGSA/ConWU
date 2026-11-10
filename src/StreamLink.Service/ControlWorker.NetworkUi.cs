@@ -203,6 +203,26 @@ public sealed partial class ControlWorker
                 if ((profile.Mesh != null || profile.Pair != null) && !action.ConfirmReplace) throw new IOException("替换网络需要明确确认");
                 if (action.Mode is not ("faketcp" or "udp")) throw new FormatException("网络承载无效");
                 RequireSavedProtocol(action.Mode);
+                if(networkContext&&action.Action=="create"&&action.LocalEnrollment){
+                    // In a pairwise network the host signs the identity and
+                    // admission locally. Discovery is an optional address book,
+                    // not an authority that must be online to create a network.
+                    var created=ProfileChanges.Copy(profile);
+                    created.Mesh=CreateUiIdentity(action.Service,action.CertificatePin,action.Mode);
+                    created.Pair=null;created.Enabled=false;created.Slot=1;created.LastEntry=0;
+                    created.RejoinHistory=[];created.RejoinCredential=null;
+                    created.SelectTransport(action.Mode=="udp"?"udp-only":"faketcp-only");
+                    created=PersonalFeature.EnhancedPreset(created);
+                    created.CoordinationService=action.Service;created.CoordinationPin=action.CertificatePin;
+                    created.DirectMode=false;created.NetworkCreatedHere=true;
+                    created.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                    created.ExistingEntries=created.ExistingEntries.Where(e=>e.PeerSlot is 0 or ExistingEntry.Network).ToArray();
+                    created.Validate();await PersonalPacketAdapters.Preflight(created,token);
+                    await CloseUiPair(token);await End(token);
+                    lock(sync){created.Enabled=true;store.Save(created);profile=created;}
+                    Begin();ResetUiPair("网络已创建，准备入口后可生成直连码");
+                    break;
+                }
                 SetOperation(operation,"检查 HTTPS 协调服务",true);
                 using (var check = new ShortPairClient(action.Service, action.CertificatePin)) await check.RequireMeshSupport(token,true,profile.RequestedVirtualIp.Length>0,action.Action=="join"&&profile.RejoinCredential!=null,!networkContext&&action.Action=="create",requirePairwise:networkContext);
                 if (action.Action == "create") {
@@ -277,6 +297,10 @@ public sealed partial class ControlWorker
                 await OpenUiRoom(pairing.Item1,pairing.Item2,token);break;
             case "pair-poll":
                 await PollUiPair(operation); break;
+            case "refresh-pkarr":
+                RequireUiNetwork(action.ExpectedNetwork);
+                if(!PkarrRendezvous.Uses(profile)&&!profile.PkarrPublish)throw new IOException("当前网络未启用 PKARR");
+                Interlocked.Exchange(ref pkarrRefreshRequested,1);meshRunner?.RequestDiscoveryRefresh();break;
             case "approve":
                 EnsurePkarrIdentity();
                 RequireUiNetwork(uiExpectedNetwork);
@@ -294,6 +318,11 @@ public sealed partial class ControlWorker
                     var admitted=ProfileChanges.Copy(profile);
                     string deviceId=PairingDevice();
                     string issued=admitted.Mesh!.Pair.Direct?DirectInvitation.Issue(admitted.Mesh,admitted.ExistingEntries,uiRoomState.RequestedIp,prior,deviceId):MeshIdentity.Export(prior==null?MeshIdentity.Issue(admitted.Mesh,uiRoomState.RequestedIp,deviceId):MeshIdentity.Replace(admitted.Mesh,prior,uiRoomState.RequestedIp,deviceId));
+                    if(PkarrRendezvous.Uses(admitted)){
+                        var guestMesh=DirectInvitation.Import(issued).Mesh;
+                        var member=guestMesh.Self;
+                        admitted.PkarrPeers=[new(admitted.Mesh.Pair.Network,member.Slot,member.Device,member.SigningKey,PkarrPacket.Source(PkarrRendezvous.MemberSeed(guestMesh)))];
+                    }
                     if(prior!=null){
                         int nextSlot=admitted.Mesh.Directory!.NextSlot-1;
                         admitted.ExistingEntries=admitted.ExistingEntries.Select(e=>e.PeerSlot==prior.Slot?e with{PeerSlot=nextSlot}:e).Distinct().ToArray();
@@ -430,19 +459,28 @@ public sealed partial class ControlWorker
                 if (action.Action == "leave" && profile.Mesh?.IsOwner == true) throw new IOException("创建者可暂时离开并保留网络；解散网络请使用删除网络");
                 if(!action.ConfirmReplace)throw new IOException("退出网络需要确认");
                 await CloseUiPair(token);
-                // Remove every issued member before deleting an owner's local
-                // credentials. Server-backed revocation must be published first;
-                // a failed publish leaves the network intact for a safe retry.
+                // Retire issued members before deleting the host credentials.
+                // Legacy many-member networks require server confirmation;
+                // pairwise networks keep local management independent of it.
                 if(profile.Mesh is {IsOwner:true,Directory:{} currentDirectory} owner && currentDirectory.Members.Length>1){
                     var retired=ProfileChanges.Copy(profile);
                     foreach(var member in currentDirectory.Members.Where(m=>m.Slot!=owner.Self.Slot))MeshIdentity.Revoke(retired.Mesh!,member.Slot);
                     retired.RejoinHistory=[];
-                    if(!owner.Pair.Direct){
+                    if(!owner.Pair.Direct&&!networkContext){
                         SetOperation(operation,"向协调服务器提交成员撤销",true);
                         using var client=new MeshDiscoveryClient(owner);
                         try{await SaveRevocation(client,retired.Mesh!.Directory!,token);}
                         catch(OperationCanceledException)when(!token.IsCancellationRequested){throw new IOException("协调服务器未及时确认成员撤销，当前网络仍保留。请检查 HTTPS 协调服务后重试删除。");}
                     }
+                    else if(!owner.Pair.Direct){
+                        using var cleanup=CancellationTokenSource.CreateLinkedTokenSource(token);cleanup.CancelAfter(1000);
+                        using var client=new MeshDiscoveryClient(owner);
+                        try{await client.SaveDirectory(retired.Mesh!.Directory!,cleanup.Token).WaitAsync(cleanup.Token);}
+                        catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or HttpRequestException or OperationCanceledException){Log("发现服务尚未确认清理，本机网络将按用户操作移除；不影响其他网络");}
+                    }
+                    // Pairwise membership is host-signed and can be retired
+                    // locally. Deliver closure to the live peer when possible;
+                    // an offline discovery service cannot prevent local removal.
                     if(meshRunner!=null)await meshRunner.NotifyDirectClosure(retired.Mesh!.Directory!,token);
                     lock(sync){store.Save(retired);profile=retired;meshRunner?.UpdateDirectory(retired.Mesh!.Directory!);}
                 }
@@ -539,6 +577,12 @@ public sealed partial class ControlWorker
             ConnectionSettings.Apply(next,inherited);next.ReceivedNetworkSettings=receivedSettings;
             next.JoinedEntrySources=next.JoinedEntrySources.Concat(receivedSettings.Entries).Distinct().Take(ExistingEntryResolver.MaximumSources).ToArray();
         }
+        if(PkarrRendezvous.Uses(next)){
+            next.PkarrSeed=PkarrRendezvous.MemberSeed(mesh);next.PkarrSequence=0;
+            var owner=mesh.Directory!.Members.Single(m=>m.Slot==mesh.IntroducerSlot);
+            var source=(receivedSettings?.Entries??next.JoinedEntrySources).FirstOrDefault(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")?.Source;
+            if(source!=null)next.PkarrPeers=[new(mesh.Pair.Network,owner.Slot,owner.Device,owner.SigningKey,source)];
+        }
         next.ExistingEntries=RuntimeEntries(next);
         next.Validate(); await PersonalPacketAdapters.Preflight(next, token);
         SetOperation(operation, "保存配对并启动网络", false); await End(token);
@@ -553,7 +597,7 @@ public sealed partial class ControlWorker
         ProfileChanges.PreserveLatestDirectory(profile,updated);
         if(updated.Mesh?.Directory is {} directory){
             updated.RejoinHistory=updated.RejoinHistory.Where(h=>directory.Members.Any(m=>m.Slot==h.CurrentSlot)).ToArray();
-            if(updated.Mesh.IsDecentralized)updated.ExistingEntries=RuntimeEntries(updated);
+            if(updated.Mesh.IsDecentralized||PkarrRendezvous.Uses(updated))updated.ExistingEntries=RuntimeEntries(updated);
         }
     }
 }

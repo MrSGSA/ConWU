@@ -70,11 +70,10 @@ ConWU · Linux
   network list                    列出网络操作 ID 和所引用的配置
   network status <网络ID>         查看指定网络状态
   network create <配置ID> [名称]   使用已保存配置创建网络
-  network join <配置ID> <配对码/邀请> 申请加入
+  network join <16位直连码>       申请加入，批准后自动获取设置
   network join-code <16位直连码>  无需预设配置，批准后自动获取设置
   创建和加入可在末尾加 --ip <虚拟IPv4>，留空自动分配
   network invite <网络ID>         生成 16 位直连码
-  network pair-code <网络ID>      生成六位配对码
   network poll|reject|cancel|leave|withdraw|close|resume <网络ID>
   network approve <网络ID> <校验码>
   network rename <网络ID> <名称>  修改本机显示名称
@@ -84,7 +83,8 @@ ConWU · Linux
   可在命令前使用 --data <已存在的绝对目录> 选择后台数据目录。
 
 使用同一后台用户操作（系统服务通常使用 sudo）。网络管理和本机协调是独立角色。
-首次使用可在本机设置的 Coordinator 中开启协调服务。连接参数使用 profiles/profile 命令管理。
+默认具备独立的协调服务能力；监听与证书可在本机设置的高级部分修改。
+首次加入只需主机生成的直连码。旧版 network join <配置ID> <配对码/邀请> 仍供脚本兼容。
 """);return;
     }
     if(args is ["remote-admin","set",var publicOrigin]){
@@ -160,7 +160,7 @@ ConWU · Linux
         string verb=args[1];
         if(verb=="list"&&args.Length==2){Print(state.Networks.Select(n=>new{id=n.Id,profileId=n.ConfigurationId,name=n.Name,networkId=n.Status.NetworkId,role=n.Status.IsOwner?"host":"guest",enabled=n.Status.NetworkEnabled,virtualIp=n.Status.VirtualIp,state=n.Status.State}));return;}
         if(verb=="status"&&args.Length==3){Print(await SelectNetwork(args[2]));return;}
-        if(verb=="join-code"&&args.Length==3){
+        if((verb is "join" or "join-code")&&args.Length==3){
             var compact=CompactDirectCode.Import(args[2]);
             Print(await Mutate(new UiControlRequest("network",Network:new("join-compact",Code:args[2],Mode:compact.Mode){AutoConfigure=true,RequestedVirtualIp=virtualIp})));return;
         }
@@ -171,7 +171,7 @@ ConWU · Linux
             if(!template.DirectMode&&string.IsNullOrWhiteSpace(template.Service))throw new IOException("请在配置中填写 HTTPS 协调服务，或选择无协调的直连邀请");
             string enrollmentAction=verb=="create"?(template.DirectMode?"create-direct":"create"):value.Length==6&&value.All(char.IsAsciiDigit)?(template.ConnectionSource=="existing"?"join-direct-short":"join"):value.StartsWith("SL6.")?"join-invitation":"join-entry";
             if(verb=="join"&&template.DirectMode&&template.ConnectionSource!="existing"&&enrollmentAction!="join-invitation")throw new IOException("无协调的自主入口请使用主机生成的直连邀请");
-            var request=new UiNetworkAction(enrollmentAction,template.Service,template.CertificatePin,enrollmentAction is "join-entry" or "create" or "create-direct"?"":value,Mode:template.PathSelection=="udp-only"?"udp":"faketcp"){RequestedVirtualIp=virtualIp,ConfigurationId=config.Id,Name=verb=="create"&&args.Length==4?args[3]:"",Entry=enrollmentAction=="join-entry"?value:""};
+            var request=new UiNetworkAction(enrollmentAction,template.Service,template.CertificatePin,enrollmentAction is "join-entry" or "create" or "create-direct"?"":value,Mode:template.PathSelection=="udp-only"?"udp":"faketcp"){LocalEnrollment=verb=="create",RequestedVirtualIp=virtualIp,ConfigurationId=config.Id,Name=verb=="create"&&args.Length==4?args[3]:"",Entry=enrollmentAction=="join-entry"?value:""};
             Print(await Mutate(new UiControlRequest("network",Network:request)));return;
         }
         bool needsValue=verb is "approve" or "rename" or "remove";

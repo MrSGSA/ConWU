@@ -24,6 +24,11 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--release-discovery"]){await ReleaseDiscovery();return;}
+        if(args is ["--pkarr-resilience"]){await PkarrResilience();return;}
+        if(args is ["--pkarr-lifecycle"]){await PkarrLifecycle();return;}
+        if(args is ["--pkarr-duplex"]){await PkarrDuplex();return;}
+        if(args is ["--pkarr-public-duplex",var publicDuplexReport]){await PkarrPublicDuplex(publicDuplexReport);return;}
         if(args is ["--compact-code"]){CompactCodeTests();return;}
         if(args is ["--compact-integration"]){await CompactInvitationIntegration();return;}
         if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}

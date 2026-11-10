@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.1.0-preview.9',[string]$MsiVersion='1.1.8',[switch]$PublicationApproved)
+      [string]$Version='1.1.0-rc.1',[string]$MsiVersion='1.1.9',[switch]$PublicationApproved)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -62,7 +62,7 @@ try {
  $files=@(Get-ChildItem -LiteralPath $runtime -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
  [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel=$(if($stable){'stable'}else{'engineering-candidate'});releaseGate='NotPassed';
   provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};
-  product='ConWU';autoGuestSettings=1;pkarrDiscovery='autonomous signed endpoint discovery; initial approved invitation; HTTPS gateways; no synchronized NAT exchange';discoveryPolicyVersion=1;integratedCoordinator=1;networkEntryIdentity=1;signedDnsDiscovery=0;dnsPublisher='Not included; external HTTPS/TXT subscriptions supported';
+  product='ConWU';autoGuestSettings=1;pkarrDiscovery='autonomous signed endpoint discovery; initial approved invitation; HTTPS gateways; no synchronized NAT exchange';discoveryPolicyVersion=1;integratedCoordinator=1;defaultCoordinatorRoleVersion=1;pairingUi='16-symbol compact direct code with local approval';networkEntryIdentity=1;signedDnsDiscovery=0;dnsPublisher='Not included; external HTTPS/TXT subscriptions supported';
   msiVersion=$MsiVersion;researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';directControl='authenticated MeshLink, no coordinator';directInvitationVersion=2;compactDirectCodeVersion=1;directShortPairing=1;peerMetadataReplication=1;equalMembership=0;pairNetworks=1;nodeIdentity=1;workspaceVersion=2;sharedConfigurationLibrary=1;sharedReceiverFrame='CNW1';freshInstallRequiredFrom='legacy single-network configurations only';maximumStoredNetworks=16;maximumEnabledNetworks=8;networkModel='independent two-device networks; creator approves the guest; bidirectional data; no inter-network forwarding';coordinatedNetworks='shared integrated HTTPS discovery; coordinator does not enroll itself; no business relay';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
  [ordered]@{schemaVersion=1;version=$Version;sourceCommit=$commit;entryPoint='ConWU.exe';runtimeDirectory='app';runtimeManifest='app/manifest.json';runtimeManifestSha256=(Get-FileHash (Join-Path $runtime 'manifest.json')).Hash;launcherSha256=(Get-FileHash (Join-Path $stage 'ConWU.exe')).Hash;installer='MSI';profileDirectory='%ProgramData%/StreamLink-PersonalFeature'}|ConvertTo-Json|Set-Content (Join-Path $stage 'layout-manifest.json') -Encoding utf8NoBOM
  $p=Start-Process -FilePath (Join-Path $runtime 'ConWU.exe') -ArgumentList @('--verify-bundle',"`"$(Join-Path $logs 'bundle-preflight.json')`"") -WindowStyle Hidden -Wait -PassThru

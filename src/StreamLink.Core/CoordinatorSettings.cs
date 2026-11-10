@@ -32,5 +32,6 @@ public sealed record CoordinatorStatus(bool Enabled, bool Running, string State,
 {
     public CoordinatorDiagnostic? External { get; init; }
     public DateTimeOffset? CertificateExpires { get; init; }
+    public string CertificatePin {get;init;}="";
     public DateTimeOffset? RetryAt { get; init; }
 }

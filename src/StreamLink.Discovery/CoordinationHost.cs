@@ -36,6 +36,7 @@ public sealed class CoordinationHost : IAsyncDisposable
     readonly X509Certificate2? certificate;
     public string InstanceId { get; }
     public DateTimeOffset? CertificateExpires => certificate == null ? null : new DateTimeOffset(certificate.NotAfter.ToUniversalTime());
+    public string CertificatePin=>certificate==null?"":Convert.ToHexString(SHA256.HashData(certificate.RawData));
     public bool IsStopping => app.Lifetime.ApplicationStopping.IsCancellationRequested || app.Lifetime.ApplicationStopped.IsCancellationRequested;
     CoordinationHost(WebApplication app, LinuxSynCapture? capture, FileStream lease, X509Certificate2? certificate, string instanceId) {
         this.app = app; this.capture = capture; this.lease = lease; this.certificate = certificate; InstanceId = instanceId;

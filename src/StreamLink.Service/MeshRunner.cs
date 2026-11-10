@@ -19,17 +19,30 @@ public sealed class MeshRunner
     readonly Action<MeshDirectory> remember;
     readonly MeshRuntimeServices services;
     public Func<ReadOnlyMemory<byte>,byte[]?>? DirectPairing {get;set;}
+    public Action<PkarrPeerBinding>? RememberPkarrPeer {get;set;}
+    public PkarrCheckpoints? PkarrCheckpoints {get;set;}
+    public Guid PkarrBootId {get;}=Guid.NewGuid();
+    PkarrPeerObservation? pkarrPeer;
+    sealed record PkarrPublication(Guid Entry);
+    PkarrPublication? pkarrPublication;
+    string pkarrQueryError="";
+    public PkarrPeerObservation? PkarrPeer=>Volatile.Read(ref pkarrPeer);
+    public string PkarrQueryError=>Volatile.Read(ref pkarrQueryError);
+    public bool HasHealthyPeers=>router?.Status() is {Length:>0} peers&&peers.All(p=>p.Connected);
+    public bool PkarrConfirmed=>PkarrPeer is {} peer&&peer.State.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&peer.State.AcknowledgedBoot==PkarrBootId&&Volatile.Read(ref pkarrPublication) is {} publication&&peer.State.AcknowledgedEntry==publication.Entry;
+    public void ObservePkarrPublication(Guid entry){if(Volatile.Read(ref pkarrPublication)?.Entry!=entry){Volatile.Write(ref pkarrPublication,new(entry));RequestDiscoveryRefresh();}}
     public MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string>? rememberStun = null)
         : this(profile, log, report, remember, rememberStun ?? (_ => { }), MeshRuntimeServices.Default) { }
     internal MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string> rememberStun, MeshRuntimeServices services)
     { this.profile = profile; mesh = profile.Mesh!; this.log = log; this.report = report; this.remember = remember; this.rememberStun = rememberStun; this.services = services; }
     readonly object gate = new();
-    int retryRequested, invitationEntryRequested, runStarted;
-    sealed record EntrySettings(string Source,string Manual,ExistingEntry[] Entries) {
+    int retryRequested, invitationEntryRequested, runStarted,lookupRefreshRequested;
+    public void RequestDiscoveryRefresh()=>Interlocked.Exchange(ref lookupRefreshRequested,1);
+    sealed record EntrySettings(string Source,string Manual,ExistingEntry[] Entries,string PkarrSeed,PkarrPeerBinding[] PkarrPeers,UiNetworkSettings? Settings,bool PkarrPublish,int PkarrStateVersion) {
         public override string ToString()=>"EntrySettings (credentials hidden)";
     }
     EntrySettings? pendingEntries;
-    public void UpdateEntries(DeviceProfile updated)=>Volatile.Write(ref pendingEntries,new(updated.ConnectionSource,updated.ManualEndpoint,updated.ExistingEntries.ToArray()));
+    public void UpdateEntries(DeviceProfile updated)=>Volatile.Write(ref pendingEntries,new(updated.ConnectionSource,updated.ManualEndpoint,updated.ExistingEntries.ToArray(),updated.PkarrSeed,updated.PkarrPeers.ToArray(),updated.SavedNetworkSettings,updated.PkarrPublish,updated.PkarrStateVersion));
     ExistingEntry[] preparedInvitationEntries=[];
     public ExistingEntry[] PreparedInvitationEntries=>Volatile.Read(ref preparedInvitationEntries).ToArray();
     bool stopping;
@@ -62,8 +75,13 @@ public sealed class MeshRunner
         // A serverless autonomous guest learns authenticated host hints during
         // approval. These must remain resolvable, including the PKARR public key,
         // without treating old LOCAL third-party inputs as autonomous entries.
-        var sources=profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly||mesh.Pair.Direct&&e.PeerSlot!=0)
-            .Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e).Distinct().ToArray();
+        var bindings=PkarrRendezvous.Uses(profile)&&profile.PkarrStateVersion==1?profile.PkarrPeers.Where(p=>PkarrRendezvous.Matches(p,mesh)).Select(p=>new ExistingEntry(p.Slot,p.Source)):[];
+        // An approved direct exchange can bootstrap a coordinated network too.
+        // Keep its network-bound host hints usable while the optional directory
+        // service is offline; the transport still authenticates membership.
+        bool approvedBootstrap=profile.JoinedEntryNetwork==mesh.Pair.Network;
+        var sources=bindings.Concat(profile.ExistingEntries.Where(e=>profile.UsesExistingEntriesOnly||(mesh.Pair.Direct||approvedBootstrap)&&e.PeerSlot!=0)
+            .Select(e=>e.PeerSlot==ExistingEntry.NetworkOwner?e with{PeerSlot=mesh.IntroducerSlot}:e)).Distinct().ToArray();
         return sources.Length==0&&profile.ManualEndpoint.Length>0?[new(0,profile.ManualEndpoint)]:sources;
     }
     MeshRouter? router;
@@ -140,7 +158,7 @@ public sealed class MeshRunner
         MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
         bool mappingReleaseFailed = false;
-        bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false;
+        bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false,pkarrWasHealthy=false;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -218,6 +236,10 @@ public sealed class MeshRunner
                 try { announcement = MeshMetadata.Open(mesh, member, envelope); }
                 catch (Exception ex) when (ex is CryptographicException or FormatException or JsonException) { continue; }
                 if (revisions.GetValueOrDefault(member.Slot) >= announcement.Revision) continue;
+                if(PkarrRendezvous.Uses(profile)&&announcement.PkarrSource is {} source){
+                    var binding=new PkarrPeerBinding(mesh.Pair.Network,member.Slot,member.Device,member.SigningKey,source);
+                    try{RememberPkarrPeer?.Invoke(binding);}catch(IOException ex){log("PKARR 对端绑定未保存："+ex.Message);}
+                }
                 revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
             }
             synchronizedVersion = synchronization.Version;
@@ -240,6 +262,9 @@ public sealed class MeshRunner
                 if(Interlocked.Exchange(ref pendingEntries,null) is {} edited){
                     if((edited.Source=="existing"||edited.Manual.Length>0)!=existingOnly)throw new IOException("连接方式已改变，需要重新建立连接以应用入口策略");
                     profile.ConnectionSource=edited.Source;profile.ManualEndpoint=edited.Manual;profile.ExistingEntries=edited.Entries;
+                    if(profile.PkarrSeed!=edited.PkarrSeed){profile.PkarrSeed=edited.PkarrSeed;lastPublish=0;}
+                    profile.PkarrPeers=edited.PkarrPeers;profile.SavedNetworkSettings=edited.Settings;profile.PkarrPublish=edited.PkarrPublish;profile.PkarrStateVersion=edited.PkarrStateVersion;
+                    if(!PkarrRendezvous.Uses(profile)){Volatile.Write(ref pkarrPeer,null);Volatile.Write(ref pkarrQueryError,"");}
                     var nextSources=EntrySources(profile,mesh);
                     if(!nextSources.SequenceEqual(externalSources)){
                         // Cache by the exact source AND owner, never the reused row index.
@@ -253,20 +278,51 @@ public sealed class MeshRunner
                     }
                 }
                 localExisting=LocalEntries();
+                if(PkarrRendezvous.Uses(profile)){bool healthy=HasHealthyPeers;if(pkarrWasHealthy&&!healthy)nextResolve=now;pkarrWasHealthy=healthy;}
+                if(Interlocked.Exchange(ref lookupRefreshRequested,0)!=0)nextResolve=0;
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
                 if(externalSources.Length>0 && resolving==null && now>=nextResolve){
                     resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);
                     // Long user intervals for ordinary subscriptions must not
                     // leave a short-lived signed locator dormant for hours.
                     int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source) is "DDNS" or "PKARR")?Math.Min(refreshSeconds,60):refreshSeconds;
+                    if(PkarrRendezvous.Uses(profile)&&externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR"))interval=Math.Max(5,Math.Min(refreshSeconds,PkarrConfirmed&&HasHealthyPeers?60:now-began>=120000?30:5));
                     nextResolve=now+interval*1000L;
                 }
                 if(resolving?.IsCompleted==true){
                     if(!resolvingSources.SequenceEqual(externalSources)){try{await resolving;}catch(Exception)when(!stop.IsCancellationRequested){}resolving=null;nextResolve=0;continue;}
-                    try {var previous=resolved;resolved=(await resolving).Select(item=>EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds())).ToArray();localExisting=LocalEntries();
+                    try {var previous=resolved;resolved=(await resolving).Select(item=>{
+                            if(item.Pkarr is {} signed){
+                                try{
+                                    string source=resolvingSources[item.Index].Source,key=PkarrPacket.KeyFromSource(source);
+                                    var verified=PkarrPacket.Read(key,signed.Packet,DateTimeOffset.UtcNow);
+                                    if(verified.Announcement.Mode!=profile.TransportMode)throw new FormatException("PKARR 公告协议不符");
+                                    PkarrCheckpoints?.Remember(key,verified);item=item with{Pkarr=verified};
+                                    if(PkarrRendezvous.Uses(profile)&&verified.Announcement.State!=null&&profile.PkarrPeers.FirstOrDefault(p=>p.Source==source&&PkarrRendezvous.Matches(p,mesh)) is {} binding){
+                                        var member=mesh.Directory!.Members.Single(m=>m.Slot==binding.Slot);
+                                        var state=PkarrRendezvous.Open(mesh,member,source,verified.Announcement);
+                                        if(pkarrPeer==null||state.ObservedAt>=pkarrPeer.State.ObservedAt){
+                                            Volatile.Write(ref pkarrPeer,new(source,state,DateTimeOffset.UtcNow.ToUnixTimeSeconds()));
+                                            // This state is authenticated by the pinned PKARR key
+                                            // and the member ECDH key. It never changes membership.
+                                            var known=announcements.GetValueOrDefault(member.Slot);
+                                            if(known?.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||known==null)
+                                                announcements[member.Slot]=new(member.Slot,member.Device,verified.Sequence,state.Expires,item.Endpoints.FirstOrDefault()??"",state.Name);
+                                        }
+                                    }
+                                    Volatile.Write(ref pkarrQueryError,"");
+                                }catch(Exception ex)when(ex is IOException or FormatException or CryptographicException or JsonException or ArgumentException){
+                                    Volatile.Write(ref pkarrQueryError,"PKARR 对端公告未通过本机验证");return item with{Endpoints=[],Pkarr=null,Error="PKARR 公告旧于本机记录、身份不符或状态无效",AllowCached=false};
+                                }
+                            }else if(item.Kind=="PKARR"&&item.Error.Length>0)Volatile.Write(ref pkarrQueryError,item.Error);
+                            return EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+                        }).ToArray();localExisting=LocalEntries();
                         string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}"));
                         if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址，仍需验证直连"));}
-                    }catch(Exception ex)when(!stop.IsCancellationRequested){log("已有入口解析失败，保留上次可用地址："+ex.GetType().Name);}
+                    }catch(Exception ex)when(!stop.IsCancellationRequested){
+                        if(externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")){Volatile.Write(ref pkarrQueryError,"PKARR 查询暂未完成");resolved=resolved.Select(r=>r.Kind=="PKARR"?r with{Endpoints=[],Pkarr=null,Error="PKARR 查询暂未完成",AllowCached=false}:r).ToArray();localExisting=LocalEntries();}
+                        log("入口解析暂未完成："+ex.GetType().Name);
+                    }
                     resolving=null;
                 }
                 // Source polling intervals may exceed a signed record's life.
@@ -347,7 +403,7 @@ public sealed class MeshRunner
                 if (!existingOnly && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
                     (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
-                    bool needed = mesh.Pair.Direct&&mesh.IsOwner || restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
+                    bool needed = mesh.Pair.Direct&&(mesh.IsOwner||PkarrRendezvous.Uses(profile)) || restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     if (needed) {
                         entryProbeRequested = entryProbeDeferred = false;
@@ -455,7 +511,8 @@ public sealed class MeshRunner
                     publishingEndpoint = candidate; lastPublish = now;
                     var announcement = new MeshAnnouncement(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
                         ExistingEndpoints=server!=null&&!server.Exited&&localExisting.Length>0?localExisting:null,
-                        ExistingEntryOnly=existingOnly
+                        ExistingEntryOnly=existingOnly,
+                        PkarrSource=PkarrRendezvous.Uses(profile)&&profile.PkarrSeed.Length>0?PkarrPacket.Source(profile.PkarrSeed):null
                     };
                     peerSynchronization?.Publish(announcement);
                     publishing = discovery.Publish(announcement, stop);

@@ -66,7 +66,7 @@ try {
   Run "pair-workspace-$case" 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',$argument) 300
  }
  Run 'pair-workspace-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-workspace-native',$native,(Join-Path $OutputDirectory 'pair-workspace-native')) 300
- foreach($newCase in @('auto-settings','auto-coordination','auto-entry-backup','pkarr-only','pkarr-publisher','pkarr-pairing','autonomous-invitation','existing-invitation','compact-code','compact-integration')) {
+ foreach($newCase in @('auto-settings','auto-coordination','auto-entry-backup','pkarr-only','pkarr-resilience','pkarr-lifecycle','pkarr-publisher','pkarr-pairing','pkarr-duplex','autonomous-invitation','existing-invitation','compact-code','compact-integration','release-discovery')) {
   Run $newCase 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',"--$newCase") 300
  }
  Run 'saved-settings' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')

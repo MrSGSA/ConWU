@@ -20,8 +20,8 @@ static partial class Program
         using var coordinator=new WorkspaceNode(Path.Combine(folder,"coordinator"),"Coordinator",coordinator:new(true,service,certificate,privateKey));
         bool ready=false;for(int i=0;i<100;i++){ready=(await coordinator.State()).Coordinator?.Running==true;if(ready)break;await Task.Delay(30);}Check(ready,"compact pairing fixture has a real TLS coordinator for the configured-policy case");
         using var gateway=new PublishingGateway();using var http=new HttpClient(gateway);PkarrClient PkarrFactory()=>new(http,["https://fixture.invalid"]);
-        foreach(string scenario in new[]{"existing-faketcp","existing-offline-pairing","autonomous-direct","autonomous-coordinated","autonomous-pkarr","existing-udp"}){
-            bool existing=scenario.StartsWith("existing"),coordinated=scenario=="autonomous-coordinated",pkarr=scenario=="autonomous-pkarr";
+        foreach(string scenario in new[]{"existing-faketcp","existing-offline-pairing","autonomous-direct","autonomous-coordinated","autonomous-coordinated-offline","autonomous-pkarr","existing-udp"}){
+            bool existing=scenario.StartsWith("existing"),coordinated=scenario.StartsWith("autonomous-coordinated"),offline=scenario=="autonomous-coordinated-offline",pkarr=scenario=="autonomous-pkarr";
             string mode=scenario.EndsWith("udp")?"udp":"faketcp",source=existing?"https://entry.example.invalid/current?token=read-only#streamlink1":"203.0.113.99:9999";
             using var blackhole=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);blackhole.Bind(new IPEndPoint(IPAddress.Loopback,0));
             WorkspaceNode? guestTarget=null;
@@ -31,10 +31,11 @@ static partial class Program
             using var guest=new WorkspaceNode(Path.Combine(folder,scenario,"guest"),"Guest",host,mappingFactory:existing?null:()=>new PreparedMapping(),pkarrFactory:pkarr?PkarrFactory:null);guestTarget=guest;
             try{
                 var config=(await host.State()).Configurations.Single();
-                var settings=config.Settings with{ConnectionSource=existing?"existing":"custom",DirectMode=!coordinated,DiscoveryMode=existing?"existing":coordinated?"coordinator":pkarr?"pkarr":"direct",Service=coordinated?service:"",CertificatePin=coordinated?pin:"",PairingService=scenario=="existing-offline-pairing"?"https://127.0.0.1:1/":"",ExistingEntries=[new(0,source)],PathSelection=mode=="udp"?"udp-only":"faketcp-only",CoordinatorBackup=false};
+                var settings=config.Settings with{ConnectionSource=existing?"existing":"custom",DirectMode=!coordinated,DiscoveryMode=existing?"existing":coordinated?"coordinator":pkarr?"pkarr":"direct",Service=coordinated?(offline?"https://127.0.0.1:1/":service):"",CertificatePin=coordinated&&!offline?pin:"",PairingService=scenario=="existing-offline-pairing"?"https://127.0.0.1:1/":"",ExistingEntries=[new(0,source)],PathSelection=mode=="udp"?"udp-only":"faketcp-only",CoordinatorBackup=false,PkarrGateways=pkarr?["https://custom-one.example.invalid","https://custom-two.example.invalid"]:PkarrClient.DefaultGateways.ToArray()};
                 var saved=await host.Ui(new("configuration",OperationId:Guid.NewGuid(),Configuration:new("save",config.Id,config.Name,config.Revision,settings)));Check(saved.Ok,saved.Error);
-                var created=await host.Action("",new(coordinated?"create":"create-direct",Service:settings.Service,CertificatePin:settings.CertificatePin,Mode:mode){Name=scenario,ConfigurationId=config.Id});Check(created.Ok,created.Error);
+                var created=await host.Action("",new(coordinated?"create":"create-direct",Service:settings.Service,CertificatePin:settings.CertificatePin,Mode:mode){LocalEnrollment=true,Name=scenario,ConfigurationId=config.Id});Check(created.Ok,created.Error);
                 string hostId=created.Status!.SelectedNetworkId,network=created.Status.NetworkId;
+                if(coordinated)Check(created.Status.Pairing?.Active!=true,"modern coordinated creation does not open a server short-code room");
                 await Until(()=>host.NativeTarget!=null,"compact host starts its selected receiver without replacing its network");
                 if(pkarr)await Until(()=>gateway.Packets.Count==1,"the isolated PKARR gateway has accepted the host announcement before reconnect assertions",18000);
                 var issued=await host.Action(hostId,new("invite-compact",ExpectedNetwork:network));Check(issued.Ok,issued.Error);
@@ -74,10 +75,18 @@ static partial class Program
                 Check(received.SavedNetworkSettings!.ConnectionSource==settings.ConnectionSource&&received.SavedNetworkSettings.DiscoveryMode==settings.DiscoveryMode&&received.Mesh!.Pair.Direct==!coordinated,"compact joining preserves the host discovery policy instead of silently changing the network");
                 Check(received.PathSelection==(mode=="udp"?"udp-only":"faketcp-only"),"the encoded protocol is applied explicitly with no fallback");
                 if(existing)Check(received.SavedNetworkSettings.ExistingEntries.Any(e=>e.Source==source)&&host.Probes==0&&guest.Probes==0,"original subscription sources arrive after approval and existing entries never start autonomous punching");
-                if(pkarr)Check(received.PkarrSeed.Length==0&&received.ExistingEntries.Any(e=>e.Source.StartsWith("pkarr://")),"PKARR discovery hints arrive after compact approval without disclosing the host publishing key");
+                if(pkarr)Check(received.PkarrSeed.Length>0&&received.PkarrPeers.Length==1&&received.PkarrPeers[0].Source!=PkarrPacket.Source(received.PkarrSeed)&&received.ExistingEntries.Any(e=>e.Source.StartsWith("pkarr://")),"PKARR discovery hints arrive after compact approval while the guest receives no host publishing key and uses its own identity");
+                if(pkarr)Check(received.SavedNetworkSettings.PkarrGateways.SequenceEqual(settings.PkarrGateways),"custom discovery gateways are delivered only inside the approved configuration");
                 var hs=await PairReady(host,20000,guest);var gs=(await guest.State()).Networks.Single();
                 guest.Adapters[network].Outgoing.Add(Packet(gs.Status.VirtualIp,hs.Networks.Single().Status.VirtualIp));
                 bool delivered=false;for(int i=0;i<100;i++){delivered=(await host.State()).Aggregate!.ReceivedBytes>=1280;if(delivered)break;await Task.Delay(30);}Check(delivered,"the approved compact relation carries one authenticated inner packet");
+                if(offline){
+                    var clock=System.Diagnostics.Stopwatch.StartNew();
+                    var removed=await host.Action(hostId,new("delete-network",ExpectedNetwork:network,ConfirmReplace:true));
+                    Check(removed.Ok&&removed.Status!.Networks.Length==0&&clock.Elapsed<TimeSpan.FromSeconds(8),"offline discovery cannot block host deletion of its compact-paired network");
+                    var left=await guest.Action(guestId,new("leave",ExpectedNetwork:network,ConfirmReplace:true));
+                    Check(left.Ok&&left.Status!.Networks.Length==0,"the guest can leave locally while the selected discovery server is offline");
+                }
             }finally{await guest.Worker.StopLocal();await host.Worker.StopLocal();}
         }
         // Compact codes reuse this room implementation, including its expiry,

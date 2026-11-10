@@ -46,6 +46,19 @@ public sealed partial class ControlWorker
         }
         try {
             while (!token.IsCancellationRequested) {
+                if(automaticCoordinator){
+                    CoordinatorSettings? pending;lock(sync)pending=profile.CoordinatorRoleVersion<1?profile.Coordinator:null;
+                    if(pending!=null){
+                        try{
+                            var prepared=CoordinatorProvisioning.Enable(store,pending);
+                            lock(sync){if(profile.CoordinatorRoleVersion<1&&profile.Coordinator==pending){
+                                var next=ProfileChanges.Copy(profile);next.Coordinator=prepared;next.CoordinatorRoleVersion=1;store.Save(next);profile=next;PublishReply();
+                            }}
+                        }catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or FormatException){
+                            Failed(ex);await Task.Delay(15000,token);continue;
+                        }
+                    }
+                }
                 CoordinatorSettings desired; lock (sync) desired = profile.Coordinator;
                 // Changing the advertised probe URL does not restart the listener
                 // or discard pending pairing rooms.
@@ -59,7 +72,7 @@ public sealed partial class ControlWorker
                     try {
                         desired.Validate();
                         Volatile.Write(ref coordinatorStatus, new(true, false, "正在启动", []));
-                        host = CoordinationHost.Create(new(Path.Combine(ProfileStore.Root, "coordination"), desired.ListenUrl,
+                        host = CoordinationHost.Create(new(Path.Combine(store.DirectoryPath, "coordination"), desired.ListenUrl,
                             desired.CertificateFile, desired.CertificateKeyFile, desired.TrustCloudflare){ManagementHandler=RemoteManagement});
                         await host.Start(token);
                         Log("本机协调服务已启动；成员身份与数据连接独立运行");
@@ -85,7 +98,7 @@ public sealed partial class ControlWorker
                     string state = host.CertificateExpires is { } expires && expires <= DateTimeOffset.UtcNow.AddDays(7)
                         ? expires <= DateTimeOffset.UtcNow ? "运行中；监听证书已过期，请更换证书并重启协调角色" : "运行中；监听证书将在 7 天内过期"
                         : "运行中";
-                    Volatile.Write(ref coordinatorStatus, new(true, true, state, host.Addresses) { External = external, CertificateExpires = host.CertificateExpires });
+                    Volatile.Write(ref coordinatorStatus, new(true, true, state, host.Addresses) { External = external, CertificateExpires = host.CertificateExpires,CertificatePin=host.CertificatePin });
                 }
                 await Task.Delay(1000, token);
             }

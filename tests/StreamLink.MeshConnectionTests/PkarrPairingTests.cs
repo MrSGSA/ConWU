@@ -42,18 +42,24 @@ static partial class Program
             }
             Check(received?.Status.ReceivedNetworkSettings?.DiscoveryMode==mode&&received.Status.Settings?.DiscoveryMode==mode&&received.Status.Settings.PkarrPublish==false,"encrypted approval preserves the selected discovery mode independently of publishing permission");
             var saved=new ProfileStore(Path.Combine(guest.Store.DirectoryPath,"networks",guestId),guest.Store).LoadForMaintenance();
-            Check(saved.PkarrSeed.Length==0&&saved.ExistingEntries.Any(e=>e.Source=="203.0.113.54:45460")&&saved.ExistingEntries.Any(e=>e.Source.StartsWith("pkarr://"))==pkarr,"guest persists the signed invitation's initial entry without receiving any publishing private key");
-            bool connected=false;for(int attempt=0;attempt<120;attempt++){connected=(await guest.State()).Aggregate!.ConnectedNetworks==1;if(connected)break;await Task.Delay(100);}
-            Check(connected,"autonomous relation connects through real loopback MeshLink with injected physical transports");
+            Check((pkarr?saved.PkarrSeed.Length>0&&PkarrPacket.Source(saved.PkarrSeed)!=invitation.Entries.Single(e=>e.Source.StartsWith("pkarr://")).Source:saved.PkarrSeed.Length==0)&&saved.ExistingEntries.Any(e=>e.Source=="203.0.113.54:45460")&&saved.ExistingEntries.Any(e=>e.Source.StartsWith("pkarr://"))==pkarr,"guest persists the approved initial entry and creates only its independent publishing identity in PKARR mode");
+            await PairReady(host,12000,guest);
+            Check(true,"autonomous relation connects through real loopback MeshLink with injected physical transports");
             if(existing)Check(host.Probes==0&&guest.Probes==0,"existing-entry invitation and automatic settings never start autonomous hole punching");
-            if(pkarr){mapping.Change(new(IPAddress.Parse("203.0.113.55"),45461));
-                await Until(()=>gateway.Packets.Values.Any(p=>PkarrPacket.Read(PkarrPacket.KeyFromSource(invitation.Entries.Single(e=>e.Source.StartsWith("pkarr://")).Source),p,DateTimeOffset.UtcNow).Announcement.Endpoints.Contains("203.0.113.55:45461")),"a changed autonomous candidate is published under the original discovery key",18000);}
+            if(pkarr){
+                // Publication is asynchronous to route readiness. Wait for both
+                // identities before a restart can interrupt the negotiation.
+                await Until(()=>gateway.Packets.Count==2,"both independently approved publishers finish their first record",18000);
+                mapping.Change(new(IPAddress.Parse("203.0.113.55"),45461));
+                string hostKey=PkarrPacket.KeyFromSource(invitation.Entries.Single(e=>e.Source.StartsWith("pkarr://")).Source);
+                await Until(()=>gateway.Packets.TryGetValue(hostKey,out var packet)&&PkarrPacket.Read(hostKey,packet,DateTimeOffset.UtcNow).Announcement.Endpoints.Contains("203.0.113.55:45461"),"a changed autonomous candidate is published under the original discovery key",18000);
+            }
             await guest.Worker.StopLocal();guest.Dispose();guestClosed=true;
             targets.Clear();using var reopened=new WorkspaceNode(guest.Store.DirectoryPath,"ignored",host,listenPort:45210,reuseProfile:true,pkarrFactory:Factory,mappingFactory:()=>new PreparedMapping(),transportOverride:Transport);
             try{
                 bool recovered=false;for(int attempt=0;attempt<300;attempt++){recovered=(await reopened.State()).Aggregate!.ConnectedNetworks==1;if(recovered)break;await Task.Delay(100);}
                 Check(recovered&&targets.Contains(mapping.PublicEndpoint.ToString()),"guest restart reconnects through the current reachable entry; stale physical candidates cannot bypass the emulated mapping");
-                Check(gateway.Packets.Count==(pkarr?1:0),"joining and guest restart never start an unselected publisher or a competing host record");
+                Check(gateway.Packets.Count==(pkarr?2:0),"PKARR host and guest keep distinct records; other modes start no publisher");
             }finally{await reopened.Worker.StopLocal();}
         }finally{if(!guestClosed){await guest.Worker.StopLocal();guest.Dispose();}await host.Worker.StopLocal();}
         Console.WriteLine($"PASS {checks} {mode} approval/reconnect checks; isolated gateway and loopback transport, no WAN NAT claim");

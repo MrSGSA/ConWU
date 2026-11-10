@@ -2,7 +2,12 @@ namespace StreamLink.Core;
 
 // User preferences can be shared. Enrollment, identity, allocated addresses and
 // runtime observations always remain in the individual network profile.
-public sealed record ConnectionConfiguration(string Id,string Name,long Revision,UiNetworkSettings Settings);
+public sealed record ConnectionConfiguration(string Id,string Name,long Revision,UiNetworkSettings Settings)
+{
+    // Modern WebUI settings belong to their network. Explicit CLI templates
+    // retain their own lifecycle, including when their last user is removed.
+    public bool RetireWithNetwork {get;init;}
+}
 public sealed record UiConfigurationUse(string NetworkId,string Name,bool Enabled,string State,string Error);
 public sealed record UiConfigurationDto(string Id,string Name,long Revision,UiNetworkSettings Settings,UiConfigurationUse[] Networks);
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
@@ -17,7 +22,11 @@ public static class ConnectionSettings
         settings.ConnectionSource=="existing"?"existing":settings.DirectMode?(settings.PkarrPublish?"pkarr":"direct"):"coordinator";
     public static UiNetworkSettings Normalize(UiNetworkSettings settings,bool forGuest=false)
     {
-        if(settings is null||settings.Service is null||settings.CertificatePin is null||settings.PairingService is null||settings.PairingCertificatePin is null||settings.ManualEndpoint is null||settings.RequestedVirtualIp is null||settings.Coordinator is null||settings.ExistingEntries is null||settings.ExistingEntries.Any(e=>e==null||e.Source==null))throw new FormatException("连接配置内容无效");
+        if(settings is null||settings.Service is null||settings.CertificatePin is null||settings.PairingService is null||settings.PairingCertificatePin is null||settings.ManualEndpoint is null||settings.RequestedVirtualIp is null||settings.Coordinator is null||settings.PkarrGateways is null||settings.PkarrGateways.Any(g=>g is null)||settings.ExistingEntries is null||settings.ExistingEntries.Any(e=>e==null||e.Source==null))throw new FormatException("连接配置内容无效");
+        if(Discovery(settings)=="pkarr"){
+            try{settings=settings with{PkarrGateways=PkarrClient.NormalizeGateways(settings.PkarrGateways)};}
+            catch(ArgumentException ex){throw new FormatException("请填写 1–4 个有效的 HTTPS PKARR 发现网关",ex);}
+        }
         if(settings.PairingService.Length>2048||settings.PairingCertificatePin.Length>128||settings.PairingService.Any(char.IsControl))throw new FormatException("配对协调地址或证书指纹无效");
         if(settings.ConnectionSource=="existing"&&settings.PairingService.Length>0){
             if(!Uri.TryCreate(settings.PairingService,UriKind.Absolute,out var uri)||uri.Scheme!="https"||uri.UserInfo.Length>0||uri.Query.Length>0||uri.Fragment.Length>0)throw new FormatException("短配对码需要有效的 HTTPS 协调地址");

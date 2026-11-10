@@ -25,6 +25,7 @@ public sealed class DeviceProfile
     public bool Enabled { get; set; }
     public bool AutoStart {get;set;}=true;
     public CoordinatorSettings Coordinator {get;set;}=new();
+    public int CoordinatorRoleVersion {get;set;}
     public CloudflareDdnsSettings Ddns {get;set;}=new();
     // Protected by the profile store; never included in UiNetworkSettings.
     public string CloudflareDdnsToken {get;set;}="";
@@ -49,6 +50,8 @@ public sealed class DeviceProfile
     public bool PkarrPublish {get;set;}
     public string PkarrSeed {get;set;}="";
     public long PkarrSequence {get;set;}
+    public PkarrPeerBinding[] PkarrPeers {get;set;}=[];
+    public int PkarrStateVersion {get;set;}
     public string SavedPeerEntryNetwork { get; set; } = "";
     // Enrollment observations are not user settings. A join may learn a seed
     // without overwriting saved sources, and saves must not erase that seed.
@@ -150,6 +153,9 @@ public sealed class DeviceProfile
         ExistingEntryResolver.Validate(JoinedEntrySources);
         if(PkarrPublish&&UsesExistingEntriesOnly&&ExistingEntries.Count(e=>e.PeerSlot==0)>=ExistingEntryResolver.MaximumSources)throw new FormatException("启用 PKARR 时最多填写 11 项本机入口，请为自动发现地址保留一项空间");
         if(PkarrSeed is null||PkarrSequence<0)throw new FormatException("PKARR 本机身份无效");
+        if(PkarrStateVersion is <0 or >1)throw new FormatException("PKARR 对端状态版本无效");
+        if(PkarrPeers is null||PkarrPeers.Length>8||PkarrPeers.Any(p=>p is null||!Guid.TryParseExact(p.Network,"N",out _)||p.Slot is <1 or >254||!Guid.TryParseExact(p.Device,"N",out _)||p.SigningKey is not {Length:>0 and <=512})||PkarrPeers.Select(p=>(p.Network,p.Slot)).Distinct().Count()!=PkarrPeers.Length)throw new FormatException("PKARR 对端绑定无效");
+        foreach(var peer in PkarrPeers)PkarrPacket.KeyFromSource(peer.Source);
         if(PkarrSeed.Length>0){try{if(Convert.FromBase64String(PkarrSeed).Length!=32)throw new FormatException();}catch(FormatException){throw new FormatException("PKARR 本机密钥格式无效");}}
         if(JoinedEntryNetwork==null||JoinedEntryNetwork.Length>0&&!Guid.TryParseExact(JoinedEntryNetwork,"N",out _))throw new FormatException("已加入网络的入口身份无效");
         if(EntryRefreshSeconds is <1 or >86400)throw new FormatException("订阅更新间隔需为 1 秒至 24 小时");
