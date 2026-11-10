@@ -1,5 +1,0 @@
-<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><TargetFramework>net10.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
-  <ItemGroup><ProjectReference Include="../StreamLink.Core/StreamLink.Core.csproj" /></ItemGroup>
-  <ItemGroup><Compile Include="../../drivers/CatalogTrust.cs" Link="CatalogTrust.cs" /></ItemGroup>
-</Project>
