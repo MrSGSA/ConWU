@@ -88,7 +88,7 @@ public static class PkarrPacket
     static void Validate(PkarrAnnouncement value,long sequence,DateTimeOffset now)
     {
         if(value.State is {Length:>512})throw new FormatException("PKARR 对端状态超过大小限制");
-        if(value.Version!=1||value.Mode is not ("faketcp" or "udp")||value.Endpoints is not {Length:>0 and <=8}||value.Expires<=now.ToUnixTimeSeconds()||value.Expires>sequence/1_000_000+7200||sequence/1_000_000<now.AddHours(-2).ToUnixTimeSeconds())throw new FormatException("PKARR 公告已过期或格式无效");
+        if(value.Version!=1||!TransportModes.Valid(value.Mode)||value.Endpoints is not {Length:>0 and <=8}||value.Expires<=now.ToUnixTimeSeconds()||value.Expires>sequence/1_000_000+7200||sequence/1_000_000<now.AddHours(-2).ToUnixTimeSeconds())throw new FormatException("PKARR 公告已过期或格式无效");
         foreach(string endpoint in value.Endpoints)if(!IPEndPoint.TryParse(endpoint,out var address)||!ExistingEntryResolver.EndpointAddress(address.Address)||address.Port==0)throw new FormatException("PKARR 公告包含无效入口");
     }
 }
@@ -116,7 +116,7 @@ public sealed class PkarrClient:IDisposable
     public async Task<string[]> Resolve(string source,string mode,CancellationToken token)=>(await ResolveRecord(source,mode,token)).Announcement.Endpoints.Distinct().ToArray();
     public async Task<PkarrRecord> ResolveRecord(string source,string mode,CancellationToken token)
     {
-        if(mode is not ("faketcp" or "udp"))throw new FormatException("PKARR 查询协议无效");
+        if(!TransportModes.Valid(mode))throw new FormatException("PKARR 查询协议无效");
         string key=PkarrPacket.KeyFromSource(source);bool reconcile=checkpoints.Reconcile(key);
         using var round=CancellationTokenSource.CreateLinkedTokenSource(token);round.CancelAfter(requestTimeout);
         var reads=CurrentGateways().Select(async gateway=>{

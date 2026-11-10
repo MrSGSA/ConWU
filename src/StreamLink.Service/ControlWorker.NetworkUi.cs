@@ -51,6 +51,7 @@ public sealed partial class ControlWorker
     {
         for(int attempt=0;attempt<32;attempt++){
             var mesh=MeshIdentity.Create(service,pin,mode,profile.RequestedVirtualIp,direct,pairwise:networkContext,deviceId:networkContext?profile.Device:"");
+            if(mode=="https")mesh.Pair=mesh.Pair with{TransportKeyPin=StreamMeshTransport.CertificatePin(StreamTransportIdentity.Get())};
             var candidate=ProfileChanges.Copy(profile);candidate.Mesh=mesh;candidate.Enabled=false;
             try{
                 store.ValidateNetworkProfile?.Invoke(candidate);
@@ -169,13 +170,13 @@ public sealed partial class ControlWorker
             case "create-direct":
                 RequireUiNetwork(action.ExpectedNetwork);
                 if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("请先删除或退出当前网络");
-                if(action.Mode is not ("faketcp" or "udp"))throw new FormatException("网络承载无效");
+                if(!TransportModes.Valid(action.Mode))throw new FormatException("网络承载无效");
                 RequireSavedProtocol(action.Mode);
                 var directNext=PersonalFeature.EnhancedPreset(ProfileChanges.Copy(profile));
                 directNext.Mesh=CreateUiIdentity("","",action.Mode,direct:true);directNext.RejoinHistory=[];directNext.RejoinCredential=null;
                 directNext.Pair=null;directNext.Enabled=false;directNext.Slot=1;directNext.LastEntry=0;
                 directNext.DirectMode=true;
-                directNext.SelectTransport(action.Mode=="udp"?"udp-only":"faketcp-only");
+                directNext.SelectTransport(TransportModes.Policy(action.Mode));
                 directNext.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();directNext.NetworkCreatedHere=true;
                 directNext.ExistingEntries=directNext.ExistingEntries.Where(e=>e.PeerSlot is 0 or ExistingEntry.Network).ToArray();
                 directNext.Validate();await PersonalPacketAdapters.Preflight(directNext,token);
@@ -193,7 +194,7 @@ public sealed partial class ControlWorker
                 var joined=PersonalFeature.EnhancedPreset(ProfileChanges.Copy(profile));
                 joined.Mesh=imported.Mesh;joined.Pair=null;joined.Enabled=false;joined.Slot=1;joined.LastEntry=0;joined.RejoinHistory=[];joined.RejoinCredential=null;
                 joined.ConnectionSource="existing";joined.DirectMode=true;
-                joined.SelectTransport(imported.Mesh.Pair.Mode=="udp"?"udp-only":"faketcp-only");
+                joined.SelectTransport(TransportModes.Policy(imported.Mesh.Pair.Mode));
                 joined.ExistingEntries=ExistingEntry.ForJoinedNetwork(joined.ExistingEntries).Concat(imported.Entries).Distinct().ToArray();
                 joined.NetworkEstablishedAt=DateTimeOffset.UtcNow.ToUnixTimeSeconds();joined.NetworkCreatedHere=false;
                 joined.Validate();await PersonalPacketAdapters.Preflight(joined,token);
@@ -204,7 +205,7 @@ public sealed partial class ControlWorker
             case "join":
                 RequireUiNetwork(action.ExpectedNetwork);
                 if ((profile.Mesh != null || profile.Pair != null) && !action.ConfirmReplace) throw new IOException("替换网络需要明确确认");
-                if (action.Mode is not ("faketcp" or "udp")) throw new FormatException("网络承载无效");
+                if (!TransportModes.Valid(action.Mode)) throw new FormatException("网络承载无效");
                 RequireSavedProtocol(action.Mode);
                 if(networkContext&&action.Action=="create"&&action.LocalEnrollment){
                     // In a pairwise network the host signs the identity and
@@ -214,7 +215,7 @@ public sealed partial class ControlWorker
                     created.Mesh=CreateUiIdentity(action.Service,action.CertificatePin,action.Mode);
                     created.Pair=null;created.Enabled=false;created.Slot=1;created.LastEntry=0;
                     created.RejoinHistory=[];created.RejoinCredential=null;
-                    created.SelectTransport(action.Mode=="udp"?"udp-only":"faketcp-only");
+                    created.SelectTransport(TransportModes.Policy(action.Mode));
                     created=PersonalFeature.EnhancedPreset(created);
                     created.CoordinationService=action.Service;created.CoordinationPin=action.CertificatePin;
                     created.DirectMode=false;created.NetworkCreatedHere=true;
@@ -232,7 +233,7 @@ public sealed partial class ControlWorker
                     var mesh = CreateUiIdentity(action.Service, action.CertificatePin, action.Mode);
                     var next = ProfileChanges.Copy(profile);
                     next.Mesh = mesh; next.Pair = null; next.Enabled = false; next.Slot = 1; next.LastEntry = 0;next.RejoinHistory=[];next.RejoinCredential=null;
-                    next.SelectTransport(action.Mode == "udp" ? "udp-only" : "faketcp-only");
+                    next.SelectTransport(TransportModes.Policy(action.Mode));
                     next = PersonalFeature.EnhancedPreset(next);
                     next.CoordinationService=action.Service;next.CoordinationPin=action.CertificatePin;
                     next.DirectMode=false;
@@ -417,7 +418,7 @@ public sealed partial class ControlWorker
                 break;
             case "resolve-entries":
                 var sources=action.Settings??throw new FormatException("请先填写入口");
-                Volatile.Write(ref uiEntryResolutions,await uiEntryResolver.Value.Resolve(sources.ExistingEntries,sources.PathSelection=="udp-only"?"udp":"faketcp",token));
+                Volatile.Write(ref uiEntryResolutions,await uiEntryResolver.Value.Resolve(sources.ExistingEntries,TransportModes.Mode(sources.PathSelection),token));
                 break;
             case "startup-enable":
             case "startup-disable":
@@ -540,6 +541,7 @@ public sealed partial class ControlWorker
         else if(invitation.StartsWith("SL5.")){var importedDirect=DirectInvitation.Import(invitation);mesh=importedDirect.Mesh;enrollmentEntries=importedDirect.Entries;}
         else{mesh=MeshIdentity.Import(invitation);enrollmentEntries=[];}
         if(networkContext&&mesh.Directory?.Pairwise!=true)throw new IOException("目标不是新版双机网络，请在两端新版重新创建连接");
+        if(directPair&&mesh.Pair.Mode=="https"&&(uiPairClient is not DirectPairClient secure||mesh.Pair.TransportKeyPin is not {Length:64} keyPin||!string.Equals(secure.PeerCertificatePin,keyPin,StringComparison.OrdinalIgnoreCase)))throw new CryptographicException("HTTPS 实际证书与主机批准的设备身份不符，加入授权尚未保存");
         if(networkContext&&(!NodeIdentityProof.Valid(uiRoom.Identity,uiRoom.HostCommitment)||mesh.Self.Device!=profile.Device||mesh.Directory!.Members.Single(m=>m.Slot==1).Device!=uiRoom.Identity!.DeviceId))throw new CryptographicException("批准的网络设备身份与本次配对不符");
         if(profile.AutoConfigureJoin){if(receivedSettings==null)throw new IOException("主机或协调服务版本暂不支持自动获取网络设置，请更新后重新申请");}
         else RequireSavedProtocol(mesh.Pair.Mode);
@@ -560,7 +562,7 @@ public sealed partial class ControlWorker
         if(directPair&&uiApprovalExpected is {} signedRoute&&(mesh.Pair.Direct!=(signedRoute.Service==null)||signedRoute.Service!=null&&(!Uri.TryCreate(mesh.Pair.Service,UriKind.Absolute,out var approvedService)||approvedService!=new Uri(signedRoute.Service)||!mesh.Pair.CertificatePin.Equals(signedRoute.CertificatePin,StringComparison.OrdinalIgnoreCase))))throw new CryptographicException("获批的网络协调身份与直连邀请不符");
         if(directPair&&uiBackupExpected is {} backupExpected&&(mesh.Pair.Network!=backupExpected.Entry.Network||mesh.OwnerKey!=backupExpected.OwnerKey||mesh.Directory?.Members.Any(m=>m.Slot==1&&m.Device==backupExpected.Host.Device)!=true))throw new CryptographicException("获批的网络身份与备用协调公告不符");
         var next = ProfileChanges.Copy(profile); next.Mesh = mesh; next.Pair = null; next.Enabled = false; next.Slot = 1; next.LastEntry = 0;next.RejoinCredential=null;next.RejoinHistory=[];
-        next.SelectTransport(mesh.Pair.Mode == "udp" ? "udp-only" : "faketcp-only");
+        next.SelectTransport(TransportModes.Policy(mesh.Pair.Mode));
         next = PersonalFeature.EnhancedPreset(next);
         next.CoordinationService=directPair&&profile.SavedNetworkSettings is {CoordinatorBackup:true} backupSettings?backupSettings.Service:uiPairService;
         next.CoordinationPin=directPair&&profile.SavedNetworkSettings is {CoordinatorBackup:true} backupPinSettings?backupPinSettings.CertificatePin:uiPairPin;

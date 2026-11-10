@@ -14,7 +14,7 @@ public enum TraversalFailure
     MtuInsufficient, CandidateStale, BudgetExhausted, QualityInsufficient,
     NoDirectPathWithinBudget, EnvironmentUnavailable
 }
-public enum PathPolicy { PreferFakeTcp, FakeTcpOnly, AutoQuality, UdpOnly }
+public enum PathPolicy { PreferFakeTcp, FakeTcpOnly, AutoQuality, UdpOnly, TcpOnly, HttpsOnly }
 public enum PathQualification { Reachable, Authenticated, MtuQualified, QualityObserved, Selected }
 
 public sealed record TraversalCandidate(Guid CandidateId, long Version, TraversalProfile Profile,

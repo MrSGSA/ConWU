@@ -107,15 +107,16 @@ public sealed class DeviceProfile
     public bool LegacyEgressPacing { get; set; }
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
-        "auto-quality" => PathPolicy.AutoQuality, "udp-only" => PathPolicy.UdpOnly, _ => throw new FormatException("选路策略无效")
+        "auto-quality" => PathPolicy.AutoQuality, "udp-only" => PathPolicy.UdpOnly,
+        "tcp-only"=>PathPolicy.TcpOnly,"https-only"=>PathPolicy.HttpsOnly,_ => throw new FormatException("选路策略无效")
     }, AllowUdpFallback);
     public void SelectTransport(string policy)
     {
-        if(policy is not ("faketcp-only" or "udp-only")) throw new FormatException("请选择 FakeTCP 或直接 UDP；不支持自动回退");
+        if(policy is not ("faketcp-only" or "udp-only" or "tcp-only" or "https-only")) throw new FormatException("请选择固定传输协议；不支持自动回退");
         PathSelection=policy; AllowUdpFallback=false; TraversalMode="tcp-udp";
-        TransportMode=policy=="udp-only"?"udp":"faketcp";
-        if(policy=="udp-only") { TcpPeerReflexive=false; TcpPortPrediction=false; TcpPortCalibration=false; TcpSynObservation=false; FakeTcpIpv6=false; LegacyEgressPacing=false; }
-        else { UdpExploration=false; UdpEmpiricalStability=false; UdpIpv6=false; }
+        TransportMode=TransportModes.Mode(policy);
+        if(policy!="faketcp-only") { TcpPeerReflexive=false; TcpPortPrediction=false; TcpPortCalibration=false; TcpSynObservation=false; FakeTcpIpv6=false; LegacyEgressPacing=false; }
+        if(policy!="udp-only") { UdpExploration=false; UdpEmpiricalStability=false; UdpIpv6=false; }
     }
     public bool MigrateAutomaticTransport()
     {
@@ -129,10 +130,12 @@ public sealed class DeviceProfile
     // Low-level isolated comparison fixtures may still exercise those policies.
     public void RequireFixedTransport()
     {
-        if(PathSelection is not ("faketcp-only" or "udp-only") || AllowUdpFallback)
-            throw new FormatException("请选择固定的 FakeTCP 或直接 UDP 模式；不支持自动协议回退");
-        if(TransportMode != (PathSelection=="udp-only"?"udp":"faketcp"))
+        if(PathSelection is not ("faketcp-only" or "udp-only" or "tcp-only" or "https-only") || AllowUdpFallback)
+            throw new FormatException("请选择固定传输协议；不支持自动协议回退");
+        if(TransportMode != (TransportModes.Mode(PathSelection)))
             throw new FormatException("传输模式与连接策略不一致，请在设置中重新选择传输模式");
+        if(Mesh is {} bound&&bound.Pair.Mode!=TransportMode&&(TransportModes.Stream(bound.Pair.Mode)||TransportModes.Stream(TransportMode)))throw new FormatException("TCP／HTTPS 网络的配对协议与设置不一致，请新建网络重新配对");
+        if(Pair!=null&&TransportModes.Stream(TransportMode))throw new FormatException("旧版网络不支持 TCP／HTTPS，请新建网络重新配对");
         if(Mesh != null && Mesh.Pair.Mode != TransportMode &&
             (TraversalMode=="legacy" || TransportMode=="udp" && TraversalMode!="tcp-udp"))
             throw new FormatException("切换传输模式需要启用对应的受管打洞");
@@ -168,7 +171,7 @@ public sealed class DeviceProfile
         if (ListenPort is < 1024 or > 65535 || SourcePort is < 1024 or > 65535 || SourcePort == ListenPort) throw new FormatException("源端口与监听端口必须是不同的 1024–65535 端口");
         ValidateServers(TcpStun); ValidateServers(UdpStun); Pair?.Validate();
         if (DeviceName is null || DeviceName.Length is < 1 or > 64 || DeviceName.Any(char.IsControl)) throw new FormatException("设备名称需为 1–64 个可见字符");
-        if (TransportMode is not ("faketcp" or "udp") || LogLevel is not ("off" or "error" or "warn" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
+        if (!TransportModes.Valid(TransportMode) || LogLevel is not ("off" or "error" or "warn" or "info" or "debug")) throw new FormatException("传输或日志选项无效");
         if (TraversalMode is not ("legacy" or "tcp" or "tcp-udp")) throw new FormatException("打洞试验模式无效");
         if (TcpPortCalibration && (!TcpSynObservation || TraversalMode == "legacy")) throw new FormatException("TCP 端口校准需同时开启受管打洞和 TCP 观察诊断");
         if (TcpPortPrediction && !TcpPortCalibration) throw new FormatException("实验 TCP 预测需启用独立端口校准");

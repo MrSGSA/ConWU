@@ -74,14 +74,14 @@ public sealed partial class MeshRouter : IAsyncDisposable
     public Func<ReadOnlyMemory<byte>,byte[]?>? DirectPairing {get;set;}
     public Guid BootId { get; }
     public PathSelection Selection { get; }
-    public bool LegacyAllowed => Selection.Allows(profile.Pair.Mode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
+    public bool LegacyAllowed => Selection.Allows(TransportModes.Carrier(profile.Pair.Mode));
     public MeshRouter(MeshProfile profile, IPacketAdapter adapter, Guid? bootId = null, PathSelection? selection = null)
     {
         Selection = selection ?? new();
         this.profile = profile; this.adapter = adapter;
         try {
             ArgumentNullException.ThrowIfNull(profile);
-            if(selection==null) Selection=new(profile.Pair.Mode=="udp"?PathPolicy.UdpOnly:PathPolicy.FakeTcpOnly);
+            if(selection==null) Selection=new(TransportModes.FixedPolicy(profile.Pair.Mode));
             ArgumentNullException.ThrowIfNull(adapter);
             if (bootId == Guid.Empty) throw new ArgumentException("Router 启动代次无效", nameof(bootId));
             Selection.Validate();
@@ -223,7 +223,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
-                    ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : "FakeTCP+HTTP",
+                    ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : profile.Pair.Mode=="tcp"?"TCP":profile.Pair.Mode=="https"?"HTTPS":"FakeTCP+HTTP",
                     OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
                     OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
                     EntryDirection=!healthy?"Unknown":p.Managed!=null?"Managed":p.Active!=null&&p.LegacyListenerSources.Contains(p.Active)?"Inbound":"Outbound",

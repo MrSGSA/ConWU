@@ -20,7 +20,7 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
 
     public UiNetworkSettings ForGuest(MeshProfile mesh,UiNetworkSettings local)
     {
-        if(PathSelection!=(mesh.Pair.Mode=="udp"?"udp-only":"faketcp-only")||ConnectionSource is not ("custom" or "existing")||
+        if(PathSelection!=(TransportModes.Policy(mesh.Pair.Mode))||ConnectionSource is not ("custom" or "existing")||
             Entries is null||TcpStun is null||UdpStun is null||Service is null||CertificatePin is null||PairingService is null||PairingCertificatePin is null||PkarrGateways is null||
             Entries.Any(e=>e is null||e.PeerSlot!=mesh.IntroducerSlot)||HostListenPort is <1 or >65535||NetworkName is null||NetworkName.Length>64||NetworkName.Any(char.IsControl))
             throw new FormatException("主机提供的网络设置与获准身份不符");

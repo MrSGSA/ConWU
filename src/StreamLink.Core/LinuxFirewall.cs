@@ -4,6 +4,15 @@ namespace StreamLink.Core;
 
 public static class LinuxFirewall
 {
+    public static IDisposable AllowStreamListener(int port)
+    {
+        if(port is <1024 or >65535)throw new ArgumentOutOfRangeException(nameof(port));
+        string name="StreamLink-"+Guid.NewGuid().ToString("N");
+        string[] spec=["-p","tcp","--dport",port.ToString(System.Globalization.CultureInfo.InvariantCulture),"-m","comment","--comment",name,"-j","ACCEPT"];
+        var resource=new LinuxKernelResource(spec);
+        try{LinuxPlatform.Run("iptables",new[]{"-w","3","-I","INPUT"}.Concat(spec).ToArray());return resource;}
+        catch{resource.Dispose();throw;}
+    }
     static readonly object gate=new();
     static readonly Dictionary<string,LinuxKernelResource> owned=[];
     public static void Recover()=>LinuxKernelResource.Recover();

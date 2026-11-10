@@ -127,8 +127,9 @@ public sealed class MeshRunner
         // in the original enrollment. This cannot enable an unselected protocol.
         var wireMesh=JsonSerializer.Deserialize<MeshProfile>(JsonSerializer.Serialize(mesh))!;
         wireMesh.Pair=wireMesh.Pair with {Mode=profile.TransportMode};
-        bool legacyAllowed=profile.Selection().Allows(profile.TransportMode=="udp"?TraversalProfile.UdpDirect:TraversalProfile.FakeTcpHttpSo);
+        bool legacyAllowed=profile.Selection().Allows(TransportModes.Carrier(profile.TransportMode));
         bool existingOnly=profile.UsesExistingEntriesOnly;
+        bool streamGuest=TransportModes.Stream(profile.TransportMode)&&!mesh.IsOwner;
         Volatile.Write(ref entryPreparation,existingOnly?new("Existing","只使用已保存入口；仍需设备认证与双向验证"):new("Preparing","正在准备自主入口，取得候选不代表对端可达"));
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
@@ -400,7 +401,7 @@ public sealed class MeshRunner
                     }
                 }
                 if(Interlocked.Exchange(ref invitationEntryRequested,0)!=0&&!existingOnly){entryProbeRequested=mapping==null&&probe==null;nextProbe=0;}
-                if (!existingOnly && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
+                if (!existingOnly && !streamGuest && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
                     (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                     bool needed = mesh.Pair.Direct&&(mesh.IsOwner||PkarrRendezvous.Uses(profile)) || restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
@@ -459,7 +460,7 @@ public sealed class MeshRunner
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
-                if (legacyAllowed && router != null && server == null && now >= nextServer) {
+                if (legacyAllowed && !streamGuest && router != null && server == null && now >= nextServer) {
                     try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
@@ -590,6 +591,7 @@ public sealed class MeshRunner
                 var scheduling=announcements.ToDictionary(p=>p.Key,p=>selectedEntries.TryGetValue(p.Key,out var chosen)&&chosen.Length>0?p.Value with {Endpoint=chosen}:p.Value);
                 traversal?.Tick(scheduling, candidate,priorityPeers,onlyEntryPeers);
                 foreach (var member in members) {
+                    if(TransportModes.Stream(profile.TransportMode)&&mesh.IsOwner){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}
                     if(quietPeers.Contains(member.Slot)){
                         if(clients.TryGetValue(member.Slot,out var quiet))quiet.Suspend(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"");
                         continue;

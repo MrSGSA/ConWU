@@ -3,11 +3,11 @@ const $=id=>document.getElementById(id),esc=value=>String(value??'').replace(/[&
 const titles={overview:'概况',create:'创建网络',join:'加入网络',logs:'日志',settings:'设置'},sectionNames={system:'启动与服务',identity:'本机设置',network:'连接设置',coordination:'协调服务器',port:'端口设置',certificate:'证书设置',stun:'STUN 服务器',logging:'日志设置'},sectionIcons={system:'monitor',identity:'laptop',network:'link',coordination:'server',port:'port',certificate:'shield',stun:'globe',logging:'log'};
 const defaults={system:{startup:true},identity:{name:'',ipMode:'auto',ip:''},network:{protocol:'faketcp',mode:'custom',route:'server',existingRoute:'server',owner:'local',entries:{local:[''],target:['']},refresh:60,unit:1},coordination:{url:''},port:{listen:44680},certificate:{pin:''},stun:{tcp:'',udp:''},logging:{level:'info',terminal:'auto'}};
 const heading=(title,description,extra='')=>`<div class="heading"><div><h1 id="page-title">${title}</h1><p>${description}</p></div>${extra}</div>`;
-let state=null,online=false,busy=false,busyKind='',expired=false,csrf='',reading=null,generation=0,lastStatusAt=0,baseRevision='',saved=clone(defaults),drafts=clone(saved),history=null;
+let state=null,online=false,busy=false,busyKind='',expired=false,csrf='',reading=null,generation=0,lastStatusAt=0,lastBackendAt=0,baseRevision='',saved=clone(defaults),drafts=clone(saved),history=null;
 let page='overview',section='network',networkActive=false,owner=false,pairCode='',pairExpires=0,invitation='',inviteExpires=0,joinTab='outgoing',joinCodeValue='',joinInviteValue='',joinStatus='',joinName='',joinError='',incoming=false,createdAt=0,theme='dark',toastTimer,testTimer,testGeneration=0,modalCallback=null,networkRoute='server';
 let previousTraffic=null,traffic={peers:new Map(),up:null,down:null},historyTraffic=[],logLines=[],lastLogs=[],lastPairPoll=0,lastPairError='',pairNotice='',pairNoticeTimer,joinModel='',settingsHydrated=false;
 let noticeSource='',noticeTimer,lastStatusFailure='',resumeGraceUntil=0,submittedJoin=null;
-let expanded=new Set(),dirty=key=>!same(drafts[key],saved[key]),dirtyCount=()=>Object.keys(defaults).filter(dirty).length,localName=()=>state?.deviceName||'正在读取',localIp=()=>state?.virtualIp||'尚未分配',activeRoute=()=>saved.network.mode==='custom'?'server':saved.network.route,protocol=()=>saved.network.protocol==='udp'?'直接 UDP':'FakeTCP + HTTP';
+let expanded=new Set(),dirty=key=>!same(drafts[key],saved[key]),dirtyCount=()=>Object.keys(defaults).filter(dirty).length,localName=()=>state?.deviceName||'正在读取',localIp=()=>state?.virtualIp||'尚未分配',activeRoute=()=>saved.network.mode==='custom'?'server':saved.network.route,protocol=()=>({udp:'直接 UDP',tcp:'纯 TCP',https:'HTTPS'})[saved.network.protocol]||'FakeTCP + HTTP';
 const total=value=>value>=1e9?(value/1e9).toFixed(2)+' GB':value>=1e6?(value/1e6).toFixed(1)+' MB':value>=1000?(value/1000).toFixed(1)+' KB':Math.max(0,value||0)+' B';
 const speed=value=>value==null?'—':(value/1e6).toFixed(2)+' MB/s',duration=ms=>{let n=Math.max(0,Math.floor(ms/1000));return String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');};
 const connectedDuration=ms=>{const seconds=Math.max(0,Math.floor(ms/1000));return `${Math.floor(seconds/86400)} 天 ${String(Math.floor(seconds/3600)%24).padStart(2,'0')} 时 ${String(Math.floor(seconds/60)%60).padStart(2,'0')} 分 ${String(seconds%60).padStart(2,'0')} 秒`;};
@@ -187,7 +187,11 @@ async function api(path,body,valid=()=>true,sessionRetried=false){
    if(result.status===401){if(valid()){expired=true;csrf='';unavailable('请从 ConWU 托盘重新打开 WebUI，后台连接继续运行。');}throw Error('面板授权已过期，请从托盘重新打开 WebUI。');}
    const error=Error(problem?.error||'请求未完成（HTTP '+result.status+'），请刷新状态后再操作。');error.retryable=[429,502,503,504].includes(result.status)&&problem?.code!=='AccessDenied';error.backendCode=problem?.code||'';throw error;
   }
-  return await result.json();
+  const reply=await result.json();
+  // A valid reply still proves backend responsiveness when its state belongs
+  // to a superseded UI generation. Never apply that older state to the form.
+  if((path.startsWith('/api/status')||path==='/api/command')&&typeof reply?.ok==='boolean'&&reply.status)lastBackendAt=performance.now();
+  return reply;
  }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const pending=Error('本机后台暂未响应，操作结果尚待确认；正在自动刷新。');pending.retryable=true;throw pending;}throw error;}finally{clearTimeout(timer);}
 }
 
@@ -225,15 +229,15 @@ async function command(method,extra={},quiet=false){
   generation++;if(reply.status)render(reply.status);else if(reply.statusNotice)unavailable(reply.statusNotice);
   if(!reply.ok)throw Error(reply.error||'操作未完成');if(!quiet&&online)notice('');return reply;
  }
- finally{busy=false;busyKind='';controls();}
+ finally{busy=false;busyKind='';controls();void refresh();}
 }
 
 async function refresh(){
  if(reading||expired||!csrf)return reading;const version=generation;
- reading=(async()=>{try{const reply=await api('/api/status',undefined,()=>version===generation);if(version!==generation)return;if(!reply.ok||!reply.status)throw Error(reply.error||reply.statusNotice||'未收到完整状态');render(reply.status);}catch(error){if(version!==generation)return;lastStatusFailure=error.message;if(!error.retryable||['NotInstalled','Stopped','AccessDenied'].includes(error.backendCode)||!lastStatusAt||!document.hidden&&performance.now()>=resumeGraceUntil&&performance.now()-lastStatusAt>10000)unavailable(error.message);}})().finally(()=>reading=null);return reading;
+ reading=(async()=>{try{const reply=await api('/api/status',undefined,()=>version===generation);if(version!==generation)return;if(!reply.ok||!reply.status)throw Error(reply.error||reply.statusNotice||'未收到完整状态');render(reply.status);}catch(error){if(version!==generation)return;lastStatusFailure=error.message;if(!error.retryable||['NotInstalled','Stopped','AccessDenied'].includes(error.backendCode)||!lastStatusAt||!document.hidden&&performance.now()>=resumeGraceUntil&&performance.now()-Math.max(lastStatusAt,lastBackendAt)>10000)unavailable(error.message);}})().finally(()=>{reading=null;if(!expired&&version!==generation)queueMicrotask(()=>void refresh());});return reading;
 }
 
-function checkStatusFreshness(){if(!document.hidden&&performance.now()>=resumeGraceUntil&&online&&performance.now()-lastStatusAt>10000)unavailable(lastStatusFailure||'超过 10 秒未收到后台状态，正在自动重试。');}
+function checkStatusFreshness(){if(!document.hidden&&performance.now()>=resumeGraceUntil&&online&&performance.now()-Math.max(lastStatusAt,lastBackendAt)>10000)unavailable(lastStatusFailure||'超过 10 秒未收到后台状态，正在自动重试。');}
 function resumeStatus(){if(document.hidden||expired)return;resumeGraceUntil=performance.now()+10000;void refresh();}
 
 function rates(s){
@@ -254,7 +258,7 @@ function configFromStatus(s){
  let selected='local',terminal='auto',existingRoute=p.directMode?'direct':'server',preferredUnit=0;try{selected=localStorage.getItem('streamlink-entry-owner')||'local';terminal=localStorage.getItem('streamlink-terminal-theme')||'auto';if(p.connectionSource!=='existing')existingRoute=existingRoute;preferredUnit=Number(localStorage.getItem('streamlink-entry-refresh-unit'));}catch{}
  if(!entries[selected])selected='local';if(!entries.local.some(v=>v.trim())&&entries.target.some(v=>v.trim()))selected='target';
  const seconds=p.entryRefreshSeconds||60,unit=[1,60,3600].includes(preferredUnit)&&seconds%preferredUnit===0?preferredUnit:seconds%3600===0?3600:seconds%60===0?60:1;
- return {system:{startup:!!s.desktop?.autoStart},identity:{name:s.deviceName,ipMode:p.requestedVirtualIp?'custom':'auto',ip:p.requestedVirtualIp||''},network:{protocol:p.pathSelection==='udp-only'?'udp':'faketcp',mode:p.connectionSource||'custom',route:p.directMode?'direct':'server',existingRoute:['direct','server'].includes(existingRoute)?existingRoute:'server',owner:selected,entries,refresh:seconds/unit,unit},coordination:{url:p.service||''},port:{listen:p.listenPort||44680},certificate:{pin:p.certificatePin||''},stun:{tcp:(p.tcpStun||[]).join('\n'),udp:(p.udpStun||[]).join('\n')},logging:{level:s.logLevel||'info',terminal:['auto','light','dark'].includes(terminal)?terminal:'auto'}};
+ return {system:{startup:!!s.desktop?.autoStart},identity:{name:s.deviceName,ipMode:p.requestedVirtualIp?'custom':'auto',ip:p.requestedVirtualIp||''},network:{protocol:({'udp-only':'udp','tcp-only':'tcp','https-only':'https'})[p.pathSelection]||'faketcp',mode:p.connectionSource||'custom',route:p.directMode?'direct':'server',existingRoute:['direct','server'].includes(existingRoute)?existingRoute:'server',owner:selected,entries,refresh:seconds/unit,unit},coordination:{url:p.service||''},port:{listen:p.listenPort||44680},certificate:{pin:p.certificatePin||''},stun:{tcp:(p.tcpStun||[]).join('\n'),udp:(p.udpStun||[]).join('\n')},logging:{level:s.logLevel||'info',terminal:['auto','light','dark'].includes(terminal)?terminal:'auto'}};
 }
 function entryOwnerOptions(d){
  const options=[['local','本机入口 · 供其他设备连接'],['target','目标主机的入口 · 用于连接到目标主机。']];
@@ -267,7 +271,7 @@ function settingsDto(){
  const n=drafts.network,lines=value=>value.split(/\r?\n/).map(v=>v.trim()).filter(Boolean),slot=key=>key==='local'?0:key==='target'?-1:Number(key.slice(4));
  let service=drafts.coordination.url.trim();if(service&&!service.includes('://'))service='https://'+service;
  if(service){let uri=new URL(service);if(uri.protocol!=='https:'||uri.username||uri.password||uri.search||uri.hash)throw Error('协调地址需使用 HTTPS，且不能包含账号、查询参数或片段。');if(!uri.pathname.endsWith('/'))uri.pathname+='/';service=uri.toString();}
- return {...state.settings,service,certificatePin:drafts.certificate.pin.trim(),manualEndpoint:'',pathSelection:n.protocol==='udp'?'udp-only':'faketcp-only',connectionSource:n.mode,directMode:n.mode==='existing'&&n.route==='direct',existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:slot(key),source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),requestedVirtualIp:drafts.identity.ipMode==='custom'?drafts.identity.ip.trim():'',tcpStun:lines(drafts.stun.tcp),udpStun:lines(drafts.stun.udp)};
+ return {...state.settings,service,certificatePin:drafts.certificate.pin.trim(),manualEndpoint:'',pathSelection:({faketcp:'faketcp-only',udp:'udp-only',tcp:'tcp-only',https:'https-only'})[n.protocol],connectionSource:n.mode,directMode:n.mode==='existing'&&n.route==='direct',existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:slot(key),source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),requestedVirtualIp:drafts.identity.ipMode==='custom'?drafts.identity.ip.trim():'',tcpStun:lines(drafts.stun.tcp),udpStun:lines(drafts.stun.udp)};
 }
 function updateShell(){
  document.querySelectorAll('.nav[data-page]').forEach(e=>{const active=e.dataset.page===page;e.classList.toggle('active',active);if(active)e.setAttribute('aria-current','page');else e.removeAttribute('aria-current');});

@@ -28,7 +28,7 @@ public sealed partial class ControlWorker
             {Connection=PublicProgress(state?.Connection??(state==null?null:new("Blocked",state.Detail)),p),Adapter=state?.Adapter is {} adapter ? adapter with {Reason=PublicText(adapter.Reason,p,400)} : null,PersonalFeatureEdition=PersonalFeature.Enabled,NetworkId=p.Mesh?.Pair.Network??"",IsOwner=p.Mesh?.IsOwner==true,IsDecentralized=p.Mesh?.IsDecentralized==true,CanManageNetwork=p.Mesh?.CanManage==true,EntryTargetSlot=p.Mesh is {IsDecentralized:true,Directory:{} d} equal?MeshGovernance.CurrentSlot(d,equal.IntroducerSlot):p.Mesh?.IntroducerSlot??1,PendingMembership=p.PendingMembership!=null,NetworkClosed=p.Mesh?.Directory?.Closed==true,
              Settings=PublicSettings(p),ReceivedNetworkSettings=p.ReceivedNetworkSettings,Pkarr=Volatile.Read(ref pkarrStatus),SettingsRevision=SettingsRevision(p),MigrationNotice=p.MigrationNotice,Pairing=Volatile.Read(ref uiPairSnapshot),NetworkDirect=p.Mesh?.Pair.Direct==true,
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
-             NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),EntryPreparation=p.Enabled&&meshRunner?.EntryPreparation is {} entry?entry with{Detail=PublicText(entry.Detail,p,400)}:null,Desktop=networkContext?null:StartupSettings.Read(),Coordinator=Volatile.Read(ref coordinatorStatus),
+             NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),EntryPreparation=p.Enabled&&meshRunner?.EntryPreparation is {} entry?entry with{Detail=PublicText(entry.Detail,p,400)}:null,Desktop=networkContext?null:StartupSettings.Read(full.ServiceReady),Coordinator=Volatile.Read(ref coordinatorStatus),
 
              QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
     }
@@ -55,6 +55,7 @@ public sealed partial class ControlWorker
     {
         using(pipe)using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(token)){
             string stage="client-identity",method="unknown";bool authorized=false;
+            var elapsed=System.Diagnostics.Stopwatch.StartNew();long handledAt=0,writingAt=0;
             deadline.CancelAfter(20000);try{
                 string caller=LocalControlPipe.ClientSid(pipe);
                 if(caller!=allowed)return;
@@ -62,6 +63,7 @@ public sealed partial class ControlWorker
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
                 method=request.Method is "status" or "network" or "patch" or "start" or "stop" or "retry" or "cancel" or "check" or "quality"?request.Method:"unknown";
                 stage="handle-request";
+                handledAt=elapsed.ElapsedMilliseconds;
                 // Cancellation callbacks, DPAPI and Windows resource operations
                 // can block synchronously before an async method first yields.
                 // Never run a mutation inline on the pipe acceptance loop.
@@ -72,8 +74,10 @@ public sealed partial class ControlWorker
                     _=handling.ContinueWith(t=>Log("UI后台操作异常："+t.Exception!.GetBaseException().GetType().Name),CancellationToken.None,TaskContinuationOptions.OnlyOnFaulted,TaskScheduler.Default);
                 }else reply=await handling;
                 stage="write-reply";
+                writingAt=elapsed.ElapsedMilliseconds;
                 await ServiceProtocol.Write(pipe,FitUiReply(reply),deadline.Token);
-            }catch(Exception)when(deadline.IsCancellationRequested){if(authorized&&!token.IsCancellationRequested)Log("受限UI请求超时：method="+method+" stage="+stage);}catch(Exception ex){
+                if(elapsed.ElapsedMilliseconds>=1000)Log($"受限UI慢响应：method={method} elapsedMs={elapsed.ElapsedMilliseconds} admissionMs={handledAt} handlingMs={writingAt-handledAt} threads={ThreadPool.ThreadCount} queued={ThreadPool.PendingWorkItemCount}");
+            }catch(Exception)when(deadline.IsCancellationRequested){if(authorized&&!token.IsCancellationRequested)Log("受限UI请求超时：method="+method+" stage="+stage+" elapsedMs="+elapsed.ElapsedMilliseconds);}catch(Exception ex){
                 string missing=ex is FileNotFoundException file?" assembly="+Path.GetFileName(file.FileName??"unknown"):"";
                 Log("受限UI请求失败：stage="+stage+" "+ex.GetType().Name+missing);
                 if(authorized&&stage=="handle-request")try{await ServiceProtocol.Write(pipe,new UiControlReply(false,"个人服务处理请求时发生内部错误，请修复安装并查看诊断日志。",null),deadline.Token);}catch(IOException){}

@@ -171,7 +171,7 @@ ConWU · Linux
             if(!template.DirectMode&&string.IsNullOrWhiteSpace(template.Service))throw new IOException("请在配置中填写 HTTPS 协调服务，或选择无协调的直连邀请");
             string enrollmentAction=verb=="create"?(template.DirectMode?"create-direct":"create"):value.Length==6&&value.All(char.IsAsciiDigit)?(template.ConnectionSource=="existing"?"join-direct-short":"join"):value.StartsWith("SL6.")?"join-invitation":"join-entry";
             if(verb=="join"&&template.DirectMode&&template.ConnectionSource!="existing"&&enrollmentAction!="join-invitation")throw new IOException("无协调的自主入口请使用主机生成的直连邀请");
-            var request=new UiNetworkAction(enrollmentAction,template.Service,template.CertificatePin,enrollmentAction is "join-entry" or "create" or "create-direct"?"":value,Mode:template.PathSelection=="udp-only"?"udp":"faketcp"){LocalEnrollment=verb=="create",RequestedVirtualIp=virtualIp,ConfigurationId=config.Id,Name=verb=="create"&&args.Length==4?args[3]:"",Entry=enrollmentAction=="join-entry"?value:""};
+            var request=new UiNetworkAction(enrollmentAction,template.Service,template.CertificatePin,enrollmentAction is "join-entry" or "create" or "create-direct"?"":value,Mode:TransportModes.Mode(template.PathSelection)){LocalEnrollment=verb=="create",RequestedVirtualIp=virtualIp,ConfigurationId=config.Id,Name=verb=="create"&&args.Length==4?args[3]:"",Entry=enrollmentAction=="join-entry"?value:""};
             Print(await Mutate(new UiControlRequest("network",Network:request)));return;
         }
         bool needsValue=verb is "approve" or "rename" or "remove";

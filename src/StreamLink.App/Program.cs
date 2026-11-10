@@ -71,7 +71,7 @@ static class Program
                     var action=new StreamLink.Core.UiNetworkAction("settings",Settings:settings with{ConnectionSource="existing",DirectMode=true},ExpectedRevision:status.DeviceSettingsRevision,ConfirmReplace:true);
                     UiMutation(new StreamLink.Core.UiControlRequest("save-settings"){SettingsBatch=new(action,[])});
                 }
-                var created=UiMutation(new StreamLink.Core.UiControlRequest("network",Network:new("create-direct",Mode:settings.PathSelection=="udp-only"?"udp":"faketcp")));
+                var created=UiMutation(new StreamLink.Core.UiControlRequest("network",Network:new("create-direct",Mode:StreamLink.Core.TransportModes.Mode(settings.PathSelection))));
                 string id=created.Status?.SelectedNetworkId??throw new IOException("创建后未返回网络配置 ID");
                 UiMutation(new StreamLink.Core.UiControlRequest("stop"){NetworkId=id});
             }catch(Exception ex){Environment.ExitCode=1;File.WriteAllText(Path.Combine(AppContext.BaseDirectory,"acceptance-error.log"),ex.ToString());}return;

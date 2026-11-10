@@ -1,4 +1,5 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MappingTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.StreamTransportTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshConnectionTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.MeshRunnerTraversalTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("StreamLink.EgressTests")]

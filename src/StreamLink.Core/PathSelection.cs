@@ -7,10 +7,12 @@ public sealed record PathSelection(PathPolicy Policy = PathPolicy.PreferFakeTcp,
     public void Validate()
     {
         if (!Enum.IsDefined(Policy)) throw new FormatException("选路策略无效");
+        if(Policy is PathPolicy.TcpOnly or PathPolicy.HttpsOnly&&AllowUdpFallback)throw new FormatException("TCP 和 HTTPS 不允许自动协议回退");
     }
     public bool Allows(TraversalProfile profile) => profile switch {
-        TraversalProfile.LegacyExplicit or TraversalProfile.FakeTcpHttpSo => Policy != PathPolicy.UdpOnly,
-        TraversalProfile.UdpDirect => Policy == PathPolicy.UdpOnly || Policy != PathPolicy.FakeTcpOnly && AllowUdpFallback,
+        TraversalProfile.LegacyExplicit => Policy != PathPolicy.UdpOnly,
+        TraversalProfile.FakeTcpHttpSo => Policy is not (PathPolicy.UdpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly),
+        TraversalProfile.UdpDirect => Policy == PathPolicy.UdpOnly || Policy is not (PathPolicy.FakeTcpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly) && AllowUdpFallback,
         _ => false
     };
     public string? Reject(TraversalProfile candidate, TraversalProfile? active, bool activeHealthy, bool qualityApproved = false)

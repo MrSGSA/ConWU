@@ -81,7 +81,7 @@ public sealed partial class ControlWorker
                 deadline.Token.ThrowIfCancellationRequested();
                 SetOperation(operation,"连接邀请中的主机入口",false);
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);attempt.CancelAfter(endpoints.Length==1?12000:4000);
-                var client=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,IPEndPoint.Parse(endpoint),false,0,null,"error")),targetNetwork:invitation.Network);
+                var client=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,IPEndPoint.Parse(endpoint),false,0,null,"error"){PairingBootstrap=true}),targetNetwork:invitation.Network);
                 try {
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential?.Network==invitation.Network?profile.RejoinCredential:null,invitation.Capability,uiPairKey);
                     var room=await client.Join(invitation.Capability,uiPairKey,profile.DeviceName,attempt.Token,profile.RequestedVirtualIp,uiExpectedRejoin);

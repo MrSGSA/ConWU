@@ -46,7 +46,7 @@ public sealed partial class ControlWorker
 
     void RequireSavedProtocol(string mode)
     {
-        string selected=PublicSettings(profile).PathSelection=="udp-only"?"udp":"faketcp";
+        string selected=TransportModes.Mode(PublicSettings(profile).PathSelection);
         if(mode!=selected)throw new IOException("目标网络使用的协议与已保存的设置不同。请在设置中自行选择并保存相同协议后重试；原设置未改动。");
     }
 }

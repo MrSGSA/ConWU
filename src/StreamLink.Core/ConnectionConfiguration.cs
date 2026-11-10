@@ -53,6 +53,7 @@ public static class ConnectionSettings
     }
     public static void Apply(DeviceProfile profile,UiNetworkSettings settings)
     {
+        if(profile.Mesh is {} paired&&paired.Pair.Mode!=TransportModes.Mode(settings.PathSelection)&&(TransportModes.Stream(paired.Pair.Mode)||TransportModes.Stream(TransportModes.Mode(settings.PathSelection))))throw new IOException("TCP／HTTPS 协议需要重新配对，请新建网络使用；原网络和设置保持不变");
         profile.SelectTransport(settings.PathSelection);profile.AllowManualQualityRequests=settings.AllowManualQualityRequests;
         profile.ConnectionSource=settings.ConnectionSource;profile.DirectMode=settings.DirectMode;
         profile.PkarrPublish=settings.PkarrPublish;

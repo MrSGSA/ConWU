@@ -114,7 +114,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             if(string.IsNullOrWhiteSpace(action.Entry))throw new FormatException("请提供目标主机入口，或使用包含入口的直连邀请");
             entries=[new(ExistingEntry.NetworkOwner,action.Entry)];
         }
-        return ConnectionSettings.Normalize(new(action.Service,action.CertificatePin,PathSelection:mode=="udp"?"udp-only":"faketcp-only",ListenPort:local.ListenPort,SourcePort:local.SourcePort){
+        return ConnectionSettings.Normalize(new(action.Service,action.CertificatePin,PathSelection:TransportModes.Policy(mode),ListenPort:local.ListenPort,SourcePort:local.SourcePort){
             DirectMode=direct,ConnectionSource=direct?"existing":"custom",ExistingEntries=entries
         });
     }
@@ -242,7 +242,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         if(!automatic&&!configurations.TryGetValue(configurationId,out configuration))throw new IOException("请先选择或保存本次连接配置");
                         var template=device.ProfileSnapshot();
                         var settings=automatic?AutoJoinSettings(request.Network,template):configuration!.Settings;
-                        if(automatic&&request.Network.Action is ("join-invitation" or "join-compact"))request=request with{Network=request.Network with{Mode=settings.PathSelection=="udp-only"?"udp":"faketcp"}};
+                        if(automatic&&request.Network.Action is ("join-invitation" or "join-compact"))request=request with{Network=request.Network with{Mode=TransportModes.Mode(settings.PathSelection)}};
                         ConnectionSettings.Apply(template,settings);
                         template.AutoConfigureJoin=automatic;template.ReceivedNetworkSettings=null;template.PkarrSeed="";template.PkarrSequence=0;
                         template.PkarrPeers=[];template.PkarrStateVersion=0;

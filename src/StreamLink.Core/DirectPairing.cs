@@ -156,6 +156,7 @@ public sealed class DirectPairHost : IShortPairClient
 
 public sealed class DirectPairClient : IShortPairClient
 {
+    public string PeerCertificatePin=>transport is StreamMeshTransport stream?stream.PeerCertificatePin:"";
     readonly string targetNetwork;
     readonly UdpClient socket=new(new IPEndPoint(IPAddress.Loopback,0));
     readonly IMeshTransport transport;

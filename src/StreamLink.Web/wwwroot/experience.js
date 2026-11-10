@@ -10,7 +10,7 @@ const liveLogView=updateLogView;
 updateLogView=function(){const prior=saved.logging.terminal;saved.logging.terminal=terminalTheme;try{liveLogView();}finally{saved.logging.terminal=prior;}};
 const ui={hostId:'',joinId:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
 const all=()=>workspaceState?.networks||[],row=id=>all().find(n=>n.id===id);
-const protocolOf=p=>p?.pathSelection==='udp-only'?'直接 UDP（旧网络）':'FakeTCP + HTTP';
+const protocolOf=p=>({'udp-only':'直接 UDP（旧网络）','tcp-only':'纯 TCP','https-only':'HTTPS'}[p?.pathSelection]||'FakeTCP + HTTP');
 const strategyOf=p=>p?.connectionSource==='existing'?'只使用已有入口':'自主打洞';
 const deviceSettings=()=>workspaceState?.deviceSettings||newConfigurationSettings();
 const privateFields=[['network','连接方式','link'],['discovery','配对与发现方式','globe'],['entry','已有入口','globe'],['virtual','虚拟 IP','laptop'],['port','端口设置','port'],['stun','STUN 服务器','globe']];
@@ -176,9 +176,9 @@ renderFields=function(){if(ui.editor)renderEditor();else oldRenderFields();};
 function editorFields(){
  const d=drafts.network;
  if(section==='network'){
-  const protocols=[['faketcp','FakeTCP + HTTP','适合高码率串流，默认使用。'],['tcp','纯 TCP','后续功能，暂不可选。']];
+  const protocols=[['faketcp','FakeTCP + HTTP','适合高码率串流，默认使用。'],['tcp','纯 TCP','使用真实 TCP 通道，适合已有入口或较宽松的 NAT。'],['https','HTTPS','使用 TLS 与 WebSocket 加密承载，首次配对自动绑定设备证书。']];
   if(d.protocol==='udp')protocols.push(['udp','直接 UDP（旧网络）','保留原有协议；两端须使用相同协议。']);
-  return `<h3>连接协议</h3><div class="radio-cards">${protocols.map(([v,t,h])=>`<label class="radio-card ${v==='tcp'?'unavailable':''}"><input type="radio" name="protocol" data-key="protocol" value="${v}" ${d.protocol===v?'checked':''} ${v==='tcp'?'disabled':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div><h3>连接策略</h3><div class="radio-cards">${[['custom','自主打洞','由 ConWU 准备入口并尝试穿透。'],['existing','只使用已有入口','公网、端口转发或第三方已打通的入口。']].map(([v,t,h])=>`<label class="radio-card"><input type="radio" name="mode" data-key="mode" value="${v}" ${d.mode===v?'checked':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div><div class="note strategy-note">${icon('info')}<span>${d.mode==='existing'?'仅通过已有入口连接。':'首次使用直连码配对；后续入口更新可在左侧“配对与发现方式”中设置。'}</span></div>`;
+  return `<h3>连接协议</h3><div class="radio-cards">${protocols.map(([v,t,h])=>`<label class="radio-card ${ui.editor?.id&&v!==d.protocol&&(['tcp','https'].includes(v)||['tcp','https'].includes(d.protocol))?'unavailable':''}"><input type="radio" name="protocol" data-key="protocol" value="${v}" ${d.protocol===v?'checked':''} ${ui.editor?.id&&v!==d.protocol&&(['tcp','https'].includes(v)||['tcp','https'].includes(d.protocol))?'disabled':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div><h3>连接策略</h3><div class="radio-cards">${[['custom','自主打洞','由 ConWU 准备入口并尝试穿透。'],['existing','只使用已有入口','公网、端口转发或第三方已打通的入口。']].map(([v,t,h])=>`<label class="radio-card"><input type="radio" name="mode" data-key="mode" value="${v}" ${d.mode===v?'checked':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div><div class="note strategy-note">${icon('info')}<span>${d.mode==='existing'?'仅通过已有入口连接。':'首次使用直连码配对；后续入口更新可在左侧“配对与发现方式”中设置。'}</span></div>`;
  }
  if(section==='discovery'){
   const tips={pkarr:'首次通过直连码配对，之后经由 PKARR 发布和查询最新地址。',server:'使用你指定的协调服务器更新入口与交换连接信息；首次配对仍使用直连码。',direct:'只通过直连码配对连接；入口变化后，需要重新生成并输入直连码。'};
@@ -218,11 +218,11 @@ function renderEditor(){
 settingsDto=function(){
  const n=drafts.network,active=n.mode!=='existing'&&n.route==='server',lines=v=>String(v||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
  let service=drafts.coordination.url.trim();if(active&&service)service=normalizedJoinCoordinator(service.includes('://')?service:'https://'+service);
- return {...(configuration()?.settings||newConfigurationSettings()),service,certificatePin:drafts.certificate.pin.trim(),pairingService:'',pairingCertificatePin:'',manualEndpoint:'',pathSelection:n.protocol==='udp'?'udp-only':'faketcp-only',connectionSource:n.mode,directMode:!active,discoveryMode:n.mode==='existing'?'existing':n.route==='pkarr'?'pkarr':active?'coordinator':'direct',pkarrPublish:n.mode!=='existing'&&n.route==='pkarr',pkarrGateways:lines(n.pkarrGateways),coordinatorBackup:false,existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:key==='local'?0:-1,source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',tcpStun:lines(drafts.stun.tcp),udpStun:lines(drafts.stun.udp),coordinator:{...defaults.host},ddns:null};
+ return {...(configuration()?.settings||newConfigurationSettings()),service,certificatePin:drafts.certificate.pin.trim(),pairingService:'',pairingCertificatePin:'',manualEndpoint:'',pathSelection:({faketcp:'faketcp-only',udp:'udp-only',tcp:'tcp-only',https:'https-only'})[n.protocol],connectionSource:n.mode,directMode:!active,discoveryMode:n.mode==='existing'?'existing':n.route==='pkarr'?'pkarr':active?'coordinator':'direct',pkarrPublish:n.mode!=='existing'&&n.route==='pkarr',pkarrGateways:lines(n.pkarrGateways),coordinatorBackup:false,existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:key==='local'?0:-1,source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',tcpStun:lines(drafts.stun.tcp),udpStun:lines(drafts.stun.udp),coordinator:{...defaults.host},ddns:null};
 };
 validateSection=function(key,configuration=drafts){
  const n=configuration.network;
- if(key==='network'&&!['faketcp','udp'].includes(n.protocol))return '此传输协议尚未开放。';
+ if(key==='network'&&!['faketcp','udp','tcp','https'].includes(n.protocol))return '请选择有效的传输协议。';
  if(key==='entry'&&n.mode==='existing'){
   const interval=Number(n.refresh)*Number(n.unit);if(!Number.isInteger(interval)||interval<1||interval>86400)return '自动更新间隔应为 1 秒至 24 小时。';
   if(Object.values(n.entries).flat().filter(v=>v.trim()).length>12)return '最多保存 12 项地址来源。';
@@ -286,7 +286,7 @@ async function create(){
   }
   const p=c.settings;if(p.connectionSource==='existing'&&!p.existingEntries.some(e=>e.peerSlot===0))throw Error('请在网络设置中填写本机已有入口。');
   selectedConfiguration=c.id;
-  const reply=await command('network',{networkId:'',network:{action:p.directMode?'create-direct':'create',localEnrollment:true,configurationId:c.id,service:p.service,certificatePin:p.certificatePin,mode:p.pathSelection==='udp-only'?'udp':'faketcp',name:newNetworkName.trim(),requestedVirtualIp:newNetworkIp.trim(),expectedNetwork:''}});
+  const reply=await command('network',{networkId:'',network:{action:p.directMode?'create-direct':'create',localEnrollment:true,configurationId:c.id,service:p.service,certificatePin:p.certificatePin,mode:({'udp-only':'udp','tcp-only':'tcp','https-only':'https'})[p.pathSelection]||'faketcp',name:newNetworkName.trim(),requestedVirtualIp:newNetworkIp.trim(),expectedNetwork:''}});
   ui.hostId=reply.status?.selectedNetworkId||selectedNetwork;ui.newConfig='';newNetworkIp='';
   try{localStorage.removeItem('conwu-create-ip-draft');localStorage.removeItem('conwu-create-configuration-draft');}catch{}
   render();notify('网络已创建，可生成直连码');

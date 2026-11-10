@@ -32,7 +32,11 @@ const check=(value,text)=>{if(!value)throw Error(text);checks.push(text);};
  await page.locator('#help-dialog [data-ui-action="close-help"]').first().click();
  await page.locator('.nav[data-page="create"]').click();await page.locator('#new-network-name').fill('浏览器独立网络');await page.locator('#open-network-settings').click();
  check(await page.locator('[data-ui-action="save-editor"]').isDisabled(),'an unchanged fresh editor starts clean');
- check(await page.locator('input[data-key="protocol"][value="tcp"]').isDisabled(),'pure TCP is a future option, never a renamed UDP transport');
+ check(await page.locator('input[data-key="protocol"][value="tcp"]').isEnabled()&&await page.locator('input[data-key="protocol"][value="https"]').isEnabled(),'new networks expose real TCP and HTTPS choices');
+ for(const mode of ['tcp','https','faketcp']){
+  await page.locator(`input[data-key="protocol"][value="${mode}"]`).check();
+  check(await page.evaluate(value=>settingsDto().pathSelection===value+'-only'&&validateSection('network')==='',mode),mode+' survives form validation and serialization without becoming FakeTCP');
+ }
  const size=await page.locator('#network-dialog').boundingBox();
  await page.locator('[data-ui-section="stun"]').click();
  const defaults=await page.evaluate(()=>workspaceState.networkDefaults);

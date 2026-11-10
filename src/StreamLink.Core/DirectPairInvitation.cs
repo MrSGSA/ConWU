@@ -37,7 +37,7 @@ public sealed record DirectPairInvitation(string Network,string OwnerKey,string 
         try{v=JsonSerializer.Deserialize<DirectPairInvitation>(Convert.FromBase64String(code[4..]))??throw new FormatException("直连邀请为空");}
         catch(JsonException){throw new FormatException("直连邀请内容无效");}
         if(v.Network is not {Length:32}||v.OwnerKey is not {Length:>0 and <=512}||v.Signature is not {Length:>0 and <=512}||
-            v.Mode is not ("faketcp" or "udp")||!Guid.TryParseExact(v.Room,"N",out _)||
+            !TransportModes.Valid(v.Mode)||!Guid.TryParseExact(v.Room,"N",out _)||
             !PairKeyExchange.ValidCommitment(v.HostCommitment)||v.Capability is not {Length:64}||!v.Capability.All(char.IsAsciiHexDigit)||
             v.Expires<=DateTimeOffset.UtcNow.ToUnixTimeSeconds()||v.Expires>DateTimeOffset.UtcNow.AddMinutes(6).ToUnixTimeSeconds()||
             v.Entries is not {Length:>0 and <=12})throw new FormatException("直连邀请无效或已过期，请主机重新生成");

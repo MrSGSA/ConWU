@@ -6,7 +6,7 @@ namespace StreamLink.Core;
 
 public static class StartupSettings
 {
-    public static UiDesktopStatus Read()
+    public static UiDesktopStatus Read(bool? serviceReady = null)
     {
         if(OperatingSystem.IsLinux()) {
             bool installed=File.Exists("/etc/systemd/system/streamlink.service");
@@ -14,7 +14,11 @@ public static class StartupSettings
         }
         if(!OperatingSystem.IsWindows())return new(false,false,"NotInstalled");
         using var key=Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\"+WindowsInstance.Name);
-        return new(key!=null,key?.GetValue("Start") is int start && start==2,ControlServerIdentity.Availability());
+        // A reply produced by the running service already knows its readiness.
+        // Do not synchronously call SCM from every status snapshot while a
+        // network driver may be starting under the service-manager lock.
+        return new(key!=null,key?.GetValue("Start") is int start && start==2,
+            key==null?"NotInstalled":serviceReady is {} ready?ready?"Running":"Stopped":ControlServerIdentity.Availability());
     }
     // The service changes only its own startup type, with no user-supplied paths.
     public static void Set(bool enabled)

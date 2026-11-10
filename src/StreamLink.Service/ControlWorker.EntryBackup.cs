@@ -25,7 +25,7 @@ public sealed partial class ControlWorker
     {
         var token=operation.Stop.Token;RequireUiNetwork(action.ExpectedNetwork);
         if((profile.Mesh!=null||profile.Pair!=null)&&!action.ConfirmReplace)throw new IOException("替换网络需要明确确认");
-        if(action.Mode is not ("faketcp" or "udp"))throw new FormatException("网络承载无效");
+        if(!TransportModes.Valid(action.Mode))throw new FormatException("网络承载无效");
         RequireSavedProtocol(action.Mode);
         var settings=PublicSettings(profile);if(invitation)settings=settings with{CoordinatorBackup=false};
         var entries=invitationEntries??settings.ExistingEntries.Where(e=>e.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner||e.PeerSlot==1&&profile.Mesh?.IsOwner!=true).ToArray();
@@ -42,7 +42,7 @@ public sealed partial class ControlWorker
                 budget.ThrowIfCancellationRequested();
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(budget);attempt.CancelAfter(endpoints.Length==1?12000:4000);
                 SetOperation(operation,expected==null?"检查已配置入口，匹配配对码":"验证备用协调提供的主机入口，匹配设备身份",true);
-                var client=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,IPEndPoint.Parse(endpoint),false,0,null,"error")),targetNetwork:expected?.Entry.Network??"");
+                var client=new DirectPairClient(local=>(meshRuntime??MeshRuntimeServices.Default).Transport(new(folder,temporary,IPEndPoint.Parse(endpoint),false,0,null,"error"){PairingBootstrap=true}),targetNetwork:expected?.Entry.Network??"");
                 try{
                     uiExpectedRejoin=MeshRejoin.Create(profile.RejoinCredential,action.Code,uiPairKey);
                     var ticket=await client.Join(action.Code,uiPairKey,profile.DeviceName,attempt.Token,profile.RequestedVirtualIp,uiExpectedRejoin);

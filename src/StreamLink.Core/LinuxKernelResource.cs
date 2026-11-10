@@ -20,7 +20,10 @@ internal sealed class LinuxKernelResource : IDisposable
     }
     static void Cleanup(Entry value) {
         if(value.Rule is {} rule) {
-            if(rule.Length!=10||rule[0]!="-s"||rule[2]!="-d"||rule[4]!="-m"||rule[5]!="comment"||rule[6]!="--comment"||!rule[7].StartsWith("StreamLink-")||rule[8]!="-j"||rule[9]!="ACCEPT")throw new IOException("无效的防火墙回收记录");
+            if(rule.Length!=10)throw new IOException("无效的防火墙回收记录");
+            bool virtualRule=rule[0]=="-s"&&rule[2]=="-d";
+            bool streamRule=rule[0]=="-p"&&rule[1]=="tcp"&&rule[2]=="--dport"&&int.TryParse(rule[3],out int port)&&port is >=1024 and <=65535&&rule[7].Length==43&&Guid.TryParseExact(rule[7][11..],"N",out _);
+            if((!virtualRule&&!streamRule)||rule[4]!="-m"||rule[5]!="comment"||rule[6]!="--comment"||!rule[7].StartsWith("StreamLink-")||rule[8]!="-j"||rule[9]!="ACCEPT")throw new IOException("无效的防火墙回收记录");
             // Only remove the exact tuple and random ownership comment.
             var listing=LinuxPlatform.Run("iptables","-w","3","-S","INPUT");
             if(listing.Contains(rule[7],StringComparison.Ordinal))LinuxPlatform.Run("iptables",new[]{"-w","3","-D","INPUT"}.Concat(rule).ToArray());

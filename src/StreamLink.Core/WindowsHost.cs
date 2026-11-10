@@ -133,6 +133,27 @@ public sealed class ChildJob : IDisposable
 [SupportedOSPlatform("windows")]
 public static class WindowsHost
 {
+    sealed class StreamAccess(string name,string? folder):IDisposable
+    {
+        int closed;
+        public void Dispose(){if(Interlocked.Exchange(ref closed,1)!=0)return;RemoveFirewall(name);if(folder!=null){File.Delete(Path.Combine(folder,"owner.json"));Directory.Delete(folder);}}
+    }
+    public static IDisposable AllowStreamListener(int port,string? recoveryRoot=null)
+    {
+        if(port is <1024 or >65535)throw new ArgumentOutOfRangeException(nameof(port));
+        string name="StreamLink-"+Guid.NewGuid().ToString("N");
+        string? folder=recoveryRoot==null?null:Path.Combine(recoveryRoot,Guid.NewGuid().ToString("N"));
+        if(folder!=null){Directory.CreateDirectory(folder);try{Recovery.Record(folder,name);}catch{Directory.Delete(folder);throw;}}
+        var access=new StreamAccess(name,folder);
+        dynamic policy=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
+        dynamic rule=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
+        try{
+            rule.Name=name;rule.Description="ConWU TCP/HTTPS 接收端口，所属监听关闭时移除";
+            rule.Protocol=6;rule.LocalPorts=port.ToString(System.Globalization.CultureInfo.InvariantCulture);rule.ApplicationName=Environment.ProcessPath;
+            rule.Direction=1;rule.Action=1;rule.Enabled=true;rule.Profiles=int.MaxValue;policy.Rules.Add(rule);return access;
+        }catch{access.Dispose();throw;}
+        finally{Marshal.FinalReleaseComObject(rule);Marshal.FinalReleaseComObject(policy);}
+    }
     public static bool IsAdmin => new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator);
     public static void AddFirewall(string name, string localIp, string peerIp)
     {
