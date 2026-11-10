@@ -1,6 +1,0 @@
-{
-  "runId": "rc1-control-before",
-  "sourceCommit": "49041966d752d4862c583a06ed533f97b3f2bfeb",
-  "exitCode": 1,
-  "scope": "isolated protected test profile; no production service or drivers"
-}

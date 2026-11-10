@@ -1,8 +1,0 @@
-D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\Program.cs(15,111): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\StreamLink.Tests.csproj]
-D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\Program.cs(16,56): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\StreamLink.Tests.csproj]
-D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\Program.cs(21,113): warning CS8602: 解引用可能出现空引用。 [D:\Codex_workspace\UDP2RAW\product\tests\StreamLink.Tests\StreamLink.Tests.csproj]
-PASS 22 checks: STUN framing, invitation validation, authenticated quality test.
-PASS owned-process shutdown
-PASS stale-session recovery and live-owner protection
-TOTAL PASS 26
-TOTAL PASS 41: pairing, election, IPC and optional live discovery.

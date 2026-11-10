@@ -1,4 +1,4 @@
-# ConWU Linux 候选包
+# ConWU Linux
 
 与 Windows 使用同一套双机多网络核心，也可兼任 HTTPS 协调设备。每个网络一主一从，通道双向；不提供串流中继。配置和入口格式见[入口与配置](../../docs/ConWU-入口与配置.md)。
 
@@ -48,7 +48,7 @@ sudo conwu network approve <网络操作ID> <双方校验码>
 
 `profile create <名称> connection.json` 新建配置；`profile copy <ID> <名称>` 显式复制；`profile assign <配置ID> <网络操作ID> --reconnect` 更换引用；`profile delete <ID>` 只删除未关联配置。保存的设置会更新全部引用者，停止的网络在下次启动应用。
 
-`config show`／`config apply device.json` 只管理本机设置。本机默认提供独立协调能力，可在其中的 `Coordinator` 维护监听与证书；新设备自动生成 HTTPS 证书，默认端口 47822，原有反代设置保留。HTTP 只允许本机地址，公网通过 HTTPS／反向代理公开。协调设备不自动加入其他网络。
+`config show`／`config apply device.json` 只管理本机设置。本机默认提供独立协调能力，可在其中的 `Coordinator` 维护监听与证书；新设备自动生成 HTTPS 证书，默认端口 47822，原有反代设置保留。HTTP 只允许本机地址，公网通过 HTTPS／反向代理公开。协调设备不自动加入其他网络。维护和备份见[协调服务与升级](../../docs/协调服务与升级.md)。
 
 `network leave <网络操作ID>` 从本机退出；`network close <网络操作ID>` 由主机按授权流程解散；`start/stop/retry <网络操作ID>` 控制单条连接。协调不可用时本机退出仍可进行，不把未确认的远端撤销说成成功。
 

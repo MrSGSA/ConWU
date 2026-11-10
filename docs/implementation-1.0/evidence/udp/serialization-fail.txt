@@ -1,9 +1,0 @@
-PASS two actual authenticated peer ports witness the same held sender socket before data nomination
-PASS production strong evidence factory accepts only the measured full peer-port scope
-PASS extra/missing target scope cannot reuse the strong proof
-PASS wrong peer key yields explicit unavailability without killing the shared receive loop or rebinding
-PASS a private peer without an authorized reachable witness is not assigned stable status
-PASS empirical mapping stability remains disabled and cannot become a peer-port proof
-PASS independent changed holdout rejects the experimental mapping hypothesis
-PASS old or mixed generation cannot admit empirical exploration
-PASS all actual witness sockets remain accounted in the existing per-device resource pools

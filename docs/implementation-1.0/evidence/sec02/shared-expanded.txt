@@ -1,1 +1,0 @@
-{"scope":"same offline frames through complete native parser and managed TCP admission; not driver/WAN","frames":22414,"accepted":743,"rejected":21671,"mismatches":0,"corpusSha256":"884CEA86A5A58D74B8CF127AC720D7F94476C64FE55FB1FE6CF0D0D798F38D63","status":"Pass"}

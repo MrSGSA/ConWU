@@ -1,1 +1,0 @@
-{"scope":"pure C++ TCP-shape model; not native integration or NAT","cases":630,"status":"Pass"}

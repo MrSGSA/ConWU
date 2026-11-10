@@ -33,9 +33,9 @@ exec "$(dirname -- "$(readlink -f -- "$0")")/conwu" "$@"
  $unitPath=Join-Path $bundle 'streamlink.service'
  [IO.File]::WriteAllText($unitPath,[IO.File]::ReadAllText($unitPath).Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))
  Copy-Item -LiteralPath docs/ConWU-入口与配置.md -Destination (Join-Path $bundle '入口与配置.md')
- Copy-Item -LiteralPath docs/aq1/协调服务可靠性与迁移-20261106.md -Destination (Join-Path $bundle '协调服务可靠性与迁移.md')
+ Copy-Item -LiteralPath docs/协调服务与升级.md -Destination (Join-Path $bundle '协调服务与升级.md')
  $readme=Join-Path $bundle 'README.md'
- $readmeText=[IO.File]::ReadAllText($readme).Replace('../../docs/ConWU-入口与配置.md','入口与配置.md').Replace('../../docs/aq1/协调服务可靠性与迁移-20261106.md','协调服务可靠性与迁移.md')
+ $readmeText=[IO.File]::ReadAllText($readme).Replace('../../docs/ConWU-入口与配置.md','入口与配置.md').Replace('../../docs/协调服务与升级.md','协调服务与升级.md')
  [IO.File]::WriteAllText($readme,$readmeText,[Text.UTF8Encoding]::new($false))
  Copy-Item -LiteralPath LICENSE -Destination $bundle
  Copy-Item -LiteralPath transport/udp2raw/LICENSE.md -Destination (Join-Path $bundle 'udp2raw-LICENSE.md')

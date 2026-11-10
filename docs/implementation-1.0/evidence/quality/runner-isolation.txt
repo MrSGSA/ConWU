@@ -1,5 +1,0 @@
-PASS actual diagnostic port conflict is reported without network restart
-PASS peer authentication connects despite unavailable diagnostic port
-PASS complete authenticated IP datagram reaches peer after diagnostic fault
-PASS diagnostic failure must not recreate adapter or transport
-PASS 4 optional quality isolation checks

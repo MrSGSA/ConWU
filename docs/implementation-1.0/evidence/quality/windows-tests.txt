@@ -1,1 +1,0 @@
-PASS 100: isolated foreground lifecycle, DPAPI, mutual exclusion, bundle verification and UI busy/success/failure feedback. No live service/network changed.

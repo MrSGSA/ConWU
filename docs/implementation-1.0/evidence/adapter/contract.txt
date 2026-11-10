@@ -1,1 +1,0 @@
-{"scope":"adapter contracts and subnet models \u002B actual read-only Windows route table; no driver loaded","checks":12,"status":"Pass"}

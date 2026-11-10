@@ -1,7 +1,0 @@
-{
-  "runId": "rc1-sec01-after",
-  "baselineCommit": "61aa883",
-  "testBinarySha256": "88157DB8B8920C2E5DF76F1E7752C65A2C457B4A53779C9FE6C424684BA821D4",
-  "exitCode": 0,
-  "scope": "complete production parser offline; no driver/WAN"
-}

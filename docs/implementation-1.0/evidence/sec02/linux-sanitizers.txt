@@ -1,5 +1,0 @@
-In file included from transport/udp2raw/my_ev.cpp:14:
-transport/udp2raw/libev/ev.c:1831:31: warning: ‘ev_default_loop_ptr’ initialized and declared ‘extern’
- 1831 |   EV_API_DECL struct ev_loop *ev_default_loop_ptr = 0; /* needs to be initialised to make it a definition despite extern */
-      |                               ^~~~~~~~~~~~~~~~~~~
-{"scope":"complete production TCP parser offline; no driver or WAN","cases":29659,"failures":0,"mutations":20000,"status":"Pass"}

@@ -1,7 +1,0 @@
-{
-  "status": "Pass",
-  "checks": 15,
-  "quality": {
-    "scope": "quality rule/digest models; synthetic diagnostic evidence, no actual policy switch or network"
-  }
-}

@@ -1,1 +1,0 @@
-{"scope":"complete production TCP parser offline; no driver or WAN","cases":29659,"failures":0,"mutations":20000,"status":"Pass"}
