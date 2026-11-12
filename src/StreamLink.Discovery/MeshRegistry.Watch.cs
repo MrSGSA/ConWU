@@ -79,6 +79,7 @@ public sealed partial class MeshRegistry
             catch { return Results.BadRequest(); }
             account = MemberAccount(network, request.Slot); feed = State(network);
             if (!TakeRequest(network, request.Slot)) return Results.StatusCode(429);
+            clients?.Observe(member.Device,"",network,"网络发现");
             long utc = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
             foreach (Guid id in account.Requests.Where(p => p.Value <= utc).Select(p => p.Key).ToArray()) account.Requests.Remove(id);
             if (account.Requests.ContainsKey(request.RequestId)) return Results.Conflict();

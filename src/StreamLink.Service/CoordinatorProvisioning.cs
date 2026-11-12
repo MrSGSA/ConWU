@@ -10,6 +10,13 @@ namespace StreamLink.Service;
 // room, or PKARR identity. Existing operator-managed listeners are preserved.
 internal static class CoordinatorProvisioning
 {
+    internal static CoordinatorSettings Prepare(ProfileStore store,CoordinatorSettings settings)
+    {
+        if (!settings.Enabled || !settings.ListenUrl.StartsWith("https://",StringComparison.OrdinalIgnoreCase) ||
+            settings.CertificateFile.Length>0 || settings.CertificateKeyFile.Length>0) return settings;
+        var automatic=Enable(store,new());
+        return settings with {CertificateFile=automatic.CertificateFile,CertificateKeyFile=automatic.CertificateKeyFile};
+    }
     internal static CoordinatorSettings Enable(ProfileStore store,CoordinatorSettings settings)
     {
         if(settings.Enabled){settings.Validate();return settings;}
@@ -33,7 +40,7 @@ internal static class CoordinatorProvisioning
             Write(privateKey,key.ExportPkcs8PrivateKeyPem());Write(certificate,issued.ExportCertificatePem());
         }
         using var loaded=X509Certificate2.CreateFromPemFile(certificate,privateKey);
-        if(!loaded.HasPrivateKey||DateTime.UtcNow>loaded.NotAfter.ToUniversalTime())throw new IOException("本机协调证书不可用，请在高级服务设置中更新证书");
+        if(!loaded.HasPrivateKey||DateTime.UtcNow>loaded.NotAfter.ToUniversalTime())throw new IOException("本机协调证书不可用，请在“对外协调”的“本机协调设置”中更新证书");
         var automatic=new CoordinatorSettings(true,"https://0.0.0.0:47822",certificate,privateKey,PublicCertificatePin:Convert.ToHexString(SHA256.HashData(loaded.RawData)));
         automatic.Validate();return automatic;
     }

@@ -3,12 +3,12 @@
 // Live workspace presentation. Pairing, operation tracking and local session
 // renewal continue to use app.js; this layer never simulates connection success.
 (()=>{
-Object.assign(titles,{requests:'加入申请'});
+Object.assign(titles,{requests:'加入申请',coordination:'对外协调'});
 delete titles.coordinator;
 let terminalTheme='auto';try{terminalTheme=localStorage.getItem('streamlink-terminal-theme')||'auto';}catch{}
 const liveLogView=updateLogView;
 updateLogView=function(){const prior=saved.logging.terminal;saved.logging.terminal=terminalTheme;try{liveLogView();}finally{saved.logging.terminal=prior;}};
-const ui={hostId:'',joinId:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
+const ui={coordination:null,coordinationBase:null,hostId:'',joinId:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
 const all=()=>workspaceState?.networks||[],row=id=>all().find(n=>n.id===id);
 const protocolOf=p=>({'udp-only':'直接 UDP（旧网络）','tcp-only':'纯 TCP','https-only':'HTTPS'}[p?.pathSelection]||'FakeTCP + HTTP');
 const strategyOf=p=>p?.connectionSource==='existing'?'只使用已有入口':'自主打洞';
@@ -17,8 +17,12 @@ const privateFields=[['network','连接方式','link'],['discovery','配对与�
 const uiToggle=(scope,key,value,label)=>`<label class="switch"><input type="checkbox" data-ui-scope="${scope}" data-ui-key="${key}" ${value?'checked':''} aria-label="${label}"><span class="switch-track"></span></label>`;
 const kv=(label,value,mono=false)=>`<div class="kv"><span>${esc(label)}</span><span class="${mono?'mono':''}">${esc(value)}</span></div>`;
 const readRows=items=>`<dl class="readonly-values">${items.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value||'未设置')}</dd></div>`).join('')}</dl>`;
-const deviceValue=()=>({name:workspaceState?.deviceName||'',startup:!!workspaceState?.desktop?.autoStart,level:workspaceState?.logLevel||'info',terminal:terminalTheme,host:clone({...defaults.host,...deviceSettings().coordinator})});
-const defaultDevice=()=>({name:workspaceState.deviceName,startup:true,level:'info',terminal:'auto',host:clone(ui.deviceBase?.host||deviceValue().host)});
+const deviceValue=()=>({name:workspaceState?.deviceName||'',startup:!!workspaceState?.desktop?.autoStart,level:workspaceState?.logLevel||'info',terminal:terminalTheme});
+const defaultDevice=()=>({name:workspaceState.deviceName,startup:true,level:'info',terminal:'auto'});
+function coordinatorValue(){
+ const host=clone({...defaults.host,...deviceSettings().coordinator});
+ return {...host,port:String(new URL(host.listenUrl).port||47822)};
+}
 const compactCodeValue=value=>String(value||'').toUpperCase().replace(/[\s\u2010-\u2015-]/g,'').replace(/O/g,'0').replace(/[IL]/g,'1');
 const formatCompact=value=>compactCodeValue(value).match(/.{1,4}/g)?.join('-')||'';
 const validCompactCode=value=>/^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{16}$/.test(compactCodeValue(value));
@@ -48,6 +52,7 @@ function openHelp(kind){
 function initializeDrafts(){
  if(!workspaceState)return;
  if(!ui.device||!ui.savingDevice&&same(ui.device,ui.deviceBase)){ui.deviceBase=deviceValue();ui.device=clone(ui.deviceBase);ui.deviceRevision=workspaceState.deviceSettingsRevision;}
+ if(!ui.coordination||!ui.savingCoordination&&same(ui.coordination,ui.coordinationBase)){ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);}
  if(ui.newConfig&&!workspaceState.configurations?.some(c=>c.id===ui.newConfig))ui.newConfig='';
 }
 function saveActions(scope){return `<div class="heading-actions"><div class="heading-action-buttons">${scope==='device'?'<button class="btn" data-ui-action="default-device">恢复默认设置</button>':''}<button class="btn" data-ui-action="restore-${scope}" id="revert-${scope}">恢复刚才设置</button><button class="btn primary" data-ui-action="save-${scope}" id="save-${scope}">${icon('save')}保存设置</button></div><span class="save-state" id="${scope}-save-state" role="status"></span></div>`;}
@@ -79,8 +84,68 @@ joinPage=function(){
 };
 function requestsPage(){return heading('加入申请','核对设备与校验码，决定是否允许加入。')+incomingPage().replaceAll('data-action="approve"','data-ui-action="approve"').replaceAll('data-action="reject"','data-ui-action="reject"').replaceAll('data-request-network=','data-network=');}
 function liveSettingsPage(){
- const d=ui.device||deviceValue(),desktop=workspaceState?.desktop,linux=workspaceState?.platform==='linux',host=d.host;
- return heading('设置','',saveActions('device'))+`<article class="card settings-page"><section class="settings-section"><div><h2>启动与服务</h2><p class="intro">配置开机启动与服务</p></div><div><div class="switch-row"><div><h3>开机启动</h3><p>${linux?'由系统服务管理。':'启动后台服务，登录后显示托盘。'}</p></div>${linux?'<span class="badge">由 systemd 管理</span>':uiToggle('device','startup',d.startup,'开机启动')}</div><div class="row between" style="margin-top:23px"><span class="small muted">后台服务</span><span class="badge ${state?.serviceReady&&(linux||desktop?.serviceRegistered)?'good':''}">${linux?state?.serviceReady?'正在运行':'未运行':desktop?.serviceRegistered?state?.serviceReady?'已注册 · 正在运行':'已注册 · 未运行':'尚未注册'}</span>${!linux&&(!desktop?.serviceRegistered||!state?.serviceReady)?'<button class="btn compact" data-ui-action="register-service">注册／启动服务</button>':''}</div><details class="service-advanced" id="local-service-listener"><summary class="text-btn">监听与证书（高级）</summary><div class="section-spacer"><label class="field"><span>本机协调监听地址</span><input data-ui-scope="deviceHost" data-ui-key="listenUrl" value="${esc(host.listenUrl)}" spellcheck="false"></label>${[['certificateFile','监听证书文件'],['certificateKeyFile','监听私钥文件']].map(([k,label])=>`<label class="field"><span>${label}</span><input data-ui-scope="deviceHost" data-ui-key="${k}" value="${esc(host[k]||'')}" spellcheck="false"></label>`).join('')}${readRows([['协调服务',workspaceState?.coordinator?.state||'正在读取'],['本机证书指纹',workspaceState?.coordinator?.certificatePin||host.publicCertificatePin||'当前使用本机反向代理']])}</div></details></div></section><section class="settings-section"><div><h2>本机设备名</h2><p class="intro">所有网络统一使用这个设备名称。</p></div><label class="field"><span>设备名称</span><input id="device-name" data-ui-scope="device" data-ui-key="name" maxlength="64" value="${esc(d.name)}"></label></section><section class="settings-section"><div><h2>日志设置</h2><p class="intro">调整日志详细程度与终端外观</p></div><div><label class="field"><span>日志等级</span><select data-ui-scope="device" data-ui-key="level">${[['error','仅错误'],['warn','警告与错误'],['info','常规信息'],['debug','详细调试'],['off','关闭记录']].map(([v,t])=>`<option value="${v}" ${d.level===v?'selected':''}>${t}</option>`).join('')}</select></label><label class="field"><span>终端外观</span><select data-ui-scope="device" data-ui-key="terminal">${[['auto','跟随界面'],['dark','深色'],['light','浅色']].map(([v,t])=>`<option value="${v}" ${d.terminal===v?'selected':''}>${t}</option>`).join('')}</select></label><button class="text-btn" data-page="logs">打开日志${icon('chevron')}</button></div></section></article>`;
+ const d=ui.device||deviceValue(),desktop=workspaceState?.desktop,linux=workspaceState?.platform==='linux';
+ const registered=linux||desktop?.serviceRegistered;
+ const serviceState=registered?(state?.serviceReady?'正在运行':'未运行'):'尚未注册';
+ return heading('设置','',saveActions('device'))+`
+ <article class="card settings-page">
+  <section class="settings-section"><div><h2>启动与服务</h2><p class="intro">配置开机启动与服务</p></div><div>
+   <div class="switch-row"><div><h3>开机启动</h3><p>${linux?'由系统服务管理。':'启动后台服务，登录后显示托盘。'}</p></div>${linux?'<span class="badge">由 systemd 管理</span>':uiToggle('device','startup',d.startup,'开机启动')}</div>
+   <div class="row between section-spacer"><span class="small muted">后台服务</span><span class="badge ${state?.serviceReady&&registered?'good':''}">${serviceState}</span>${!linux&&(!registered||!state?.serviceReady)?'<button class="btn compact" data-ui-action="register-service">注册／启动服务</button>':''}</div>
+  </div></section>
+  <section class="settings-section"><div><h2>本机设备名</h2><p class="intro">所有网络统一使用这个设备名称。</p></div><label class="field"><span>设备名称</span><input id="device-name" data-ui-scope="device" data-ui-key="name" maxlength="64" value="${esc(d.name)}"></label></section>
+  <section class="settings-section"><div><h2>日志设置</h2><p class="intro">调整日志详细程度与终端外观</p></div><div>
+   <label class="field"><span>日志等级</span><select data-ui-scope="device" data-ui-key="level">${[['error','仅错误'],['warn','警告与错误'],['info','常规信息'],['debug','详细调试'],['off','关闭记录']].map(([v,t])=>`<option value="${v}" ${d.level===v?'selected':''}>${t}</option>`).join('')}</select></label>
+   <label class="field"><span>终端外观</span><select data-ui-scope="device" data-ui-key="terminal">${[['auto','跟随界面'],['dark','深色'],['light','浅色']].map(([v,t])=>`<option value="${v}" ${d.terminal===v?'selected':''}>${t}</option>`).join('')}</select></label><button class="text-btn" data-page="logs">打开日志${icon('chevron')}</button>
+  </div></section>
+ </article>`;
+}
+function coordinationPage(){
+ const host=deviceSettings().coordinator||{},status=workspaceState.coordinator,clients=status?.clients||[];
+ const running=online&&status?.running;
+ const label=!online?'等待后台状态':status?.enabled!==host.enabled?(host.enabled?'正在启动':'正在停止'):status?.state||'正在读取';
+ return heading('对外协调','由本机提供配对与地址发现服务。')+`
+ <div class="network-columns coordination-columns">
+  <article class="card pad">
+   <div class="switch-row"><div><h2>本机协调服务</h2><p class="hint">为选用本机协调地址的设备提供服务。</p></div>${uiToggle('coordinationSwitch','enabled',host.enabled,'开启本机协调服务')}</div>
+   <div class="kv provider-status"><span>当前状态</span><span class="row" id="coordinator-state"><span class="dot ${running?'good':''}"></span>${esc(label)}</span></div>
+   <button class="settings-launch" data-ui-action="open-coordination-settings"><span>${icon('settings')}</span><span class="grow"><strong>本机协调设置</strong><small>监听端口 ${esc(coordinatorValue().port)}</small></span><span class="open-label">打开设置${icon('chevron')}</span></button>
+  </article>
+  <article class="card table-card">
+   <div class="pad"><h2>使用本机协调的设备</h2><p class="hint">最近 3 分钟内有已验证活动的设备，最多显示 128 台。</p></div>
+   ${clients.length?`<div class="table-scroll"><table><thead><tr><th>设备</th><th>用途</th><th>网络数</th><th>最近活动</th></tr></thead><tbody>${clients.map(client=>`<tr><td><strong>${esc(client.name)}</strong></td><td>${esc(client.phase)}</td><td>${client.networks||'—'}</td><td class="mono">${esc(new Date(client.lastSeen).toLocaleTimeString())}</td></tr>`).join('')}</tbody></table></div>`:`<div class="empty">${icon('server')}<h2>${running?'暂无设备使用本机协调':'等待本机协调服务开启'}</h2></div>`}
+  </article>
+ </div>`;
+}
+function renderCoordinatorEditor(){
+ const draft=ui.coordination;
+ $('coordination-error').textContent='';
+ $('coordination-settings-fields').innerHTML=`
+  <label class="field"><span>监听端口</span><input type="number" min="1024" max="65535" data-ui-scope="coordination" data-ui-key="port" value="${esc(draft.port)}"></label>
+  <label class="field"><span>证书文件（可选）</span><input data-ui-scope="coordination" data-ui-key="certificateFile" value="${esc(draft.certificateFile||'')}" placeholder="留空使用本机自动管理的证书" spellcheck="false"></label>
+  <label class="field"><span>私钥文件（可选）</span><input data-ui-scope="coordination" data-ui-key="certificateKeyFile" value="${esc(draft.certificateKeyFile||'')}" placeholder="留空使用本机自动管理的私钥" spellcheck="false"></label>
+  ${readRows([['本机证书指纹',workspaceState.coordinator?.certificatePin||'尚未启用 HTTPS 监听']])}`;
+ controls();
+}
+async function saveCoordinatorSettings(settings){
+ const action={action:'settings',settings:{...deviceSettings(),coordinator:settings},expectedRevision:workspaceState.deviceSettingsRevision,confirmReplace:true};
+ await command('save-settings',{networkId:'',settingsBatch:{device:action,networks:[]}});
+}
+async function toggleCoordinator(enabled){
+ const draft=clone(ui.coordination),base=ui.coordinationBase;
+ await saveCoordinatorSettings({...deviceSettings().coordinator,enabled});
+ const current=coordinatorValue();
+ for(const key of Object.keys(current))if(same(draft[key],base[key]))draft[key]=current[key];
+ ui.coordinationBase=current;ui.coordination=draft;render();
+}
+async function saveCoordinator(){
+ if(!same(coordinatorValue(),ui.coordinationBase))throw Error('本机协调设置已被其他窗口修改，请恢复刚才设置后重试。');
+ const {port,...settings}=ui.coordination;
+ if(!/^\d+$/.test(port)||Number(port)<1024||Number(port)>65535)throw Error('监听端口需为 1024–65535。');
+ if(!!settings.certificateFile.trim()!==!!settings.certificateKeyFile.trim())throw Error('证书与私钥需要同时填写，也可以同时留空。');
+ const address=new URL(settings.listenUrl);address.port=String(Number(port));
+ await saveCoordinatorSettings({...settings,listenUrl:address.href,certificateFile:settings.certificateFile.trim(),certificateKeyFile:settings.certificateKeyFile.trim()});
+ ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);renderCoordinatorEditor();render();notify('本机协调设置已保存');
 }
 function sampleTraffic(next){const now=performance.now(),old=ui.sample,a=next.aggregate,peers=new Map(all().flatMap(n=>(n.status.peers||[]).map(p=>[n.id+':'+p.slot,p])));if(!a)return;const dt=old?(now-old.time)/1000:0,valid=old&&dt>=.1&&dt<=10;ui.rates.clear();if(valid)for(const [id,p]of peers){const q=old.peers.get(id);if(q&&p.sentBytes>=q.sentBytes&&p.receivedBytes>=q.receivedBytes)ui.rates.set(id,{up:(p.sentBytes-q.sentBytes)/dt,down:(p.receivedBytes-q.receivedBytes)/dt});}if(valid&&a.sentBytes>=old.sent&&a.receivedBytes>=old.received)ui.chart.push({time:now,up:(a.sentBytes-old.sent)/dt,down:(a.receivedBytes-old.received)/dt});ui.chart=ui.chart.filter(p=>now-p.time<3600000);ui.sample={time:now,sent:a.sentBytes,received:a.receivedBytes,peers};}
 function chart(){const now=performance.now(),values=ui.chart.filter(p=>now-p.time<=ui.range*1000),max=Math.max(1,...values.flatMap(p=>[p.up,p.down])),points=key=>values.map(p=>`${32+600*(1-(now-p.time)/(ui.range*1000))},${105-98*p[key]/max}`).join(' ');return `<svg class="traffic-chart" viewBox="0 0 640 128" preserveAspectRatio="none" role="img" aria-label="实际上传与下载速度折线图"><path d="M32 105H632M32 56H632M32 7H632" stroke="var(--line)" stroke-dasharray="3 5" fill="none"/><text x="4" y="12" fill="var(--dim)">${(max/1e6).toFixed(1)}</text><text x="4" y="109" fill="var(--dim)">0</text><polyline points="${points('down')}" fill="none" stroke="var(--accent)" stroke-width="1.8" vector-effect="non-scaling-stroke"/><polyline points="${points('up')}" fill="none" stroke="var(--green)" stroke-width="1.5" vector-effect="non-scaling-stroke"/><text x="32" y="124" fill="var(--dim)">${ui.range===60?'1 分钟前':'1 小时前'}</text><text x="610" y="124" fill="var(--dim)">现在</text></svg>`;}
@@ -92,11 +157,11 @@ overviewPage=function(){
   return `<tr data-peer-row="${esc(n.id)}"><td><strong class="peer-name">${esc(p?.name||'等待另一台设备')}</strong></td><td>${esc(n.name)}</td><td class="role-value">${pairs('role',[s.isOwner?'主机':'从机',s.isOwner?'从机':'主机'])}</td><td>${pairs('ip',[s.virtualIp,p?.virtualIp],true)}</td><td><div class="cell-status"><span class="dot ${connected?'good':''}"></span>${connected?'已直连':!online?'状态待确认':!s.networkEnabled?'已停止':esc(phaseNames[p?.connection?.phase]||'等待设备')}</div><div class="cell-sub">${protocolOf(s.settings)}</div>${connected?`<div class="cell-sub">已直连 <span data-network-duration="${elapsed}" data-duration-sample="${performance.now()}">${connectedDuration(elapsed)}</span></div>`:''}<div class="cell-sub entry">${esc(connected?'实际入口：':'上次入口：')}${esc(p?.outerTarget&&p.outerTarget!=='Unknown'?p.outerTarget:p?.entryDirection==='Inbound'?'入站直连 · 本机端口 '+s.settings.listenPort:'待认证连接')}</div></td><td class="mono">${connected&&p.rttMs!=null?p.rttMs.toFixed(1)+' ms':'—'}</td><td><div class="traffic-cell"><div><span class="up">↑</span> ${total(p?.sentBytes||0)}<div class="rate">${speed(online?r?.up:null)}</div></div><div><span class="down">↓</span> ${total(p?.receivedBytes||0)}<div class="rate">${speed(online?r?.down:null)}</div></div></div></td></tr>`;
  }).join('')}</tbody></table></div><div class="device-table-foot"><span class="dot ${online&&live?'good':''}"></span><span>${networks.length} 个网络</span><span>·</span><span class="direct-total">与其余 ${online?live:0} 台设备直连</span></div></article>`;
 };
-function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,logs:logsPage};return pages[page]();}
-function pageSignature(){return JSON.stringify([page,ui.hostId,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,ui.deviceBase?.host]);}
+function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,logs:logsPage};return pages[page]();}
+function pageSignature(){return JSON.stringify([page,ui.hostId,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?workspaceState?.coordinator?.clients:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;
- if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';if(noticeSource==='backend'||noticeSource==='pair'&&!next.networks.some(n=>n.status.pairing?.active)){lastPairError='';notice('');}appendLogs(next.logs||[]);initializeDrafts();if(ui.hostId&&!row(ui.hostId))ui.hostId='';if(ui.joinId&&!row(ui.joinId))ui.joinId='';if(observed)sampleTraffic(next);}
+ if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';if(noticeSource==='backend'||noticeSource==='pair'&&!next.networks.some(n=>n.status.pairing?.active)){lastPairError='';notice('');}appendStatusLogs(next);initializeDrafts();if(ui.hostId&&!row(ui.hostId))ui.hostId='';if(ui.joinId&&!row(ui.joinId))ui.joinId='';if(observed)sampleTraffic(next);}
  if(!workspaceState){$('content').innerHTML=heading('ConWU','正在读取本机后台状态。');controls();return;}
  const chosen=row(selectedNetwork)?.status;state=chosen?{...workspaceState,...chosen,desktop:workspaceState.desktop}:workspaceState;
  networkActive=!!state.networkId;owner=!!state.isOwner;createdAt=(state.networkEstablishedAt||0)*1000;
@@ -125,7 +190,7 @@ controls=function(){
  const ready=online&&!expired&&state?.serviceReady&&!busy&&!ui.preparingCommand;
  for(const b of document.querySelectorAll('[data-ui-action]')){
   const action=b.dataset.uiAction;
-  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','open-local-service'].includes(action))b.disabled=!!ui.editor?.saving;
+  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','open-local-service','open-coordination-settings','close-coordination-settings'].includes(action))b.disabled=!!ui.editor?.saving;
   else if(['range-60','range-3600'].includes(action))b.disabled=false;
   else b.disabled=!ready;
  }
@@ -133,6 +198,14 @@ controls=function(){
   const changed=!same(ui.device,ui.deviceBase);$('save-device').disabled=!ready||!changed;
   $('revert-device').disabled=!!ui.savingDevice||!changed;$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
  }
+ if($('save-coordination')){
+  const changed=!same(ui.coordination,ui.coordinationBase);
+  $('save-coordination').disabled=!ready||!!ui.savingCoordination||!changed;
+  $('restore-coordination').disabled=!!ui.savingCoordination||!changed;
+  $('coordination-save-state').textContent=ui.savingCoordination?'保存中…':changed?'有未保存的更改':'已保存';
+  $('coordination-save-state').className='save-state'+(changed?' dirty':'');
+ }
+ for(const input of document.querySelectorAll('[data-ui-scope="coordination"],[data-ui-scope="coordinationSwitch"]'))input.disabled=!ready||!!ui.savingCoordination;
  for(const b of document.querySelectorAll('[data-ui-action="approve"],[data-ui-action="reject"]')){const p=row(b.dataset.network)?.status.pairing;b.disabled=!ready||!p?.candidate||(b.dataset.uiAction==='approve'&&!/^\d{6}$/.test(p.verification||''));}
  const copy=document.querySelector('[data-ui-action="copy-pair"]');
  if(copy){const p=row(ui.hostId)?.status.pairing;copy.disabled=!p?.active||p.expires*1000<=Date.now()||p.format!=='compact'||!validCompactCode(p.code);}
@@ -335,7 +408,7 @@ function updateExit(){const n=row($('exit-network-select').value);if(!n)return;$
 async function lockedSave(key,action){if(ui[key])return;ui[key]=true;controls();try{return await action();}finally{ui[key]=false;controls();}}
 async function saveDevice(){
  const d=ui.device;if(!d.name.trim())throw Error('请输入设备名称。');
- const action={action:'settings',settings:{...deviceSettings(),coordinator:clone(d.host)},expectedRevision:ui.deviceRevision,confirmReplace:true,patch:{deviceName:d.name.trim(),expectedDeviceName:ui.deviceBase.name,logLevel:d.level,expectedLogLevel:ui.deviceBase.level}};
+ const action={action:'settings',settings:{...deviceSettings(),coordinator:clone(deviceSettings().coordinator)},expectedRevision:workspaceState.deviceSettingsRevision,confirmReplace:true,patch:{deviceName:d.name.trim(),expectedDeviceName:ui.deviceBase.name,logLevel:d.level,expectedLogLevel:ui.deviceBase.level}};
  if(d.startup!==ui.deviceBase.startup){action.autoStart=d.startup;action.expectedAutoStart=ui.deviceBase.startup;}
  await command('save-settings',{networkId:'',settingsBatch:{device:action,networks:[]}});terminalTheme=d.terminal;
  try{localStorage.setItem('streamlink-terminal-theme',terminalTheme);}catch{}
@@ -350,7 +423,8 @@ async function testEntry(){const values=drafts.network.entries.local.filter(v=>v
 
 document.addEventListener('input',e=>{
  const el=e.target,scope=el.dataset.uiScope,key=el.dataset.uiKey;
- if(scope&&key&&ui.device){const target=scope==='deviceHost'?ui.device.host:ui.device;target[key]=el.type==='checkbox'?el.checked:el.value;controls();}
+ if(scope==='coordinationSwitch'){void run(()=>lockedSave('savingCoordination',()=>toggleCoordinator(el.checked))).catch(()=>{});return;}
+ if(scope&&key&&ui.device){const target=scope==='coordination'?ui.coordination:ui.device;target[key]=el.type==='checkbox'?el.checked:el.value;if(scope==='coordination')$('coordination-error').textContent='';controls();}
  if(el.id==='new-network-ip'){newNetworkIp=el.value;if(ui.editor)ui.editor.customIp=el.value;if($('settings-error'))$('settings-error').textContent='';controls();}
 });
 document.addEventListener('change',e=>{if(e.target.id==='exit-network-select')updateExit();});
@@ -369,6 +443,10 @@ document.addEventListener('click',e=>{
   case 'remove-network':await removeNetwork(id);break;case 'choose-exit':chooseExit();break;case 'close-exit':$('exit-dialog').close();break;
   case 'confirm-exit':{const target=$('exit-network-select').value;$('exit-dialog').close();await removeNetwork(target,true);break;}
   case 'start-network':await command('start',{networkId:id});break;case 'save-device':await lockedSave('savingDevice',saveDevice);break;
+  case 'open-coordination-settings':renderCoordinatorEditor();$('coordination-dialog').showModal();break;
+  case 'close-coordination-settings':$('coordination-dialog').close();break;
+  case 'restore-coordination':ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);renderCoordinatorEditor();break;
+  case 'save-coordination':try{await lockedSave('savingCoordination',saveCoordinator);}catch(error){$('coordination-error').textContent=error.message;throw error;}break;
   case 'restore-device':ui.device=clone(ui.deviceBase);render();break;case 'default-device':ui.device=defaultDevice();render();break;
   case 'register-service':await command('register-service',{networkId:''});break;
   case 'refresh-pkarr':await command('network',{networkId:id,network:{action:'refresh-pkarr',expectedNetwork:row(id).status.networkId}});notify('已请求刷新发现信息');break;

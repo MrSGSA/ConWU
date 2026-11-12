@@ -50,6 +50,12 @@ static partial class Program
             await Until(()=>{lock(adapters)return adapters.Count==2;},"both independent network adapters open");
             var summary=(await Ui(new("status"))).Status!;
             Check(summary.Aggregate?.NetworkCount==2&&summary.NetworkId.Length==0&&summary.SelectedNetworkId.Length==0,"device overview aggregates all networks without selecting a runtime");
+            var selectedLogs=(await Ui(new("status"){NetworkId=firstId})).Status!;
+            Check(selectedLogs.LogEntries is {Length:>0}&&summary.LogEntries is {Length:>0}&&
+                selectedLogs.LogEntries.All(entry=>entry.Id.StartsWith(summary.LogEntries[0].Id.Split(':')[0]+":",StringComparison.Ordinal)),
+                "selecting a network preserves the device log source even when newer device events arrive");
+            var networkLogs=summary.Networks.SelectMany(n=>n.Status.LogEntries??[]).ToArray();
+            Check(networkLogs.Length>=2&&networkLogs.Select(entry=>entry.Id).Distinct().Count()==networkLogs.Length&&networkLogs.All(entry=>entry.Timestamp>0&&!summary.LogEntries!.Any(deviceEntry=>deviceEntry.Id==entry.Id)),"network log entries have independent stable identities and absolute timestamps");
             Check(summary.Networks.Select(n=>n.Status.Settings!.ListenPort).Distinct().Count()==1&&summary.Networks.Select(n=>n.Status.Settings!.SourcePort).Distinct().Count()==2&&probes==0,"compatible receivers share one port with separate source ownership and no autonomous probing");
             var originalDefaults=summary.DeviceSettings!;
             foreach(string source in new[]{"198.51.100.42:45120","https://entry.example.test/current.txt"}){

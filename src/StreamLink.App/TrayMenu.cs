@@ -13,7 +13,7 @@ public sealed class TrayMenu : ContextMenuStrip
         Font=new Font("Microsoft YaHei UI",10f);Renderer=new MenuRenderer();
         Items.Add(new ToolStripMenuItem("打开 WebUI(&O)",null,(_,_)=>open()){Tag="open",AccessibleName="打开 WebUI"});
         Items.Add(new ToolStripSeparator());
-        Items.Add(new ToolStripMenuItem("退出(&X)",null,(_,_)=>exit()){Tag="exit",AccessibleName="退出托盘，网络继续运行",ToolTipText="关闭托盘和本机面板，网络继续运行"});
+        Items.Add(new ToolStripMenuItem("退出托盘(&X)",null,(_,_)=>exit()){Tag="exit",AccessibleName="退出托盘，网络继续运行",ToolTipText="关闭托盘和本机面板，网络继续运行"});
         ApplyMetrics();
     }
     int Scale(int value)=> (int)Math.Round(value*DeviceDpi/96d);

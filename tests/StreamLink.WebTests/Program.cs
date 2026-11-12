@@ -10,6 +10,7 @@ using StreamLink.Web;
 if(args is ["--ui-responsiveness"])return await UiResponsivenessTests.Run();
 if(args is ["--browser-fixture",var assetRoot,..var fixtureOptions]) {
  WindowsInstance.ConfigureValidation(Guid.NewGuid().ToString("N"));
+ var fixtureStore=new ProfileStore();var fixtureProfile=fixtureStore.Load();fixtureProfile.CoordinatorRoleVersion=1;fixtureStore.Save(fixtureProfile);
  using var fixture=new ControlWorker();if(fixtureOptions.Contains("--pair-workspace"))fixture.EnablePairNetworks();fixture.StartLocal();
  string sid=WindowsIdentity.GetCurrent().User!.Value;new ProfileStore().AuthorizeUiUser(sid);
  await using var pipe=new UiPipeFixture(fixture,fixtureOptions.Contains("--deferred"));

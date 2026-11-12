@@ -150,7 +150,8 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         return chosen with{Configurations=ConfigurationSnapshot(),WorkspaceVersion=2,SelectedNetworkId=selected,Networks=rows,Aggregate=aggregate,
             NetworkDefaults=new(){DirectMode=true,DiscoveryMode="pkarr",PkarrPublish=true,TcpStun=Stun.TcpServers.ToArray(),UdpStun=Stun.UdpServers.ToArray()},
             DeviceSettings=defaults.Settings,DeviceSettingsRevision=defaults.SettingsRevision,Coordinator=defaults.Coordinator,Desktop=defaults.Desktop,
-            DeviceName=defaults.DeviceName,LogLevel=defaults.LogLevel,ServiceReady=defaults.ServiceReady};
+            DeviceName=defaults.DeviceName,LogLevel=defaults.LogLevel,ServiceReady=defaults.ServiceReady,
+            Logs=defaults.Logs,LogEntries=defaults.LogEntries};
     }
     public async Task<UiControlReply> Handle(UiControlRequest request,string sid,CancellationToken token)
     {

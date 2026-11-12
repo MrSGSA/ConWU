@@ -31,6 +31,14 @@ static class ReplyBudgetTests
             reduced.Status.Settings == status.Settings && reduced.Status.SettingsRevision == status.SettingsRevision,
             "log reduction preserves all members, settings and actual operation result");
         check(JsonSerializer.Serialize(logReply) == original, "response reduction does not mutate original records");
+        var identifiedLogs=logStatus with {LogEntries=logStatus.Logs.Select((line,index)=>new UiLogEntryDto("fixture:"+index,1700000000000+index,line)).ToArray()};
+        var identifiedReply=fit(logReply with {Status=identifiedLogs});
+        check(identifiedReply.Status?.LogEntries?.LastOrDefault()?.Id=="fixture:8"&&identifiedReply.Status.LogEntries.Last().Text=="newest-event"&&JsonSerializer.SerializeToUtf8Bytes(identifiedReply).Length<=ServiceProtocol.MaximumMessageBytes,
+            "log identities retain the newest event while the reply is reduced to its byte budget");
+        var workspace=status with {WorkspaceVersion=2,Peers=[],Networks=Enumerable.Range(0,16).Select(index=>new UiNetworkDto(index.ToString(),"Network "+index,identifiedLogs with{Peers=[]})).ToArray()};
+        var workspaceReply=fit(normal with{Status=workspace});
+        check(workspaceReply.Status?.Networks.Length==16&&workspaceReply.Status.Networks.All(network=>network.Status.LogEntries?.LastOrDefault()?.Id=="fixture:8")&&JsonSerializer.SerializeToUtf8Bytes(workspaceReply).Length<=ServiceProtocol.MaximumUiMessageBytes,
+            "workspace byte reduction retains every network and its newest identified event");
 
         var worker = new UiLegacyStage(Guid.NewGuid(), 1, "faketcp", "local", new string('详', 16000), null, null, []);
         var stages = fit(normal with { Status = status with { Stages = new(null, null, [worker]) } });

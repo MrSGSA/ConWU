@@ -19,18 +19,41 @@ def main():
     p.add_argument("--endpoint", default="")
     p.add_argument("--path-label", default="user-provided desktop endpoint")
     p.add_argument("--port", type=int, default=48443)
-    p.add_argument("--mbps", default="20,50,100,150")
+    p.add_argument("--mbps", default="20,35,45,50")
     p.add_argument("--seconds", type=int, default=8)
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--skip-upload", action="store_true")
     p.add_argument("--autonomous", action="store_true")
     p.add_argument("--local", action="store_true")
     p.add_argument("--in-flight", type=int, default=512)
+    p.add_argument("--no-batching", action="store_true")
+    p.add_argument("--affinity", type=lambda value: int(value, 0), default=0)
     a = p.parse_args()
+    if a.affinity and (not a.local or os.name != "nt"):
+        p.error("--affinity is limited to the local Windows measurement processes")
     if not a.local and (not a.desktop or not a.autonomous and not a.endpoint):
         p.error("remote trials require --desktop and --endpoint (or --autonomous)")
     binary = a.binary.resolve(strict=True)
     a.output.mkdir(parents=True, exist_ok=True)
+    def pin_measurement(process):
+        if not a.affinity:
+            return
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.SetProcessAffinityMask.argtypes = [wintypes.HANDLE, ctypes.c_size_t]
+        kernel.SetProcessAffinityMask.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x0200, False, process.pid)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not kernel.SetProcessAffinityMask(handle, a.affinity):
+                raise ctypes.WinError(ctypes.get_last_error())
+        finally:
+            kernel.CloseHandle(handle)
     # This fixed, task-specific directory never contains production profiles.
     remote_root = r"C:\ProgramData\ConWU-Transport-Validation"
     remote_exe = remote_root + "\\" + binary.name
@@ -59,9 +82,10 @@ def main():
     results = []
     for mode in ("tcp", "https"):
         key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        config = {"Mode": mode, "Key": key, "Port": a.port, "Firewall": not a.local, "LifetimeSeconds": 240, "Autonomous": a.autonomous, "MaxInFlight": a.in_flight}
+        config = {"Mode": mode, "Key": key, "Port": a.port, "Firewall": not a.local, "LifetimeSeconds": 240, "Autonomous": a.autonomous, "MaxInFlight": a.in_flight, "BatchDatagrams": not a.no_batching}
         pipes = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         server = subprocess.Popen([str(binary), "serve"], **pipes, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0) if a.local else ssh(f"& '{remote_exe}' serve;exit $LASTEXITCODE", **pipes)
+        pin_measurement(server)
         events = queue.Queue()
         lines, stderr = [], []
 
@@ -89,11 +113,19 @@ def main():
             for rate in [int(value) for value in a.mbps.split(",")]:
                 target = ready["endpoint"] if a.autonomous else ("127.0.0.1" if a.local else a.endpoint) + ":" + str(a.port)
                 config.update({"Endpoint": target, "Pin": ready["pin"], "Mbps": rate, "Seconds": a.seconds, "Firewall": False})
-                completed = subprocess.run([str(binary), "bench"], input=json.dumps(config) + "\n", capture_output=True, encoding="utf-8", errors="replace", timeout=a.seconds + 35, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                measuring = subprocess.Popen([str(binary), "bench"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                try:
+                    pin_measurement(measuring)
+                    measured_out, measured_error = measuring.communicate(json.dumps(config) + "\n", timeout=a.seconds + 35)
+                except BaseException:
+                    measuring.kill()
+                    measuring.communicate()
+                    raise
+                completed = subprocess.CompletedProcess(measuring.args, measuring.returncode, measured_out, measured_error)
                 result = next((json.loads(line.removeprefix("CONWU_BENCH_RESULT ")) for line in completed.stdout.splitlines() if line.startswith("CONWU_BENCH_RESULT ")), None)
                 if result is None:
                     result = {"status": "Fail", "mode": mode, "targetMbps": rate, "error": (completed.stdout + completed.stderr)[-2000:]}
-                result.update({"host": "local" if a.local else a.desktop, "endpoint": target, "path": "desktop TCP STUN candidate" if a.autonomous else "loopback" if a.local else a.path_label})
+                result.update({"host": "local" if a.local else a.desktop, "endpoint": target, "path": "desktop TCP STUN candidate" if a.autonomous else "loopback" if a.local else a.path_label, "measurementAffinity": hex(a.affinity) if a.affinity else "default"})
                 results.append(result)
                 (a.output / ("loopback-results.json" if a.local else "desktop-results.json")).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
                 print(json.dumps(result, ensure_ascii=False), flush=True)

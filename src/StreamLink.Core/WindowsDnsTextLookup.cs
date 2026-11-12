@@ -6,9 +6,12 @@ internal sealed class DnsTextLookupException(string message):IOException(message
 
 internal static class WindowsDnsTextLookup
 {
-    // Use the Windows resolver, including its cache, interface selection and
-    // configured DNS policy. Raw UDP bypasses those policies and can query the
-    // wrong adapter on a machine with Ethernet, Wi-Fi and virtual interfaces.
+    // Refresh explicitly configured TXT subscriptions through the Windows
+    // resolver, retaining interface selection and DNS policy. Bypass only the
+    // local answer cache so a scheduled refresh actually queries the configured
+    // resolver; upstream recursive/authoritative TTLs still apply. Never flush
+    // the machine-wide cache or switch to an unconfigured public DNS service.
+    const uint BypassCache=0x00000008;
     static readonly SemaphoreSlim workers=new(2,2);
     [DllImport("dnsapi.dll",EntryPoint="DnsQuery_W",CharSet=CharSet.Unicode)]
     static extern int DnsQuery(string name,ushort type,uint options,IntPtr extra,out IntPtr records,IntPtr reserved);
@@ -23,7 +26,7 @@ internal static class WindowsDnsTextLookup
     }
     static string[] Read(string host)
     {
-        int status=DnsQuery(host,16,0,IntPtr.Zero,out var records,IntPtr.Zero);
+        int status=DnsQuery(host,16,BypassCache,IntPtr.Zero,out var records,IntPtr.Zero);
         try{
             if(status!=0)throw new DnsTextLookupException(status is 9003 or 9501?"域名没有可用的 TXT 记录":"系统 DNS 的 TXT 查询失败（代码 "+status+"）");
             var values=new List<string>();int count=0,data=IntPtr.Size==8?32:24;

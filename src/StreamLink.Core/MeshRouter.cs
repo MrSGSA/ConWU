@@ -66,6 +66,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     readonly Socket socket = new(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
     readonly Dictionary<int, Peer> peers = [];
     readonly Dictionary<int, Peer> peersByHost = [];
+    byte[]? networkHeader;
     readonly CancellationTokenSource stop = new();
     readonly Task transmit, receive, heartbeat;
     int disposed;
@@ -116,6 +117,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
         lock (gate) {
             ObjectDisposedException.ThrowIf(disposed != 0, this);
             if (profile.Directory is {} prior) MeshIdentity.ValidateDirectoryProgression(directory, prior);
+            if (directory.Pairwise && networkHeader == null)
+                Volatile.Write(ref networkHeader, PairNetworkFrame.Wrap(profile.Pair.Network, []));
             foreach (int slot in peers.Keys.Where(s => !directory.Members.Contains(peers[s].Member)).ToArray()) { CloseManaged(peers[slot]); peers[slot].Link.Dispose(); peers.Remove(slot); }
             foreach (var member in directory.Members.Where(m => m.Slot != profile.Self.Slot)) {
                 if (peers.ContainsKey(member.Slot)) continue;
@@ -239,8 +242,22 @@ public sealed partial class MeshRouter : IAsyncDisposable
     {
         if (packet == null || endpoint == null) return false;
         if(profile.Directory?.Pairwise==true&&!DirectPairWire.IsFrame(packet))packet=PairNetworkFrame.Wrap(profile.Pair.Network,packet);
-        try { return socket.SendTo(packet, endpoint) == packet.Length; }
+        return SendDatagram(packet, endpoint);
+    }
+    bool SendDatagram(ReadOnlySpan<byte> packet, IPEndPoint endpoint)
+    {
+        try { return socket.SendTo(packet, SocketFlags.None, endpoint) == packet.Length; }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { Interlocked.Increment(ref legacySendRejected); return false; }
+    }
+    bool SendBusiness(byte[] packet, IPEndPoint? endpoint, byte[] buffer)
+    {
+        if (endpoint == null) return false;
+        if (profile.Directory?.Pairwise != true) return SendDatagram(packet, endpoint);
+        networkHeader!.CopyTo(buffer, 0);
+        packet.CopyTo(buffer, PairNetworkFrame.HeaderSize);
+        // SendTo consumes this span synchronously. The single transmit pump
+        // owns the buffer and can reuse it after this call returns.
+        return SendDatagram(buffer.AsSpan(0, PairNetworkFrame.HeaderSize + packet.Length), endpoint);
     }
     bool SendLegacyControl(Peer peer, byte[]? packet, IPEndPoint? endpoint, bool maintenance = false)
         => LegacyAllowed && packet != null && endpoint != null && (peer.NativeControlSources.GetValueOrDefault(endpoint) ||
@@ -249,13 +266,14 @@ public sealed partial class MeshRouter : IAsyncDisposable
     void Transmit()
     {
         var buffer = new byte[MeshLink.Mtu];
+        var framed = new byte[PairNetworkFrame.HeaderSize + MeshLink.Overhead + MeshLink.Mtu];
         while (!stop.IsCancellationRequested) {
             int count = adapter.Read(buffer,stop.Token); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peersByHost.TryGetValue(slot,out var peer)) {
                 byte[]? encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
                 if (encoded != null) peer.Managed?.Active?.Traffic.Epoch(true, new Guid(encoded.AsSpan(8, 16)), Environment.TickCount64);
-                bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && Send(encoded, peer.Active));
+                bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && SendBusiness(encoded, peer.Active, framed));
                 peer.Managed?.Active?.Traffic.Send(count, delivered, Environment.TickCount64);
                 if (delivered && encoded != null) peer.Managed?.Active?.Delivery?.Send(new Guid(encoded.AsSpan(8, 16)),
                     BinaryPrimitives.ReadUInt64BigEndian(encoded.AsSpan(40)), count, Environment.TickCount64);
@@ -281,7 +299,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.ConnectionReset or SocketError.MessageSize) { continue; }
             if (!IPAddress.IsLoopback(((IPEndPoint)received.RemoteEndPoint).Address)) continue;
             if(PairNetworkFrame.IsFrame(buffer.AsSpan(0,received.ReceivedBytes))){
-                if(profile.Directory?.Pairwise!=true||PairNetworkFrame.Network(buffer.AsSpan(0,received.ReceivedBytes))!=profile.Pair.Network)continue;
+                var header=Volatile.Read(ref networkHeader);
+                if(profile.Directory?.Pairwise!=true||header==null||!buffer.AsSpan(0,PairNetworkFrame.HeaderSize).SequenceEqual(header))continue;
                 int length=received.ReceivedBytes-PairNetworkFrame.HeaderSize;
                 buffer.AsSpan(PairNetworkFrame.HeaderSize,length).CopyTo(buffer);received=received with{ReceivedBytes=length};
             }else if(profile.Directory?.Pairwise==true&&!DirectPairWire.IsFrame(buffer.AsSpan(0,received.ReceivedBytes)))continue;

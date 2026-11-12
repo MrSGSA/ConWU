@@ -11,11 +11,10 @@ sealed class WebTrayContext : ApplicationContext
     readonly AppExitWindow exitWindow;
     readonly SemaphoreSlim gate=new(1,1);
     readonly CancellationTokenSource lifetime=new();
-    readonly System.Windows.Forms.Timer statusTimer=new(){Interval=5000};
     readonly System.Windows.Forms.Timer initial=new(){Interval=150};
     Process? web;
     Task<string>? webError;
-    bool closing,statusBusy;
+    bool closing;
     readonly bool openBrowser;
     public WebTrayContext(bool openBrowser=true)
     {
@@ -23,23 +22,21 @@ sealed class WebTrayContext : ApplicationContext
         menu=new TrayMenu(async()=>await Open(),ExitThread);
         tray=new NotifyIcon{Icon=icon,Text=TrayInformation.Format(null),ContextMenuStrip=menu,Visible=true};
         tray.DoubleClick+=async(_,_)=>await Open();
-        statusTimer.Tick+=async(_,_)=>await RefreshStatus();
-        initial.Tick+=async(_,_)=>{initial.Stop();await RefreshStatus();if(!closing)await Open(openBrowser);};
+        initial.Tick+=async(_,_)=>{
+            initial.Stop();
+            if(!openBrowser)_=CheckStartupAuthorization();
+            if(!closing)await Open(openBrowser);
+        };
         exitWindow=new AppExitWindow(ExitThread,async()=>await Open());
-        statusTimer.Start();initial.Start();
+        initial.Start();
     }
-    async Task RefreshStatus()
+    async Task CheckStartupAuthorization()
     {
-        if(closing||statusBusy)return;
-        statusBusy=true;
         try{
             var reply=await UiControlProtocol.Call(new("status"),lifetime.Token);
-            if(!openBrowser && !reply.Ok && reply.Status==null && reply.Error=="该本机用户未获UI控制授权"){ExitThread();return;}
-            if(!closing)tray.Text=TrayInformation.Format(reply.Ok?reply.Status:null,reply.Ok?reply.StatusNotice.Length>0?"状态信息过大":"等待后台":"账号未授权");
-        }catch(OperationCanceledException){if(!closing)tray.Text=TrayInformation.Format(null,"后台响应超时");}
-        catch(UiBackendException ex){if(!openBrowser&&ex.Code=="AccessDenied"){ExitThread();return;}if(!closing)tray.Text=TrayInformation.Format(null,ex.Code switch{"NotInstalled"=>"后台未安装","Stopped"=>"后台已停止","AccessDenied"=>"账号未授权",_=>"后台连接异常"});}
-        catch(Exception){if(!closing)tray.Text=TrayInformation.Format(null,"后台连接异常");}
-        finally{statusBusy=false;}
+            if(!closing&&!reply.Ok&&reply.Status==null&&reply.Error=="该本机用户未获UI控制授权")ExitThread();
+        }catch(UiBackendException ex)when(ex.Code=="AccessDenied"){if(!closing)ExitThread();}
+        catch(Exception ex)when(ex is IOException or OperationCanceledException){ }
     }
     async Task Open(bool launchBrowser=true)
     {
@@ -78,7 +75,7 @@ sealed class WebTrayContext : ApplicationContext
     protected override void ExitThreadCore()
     {
         if(closing)return;
-        closing=true;initial.Stop();initial.Dispose();statusTimer.Stop();statusTimer.Dispose();lifetime.Cancel();
+        closing=true;initial.Stop();initial.Dispose();lifetime.Cancel();
         tray.Visible=false;tray.Dispose();menu.Dispose();icon.Dispose();exitWindow.Dispose();
         try{web?.StandardInput.Close();}catch(IOException){}
         web?.Dispose();base.ExitThreadCore();

@@ -14,6 +14,8 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
     internal IMeshTransport Acquire(MeshTransportRequest request,Func<MeshTransportRequest,IMeshTransport> factory,Func<ReadOnlyMemory<byte>,bool> acceptsPair,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> pairPriority)
     {
         if(!request.Server)return factory(request);
+        if(request.Target.AddressFamily!=AddressFamily.InterNetwork||!IPAddress.IsLoopback(request.Target.Address)||request.Target.Port==0)throw new ArgumentException("共享接收器的本机路由目标必须是有效 IPv4 回环入口");
+        if(!Guid.TryParseExact(request.Mesh.Pair.Network,"N",out _))throw new FormatException("网络身份无效");
         string key=request.Mesh.Pair.Mode+"/"+request.Port;
         lock(gate){
             ObjectDisposedException.ThrowIf(disposed,this);
@@ -34,6 +36,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
     sealed class Subscription(Receiver owner,string network,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released):IMeshTransport
     {
         public string Network {get;}=network;
+        public byte[] NetworkHeader {get;}=PairNetworkFrame.Wrap(network,[]);
         public IPEndPoint Target {get;}=target;
         public Func<ReadOnlyMemory<byte>,bool> Accepts {get;}=accepts;
         public Func<ReadOnlyMemory<byte>,bool> Authenticated {get;}=authenticated;
@@ -64,7 +67,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         readonly Socket ingress=new(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);
         readonly CancellationTokenSource stop=new();
         readonly List<Subscription> subscriptions=[];
-        readonly Dictionary<string,Route> routes=[];
+        readonly Dictionary<(IPEndPoint Remote,string Network),Route> routes=[];
         readonly System.Collections.Concurrent.ConcurrentDictionary<Route,Task> retiring=new();
         readonly IMeshTransport transport;
         readonly Task receive;
@@ -120,7 +123,11 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                 var remote=(IPEndPoint)incoming.RemoteEndPoint;if(!IPAddress.IsLoopback(remote.Address))continue;
                 var frame=buffer.AsMemory(0,incoming.ReceivedBytes);Subscription? subscription=null;
                 lock(gate){
-                    if(PairNetworkFrame.IsFrame(frame.Span)){string network=PairNetworkFrame.Network(frame.Span);subscription=subscriptions.FirstOrDefault(s=>s.Network==network);}
+                    if(PairNetworkFrame.IsFrame(frame.Span)){
+                        foreach(var candidate in subscriptions)if(frame.Span[..PairNetworkFrame.HeaderSize].SequenceEqual(candidate.NetworkHeader)){
+                            subscription=candidate;break;
+                        }
+                    }
                     else if(DirectPairWire.IsFrame(frame.Span)){
                         DirectPairRequest pair;try{pair=DirectPairWire.Decode<DirectPairRequest>(frame.Span);}catch{continue;}
                         if(pair.TargetNetwork is null||pair.TargetNetwork.Length>0&&!Guid.TryParseExact(pair.TargetNetwork,"N",out _))continue;
@@ -143,7 +150,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                         }
                     }
                     if(subscription==null)continue;
-                    string key=remote+"/"+subscription.Network;
+                    var key=(remote,subscription.Network);
                     if(!routes.TryGetValue(key,out var route)||route.Pump?.IsCompleted==true){
                         if(route!=null){Retire(route);routes.Remove(key);}
                         bool pairing=DirectPairWire.IsFrame(frame.Span);

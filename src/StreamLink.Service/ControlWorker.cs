@@ -11,7 +11,10 @@ public sealed partial class ControlWorker : BackgroundService
     PairNetworkWorkspace? workspace;
     bool automaticCoordinator;
     readonly object sync = new();
-    readonly Queue<string> logs = new();
+    readonly Queue<UiLogEntryDto> logs = new();
+    readonly string logEpoch = Guid.NewGuid().ToString("N");
+    long logSequence;
+    UiLogEntryDto[] uiLogEntries = [];
     DeviceProfile profile;
     SessionStatus? status;
     CancellationTokenSource? runStop;
@@ -112,7 +115,8 @@ public sealed partial class ControlWorker : BackgroundService
             bool debug=text.StartsWith("ShutdownStage=")||text.StartsWith("CandidateFactoryReady")||text.StartsWith("TraversalReady")||text.StartsWith("RouterPressure")||text.StartsWith("WintunLifecycle");
             string level=error?"ERROR":warning?"WARN":debug?"DEBUG":"INFO";
             if(profile.LogLevel=="off" || profile.LogLevel=="error"&&!error || profile.LogLevel=="warn"&&!error&&!warning || profile.LogLevel!="debug"&&debug&&!error&&!warning)return;
-            string line = $"{DateTime.Now:HH:mm:ss} [{level}] {text}"; logs.Enqueue(line); while (logs.Count > 80) logs.Dequeue();
+            string line = $"{DateTime.Now:HH:mm:ss} [{level}] {text}";
+            AppendLog(line);
             PublishReply();
             {
                 try {
@@ -123,9 +127,18 @@ public sealed partial class ControlWorker : BackgroundService
                     if (File.Exists(path) && (File.GetAttributes(path) & FileAttributes.ReparsePoint) != 0) throw new IOException("日志文件不能是链接");
                     if (File.Exists(path) && new FileInfo(path).Length > 2_000_000) File.Move(path, path + ".previous", true);
                     File.AppendAllText(path, line + Environment.NewLine);
-                } catch (Exception ex) { if (logs.Count < 80) logs.Enqueue("日志写入失败：" + ex.Message); }
+                } catch (Exception ex) {
+                    AppendLog($"{DateTime.Now:HH:mm:ss} [ERROR] 日志写入失败：{SensitiveText.Redact(ex.Message,profile)}");
+                    PublishReply();
+                }
             }
         }
+    }
+    void AppendLog(string line)
+    {
+        logs.Enqueue(new(logEpoch + ":" + ++logSequence, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), line));
+        while (logs.Count > 80) logs.Dequeue();
+        Volatile.Write(ref uiLogEntries, logs.TakeLast(40).ToArray());
     }
     void Begin()
     {
@@ -241,7 +254,7 @@ public sealed partial class ControlWorker : BackgroundService
     {
         lock(sync) Volatile.Write(ref stageLedger,new(status?.AdapterStatistics,status?.Egress,
             status?.LegacyTransports?.Resources.Take(15).Select(x=>new UiLegacyStage(x.ResourceId,x.ProcessId,x.Mode,x.Listener,x.Target,x.BusinessHandoff,x.BusinessEgress,x.Route?.Witnesses.Take(2).ToArray()??[])).ToArray()??[]) { RouterPressure=status?.RouterPressure });
-        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized,1));
+        lock (sync) Volatile.Write(ref snapshot,new(true, "", ProfileChanges.Copy(profile), DisplayStatus(status), profile.Slot == 1 ? profile.Pair?.Invite() ?? "" : "", logs.Select(entry=>entry.Text).ToArray(), quality, typeof(ControlWorker).Assembly.GetName().Version!.ToString(3), 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1,1,1,Volatile.Read(ref operationStatus),1,2,1,initialized,1));
     }
     ControlReply Reply(string error = "") {var current=Volatile.Read(ref snapshot)!;return current with{Ok=error.Length==0,Error=SensitiveText.Redact(error,current.Profile!),Profile=ProfileChanges.Copy(current.Profile!),Logs=(string[])current.Logs.Clone()};}
     // Full per-window evidence stays in the runner; the legacy pipe remains

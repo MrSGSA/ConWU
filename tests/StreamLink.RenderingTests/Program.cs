@@ -38,10 +38,10 @@ static class Program
         Check(opens==1&&exits==1,"Open invokes only the browser callback");menu.Close();
         var status=new UiStatusDto("test","Thinkbook-14-24","10.126.1.2","已连接",true,true,1,1,[],"info");
         string tip=TrayInformation.Format(status);
-        Check(tip.Contains("Thinkbook-14-24")&&tip.Contains("10.126.1.2")&&tip.Contains("已连接")&&tip.Split('\n').Length==4,"Hover information includes version, live state, device and virtual IP");
-        Check(!TrayInformation.Format(null,"后台已停止").Contains("10.126.1.2"),"Unavailable backend clears stale virtual IP");
+        Check(tip=="ConWU","Hover information contains only the software name");
+        Check(TrayInformation.Format(null,"后台已停止")==tip,"Backend availability does not change the software-name tooltip");
         string bounded=TrayInformation.Format(status with{DeviceName=new string('测',100)+"\n伪造状态",State=new string('态',100)});
-        Check(bounded.Length<=127&&bounded.Split('\n').Length==4,"Untrusted display fields cannot add tooltip lines or exceed the native shell limit");
+        Check(bounded==tip,"Device and network fields cannot change the minimal tooltip");
         using(var notify=new NotifyIcon()){notify.Text=bounded;Check(notify.Text==bounded,"Actual NotifyIcon accepts the bounded multiline tooltip");}
         var types=typeof(TrayMenu).Assembly.GetTypes();
         Check(!types.Any(t=>typeof(Form).IsAssignableFrom(t)),"The product assembly contains no desktop business forms");

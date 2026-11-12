@@ -30,8 +30,10 @@ public sealed record CoordinatorSettings(bool Enabled=false, string ListenUrl="h
 public sealed record CoordinatorDiagnostic(string Code, string Detail, DateTimeOffset CheckedAt, bool Reachable = false);
 public sealed record CoordinatorStatus(bool Enabled, bool Running, string State, string[] Addresses)
 {
+    public CoordinatorClientDto[] Clients {get;init;}=[];
     public CoordinatorDiagnostic? External { get; init; }
     public DateTimeOffset? CertificateExpires { get; init; }
     public string CertificatePin {get;init;}="";
     public DateTimeOffset? RetryAt { get; init; }
 }
+public sealed record CoordinatorClientDto(string DeviceId,string Name,string Phase,int Networks,DateTimeOffset LastSeen);

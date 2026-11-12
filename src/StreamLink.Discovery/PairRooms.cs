@@ -3,7 +3,7 @@ using StreamLink.Core;
 
 namespace StreamLink.Discovery;
 
-public sealed class PairRooms(TimeProvider? time = null)
+public sealed class PairRooms(TimeProvider? time = null,CoordinatorClients? clients = null)
 {
     sealed class Room
     {
@@ -61,9 +61,11 @@ public sealed class PairRooms(TimeProvider? time = null)
         lock (gate) {
             Prune(); if (!rooms.TryGetValue(id, out var room)) return Results.NotFound();
             if (!Authorized(context, owner ? room.Owner : room.Guest)) return Results.Unauthorized();
-            if (close) { rooms.Remove(id); return Results.Json(new { closed = true }); }
-            if(finish){if(room.Approved)return Results.Conflict();room.Outcome=owner?"Rejected":"Cancelled";room.Code="";return Results.Json(room.State());}
+            if (close) { rooms.Remove(id);clients?.RemoveScope("pair:"+id);return Results.Json(new { closed = true }); }
+            if(finish){if(room.Approved)return Results.Conflict();room.Outcome=owner?"Rejected":"Cancelled";room.Code="";clients?.RemoveScope("pair:"+id);return Results.Json(room.State());}
             if(room.Outcome.Length>0){if(reveal!=null||approve!=null)return Results.Conflict();return Results.Json(room.State());}
+            var identity=owner?room.HostIdentity:room.GuestIdentity;
+            clients?.Observe(identity?.DeviceId??"pair-"+id+(owner?"-host":"-guest"),owner?room.HostName:room.GuestName,"pair:"+id,"配对中");
             if (reveal != null) {
                 if (room.Candidate.Length == 0 || (!owner && room.HostPublic.Length == 0) || room.Approved) return Results.Conflict();
                 try { PairKeyExchange.ValidatePublic(reveal.PublicKey, owner ? room.HostCommit : room.GuestCommit); } catch { return Results.BadRequest(); }

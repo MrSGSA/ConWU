@@ -138,6 +138,7 @@ if(Array.IndexOf(args,"--native") is var nativeIndex && nativeIndex>=0) {
 }
 await EntryBackupTests.Run(Check);
 await CoordinatorReliabilityTests.Run(Check);
+await CoordinatorClientTests.Run(Check);
 Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=count,scope=OperatingSystem.IsLinux()?"Linux isolated":"Windows loopback"}));
 
 sealed class EmptyAdapter:IPacketAdapter

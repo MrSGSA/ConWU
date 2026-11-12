@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.1.0-rc.1',[string]$MsiVersion='1.1.9',[switch]$PublicationApproved)
+      [string]$Version='1.2.0',[string]$MsiVersion='1.2.3',[switch]$PublicationApproved)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -60,7 +60,7 @@ try {
  Copy-Item -LiteralPath (Join-Path $candidate "ConWU-$Version-source.zip"),(Join-Path $DependencyCache 'WinDivert-v2.2.2-source.zip') -Destination $sources
  & ./scripts/Write-RcSbom.ps1 -Directory $runtime -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json','src/StreamLink.Web/obj/project.assets.json') -Native
  $files=@(Get-ChildItem -LiteralPath $runtime -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
- [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel=$(if($stable){'stable'}else{'engineering-candidate'});releaseGate='NotPassed';
+ [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel=$(if($stable){'stable'}else{'engineering-candidate'});releaseGate='PackagePreflightOnly';releaseVerification="ConWU-$Version-verification.json";
   provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};
   product='ConWU';businessTransports=@('faketcp','tcp','https');httpsCarrier='TCP + TLS 1.2/1.3 + WebSocket; approved persistent SPKI pin';streamGuestRole='outbound connection to host, bidirectional data';autoGuestSettings=1;pkarrDiscovery='autonomous signed endpoint discovery; initial approved invitation; HTTPS gateways; no synchronized NAT exchange';discoveryPolicyVersion=1;integratedCoordinator=1;defaultCoordinatorRoleVersion=1;pairingUi='16-symbol compact direct code with local approval';networkEntryIdentity=1;signedDnsDiscovery=0;dnsPublisher='Not included; external HTTPS/TXT subscriptions supported';
   msiVersion=$MsiVersion;researchDrivers='OutOfScopeByUserDecision';businessProfile='FakeTcpHttpDatagram';controlProtocol='HTTPS';directControl='authenticated MeshLink, no coordinator';directInvitationVersion=2;compactDirectCodeVersion=1;directShortPairing=1;peerMetadataReplication=1;equalMembership=0;pairNetworks=1;nodeIdentity=1;workspaceVersion=2;sharedConfigurationLibrary=1;sharedReceiverFrame='CNW1';freshInstallRequiredFrom='legacy single-network configurations only';maximumStoredNetworks=16;maximumEnabledNetworks=8;networkModel='independent two-device networks; creator approves the guest; bidirectional data; no inter-network forwarding';coordinatedNetworks='shared integrated HTTPS discovery; coordinator does not enroll itself; no business relay';webHost='restricted loopback + SID-authenticated IPC';native=$native;files=$files}|ConvertTo-Json -Depth 12|Set-Content (Join-Path $runtime 'manifest.json') -Encoding utf8NoBOM
@@ -72,6 +72,6 @@ try {
  & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "ConWU-$Version-x64.msi") -MsiVersion $MsiVersion
  Compress-Archive -LiteralPath $stage -DestinationPath ($stage+'.zip') -CompressionLevel Optimal
  $hashes=@(Get-ChildItem -LiteralPath $candidate -File|Where-Object Extension -in '.zip','.msi'|ForEach-Object{[ordered]@{file=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
- [ordered]@{version=$Version;sourceCommit=$commit;publicReleaseApproved=[bool]$PublicationApproved;releaseGate='NotPassed';files=$hashes}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $candidate 'artifact-hashes.json') -Encoding utf8NoBOM
+ [ordered]@{version=$Version;sourceCommit=$commit;publicReleaseApproved=[bool]$PublicationApproved;releaseGate='PackagePreflightOnly';releaseVerification="ConWU-$Version-verification.json";files=$hashes}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $candidate 'artifact-hashes.json') -Encoding utf8NoBOM
  Write-Output $candidate
 } finally {Pop-Location}

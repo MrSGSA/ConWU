@@ -12,7 +12,8 @@ public sealed partial class MeshRegistry
     readonly string file;
     readonly Dictionary<string, Registration> networks;
     readonly Dictionary<string, (MeshEnvelope Envelope, DateTimeOffset Expires)> nodes = [];
-    public MeshRegistry(string root) { file = Path.Combine(root, "mesh-networks.json"); networks = CoordinationStorage.Load<Registration>(file, ValidateStored); }
+    readonly CoordinatorClients? clients;
+    public MeshRegistry(string root,CoordinatorClients? clients=null) { this.clients=clients;file = Path.Combine(root, "mesh-networks.json"); networks = CoordinationStorage.Load<Registration>(file, ValidateStored); }
     internal static void ValidateStored(string network, Registration record) {
         if(record == null || !Regex.IsMatch(record.AuthHash ?? "", "^[A-F0-9]{64}$") || record.Directory == null)
             throw new IOException("协调成员记录无效");
@@ -72,7 +73,9 @@ public sealed partial class MeshRegistry
             if (!TakeRequest(network, slot)) return Results.StatusCode(429);
             string key = network + "/" + slot;
             if (nodes.TryGetValue(key, out var old) && envelope.Revision <= old.Envelope.Revision) return Results.Conflict();
-            nodes[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); Changed(network, "announcement", slot); return Results.NoContent();
+            nodes[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); Changed(network, "announcement", slot);
+            clients?.Observe(member.Device,"",network,"网络发现");
+            return Results.NoContent();
         }
     }
     public IResult Read(HttpContext context, string network)

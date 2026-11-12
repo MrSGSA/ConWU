@@ -11,8 +11,12 @@ using StreamLink.Core;
 
 if(args.Length>0&&args[0] is "serve" or "bench"){await StreamBench.Run(args);return;}
 if(args is ["--linux-firewall"]){LinuxStreamFirewallChecks.Run();return;}
+if(args is ["--router-bench",var routerMode,var routerMbps,var routerSeconds,var routerReport]){await RouterBench.Run(routerMode,int.Parse(routerMbps),int.Parse(routerSeconds),routerReport);return;}
+if(args is ["--router-bench",var directionMode,var directionMbps,var directionSeconds,var directionReport,var direction]){await RouterBench.Run(directionMode,int.Parse(directionMbps),int.Parse(directionSeconds),directionReport,direction);return;}
 var checks=new List<string>();
 void Check(bool value,string name){if(!value)throw new Exception(name);checks.Add(name);Console.WriteLine("PASS "+name);}
+if(args is ["--mapping-recovery"]){await StreamMappingRecoveryChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
+if(args is ["--mapping-race"]){await StreamMappingRaceChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 foreach(var mode in new[]{"faketcp","udp","tcp","https"}){
     var text=CompactDirectCode.Issue("203.0.113.42:44680",mode,"123456");var decoded=CompactDirectCode.Import(text.ToLowerInvariant());
     Check(text.Length==19&&decoded.Mode==mode&&decoded.RoomCode=="123456",mode+" retains sixteen-symbol code with an unambiguous protocol");
@@ -66,6 +70,18 @@ foreach(string mode in new[]{"tcp","https"}){
             byte[] toHost=Packet(received.Mesh.LocalIp,owner.LocalIp,1280),toGuest=Packet(owner.LocalIp,received.Mesh.LocalIp,1280);toHost[^1]=17;toGuest[^1]=29;
             guestAdapter.Outgoing.Add(toHost);hostAdapter.Outgoing.Add(toGuest);
             await Until(()=>hostAdapter.Incoming.Any(p=>p.SequenceEqual(toHost))&&guestAdapter.Incoming.Any(p=>p.SequenceEqual(toGuest)),mode+" both directions preserve complete virtual-IP packets");
+            var hostBurst=new List<byte[]>();var guestBurst=new List<byte[]>();
+            for(int index=0;index<96;index++){
+                int size=index%2==0?52:MeshLink.Mtu;
+                byte[] outbound=Packet(owner.LocalIp,received.Mesh.LocalIp,size),inbound=Packet(received.Mesh.LocalIp,owner.LocalIp,size);
+                outbound.AsSpan(28).Fill((byte)index);inbound.AsSpan(28).Fill((byte)(index+96));
+                hostBurst.Add(outbound);guestBurst.Add(inbound);
+                hostAdapter.Outgoing.Add(outbound);guestAdapter.Outgoing.Add(inbound);
+            }
+            await Until(()=>hostAdapter.Incoming.Count>=97&&guestAdapter.Incoming.Count>=97,mode+" bidirectional mixed-size burst is delivered");
+            Check(hostAdapter.Incoming.Count==97&&guestAdapter.Incoming.Count==97&&hostAdapter.Incoming.Skip(1).Zip(guestBurst).All(pair=>pair.First.SequenceEqual(pair.Second))&&
+                guestAdapter.Incoming.Skip(1).Zip(hostBurst).All(pair=>pair.First.SequenceEqual(pair.Second)),
+                mode+" reused routing buffers preserve every mixed-size payload and its network in both directions");
             Check(hostRouter.Status().Single().ActualTransport==(mode=="tcp"?"TCP":"HTTPS"),mode+" actual transport status identifies the real carrier");
             if(mode=="https"){
                 Check(client.TlsProtocol is "Tls12" or "Tls13","HTTPS records the negotiated real TLS version");
@@ -91,8 +107,12 @@ foreach(string mode in new[]{"tcp","https"}){
     var reused=new TcpListener(IPAddress.Loopback,port);reused.Start();reused.Stop();Check(true,mode+" listening port is immediately reusable after shutdown");
 }
 await StreamMappingChecks.Run(Check);
+await StreamMappingRecoveryChecks.Run(Check);
+await StreamMappingRaceChecks.Run(Check);
 await SharedStreamChecks.Run(Check);
+await SharedRouteEndpointChecks.Run(Check);
 await StreamSecurityChecks.Run(Check);
+await StreamBatchChecks.Run(Check);
 StreamIdentityChecks.Run(Check);
 await RunnerStreamChecks.Run(Check);
 await ControlPairStreamChecks.Run(Check);

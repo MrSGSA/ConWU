@@ -378,6 +378,7 @@ public sealed partial class ControlWorker
                 if(explicitDiscovery)settings=ConnectionSettings.Normalize(settings);
                 var updated = action.Patch?.ApplyTo(profile)??ProfileChanges.Copy(profile);
                 if (action.ExpectedRevision != SettingsRevision(profile)) throw new IOException("连接设置已改变；草稿已保留，请刷新后核对");
+                if(!networkContext)settings=settings with{Coordinator=CoordinatorProvisioning.Prepare(store,settings.Coordinator)};
                 var previousSettings=PublicSettings(profile);
                 bool routeChanged=settings.DirectMode!=previousSettings.DirectMode||settings.ConnectionSource!=previousSettings.ConnectionSource;
                 if (updated.Mesh!=null && (settings.DirectMode!=previousSettings.DirectMode || !updated.Mesh.Pair.Direct && (settings.Service != previousSettings.Service || settings.CertificatePin != previousSettings.CertificatePin))) throw new IOException("当前网络的组网方式不能通过设置替换；请先删除或退出网络，再创建或加入新网络");

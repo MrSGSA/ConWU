@@ -28,7 +28,16 @@ public sealed class MeshRunner
     string pkarrQueryError="";
     public PkarrPeerObservation? PkarrPeer=>Volatile.Read(ref pkarrPeer);
     public string PkarrQueryError=>Volatile.Read(ref pkarrQueryError);
-    public bool HasHealthyPeers=>router?.Status() is {Length:>0} peers&&peers.All(p=>p.Connected);
+    public bool HasHealthyPeers {
+        get {
+            if(router is not {} active||mesh.Directory is not {} directory)return false;
+            bool any=false;
+            foreach(var member in directory.Members)if(member.Slot!=mesh.Self.Slot){
+                any=true;if(!active.HasHealthyPath(member.Slot))return false;
+            }
+            return any;
+        }
+    }
     public bool PkarrConfirmed=>PkarrPeer is {} peer&&peer.State.Expires>DateTimeOffset.UtcNow.ToUnixTimeSeconds()&&peer.State.AcknowledgedBoot==PkarrBootId&&Volatile.Read(ref pkarrPublication) is {} publication&&peer.State.AcknowledgedEntry==publication.Entry;
     public void ObservePkarrPublication(Guid entry){if(Volatile.Read(ref pkarrPublication)?.Entry!=entry){Volatile.Write(ref pkarrPublication,new(entry));RequestDiscoveryRefresh();}}
     public MeshRunner(DeviceProfile profile, Action<string> log, Action<SessionStatus> report, Action<MeshDirectory> remember, Action<string>? rememberStun = null)
@@ -159,7 +168,7 @@ public sealed class MeshRunner
         MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
         bool mappingReleaseFailed = false;
-        bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false,pkarrWasHealthy=false;
+        bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false,entriesWereHealthy=false;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -190,6 +199,8 @@ public sealed class MeshRunner
         var revisions = new Dictionary<int, long>();
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
+        var reportedRouterDrops = new Dictionary<int, RouterPeerDrops>();
+        var reportedBridgeDrops = new Dictionary<int, (long SendData,long SendControl,long ReceiveData,long ReceiveControl,long Socket)>();
         var qualityReports = new Dictionary<int, (Guid Session,string Result,string Reason)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
         long nextProbe = 0, nextRead = 0, nextSave = 0, lastPublish = 0, nextReport = 0, lastWarning = 0, nextServer = 0, serverStarted = 0, nextEgressReport = 0, nextTrafficReport = 0;
@@ -279,7 +290,18 @@ public sealed class MeshRunner
                     }
                 }
                 localExisting=LocalEntries();
-                if(PkarrRendezvous.Uses(profile)){bool healthy=HasHealthyPeers;if(pkarrWasHealthy&&!healthy)nextResolve=now;pkarrWasHealthy=healthy;}
+                // A remote restart/NAT change need not raise a LOCAL interface
+                // notification. Refresh saved subscriptions on path loss too;
+                // a long ordinary polling interval must not pin the old tuple.
+                // This only refreshes discovery; proven paths and their owners
+                // remain under the router's normal authentication/health rules.
+                bool entriesHealthy=HasHealthyPeers;
+                if(entriesWereHealthy&&!entriesHealthy&&externalSources.Length>0){
+                    nextResolve=now;
+                    foreach(var plan in reconnectPlans.Values)plan.Wake();
+                    log("原直连路径暂未通过健康检查，正在重新获取已保存的入口；保留网络身份与设置");
+                }
+                entriesWereHealthy=entriesHealthy;
                 if(Interlocked.Exchange(ref lookupRefreshRequested,0)!=0)nextResolve=0;
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
                 if(externalSources.Length>0 && resolving==null && now>=nextResolve){
@@ -287,7 +309,12 @@ public sealed class MeshRunner
                     // Long user intervals for ordinary subscriptions must not
                     // leave a short-lived signed locator dormant for hours.
                     int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source) is "DDNS" or "PKARR")?Math.Min(refreshSeconds,60):refreshSeconds;
-                    if(PkarrRendezvous.Uses(profile)&&externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR"))interval=Math.Max(5,Math.Min(refreshSeconds,PkarrConfirmed&&HasHealthyPeers?60:now-began>=120000?30:5));
+                    // A third-party mapping/DNS updater can publish only AFTER
+                    // the old path is lost. The immediate refresh may still
+                    // return its old tuple, so keep recovery reads bounded.
+                    // Healthy paths continue to use the configured interval.
+                    if(!entriesHealthy&&mesh.Directory?.Members.Any(m=>m.Slot!=mesh.Self.Slot)==true)interval=Math.Min(interval,30);
+                    if(PkarrRendezvous.Uses(profile)&&externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR"))interval=Math.Max(5,Math.Min(refreshSeconds,PkarrConfirmed&&entriesHealthy?60:now-began>=120000?30:5));
                     nextResolve=now+interval*1000L;
                 }
                 if(resolving?.IsCompleted==true){
@@ -319,7 +346,7 @@ public sealed class MeshRunner
                             return EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                         }).ToArray();localExisting=LocalEntries();
                         string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}"));
-                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址，仍需验证直连"));}
+                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址：{string.Join(", ",item.Endpoints)}；仍需验证直连"));}
                     }catch(Exception ex)when(!stop.IsCancellationRequested){
                         if(externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")){Volatile.Write(ref pkarrQueryError,"PKARR 查询暂未完成");resolved=resolved.Select(r=>r.Kind=="PKARR"?r with{Endpoints=[],Pkarr=null,Error="PKARR 查询暂未完成",AllowCached=false}:r).ToArray();localExisting=LocalEntries();}
                         log("入口解析暂未完成："+ex.GetType().Name);
@@ -421,7 +448,7 @@ public sealed class MeshRunner
                         Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()));
                         Volatile.Write(ref preparedInvitationEntries,mapping.IsValid?[new ExistingEntry(0,mapping.PublicEndpoint.ToString())]:[]);
                         restoreEstablishedEntry = false;
-                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress)) { server.Dispose(); server = null; }
+                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress) && !TransportModes.Stream(profile.TransportMode)) { server.Dispose(); server = null; }
                         maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
                     }
                     catch (Exception ex) {
@@ -433,12 +460,19 @@ public sealed class MeshRunner
                     }
                     finally { probe = null; }
                 }
-                if (mapping is TcpMapping tcp && profile.LastStun != tcp.StunServer) {
-                    profile.LastStun = tcp.StunServer; rememberStun(tcp.StunServer);
+                string selectedStun=mapping switch {TcpMapping tcp=>tcp.StunServer,StreamMapping stream=>stream.StunServer,_=>""};
+                if (selectedStun.Length>0 && profile.LastStun != selectedStun) {
+                    profile.LastStun = selectedStun; rememberStun(selectedStun);
                 }
                 if(mapping is {IsValid:true}){
                     var preparedCandidate=new ExistingEntry(0,mapping.PublicEndpoint.ToString());
-                    if(!Volatile.Read(ref preparedInvitationEntries).SequenceEqual([preparedCandidate]))Volatile.Write(ref preparedInvitationEntries,[preparedCandidate]);
+                    if(!Volatile.Read(ref preparedInvitationEntries).SequenceEqual([preparedCandidate])){
+                        Volatile.Write(ref preparedInvitationEntries,[preparedCandidate]);
+                        Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()));
+                    }
+                }else if(mapping is {IsValid:false}&&Volatile.Read(ref preparedInvitationEntries).Length>0){
+                    Volatile.Write(ref preparedInvitationEntries,[]);
+                    Volatile.Write(ref entryPreparation,new("Preparing","正在复核本机入口，已有直连继续由双向保活检查"));
                 }
                 if (maintain?.IsCompleted == true) {
                     // Previously valid ingress is a resource to restore, even
@@ -672,11 +706,22 @@ public sealed class MeshRunner
                     if (now >= nextTrafficReport) {
                         var pressure = router.Pressure();
                         log($"RouterPressure maintenanceAgeMs={pressure.MaintenanceAgeMs} maximumDelayMs={pressure.MaximumMaintenanceDelayMs} maximumLockWaitMs={pressure.MaximumMaintenanceLockWaitMs} maximumWorkMs={pressure.MaximumMaintenanceWorkMs} receiveYields={pressure.ReceiveYields} legacySendRejected={pressure.LegacySendRejected}");
-                        foreach (var peer in statuses) if (peer.LocalDrops is {Total: > 0} drops)
-                            log($"RouterDrops slot={peer.Slot} noHealthyPath={drops.NoHealthyPath} sendRejected={drops.SendRejected} authenticationRejected={drops.AuthenticationRejected} receivePolicyRejected={drops.ReceivePolicyRejected} adapterWriteRejected={drops.AdapterWriteRejected}；仅为本机拒绝阶段，不代表物理链路损失");
-                        foreach (var peer in statuses) if (peer.NativeEvidence is {BridgeSendQueue:{} sendQueue,BridgeReceiveQueue:{} receiveQueue} native &&
-                            sendQueue.DataRejected + sendQueue.ControlRejected + receiveQueue.DataRejected + receiveQueue.ControlRejected + native.BridgeSocketRejected > 0)
-                            log($"NativeBridgeDrops slot={peer.Slot} sendData={sendQueue.DataRejected} sendControl={sendQueue.ControlRejected} receiveData={receiveQueue.DataRejected} receiveControl={receiveQueue.ControlRejected} socketRejected={native.BridgeSocketRejected} queueConserved={sendQueue.Conserved && receiveQueue.Conserved}；本机原生桥计数，不代表对端送达");
+                        foreach (var peer in statuses) {
+                            if (peer.LocalDrops is {} drops && reportedRouterDrops.GetValueOrDefault(peer.Slot) != drops) {
+                                reportedRouterDrops[peer.Slot] = drops;
+                                if (drops.Total > 0)
+                                    log($"RouterDrops slot={peer.Slot} noHealthyPath={drops.NoHealthyPath} sendRejected={drops.SendRejected} authenticationRejected={drops.AuthenticationRejected} receivePolicyRejected={drops.ReceivePolicyRejected} adapterWriteRejected={drops.AdapterWriteRejected}；本次运行累计的本机拒绝计数");
+                            }
+                            if (peer.NativeEvidence is {BridgeSendQueue:{} sendQueue,BridgeReceiveQueue:{} receiveQueue} native) {
+                                var counts = (SendData:sendQueue.DataRejected,SendControl:sendQueue.ControlRejected,
+                                    ReceiveData:receiveQueue.DataRejected,ReceiveControl:receiveQueue.ControlRejected,Socket:native.BridgeSocketRejected);
+                                long total = counts.SendData + counts.SendControl + counts.ReceiveData + counts.ReceiveControl + counts.Socket;
+                                if (reportedBridgeDrops.TryGetValue(peer.Slot,out var previous) && previous == counts) continue;
+                                reportedBridgeDrops[peer.Slot] = counts;
+                                if (total > 0)
+                                    log($"NativeBridgeDrops slot={peer.Slot} sendData={sendQueue.DataRejected} sendControl={sendQueue.ControlRejected} receiveData={receiveQueue.DataRejected} receiveControl={receiveQueue.ControlRejected} socketRejected={native.BridgeSocketRejected} queueConserved={sendQueue.Conserved && receiveQueue.Conserved}；本次运行累计的原生桥拒绝计数");
+                            }
+                        }
                         foreach (var peer in statuses) if (peer.Traffic?.Windows.LastOrDefault(w => w.Complete) is {} window &&
                             (window.AcceptedSendBytes > 0 || window.DeliveredReceiveBytes > 0))
                             log($"设备 {peer.Slot} 路径业务窗口 {window.Seconds:F2} 秒：接受发送 {window.AcceptedSendMbps:F3} Mbps，已交付接收 {window.DeliveredReceiveMbps:F3} Mbps，拒绝 {window.SendRejectedPackets}；" +

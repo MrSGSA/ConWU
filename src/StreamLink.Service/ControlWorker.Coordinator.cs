@@ -107,7 +107,7 @@ public sealed partial class ControlWorker
                     string state = host.CertificateExpires is { } expires && expires <= DateTimeOffset.UtcNow.AddDays(7)
                         ? expires <= DateTimeOffset.UtcNow ? "运行中；监听证书已过期，请更换证书并重启协调角色" : "运行中；监听证书将在 7 天内过期"
                         : "运行中";
-                    Volatile.Write(ref coordinatorStatus, new(true, true, state, host.Addresses) { External = external, CertificateExpires = host.CertificateExpires,CertificatePin=host.CertificatePin });
+                    Volatile.Write(ref coordinatorStatus, new(true, true, state, host.Addresses) { External = external, CertificateExpires = host.CertificateExpires,CertificatePin=host.CertificatePin,Clients=host.Clients });
                 }
                 await Task.Delay(1000, token);
             }

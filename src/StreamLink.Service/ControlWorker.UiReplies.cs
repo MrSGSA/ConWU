@@ -36,6 +36,7 @@ public sealed partial class ControlWorker
         if(status.WorkspaceVersion>0&&status.Networks.Length>0){
             status=status with{Networks=status.Networks.Select(network=>network with{Status=network.Status with{
                 Logs=network.Status.Logs.TakeLast(8).Select(line=>ShortText(line,512)).ToArray(),Stages=null,LastQuality=null,Coordinator=null,Desktop=null,
+                LogEntries=network.Status.LogEntries?.TakeLast(8).Select(entry=>entry with{Text=ShortText(entry.Text,512)}).ToArray(),
                 Peers=network.Status.Peers.Select(peer=>peer with{LocalDrops=null,Liveness=peer.Liveness is {} l?l with{Keepalive=null}:null}).ToArray()
             }}).ToArray(),DiagnosticsNotice="已精简各网络的较早日志和分段诊断，网络列表与操作结果完整保留。"};
             reply=reply with{Status=status};if(Fits(reply))return reply;
@@ -51,8 +52,9 @@ public sealed partial class ControlWorker
         }
         // Prefer recent lines. Halving bounds serialization work even when a
         // single exception line is larger than the entire allowed message.
-        while (status.Logs.Length > 0) {
-            status = status with { Logs = status.Logs.TakeLast(status.Logs.Length / 2).ToArray() };
+        while (status.Logs.Length > 0 || status.LogEntries is {Length:>0}) {
+            int keep = Math.Max(status.Logs.Length,status.LogEntries?.Length??0) / 2;
+            status = status with { Logs = status.Logs.TakeLast(keep).ToArray(),LogEntries=status.LogEntries?.TakeLast(keep).ToArray() };
             Update(); if (Fits(reply)) return reply;
         }
         if (status.Stages is {} stages) {

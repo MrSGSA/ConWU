@@ -178,6 +178,9 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 .service-advanced{margin-top:24px}
 .page-heading .heading-action-buttons .btn:disabled{cursor:not-allowed}
 button:disabled{cursor:not-allowed}
+.coordination-columns>.card{margin:0;min-width:0}
+.coordinator-dialog{width:min(720px,calc(100vw - 32px));max-height:85vh;overflow-y:auto}
+.coordinator-dialog #coordination-error:empty{display:none}
 @media(min-width:1700px){.content{padding-top:42px}}
 @media(max-width:1100px){.content{padding-top:30px}.overview-devices th,.overview-devices td{padding-left:14px;padding-right:14px}.overview-devices .paired-subheaders th{padding-left:10px;padding-right:10px}}
 @media(max-width:850px){.sidebar-bottom{display:block;padding-left:0;padding-right:0}.sidebar-tools{flex-direction:column;gap:12px}.sidebar-tools .backend>span:last-child,.sidebar-device{display:none}.sidebar-tools .btn{display:inline-flex}.sidebar-tools .backend{min-height:20px}.direct-groups{gap:15px}.network-dialog .modal-grid{grid-template-columns:174px minmax(0,1fr)}}

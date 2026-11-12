@@ -49,6 +49,8 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public string QualityText {get;init;}="质量尚未测量";
     public QualityResult? LastQuality {get;init;}
     public string[] Logs {get;init;}=[];
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public UiLogEntryDto[]? LogEntries {get;init;}
     public ControlOperationStatus? Operation {get;init;}
     public UiStageLedger? Stages {get;init;}
     public string DiagnosticsNotice {get;init;}="";
@@ -63,6 +65,7 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool DdnsCredentialConfigured {get;init;}
     public string Platform {get;init;}=OperatingSystem.IsLinux()?"linux":"windows";
 }
+public sealed record UiLogEntryDto(string Id,long Timestamp,string Text);
 public sealed record UiNetworkDto(string Id,string Name,UiStatusDto Status)
 {
     public string ConfigurationId {get;init;}="";
@@ -192,8 +195,12 @@ public static class UiControlProtocol
         if(!OperatingSystem.IsWindows())throw new PlatformNotSupportedException();
         using var pipe=new NamedPipeClientStream(".",PipeName,PipeDirection.InOut,PipeOptions.Asynchronous,System.Security.Principal.TokenImpersonationLevel.Identification);
         try {
-            await pipe.ConnectAsync(3000,deadline.Token);ControlServerIdentity.Verify(pipe);
-            await ServiceProtocol.Write(pipe,request,deadline.Token);return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token);
+            await pipe.ConnectAsync(3000,deadline.Token).ConfigureAwait(false);
+            await Task.Run(()=>{
+                if(OperatingSystem.IsWindows())ControlServerIdentity.Verify(pipe);
+            },deadline.Token).ConfigureAwait(false);
+            await ServiceProtocol.Write(pipe,request,deadline.Token).ConfigureAwait(false);
+            return await ServiceProtocol.Read<UiControlReply>(pipe,deadline.Token).ConfigureAwait(false);
         } catch(UnauthorizedAccessException ex){throw new UiBackendException("AccessDenied","当前 Windows 账号未获个人后台访问权限，请运行 MSI 修复安装并核对日常使用账号。",ex);}
         catch(OperationCanceledException ex)when(!token.IsCancellationRequested){throw new UiBackendException("ResponseTimeout","本地后台响应超时，已受理的操作仍会继续；请刷新状态后确认结果。",ex);}
         catch(Exception ex)when(ex is IOException or TimeoutException && ex is not UiBackendException){

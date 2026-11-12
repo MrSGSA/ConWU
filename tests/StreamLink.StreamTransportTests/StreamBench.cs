@@ -11,12 +11,12 @@ using StreamLink.Core;
 // command-line arguments or ready/results output. No production profile is read.
 static class StreamBench
 {
-    sealed record Configuration(string Mode,string Key,int Port=48443,string Endpoint="",string Pin="",int Mbps=50,int Seconds=8,bool Firewall=false,int LifetimeSeconds=240,bool Autonomous=false,int MaxInFlight=512);
+    sealed record Configuration(string Mode,string Key,int Port=48443,string Endpoint="",string Pin="",int Mbps=50,int Seconds=8,bool Firewall=false,int LifetimeSeconds=240,bool Autonomous=false,int MaxInFlight=512,bool BatchDatagrams=true);
     public static async Task Run(string[] args)
     {
         var line=await Console.In.ReadLineAsync()??throw new IOException("Private test input missing");
         var configuration=JsonSerializer.Deserialize<Configuration>(line)??throw new IOException("Private test input invalid");
-        if(!TransportModes.Stream(configuration.Mode)||configuration.LifetimeSeconds is <10 or >600||configuration.Seconds is <1 or >60||configuration.Mbps is <1 or >500||configuration.MaxInFlight is <32 or >512)throw new IOException("Test bounds invalid");
+        if(!TransportModes.Stream(configuration.Mode)||configuration.LifetimeSeconds is <10 or >600||configuration.Seconds is <1 or >60||configuration.Mbps is <1 or >500||configuration.MaxInFlight is <32 or >8192)throw new IOException("Test bounds invalid");
         byte[] key=Convert.FromBase64String(configuration.Key);if(key.Length!=32)throw new IOException("Test key invalid");
         try{if(args[0]=="serve")await Serve(configuration,key);else await Bench(configuration,key);}
         catch(Exception error)when(args[0]=="bench"&&error is IOException or SocketException or OperationCanceledException){
@@ -30,7 +30,7 @@ static class StreamBench
         using var certificate=StreamCertificates.CreateServer(signing,DateTimeOffset.UtcNow.AddDays(1));
         var mesh=MeshIdentity.Create("","",c.Mode,direct:true);
         using var udp=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));udp.Client.ReceiveBufferSize=udp.Client.SendBufferSize=4<<20;
-        await using var transport=new StreamMeshTransport(mesh,(IPEndPoint)udp.Client.LocalEndPoint!,true,c.Port,()=>certificate,allowListener:c.Firewall?()=>OperatingSystem.IsWindows()?WindowsHost.AllowStreamListener(c.Port):LinuxFirewall.AllowStreamListener(c.Port):null);
+        await using var transport=new StreamMeshTransport(mesh,(IPEndPoint)udp.Client.LocalEndPoint!,true,c.Port,()=>certificate,allowListener:c.Firewall?()=>OperatingSystem.IsWindows()?WindowsHost.AllowStreamListener(c.Port):LinuxFirewall.AllowStreamListener(c.Port):null,batchDatagrams:c.BatchDatagrams);
         using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(c.LifetimeSeconds));
         await using var mapping=c.Autonomous?await StreamMapping.Create(c.Port,_=>{},stop.Token):null;
         var mappingWork=mapping?.Maintain(stop.Token);
@@ -57,7 +57,7 @@ static class StreamBench
         if(!IPEndPoint.TryParse(c.Endpoint,out var endpoint))throw new IOException("Benchmark endpoint invalid");
         var mesh=MeshIdentity.Create("","",c.Mode,direct:true);mesh.Pair=mesh.Pair with{TransportKeyPin=c.Pin.Length>0?c.Pin:null};
         using var udp=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));udp.Client.ReceiveBufferSize=udp.Client.SendBufferSize=4<<20;
-        await using var transport=new StreamMeshTransport(mesh,endpoint,false,0);
+        await using var transport=new StreamMeshTransport(mesh,endpoint,false,0,batchDatagrams:c.BatchDatagrams);
         using var link=new MeshLink(2,1,key);using var handshake=new CancellationTokenSource(10000);
         var target=transport.ClientEndpoint!;long connectAt=Stopwatch.GetTimestamp();
         await udp.SendAsync(link.Hello(),target,handshake.Token);
@@ -70,7 +70,7 @@ static class StreamBench
         int inFlightLimit=c.MaxInFlight;
         using var window=new SemaphoreSlim(inFlightLimit,inFlightLimit);var latency=new List<double>();
         long sent=0,received=0,last=0,lastReceivedAt=0;Exception? failure=null;var cryptoGate=new object();
-        var cpu=Process.GetCurrentProcess().TotalProcessorTime;long began=Stopwatch.GetTimestamp(),ended=0;
+        var cpu=Process.GetCurrentProcess().TotalProcessorTime;long allocatedAt=GC.GetTotalAllocatedBytes(true);long began=Stopwatch.GetTimestamp(),ended=0;
         var reading=Task.Run(async()=>{
             try{while(!stop.IsCancellationRequested){
                 var frame=await udp.ReceiveAsync(stop.Token);MeshReceive result;lock(cryptoGate)result=link.Receive(frame.Buffer);
@@ -104,7 +104,7 @@ static class StreamBench
         double seconds=Stopwatch.GetElapsedTime(began,ended).TotalSeconds;
         double deliverySeconds=Stopwatch.GetElapsedTime(began,Math.Max(ended,lastReceivedAt)).TotalSeconds;
         double deliveryMbps=received*1280*8/deliverySeconds/1_000_000;
-        var resultValue=new{status=failure==null&&sent>0&&sent==received?"Pass":"Fail",mode=c.Mode,targetMbps=c.Mbps,targetAchieved=deliveryMbps>=c.Mbps*.95,handshakeMs,inFlightLimit,sent,received,seconds,deliverySeconds,drainSeconds=Math.Max(0,deliverySeconds-seconds),sendingMbps=sent*1280*8/seconds/1_000_000,payloadMbps=deliveryMbps,p95Ms=Percentile(.95),p99Ms=Percentile(.99),cpuMs=(Process.GetCurrentProcess().TotalProcessorTime-cpu).TotalMilliseconds,workingSet=Process.GetCurrentProcess().WorkingSet64,tls=transport.TlsProtocol,error=failure?.GetType().Name??"",scope="Production transport plus encrypted MeshLink echo; no TUN, Moonlight or WAN claim"};
+        var resultValue=new{status=failure==null&&sent>0&&sent==received?"Pass":"Fail",mode=c.Mode,targetMbps=c.Mbps,targetAchieved=deliveryMbps>=c.Mbps*.95,handshakeMs,inFlightLimit,sent,received,seconds,deliverySeconds,drainSeconds=Math.Max(0,deliverySeconds-seconds),sendingMbps=sent*1280*8/seconds/1_000_000,payloadMbps=deliveryMbps,p95Ms=Percentile(.95),p99Ms=Percentile(.99),cpuMs=(Process.GetCurrentProcess().TotalProcessorTime-cpu).TotalMilliseconds,allocatedBytes=GC.GetTotalAllocatedBytes(true)-allocatedAt,workingSet=Process.GetCurrentProcess().WorkingSet64,tls=transport.TlsProtocol,batching=transport.BatchingEnabled,io=transport.Io,error=failure?.GetType().Name??"",scope="Production transport plus encrypted MeshLink echo; no TUN, Moonlight or WAN claim"};
         Console.WriteLine("CONWU_BENCH_RESULT "+JsonSerializer.Serialize(resultValue));if(resultValue.status!="Pass")Environment.ExitCode=1;
     }
 }

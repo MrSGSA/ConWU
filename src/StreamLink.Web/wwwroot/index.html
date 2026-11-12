@@ -47,6 +47,7 @@
   <button class="nav" data-page="join" title="加入网络"><svg class="icon"><use href="#i-join"/></svg><span class="nav-text">加入网络</span><span class="count-dot" id="request-dot" hidden></span></button>
   <button class="nav exit" data-ui-action="choose-exit" title="退出网络"><svg class="icon"><use href="#i-exit"/></svg><span class="nav-text">退出网络</span></button>
   <button class="nav" data-page="requests" title="加入申请"><svg class="icon"><use href="#i-shield"/></svg><span class="nav-text">加入申请</span><span class="nav-count" id="requests-count" hidden></span></button>
+  <button class="nav" data-page="coordination" title="对外协调"><svg class="icon"><use href="#i-server"/></svg><span class="nav-text">对外协调</span></button>
   <div class="nav-separator" role="separator"></div>
   <button class="nav" data-page="logs" title="日志"><svg class="icon"><use href="#i-log"/></svg><span class="nav-text">日志</span></button>
   <button class="nav" data-page="settings" title="设置"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-text">设置</span><span id="settings-dirty-dot" class="count-dot" hidden></span></button>
@@ -65,5 +66,11 @@
 <dialog class="network-dialog" id="network-dialog" aria-labelledby="network-dialog-title"><div class="modal-header"><div><h2 id="network-dialog-title">网络设置</h2><p id="network-dialog-subtitle"></p></div><button class="btn icon-only" data-ui-action="close-editor" aria-label="关闭网络设置"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="modal-grid"><nav class="modal-nav" id="network-settings-nav" aria-label="网络设置分区"></nav><div class="modal-body" id="network-settings-body"></div></div><div class="modal-footer"><span class="save-state" id="network-save-state" role="status"></span><div class="row" id="network-edit-actions"><button class="btn compact" data-ui-action="restore-editor">恢复刚才设置</button><button class="btn primary compact" data-ui-action="save-editor">保存设置</button></div><button class="btn compact" id="network-readonly-close" data-ui-action="close-editor" hidden>关闭</button></div></dialog>
 <dialog class="small-dialog" id="exit-dialog" aria-labelledby="exit-title"><div class="pad"><h2 id="exit-title">退出网络</h2><label class="field"><span>选择要退出的网络</span><select id="exit-network-select"></select></label></div><div class="dialog-actions"><button class="btn" data-ui-action="close-exit">取消</button><button class="btn danger" id="exit-confirm" data-ui-action="confirm-exit">确认退出</button></div></dialog>
 <dialog class="small-dialog help-dialog" id="help-dialog" aria-labelledby="help-title"><div class="modal-header"><h2 id="help-title"></h2><button class="btn icon-only" data-ui-action="close-help" aria-label="关闭帮助"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="pad" id="help-content"></div><div class="dialog-actions"><button class="btn primary" data-ui-action="close-help">知道了</button></div></dialog>
+<dialog class="small-dialog coordinator-dialog" id="coordination-dialog" aria-labelledby="coordination-title">
+ <div class="modal-header"><h2 id="coordination-title">本机协调设置</h2><button class="btn icon-only" data-ui-action="close-coordination-settings" aria-label="关闭本机协调设置"><svg class="icon"><use href="#i-x"/></svg></button></div>
+ <div class="pad" id="coordination-settings-fields"></div>
+ <div class="error pad" id="coordination-error" role="status"></div>
+ <div class="modal-footer"><span class="save-state" id="coordination-save-state" role="status"></span><div class="row"><button class="btn compact" id="restore-coordination" data-ui-action="restore-coordination">恢复刚才设置</button><button class="btn primary compact" id="save-coordination" data-ui-action="save-coordination">保存设置</button></div></div>
+</dialog>
 </body>
 </html>

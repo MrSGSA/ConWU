@@ -5,7 +5,7 @@ const defaults={system:{startup:true},identity:{name:'',ipMode:'auto',ip:''},net
 const heading=(title,description,extra='')=>`<div class="heading"><div><h1 id="page-title">${title}</h1><p>${description}</p></div>${extra}</div>`;
 let state=null,online=false,busy=false,busyKind='',expired=false,csrf='',reading=null,generation=0,lastStatusAt=0,lastBackendAt=0,baseRevision='',saved=clone(defaults),drafts=clone(saved),history=null;
 let page='overview',section='network',networkActive=false,owner=false,pairCode='',pairExpires=0,invitation='',inviteExpires=0,joinTab='outgoing',joinCodeValue='',joinInviteValue='',joinStatus='',joinName='',joinError='',incoming=false,createdAt=0,theme='dark',toastTimer,testTimer,testGeneration=0,modalCallback=null,networkRoute='server';
-let previousTraffic=null,traffic={peers:new Map(),up:null,down:null},historyTraffic=[],logLines=[],lastLogs=[],lastPairPoll=0,lastPairError='',pairNotice='',pairNoticeTimer,joinModel='',settingsHydrated=false;
+let previousTraffic=null,traffic={peers:new Map(),up:null,down:null},historyTraffic=[],logLines=[],lastPairPoll=0,lastPairError='',pairNotice='',pairNoticeTimer,joinModel='',settingsHydrated=false;
 let noticeSource='',noticeTimer,lastStatusFailure='',resumeGraceUntil=0,submittedJoin=null;
 let expanded=new Set(),dirty=key=>!same(drafts[key],saved[key]),dirtyCount=()=>Object.keys(defaults).filter(dirty).length,localName=()=>state?.deviceName||'正在读取',localIp=()=>state?.virtualIp||'尚未分配',activeRoute=()=>saved.network.mode==='custom'?'server':saved.network.route,protocol=()=>({udp:'直接 UDP',tcp:'纯 TCP',https:'HTTPS'})[saved.network.protocol]||'FakeTCP + HTTP';
 const total=value=>value>=1e9?(value/1e9).toFixed(2)+' GB':value>=1e6?(value/1e6).toFixed(1)+' MB':value>=1000?(value/1000).toFixed(1)+' KB':Math.max(0,value||0)+' B';
@@ -190,7 +190,7 @@ async function api(path,body,valid=()=>true,sessionRetried=false){
   const reply=await result.json();
   // A valid reply still proves backend responsiveness when its state belongs
   // to a superseded UI generation. Never apply that older state to the form.
-  if((path.startsWith('/api/status')||path==='/api/command')&&typeof reply?.ok==='boolean'&&reply.status)lastBackendAt=performance.now();
+  if(/^\/(?:admin\/)?api\/(?:status(?:\?|$)|command$)/.test(path)&&typeof reply?.ok==='boolean'&&reply.status)lastBackendAt=performance.now();
   return reply;
  }catch(error){if(error.name==='AbortError'||error instanceof TypeError){const pending=Error('本机后台暂未响应，操作结果尚待确认；正在自动刷新。');pending.retryable=true;throw pending;}throw error;}finally{clearTimeout(timer);}
 }
@@ -289,7 +289,7 @@ function render(next){
   if(noticeSource==='backend')notice('');
   if(noticeSource==='pair'&&!state.pairing?.active){lastPairError='';notice('');}
   if(oldNetwork!==state.networkId){previousTraffic=null;historyTraffic=[];expanded.clear();pairNotice='';if(submittedJoin){if(submittedJoin.direct&&joinInviteValue.replace(/\s/g,'')===submittedJoin.code)joinInviteValue='';if(!submittedJoin.direct&&joinCodeValue.replace(/\s/g,'')===submittedJoin.code)joinCodeValue='';}if(submittedJoin||joinStatus==='waiting')joinName='';submittedJoin=null;joinError=lastPairError='';joinTab='outgoing';lastPairPoll=0;clearTimeout(pairNoticeTimer);}
-  traffic=rates(state);appendLogs(state.logs||[]);
+  traffic=rates(state);appendStatusLogs(state);
   if(!settingsHydrated||!dirtyCount()){const configuration=configFromStatus(state);settingsChanged=!same(saved,configuration);saved=configuration;drafts=clone(saved);baseRevision=state.settingsRevision||'';settingsHydrated=true;if(!defaults.identity.name)defaults.identity.name=state.deviceName;}
   const p=state.pairing,live=p?.active&&p.expires*1000>Date.now();pairCode=live&&p.owner&&!p.code.startsWith('SL')?p.code:'';pairExpires=live?p.expires*1000:0;invitation=live&&p.owner&&p.code.startsWith('SL6.')?p.code:'';inviteExpires=pairExpires;
   incoming=!!(live&&p.owner&&p.candidate);joinStatus=live&&!p.owner?'waiting':'';joinModel=JSON.stringify([state.networkId,state.networkEnabled,state.settings?.directMode,state.settings?.connectionSource,p]);updateShell();
@@ -365,7 +365,49 @@ async function joinNetwork(){requireApplied();if(networkActive)throw Error('需�
 function bindJoinInput(){const direct=activeRoute()==='direct',input=$(direct?'join-invite':'join-code');if(!input)return;input.oninput=()=>{if(direct)joinInviteValue=input.value;else{joinCodeValue=input.value.replace(/\D/g,'').slice(0,6);input.value=joinCodeValue;input.closest('.digits-input').querySelectorAll('.digit').forEach((el,i)=>{const digit=joinCodeValue[i]||'';el.textContent=digit;el.classList.toggle('filled',!!digit);});}joinError='';$('join-error').textContent='';};$('join-device-name').oninput=e=>joinName=e.target.value;$('join-form').onsubmit=e=>{e.preventDefault();run(joinNetwork).catch(()=>{});};}
 async function testAddresses(){const settings=settingsDto(),slot=drafts.network.owner==='local'?0:drafts.network.owner==='target'?-1:Number(drafts.network.owner.slice(4)),entries=settings.existingEntries.filter(e=>e.peerSlot===slot);if(!entries.length)throw Error('请先填写地址来源。');const version=++testGeneration,selected=drafts.network.owner;await network('resolve-entries',{settings:{...settings,existingEntries:entries}});if(page!=='settings'||section!=='network'||version!==testGeneration||selected!==drafts.network.owner||!$('test-results'))return;const results=state.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="test-result ${r.error?'error':''}">${icon(r.error?'x':'check')}<div class="grow"><div>${esc(r.error||r.endpoints.join('、'))}</div><p>${r.error?'可以检查来源或稍后重试；现有健康连接继续保持。':'地址已解析。保存后连接时仍需验证设备身份与双向通信。'}</p></div></div>`).join('');}
 async function pollPair(){if(!online||busy||!state?.pairing?.active||state.pairing.direct||Date.now()-lastPairPoll<2500)return;lastPairPoll=Date.now();try{await network('pair-poll',{},true);if(lastPairError&&noticeSource==='pair')notice('');lastPairError='';if(!state.pairing?.active&&state.pairing?.state)notify(state.pairing.state);}catch(e){lastPairPoll=Date.now()+10000;if(e.message!==lastPairError){lastPairError=e.message;notice(e.message,true,'pair');}}}
-function appendLogs(lines){let overlap=0;for(let n=Math.min(lastLogs.length,lines.length);n>0;n--)if(lastLogs.slice(-n).every((v,i)=>v===lines[i])){overlap=n;break;}for(const line of lines.slice(overlap)){const m=line.match(/^(\d\d:\d\d:\d\d) (?:\[(INFO|WARN|ERROR|DEBUG)\] )?(.*)$/);logLines.push({time:m?.[1]||'',level:m?.[2]||'INFO',message:m?.[3]||line});}lastLogs=lines.slice();if(logLines.length>500)logLines.splice(0,logLines.length-500);}
+const logSnapshots=new Map(),seenLogEntries=new Map();
+let logOrdinal=0;
+function appendLogLine(line,source,timestamp){
+ const match=line.match(/^(\d\d:\d\d:\d\d) (?:\[(INFO|WARN|ERROR|DEBUG)\] )?(.*)$/);
+ const time=match?.[1]||'',message=match?.[3]||line;
+ if(!Number.isFinite(timestamp)){
+  const date=new Date();
+  if(time){const parts=time.split(':').map(Number);date.setHours(...parts,0);if(date.getTime()>Date.now()+300000)date.setDate(date.getDate()-1);}
+  timestamp=date.getTime();
+ }
+ logLines.push({time,level:match?.[2]||'INFO',message:source?'['+source+'] '+message:message,timestamp,ordinal:logOrdinal++});
+}
+function appendLogs(lines,key='device',source=''){
+ if(!lines.length)return;
+ const previous=logSnapshots.get(key)||[];
+ // A reduced reply can contain only an older suffix of the current window.
+ if(previous.length>=lines.length&&previous.some((_,offset)=>offset+lines.length<=previous.length&&lines.every((line,i)=>line===previous[offset+i])))return;
+ let start=0,matched=false;
+ for(let count=Math.min(previous.length,lines.length);count>0&&!matched;count--){
+  for(let offset=0;offset+count<=lines.length;offset++){
+   if(previous.slice(-count).every((line,i)=>line===lines[offset+i])){start=offset+count;matched=true;break;}
+  }
+ }
+ for(const line of lines.slice(start))appendLogLine(line,source);
+ logSnapshots.set(key,lines.slice());
+}
+function appendStatusLogs(status){
+ const sources=[{key:'device',name:status.workspaceVersion?'本机':'',status}];
+ if(status.workspaceVersion)for(const network of status.networks||[])sources.push({key:network.id,name:network.name,status:network.status});
+ const active=new Set(sources.map(source=>source.key));
+ for(const key of logSnapshots.keys())if(!active.has(key))logSnapshots.delete(key);
+ for(const source of sources){
+  if(!Array.isArray(source.status.logEntries)){appendLogs(source.status.logs||[],source.key,source.name);continue;}
+  for(const entry of source.status.logEntries){
+   const key=source.key+':'+entry.id,seen=seenLogEntries.has(key);
+   seenLogEntries.delete(key);seenLogEntries.set(key,true);
+   if(!seen)appendLogLine(entry.text,source.name,entry.timestamp);
+  }
+ }
+ while(seenLogEntries.size>4096)seenLogEntries.delete(seenLogEntries.keys().next().value);
+ logLines.sort((a,b)=>a.timestamp-b.timestamp||a.ordinal-b.ordinal);
+ if(logLines.length>500)logLines.splice(0,logLines.length-500);
+}
 let logFilter='ALL',logSearch='',autoScroll=true;
 function visibleLogs(){return logLines.filter(l=>(logFilter==='ALL'||l.level===logFilter)&&(!logSearch||l.message.toLowerCase().includes(logSearch.toLowerCase())));}
 function logsPage(){return heading('日志','查看连接与操作记录，定位发生问题的阶段。')+`<article class="card" data-static-style="u14"><div class="terminal-actions row between wrap"><div class="row"><select class="preview-select" id="log-filter" aria-label="日志等级筛选">${['ALL','INFO','WARN','ERROR','DEBUG'].map(v=>`<option ${logFilter===v?'selected':''} value="${v}">${v==='ALL'?'全部等级':v}</option>`).join('')}</select><input id="log-search" class="preview-select" aria-label="搜索日志" value="${esc(logSearch)}" placeholder="搜索日志"></div><div class="row"><button class="text-btn" data-action="copy-logs">复制日志</button><button class="text-btn" data-action="download-logs">导出</button><button class="text-btn" data-settings="logging">日志设置</button></div></div><div class="terminal terminal-content" id="terminal-content"><div id="terminal-lines" role="log" aria-label="当前后台日志"></div></div><div class="table-foot row between"><span id="log-count"></span><label><input type="checkbox" id="auto-scroll" ${autoScroll?'checked':''}>自动滚动</label></div></article>`;}

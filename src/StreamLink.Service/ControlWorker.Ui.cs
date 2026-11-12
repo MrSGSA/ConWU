@@ -30,7 +30,7 @@ public sealed partial class ControlWorker
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
              NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),EntryPreparation=p.Enabled&&meshRunner?.EntryPreparation is {} entry?entry with{Detail=PublicText(entry.Detail,p,400)}:null,Desktop=networkContext?null:StartupSettings.Read(full.ServiceReady),Coordinator=Volatile.Read(ref coordinatorStatus),
 
-             QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
+             QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),LogEntries=Volatile.Read(ref uiLogEntries),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
         progress with { Detail = PublicText(progress.Detail,profile,400) };

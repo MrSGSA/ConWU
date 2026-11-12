@@ -34,12 +34,14 @@ public sealed class CoordinationHost : IAsyncDisposable
     readonly LinuxSynCapture? capture;
     readonly FileStream lease;
     readonly X509Certificate2? certificate;
+    readonly CoordinatorClients clients;
     public string InstanceId { get; }
     public DateTimeOffset? CertificateExpires => certificate == null ? null : new DateTimeOffset(certificate.NotAfter.ToUniversalTime());
     public string CertificatePin=>certificate==null?"":Convert.ToHexString(SHA256.HashData(certificate.RawData));
     public bool IsStopping => app.Lifetime.ApplicationStopping.IsCancellationRequested || app.Lifetime.ApplicationStopped.IsCancellationRequested;
-    CoordinationHost(WebApplication app, LinuxSynCapture? capture, FileStream lease, X509Certificate2? certificate, string instanceId) {
-        this.app = app; this.capture = capture; this.lease = lease; this.certificate = certificate; InstanceId = instanceId;
+    public CoordinatorClientDto[] Clients => clients.Snapshot();
+    CoordinationHost(WebApplication app, LinuxSynCapture? capture, FileStream lease, X509Certificate2? certificate, string instanceId,CoordinatorClients clients) {
+        this.app = app; this.capture = capture; this.lease = lease; this.certificate = certificate; InstanceId = instanceId;this.clients=clients;
     }
     public Task Start(CancellationToken token = default) => app.StartAsync(token);
     public Task Run(CancellationToken token = default) => app.RunAsync(token);
@@ -143,8 +145,9 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
         messages[key] = (envelope, DateTimeOffset.UtcNow.AddSeconds(120)); return Results.NoContent();
     }
 }
-var pairRooms = new PairRooms();
-var meshRegistry = new MeshRegistry(root);
+var clients = new CoordinatorClients();
+var pairRooms = new PairRooms(clients:clients);
+var meshRegistry = new MeshRegistry(root,clients);
 TcpSynObserver? synObserver = null;
 LinuxSynCapture? synCapture = null;
 // Explicit deployment configuration only. Every IP must be assigned to this
@@ -189,7 +192,7 @@ app.MapPost("/v2/pair/{room}/reject", (HttpContext c,string room) => pairRooms.E
 app.MapPost("/v2/pair/{room}/guest/cancel", (HttpContext c,string room) => pairRooms.Exchange(c,room,false,finish:true)).RequireRateLimiting("pair-room");
 app.MapGet("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot) => Exchange(c, network, slot, null)).RequireRateLimiting("metadata");
 app.MapPut("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot, Envelope envelope) => Exchange(c, network, slot, envelope)).RequireRateLimiting("metadata");
-return new(app, synCapture, lease, certificate, instanceId);
+return new(app, synCapture, lease, certificate, instanceId,clients);
         } catch {
             try { if (ownedCapture != null) ownedCapture.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
             finally { try { if (built != null) built.DisposeAsync().AsTask().GetAwaiter().GetResult(); } finally { certificate?.Dispose(); lease.Dispose(); } }
