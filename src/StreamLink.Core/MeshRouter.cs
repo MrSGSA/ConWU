@@ -25,6 +25,7 @@ public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Conne
     public string EntryDirection {get;init;}="Unknown";
     public NativePathDiagnostics? NativeEvidence {get;init;}
     public RouterPeerDrops? LocalDrops { get; init; }
+    public StreamFlowStatus? StreamFlows { get; init; }
 }
 
 // One adapter and one local UDP socket per node. The authenticated source slot
@@ -203,6 +204,13 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 foreach(var endpoint in peer.LegacyListenerSources.ToArray())FailLegacyTransport(peer.Member.Slot,endpoint);
         }
     }
+    public void FailLegacyIngress(IPEndPoint endpoint)
+    {
+        lock(gate){
+            foreach(var peer in peers.Values.Where(p=>p.LegacyListenerSources.Contains(endpoint)).ToArray())
+                FailLegacyTransport(peer.Member.Slot,endpoint);
+        }
+    }
     void Challenge(Peer peer, IPEndPoint endpoint)
     {
         if (endpoint.Equals(peer.Active)) return;
@@ -226,12 +234,13 @@ public sealed partial class MeshRouter : IAsyncDisposable
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
-                    ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : profile.Pair.Mode=="tcp"?"TCP":profile.Pair.Mode=="https"?"HTTPS":"FakeTCP+HTTP",
+                    ActualTransport = !healthy ? "None" : udp ? "UDP_DIRECT" : profile.Pair.Mode=="tcp"?"TCP":profile.Pair.Mode=="https"?"HTTPS":TransportModes.PacketCarrier(profile.Pair.Mode)?TransportModes.Label(profile.Pair.Mode):"FakeTCP+HTTP",
                     OuterSource=p.Managed?.Active?.Identity.ActualLocal.ToString()??"Unknown",
                     OuterTarget=p.Managed?.Active?.Identity.ActualRemote.ToString()??"Unknown",
                     EntryDirection=!healthy?"Unknown":p.Managed!=null?"Managed":p.Active!=null&&p.LegacyListenerSources.Contains(p.Active)?"Inbound":"Outbound",
                     NativeEvidence=OperatingSystem.IsWindows()?(p.Managed?.Active?.Transport as NativeDatagramPath)?.Diagnostics:null,
                     LocalDrops = new(p.NoHealthyPathDrops, p.SendRejectedDrops, p.AuthenticationDrops, p.ReceivePolicyDrops, p.AdapterWriteDrops),
+                    StreamFlows = TransportModes.Stream(profile.Pair.Mode) ? StreamFlowRoutes.Status(p.Active, profile.Pair.Network, profile.Self.Slot, p.Member.Slot) : null,
                     Recovery = p.Recovery.Snapshot(Environment.TickCount64),
                     SendQueue = (p.Managed?.Active?.Transport as IMeshSendDiagnostics)?.SendQueue,
                     Traffic = p.Managed?.Active?.Traffic.Snapshot(Environment.TickCount64),
@@ -246,6 +255,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
     }
     bool SendDatagram(ReadOnlySpan<byte> packet, IPEndPoint endpoint)
     {
+        if (TransportModes.Stream(profile.Pair.Mode) && StreamFlowRoutes.TrySend(endpoint, LocalEndpoint, profile.Pair.Network, profile.Self.Slot, packet, out bool accepted)) return accepted;
         try { return socket.SendTo(packet, SocketFlags.None, endpoint) == packet.Length; }
         catch (SocketException ex) when (ex.SocketErrorCode is SocketError.WouldBlock or SocketError.NoBufferSpaceAvailable or SocketError.TimedOut or SocketError.ConnectionReset or SocketError.ConnectionRefused) { Interlocked.Increment(ref legacySendRejected); return false; }
     }
@@ -271,9 +281,14 @@ public sealed partial class MeshRouter : IAsyncDisposable
             int count = adapter.Read(buffer,stop.Token); if (count == 0) continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
             lock (gate) if (peersByHost.TryGetValue(slot,out var peer)) {
-                byte[]? encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
+                byte[]? encoded = null; bool delivered = false;
+                bool direct = Healthy(peer) && LegacyAllowed && peer.Managed == null && TransportModes.Stream(profile.Pair.Mode) &&
+                    StreamFlowRoutes.TrySendPacket(peer.Active, LocalEndpoint, profile.Pair.Network, profile.Self.Slot, peer.Member.Slot, packet, peer.Link, out encoded, out delivered);
+                if (!direct) {
+                    encoded = Healthy(peer) ? peer.Link.Data(packet) : null;
+                    delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && SendBusiness(encoded, peer.Active, framed));
+                }
                 if (encoded != null) peer.Managed?.Active?.Traffic.Epoch(true, new Guid(encoded.AsSpan(8, 16)), Environment.TickCount64);
-                bool delivered = encoded != null && (peer.Managed != null ? SendManaged(encoded, peer.Managed.Active) : LegacyAllowed && SendBusiness(encoded, peer.Active, framed));
                 peer.Managed?.Active?.Traffic.Send(count, delivered, Environment.TickCount64);
                 if (delivered && encoded != null) peer.Managed?.Active?.Delivery?.Send(new Guid(encoded.AsSpan(8, 16)),
                     BinaryPrimitives.ReadUInt64BigEndian(encoded.AsSpan(40)), count, Environment.TickCount64);
@@ -317,7 +332,8 @@ public sealed partial class MeshRouter : IAsyncDisposable
                 if (!LegacyAllowed) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
                 if (peer.Managed != null) continue; // managed data arrives through its registered resource only
                 if (peer.CancelledCandidates.Contains((IPEndPoint)received.RemoteEndPoint)) { peer.Dropped++; peer.ReceivePolicyDrops++; continue; }
-                var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes));
+                var result = peer.Link.Receive(buffer.AsSpan(0, received.ReceivedBytes), TransportModes.Stream(profile.Pair.Mode) &&
+                    StreamFlowRoutes.AllowsLanes((IPEndPoint)received.RemoteEndPoint, profile.Pair.Network, profile.Self.Slot, peer.Member.Slot));
                 if (!result.Authenticated) { peer.Dropped++; peer.AuthenticationDrops++; continue; }
                 var endpoint = (IPEndPoint)received.RemoteEndPoint;
                 if (!peer.NativeControlSources.ContainsKey(endpoint) && peer.NativeControlSources.Count < 16){

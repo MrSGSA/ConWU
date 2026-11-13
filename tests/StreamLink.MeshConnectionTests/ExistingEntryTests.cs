@@ -37,7 +37,7 @@ static partial class Program
         var plan=new ExistingEntryPlan();string[] hints=["203.0.113.1:1","203.0.113.2:2"];
         var reconnect=new PeerReconnectPolicy();
         Check(!reconnect.Allow(false,false,false,hints,1000)&&reconnect.Allow(false,false,true,hints,1001),"server-backed offline member waits for fresh presence even when its old IP remains configured");
-        Check(reconnect.Allow(true,false,false,hints,1000)&&!reconnect.Allow(true,false,false,hints,20000)&&!reconnect.Allow(true,false,false,hints,70000),"serverless unanswered entry leaves a bounded attempt and pauses dense reconnects");
+        Check(reconnect.Allow(true,false,false,hints,1000)&&!reconnect.Allow(true,false,false,hints,20000)&&!reconnect.Allow(true,false,false,hints,24000)&&reconnect.Allow(true,false,false,hints,25000),"serverless unanswered entry keeps bounded attempts and resumes after a short idle pause");
         Check(reconnect.Allow(true,false,false,["203.0.113.3:3"],70001),"changed subscription endpoint immediately wakes a paused direct peer");
         var period=new DeviceProfile{EntryRefreshSeconds=1};period.Validate();period.EntryRefreshSeconds=86400;period.Validate();period.EntryRefreshSeconds=0;Reject(period.Validate);
         Check(plan.Select(hints,"fallback",false,false,1000)==hints[0]&&plan.Priority,"first supplied endpoint wins priority");

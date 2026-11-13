@@ -24,11 +24,11 @@ static class RunnerStreamChecks
                 foreach(var (mesh,index) in new[]{(host,0),(guest,1)}){
                     string root=Path.Combine(folder,index.ToString());var store=new ProfileStore(root);store.AuthorizeUiUser(sid);
                     var profile=new DeviceProfile{Device=mesh.Self.Device,Mesh=mesh,DeviceName=index==0?"Host":"Guest",Enabled=true,ListenPort=port+index*2,SourcePort=port+index*2+1};profile.SelectTransport(TransportModes.Policy(mode));
-                    var settings=new UiNetworkSettings(PathSelection:TransportModes.Policy(mode),ListenPort:profile.ListenPort,SourcePort:profile.SourcePort){ConnectionSource="existing",DirectMode=true,DiscoveryMode="existing",ExistingEntries=[new(index==0?0:ExistingEntry.NetworkOwner,"203.0.113.25:"+port)]};
+                    var settings=new UiNetworkSettings(PathSelection:TransportModes.Policy(mode),ListenPort:profile.ListenPort,SourcePort:profile.SourcePort){StreamFlowLanes=index==0,ConnectionSource="existing",DirectMode=true,DiscoveryMode="existing",ExistingEntries=[new(index==0?0:ExistingEntry.NetworkOwner,"203.0.113.25:"+port)]};
                     ConnectionSettings.Apply(profile,settings);store.Save(profile);
                     var runtime=new MeshRuntimeServices(m=>new DirectMeshDiscovery(m),_=>Task.FromResult<IPacketAdapter>(new MemoryAdapter()),(_,_,_)=>{Interlocked.Increment(ref probes);throw new IOException("unexpected STUN");},r=>{
                         if(index==0&&!r.Server)Interlocked.Increment(ref hostDials);if(index==1&&r.Server)Interlocked.Increment(ref guestListeners);
-                        return new StreamMeshTransport(r.Mesh,r.Server?r.Target:new(IPAddress.Loopback,port),r.Server,r.Port,()=>certificate,r.PairingBootstrap,r.ReserveEndpoint);
+                        return new StreamMeshTransport(r.Mesh,r.Server?r.Target:new(IPAddress.Loopback,port),r.Server,r.Port,()=>certificate,r.PairingBootstrap,r.ReserveEndpoint,flowLanes:r.StreamFlowLanes,flowPolicy:r.StreamFlowPolicy);
                     },(_,_,token)=>Task.Delay(Timeout.Infinite,token),(_,_,_)=>{},(_,_)=>{},Path.Combine(root,"sessions")){
                         Candidates=(_,_,_,_)=>throw new IOException("unexpected raw traversal"),NetworkWake=()=>new MeshNetworkWake(false),
                         ResolveEntries=(entries,_,_)=>Task.FromResult(entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,"地址",["203.0.113.25:"+port],"")).ToArray()),
@@ -50,11 +50,14 @@ static class RunnerStreamChecks
                 await Until(()=>workers.All(w=>w.SingleUiSnapshot().DirectPeers==1),mode+" runner establishes both ends after the delayed guest adapter is ready");
                 check(hostDials==0&&guestListeners==0&&probes==0,mode+" host listens and guest dials without raw/STUN fallback or guest reachability requirements");
                 check(workers.All(w=>w.SingleUiSnapshot().Peers.Single().ActualTransport==mode.ToUpperInvariant()),mode+" service snapshots retain the actual TCP/TLS carrier");
+                await Until(()=>workers.All(w=>w.SingleUiSnapshot().Peers.Single().StreamFlows?.SplitActive==true),mode+" runner negotiates the host stream-lane policy");
+                check(workers[0].ProfileSnapshot().StreamFlowLanes&&!workers[1].ProfileSnapshot().StreamFlowLanes,mode+" guest capability follows the host without rewriting saved guest preferences");
                 // Drop only the guest's runtime and restart from the persisted
                 // approved identity. Host listener and virtual IPs stay put.
                 var stopped=await workers[1].HandleUi(new("stop",OperationId:Guid.NewGuid()),sid,default);check(stopped.Ok,mode+" guest runtime stops cleanly without changing its approved settings");
                 var restarted=await workers[1].HandleUi(new("start",OperationId:Guid.NewGuid()),sid,default);check(restarted.Ok,mode+" guest runtime restarts with the saved transport and identity");
                 await Until(()=>workers.All(w=>w.SingleUiSnapshot().DirectPeers==1),mode+" runner reconnects the same paired network after restart");
+                await Until(()=>workers.All(w=>w.SingleUiSnapshot().Peers.Single().StreamFlows?.SplitActive==true),mode+" runner restores split connections after guest restart");
                 check(workers[1].ProfileSnapshot().Mesh!.LocalIp==guest.LocalIp&&workers[1].ProfileSnapshot().TransportMode==mode,mode+" reconnect preserves virtual IP and protocol");
             }finally{
                 adapterReady.Set();await Task.WhenAll(workers.Select(w=>w.StopLocal()));foreach(var worker in workers)worker.Dispose();

@@ -38,6 +38,7 @@ public sealed class DeviceProfile
     [System.Text.Json.Serialization.JsonIgnore]
     public bool UsesExistingEntriesOnly => ConnectionSource=="existing"||ManualEndpoint.Length>0;
     public bool DirectMode { get; set; }
+    public bool StreamFlowLanes {get;set;}
     public string CoordinationService { get; set; } = "";
     public string CoordinationPin { get; set; } = "";
     public ExistingEntry[] ExistingEntries { get; set; } = [];
@@ -108,11 +109,11 @@ public sealed class DeviceProfile
     public PathSelection Selection() => new(PathSelection switch {
         "prefer-faketcp" => PathPolicy.PreferFakeTcp, "faketcp-only" => PathPolicy.FakeTcpOnly,
         "auto-quality" => PathPolicy.AutoQuality, "udp-only" => PathPolicy.UdpOnly,
-        "tcp-only"=>PathPolicy.TcpOnly,"https-only"=>PathPolicy.HttpsOnly,_ => throw new FormatException("选路策略无效")
+        "tcp-only"=>PathPolicy.TcpOnly,"https-only"=>PathPolicy.HttpsOnly,"phantun-only"=>PathPolicy.PhantunOnly,"mimic-only"=>PathPolicy.MimicOnly,"tcpraw-only"=>PathPolicy.TcpRawOnly,_ => throw new FormatException("选路策略无效")
     }, AllowUdpFallback);
     public void SelectTransport(string policy)
     {
-        if(policy is not ("faketcp-only" or "udp-only" or "tcp-only" or "https-only")) throw new FormatException("请选择固定传输协议；不支持自动回退");
+        _=TransportModes.Mode(policy);
         PathSelection=policy; AllowUdpFallback=false; TraversalMode="tcp-udp";
         TransportMode=TransportModes.Mode(policy);
         if(policy!="faketcp-only") { TcpPeerReflexive=false; TcpPortPrediction=false; TcpPortCalibration=false; TcpSynObservation=false; FakeTcpIpv6=false; LegacyEgressPacing=false; }
@@ -130,12 +131,12 @@ public sealed class DeviceProfile
     // Low-level isolated comparison fixtures may still exercise those policies.
     public void RequireFixedTransport()
     {
-        if(PathSelection is not ("faketcp-only" or "udp-only" or "tcp-only" or "https-only") || AllowUdpFallback)
+        if(PathSelection is null||!PathSelection.EndsWith("-only",StringComparison.Ordinal)||!TransportModes.Valid(PathSelection[..^5]) || AllowUdpFallback)
             throw new FormatException("请选择固定传输协议；不支持自动协议回退");
         if(TransportMode != (TransportModes.Mode(PathSelection)))
             throw new FormatException("传输模式与连接策略不一致，请在设置中重新选择传输模式");
-        if(Mesh is {} bound&&bound.Pair.Mode!=TransportMode&&(TransportModes.Stream(bound.Pair.Mode)||TransportModes.Stream(TransportMode)))throw new FormatException("TCP／HTTPS 网络的配对协议与设置不一致，请新建网络重新配对");
-        if(Pair!=null&&TransportModes.Stream(TransportMode))throw new FormatException("旧版网络不支持 TCP／HTTPS，请新建网络重新配对");
+        if(Mesh is {} bound&&TransportModes.RequiresNewEnrollment(bound.Pair.Mode,TransportMode))throw new FormatException("网络的配对协议与设置不一致，请新建网络重新配对");
+        if(Pair!=null&&TransportModes.OutboundGuest(TransportMode))throw new FormatException("旧版网络不支持所选协议，请新建网络重新配对");
         if(Mesh != null && Mesh.Pair.Mode != TransportMode &&
             (TraversalMode=="legacy" || TransportMode=="udp" && TraversalMode!="tcp-udp"))
             throw new FormatException("切换传输模式需要启用对应的受管打洞");

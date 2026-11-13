@@ -18,6 +18,16 @@ public sealed class MeshLink : IDisposable
     readonly byte[] secret, epoch = RandomNumberGenerator.GetBytes(16);
     AesGcm sendCipher;
     AesGcm? receiveCipher;
+    // Stream lanes have independent keys, nonces and replay windows. The
+    // original lane zero is byte-for-byte compatible with existing peers.
+    sealed class Lane : IDisposable
+    {
+        public AesGcm? Send, Receive;
+        public ulong Counter, Highest;
+        public readonly ulong[] Seen = new ulong[4096];
+        public void Dispose() { Send?.Dispose(); Receive?.Dispose(); }
+    }
+    readonly Lane?[] lanes = new Lane?[3];
     byte[]? remoteEpoch;
     readonly HashSet<string> retired = [];
     readonly ulong[] seen = new ulong[4096];
@@ -33,20 +43,23 @@ public sealed class MeshLink : IDisposable
         if (localSlot is < 1 or > 254 || remoteSlot is < 1 or > 254 || localSlot == remoteSlot || sharedKey.Length != 32) throw new ArgumentException("链路身份无效");
         local = (byte)localSlot; remote = (byte)remoteSlot; secret = sharedKey.ToArray(); sendCipher = Cipher(epoch, local, remote);
     }
-    AesGcm Cipher(ReadOnlySpan<byte> session, int from, int to)
+    AesGcm Cipher(ReadOnlySpan<byte> session, int from, int to, byte lane = 0)
     {
-        byte[] key = HKDF.DeriveKey(HashAlgorithmName.SHA256, secret, 32, session.ToArray(), Encoding.ASCII.GetBytes($"streamlink-datagram-v4/{from}/{to}"));
+        byte[] key = HKDF.DeriveKey(HashAlgorithmName.SHA256, secret, 32, session.ToArray(), Encoding.ASCII.GetBytes(KeyContext(from, to, lane)));
         try { return new AesGcm(key, 16); } finally { CryptographicOperations.ZeroMemory(key); }
     }
-    byte[] Encode(byte kind, ReadOnlySpan<byte> destinationEpoch, ReadOnlySpan<byte> payload)
+    internal static string KeyContext(int from, int to, byte lane) => $"streamlink-datagram-v4/{from}/{to}" + (lane == 0 ? "" : $"/stream-lane/{lane}");
+    byte[] Encode(byte kind, ReadOnlySpan<byte> destinationEpoch, ReadOnlySpan<byte> payload, byte lane = 0)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
-        if (payload.Length > Mtu || counter == ulong.MaxValue) throw new IOException("数据包或会话超出限制");
+        var state = lane == 0 ? null : lanes[lane - 1] ??= new Lane();
+        if (payload.Length > Mtu || (state?.Counter ?? counter) == ulong.MaxValue) throw new IOException("数据包或会话超出限制");
         byte[] result = new byte[Overhead + payload.Length]; "SLM4"u8.CopyTo(result);
-        result[4] = kind; result[5] = local; result[6] = remote; epoch.CopyTo(result, 8); destinationEpoch.CopyTo(result.AsSpan(24, 16));
-        BinaryPrimitives.WriteUInt64BigEndian(result.AsSpan(40), ++counter);
+        result[4] = kind; result[5] = local; result[6] = remote; result[7] = lane; epoch.CopyTo(result, 8); destinationEpoch.CopyTo(result.AsSpan(24, 16));
+        BinaryPrimitives.WriteUInt64BigEndian(result.AsSpan(40), state == null ? ++counter : ++state.Counter);
         Span<byte> nonce = stackalloc byte[12]; nonce.Clear(); result.AsSpan(40, 8).CopyTo(nonce[4..]);
-        sendCipher.Encrypt(nonce, payload, result.AsSpan(HeaderSize, payload.Length), result.AsSpan(HeaderSize + payload.Length, 16), result.AsSpan(0, HeaderSize));
+        var cipher = state == null ? sendCipher : state.Send ??= Cipher(epoch, local, remote, lane);
+        cipher.Encrypt(nonce, payload, result.AsSpan(HeaderSize, payload.Length), result.AsSpan(HeaderSize + payload.Length, 16), result.AsSpan(0, HeaderSize));
         return result;
     }
     public byte[] Hello() { lock (gate) return Encode(1, new byte[16], []); }
@@ -60,6 +73,11 @@ public sealed class MeshLink : IDisposable
         }
     }
     public byte[]? Data(ReadOnlySpan<byte> packet) { lock (gate) return Connected ? Encode(4, remoteEpoch!, packet) : null; }
+    public byte[]? StreamData(ReadOnlySpan<byte> packet, byte lane)
+    {
+        if (lane is < 1 or > 3) throw new ArgumentOutOfRangeException(nameof(lane));
+        lock (gate) return Connected ? Encode(4, remoteEpoch!, packet, lane) : null;
+    }
     internal byte[]? Synchronize(ReadOnlySpan<byte> payload) { lock(gate) return Connected ? Encode(9,remoteEpoch!,payload) : null; }
     // Only negotiated traversal peers use kind 7. It shares this member's one
     // AEAD counter, session epoch and replay window across every candidate path.
@@ -85,10 +103,14 @@ public sealed class MeshLink : IDisposable
             return Encode(5, remoteEpoch, body);
         }
     }
-    public MeshReceive Receive(ReadOnlySpan<byte> message)
+    public MeshReceive Receive(ReadOnlySpan<byte> message, bool allowStreamLanes = false)
     {
         lock (gate) {
-            if (disposed || message.Length < Overhead || message.Length > Overhead + Mtu || !message[..4].SequenceEqual("SLM4"u8) || message[5] != remote || message[6] != local || message[7] != 0 || message[4] is < 1 or > 9) return new(false);
+            if (disposed || message.Length < Overhead || message.Length > Overhead + Mtu || !message[..4].SequenceEqual("SLM4"u8) || message[5] != remote || message[6] != local || message[4] is < 1 or > 9) return new(false);
+            byte lane = message[7];
+            if (lane != 0 && (!allowStreamLanes || lane > 3 || message[4] != 4)) return new(false);
+            var state = lane == 0 ? null : lanes[lane - 1] ??= new Lane();
+            var replay = state?.Seen ?? seen; ulong top = state?.Highest ?? highest;
             byte kind = message[4]; var senderEpoch = message.Slice(8, 16); var targetEpoch = message.Slice(24, 16);
             if (kind == 1 ? targetEpoch.IndexOfAnyExcept((byte)0) >= 0 : !targetEpoch.SequenceEqual(epoch)) return new(false);
             if ((kind is 1 or 2 or 3) && message.Length != Overhead || (kind is 5 or 6) && message.Length != Overhead + 8) return new(false);
@@ -98,11 +120,11 @@ public sealed class MeshLink : IDisposable
             if (!same && (kind is >=4 and <=9 || retired.Contains(Convert.ToHexString(senderEpoch)))) return new(false);
             ulong sequence = BinaryPrimitives.ReadUInt64BigEndian(message[40..]); if (sequence == 0) return new(false);
             // Hello cannot replace an established session or advance its replay window.
-            if (kind != 1 && same && (sequence <= highest && highest - sequence >= (ulong)seen.Length || seen[sequence % (ulong)seen.Length] == sequence)) return new(false);
+            if (kind != 1 && same && (sequence <= top && top - sequence >= (ulong)replay.Length || replay[sequence % (ulong)replay.Length] == sequence)) return new(false);
             byte[] plain = new byte[message.Length - Overhead]; Span<byte> nonce = stackalloc byte[12]; nonce.Clear(); message.Slice(40, 8).CopyTo(nonce[4..]);
             AesGcm? temporary = null;
             try {
-                var cipher = same ? receiveCipher! : temporary = Cipher(senderEpoch, remote, local);
+                var cipher = same ? state == null ? receiveCipher! : state.Receive ??= Cipher(senderEpoch, remote, local, lane) : temporary = Cipher(senderEpoch, remote, local);
                 cipher.Decrypt(nonce, message.Slice(HeaderSize, plain.Length), message[^16..], plain, message[..HeaderSize]);
             } catch (CryptographicException) { return new(false); }
             finally { temporary?.Dispose(); }
@@ -112,14 +134,18 @@ public sealed class MeshLink : IDisposable
                 RandomNumberGenerator.Fill(epoch); sendCipher.Dispose(); sendCipher = Cipher(epoch, local, remote);
                 receiveCipher?.Dispose(); receiveCipher = null; remoteEpoch = null; retired.Clear(); Array.Clear(seen);
                 counter = highest = 0; lastReceive = pendingPing = 0; RttMs = null;
+                foreach (var item in lanes) if (item != null) { item.Dispose(); item.Send = item.Receive = null; item.Counter = item.Highest = 0; Array.Clear(item.Seen); }
                 return new(false);
             }
             if (kind == 1) return new(true, Encode(2, senderEpoch, []));
             if (!same) {
                 if (remoteEpoch != null) retired.Add(Convert.ToHexString(remoteEpoch));
                 remoteEpoch = senderEpoch.ToArray(); receiveCipher?.Dispose(); receiveCipher = Cipher(remoteEpoch, remote, local); Array.Clear(seen); highest = 0;
+                foreach (var item in lanes) if (item != null) { item.Receive?.Dispose(); item.Receive = null; item.Highest = 0; Array.Clear(item.Seen); }
             }
-            seen[sequence % (ulong)seen.Length] = sequence; highest = Math.Max(highest, sequence); lastReceive = Stopwatch.GetTimestamp();
+            replay[sequence % (ulong)replay.Length] = sequence;
+            if (state == null) highest = Math.Max(highest, sequence); else state.Highest = Math.Max(state.Highest, sequence);
+            lastReceive = Stopwatch.GetTimestamp();
             return kind switch {
                 2 => new(true, Encode(3, remoteEpoch!, [])),
                 4 => new(true, Packet: plain),
@@ -137,7 +163,7 @@ public sealed class MeshLink : IDisposable
         if (pendingPing != 0 && BinaryPrimitives.ReadInt64BigEndian(payload) == pendingPing) { RttMs = Stopwatch.GetElapsedTime(pendingPing).TotalMilliseconds; pendingPing = 0; }
         return new(true, PongToken: BinaryPrimitives.ReadInt64BigEndian(payload));
     }
-    public void Dispose() { lock (gate) { if (disposed) return; disposed = true; sendCipher.Dispose(); receiveCipher?.Dispose(); CryptographicOperations.ZeroMemory(secret); } }
+    public void Dispose() { lock (gate) { if (disposed) return; disposed = true; sendCipher.Dispose(); receiveCipher?.Dispose(); foreach (var item in lanes) item?.Dispose(); CryptographicOperations.ZeroMemory(secret); } }
 }
 
 public static class MeshPackets

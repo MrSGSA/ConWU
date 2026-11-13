@@ -138,7 +138,7 @@ public sealed class MeshRunner
         wireMesh.Pair=wireMesh.Pair with {Mode=profile.TransportMode};
         bool legacyAllowed=profile.Selection().Allows(TransportModes.Carrier(profile.TransportMode));
         bool existingOnly=profile.UsesExistingEntriesOnly;
-        bool streamGuest=TransportModes.Stream(profile.TransportMode)&&!mesh.IsOwner;
+        bool streamGuest=TransportModes.OutboundGuest(profile.TransportMode)&&!mesh.IsOwner;
         Volatile.Write(ref entryPreparation,existingOnly?new("Existing","只使用已保存入口；仍需设备认证与双向验证"):new("Preparing","正在准备自主入口，取得候选不代表对端可达"));
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
@@ -161,6 +161,7 @@ public sealed class MeshRunner
         using var networkWake = services.NetworkWake();
         using var entryResolver = services.ResolveEntries == null ? new ExistingEntryResolver(services.PkarrClientFactory) : null;
         Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>> resolveEntries = services.ResolveEntries ?? entryResolver!.Resolve;
+        Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>>? recoverEntries=services.ResolveEntriesForRecovery??(entryResolver==null?null:entryResolver.ResolveRecovering);
         var requestBudget = new MeshRequestBudget(profile.TcpPortPrediction ? 8 : 6);
         Task<IMeshCandidateFactory?>? gatheringFactory = null;
         IMeshCandidateFactory? factory = null;
@@ -180,7 +181,7 @@ public sealed class MeshRunner
             if(router==null)throw new InvalidOperationException("Router not ready");
             if(!clients.TryGetValue(slot,out var paths))clients[slot]=paths=new(router,
                 (ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){
-                    ReserveEndpoint=endpoint=>router.CancelLegacyCandidate(slot,endpoint),Egress=sharedEgress
+                    ReserveEndpoint=endpoint=>router.CancelLegacyCandidate(slot,endpoint),Egress=sharedEgress,StreamFlowLanes=profile.StreamFlowLanes||mesh.Self.Slot!=mesh.IntroducerSlot
                 }),ct),log);
             return paths;
         }
@@ -200,6 +201,7 @@ public sealed class MeshRunner
         var announcements = new Dictionary<int, MeshAnnouncement>();
         var recoveryReports = new Dictionary<int, (Guid Episode, bool First, bool Stable, bool Path)>();
         var reportedRouterDrops = new Dictionary<int, RouterPeerDrops>();
+        var reportedStreamFlows = new Dictionary<int, StreamFlowStatus>();
         var reportedBridgeDrops = new Dictionary<int, (long SendData,long SendControl,long ReceiveData,long ReceiveControl,long Socket)>();
         var qualityReports = new Dictionary<int, (Guid Session,string Result,string Reason)>();
         long revision = DateTime.UtcNow.Ticks, savedDirectory = 0, savingRevision = 0;
@@ -305,7 +307,9 @@ public sealed class MeshRunner
                 if(Interlocked.Exchange(ref lookupRefreshRequested,0)!=0)nextResolve=0;
                 if(refreshSeconds!=profile.EntryRefreshSeconds){refreshSeconds=profile.EntryRefreshSeconds;nextResolve=0;}
                 if(externalSources.Length>0 && resolving==null && now>=nextResolve){
-                    resolvingSources=externalSources;resolving=resolveEntries(externalSources,profile.TransportMode,stop);
+                    resolvingSources=externalSources;
+                    bool recovering=!entriesHealthy&&mesh.Directory?.Members.Any(m=>m.Slot!=mesh.Self.Slot)==true;
+                    resolving=recovering&&recoverEntries!=null?recoverEntries(externalSources,profile.TransportMode,stop):resolveEntries(externalSources,profile.TransportMode,stop);
                     // Long user intervals for ordinary subscriptions must not
                     // leave a short-lived signed locator dormant for hours.
                     int interval=externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source) is "DDNS" or "PKARR")?Math.Min(refreshSeconds,60):refreshSeconds;
@@ -345,8 +349,8 @@ public sealed class MeshRunner
                             }else if(item.Kind=="PKARR"&&item.Error.Length>0)Volatile.Write(ref pkarrQueryError,item.Error);
                             return EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                         }).ToArray();localExisting=LocalEntries();
-                        string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}"));
-                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址：{string.Join(", ",item.Endpoints)}；仍需验证直连"));}
+                        string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}:{r.LookupDetail}"));
+                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址：{string.Join(", ",item.Endpoints)}；仍需验证直连")+(item.LookupDetail.Length>0?"；"+item.LookupDetail:""));}
                     }catch(Exception ex)when(!stop.IsCancellationRequested){
                         if(externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")){Volatile.Write(ref pkarrQueryError,"PKARR 查询暂未完成");resolved=resolved.Select(r=>r.Kind=="PKARR"?r with{Endpoints=[],Pkarr=null,Error="PKARR 查询暂未完成",AllowCached=false}:r).ToArray();localExisting=LocalEntries();}
                         log("入口解析暂未完成："+ex.GetType().Name);
@@ -448,7 +452,7 @@ public sealed class MeshRunner
                         Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()));
                         Volatile.Write(ref preparedInvitationEntries,mapping.IsValid?[new ExistingEntry(0,mapping.PublicEndpoint.ToString())]:[]);
                         restoreEstablishedEntry = false;
-                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress) && !TransportModes.Stream(profile.TransportMode)) { server.Dispose(); server = null; }
+                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress) && !TransportModes.OutboundGuest(profile.TransportMode)) { server.Dispose(); server = null; }
                         maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
                     }
                     catch (Exception ex) {
@@ -495,7 +499,7 @@ public sealed class MeshRunner
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
                 if (legacyAllowed && !streamGuest && router != null && server == null && now >= nextServer) {
-                    try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
+                    try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress,RetireEndpoint=router.FailLegacyIngress,StreamFlowLanes=profile.StreamFlowLanes}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
                     catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
@@ -577,7 +581,7 @@ public sealed class MeshRunner
                 }
                 var members = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                 if(legacyAllowed){
-                    networkEntries??=new(router,(ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){Egress=sharedEgress}),ct),Paths,log,stop);
+                    networkEntries??=new(router,(ep,ct)=>LegacyStartupQueue.Shared.Start(()=>services.Transport(new(folder,wireMesh,IPEndPoint.Parse(ep),false,profile.ListenPort,null,profile.LogLevel){Egress=sharedEgress,StreamFlowLanes=profile.StreamFlowLanes||mesh.Self.Slot!=mesh.IntroducerSlot}),ct),Paths,log,stop);
                     var knownEntries=members.SelectMany(m=>resolved.Where(r=>r.PeerSlot==m.Slot).SelectMany(r=>r.Endpoints)).ToHashSet();
                     await networkEntries.Tick(resolved.Where(r=>r.PeerSlot==ExistingEntry.Network).SelectMany(r=>r.Endpoints).Distinct().Take(8).ToArray(),members,now,knownEntries);
                 }
@@ -625,7 +629,7 @@ public sealed class MeshRunner
                 var scheduling=announcements.ToDictionary(p=>p.Key,p=>selectedEntries.TryGetValue(p.Key,out var chosen)&&chosen.Length>0?p.Value with {Endpoint=chosen}:p.Value);
                 traversal?.Tick(scheduling, candidate,priorityPeers,onlyEntryPeers);
                 foreach (var member in members) {
-                    if(TransportModes.Stream(profile.TransportMode)&&mesh.IsOwner){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}
+                    if(TransportModes.OutboundGuest(profile.TransportMode)&&mesh.IsOwner){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}
                     if(quietPeers.Contains(member.Slot)){
                         if(clients.TryGetValue(member.Slot,out var quiet))quiet.Suspend(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"");
                         continue;
@@ -707,6 +711,10 @@ public sealed class MeshRunner
                         var pressure = router.Pressure();
                         log($"RouterPressure maintenanceAgeMs={pressure.MaintenanceAgeMs} maximumDelayMs={pressure.MaximumMaintenanceDelayMs} maximumLockWaitMs={pressure.MaximumMaintenanceLockWaitMs} maximumWorkMs={pressure.MaximumMaintenanceWorkMs} receiveYields={pressure.ReceiveYields} legacySendRejected={pressure.LegacySendRejected}");
                         foreach (var peer in statuses) {
+                            if (peer.StreamFlows is {} flows && reportedStreamFlows.GetValueOrDefault(peer.Slot) != flows) {
+                                reportedStreamFlows[peer.Slot] = flows;
+                                log($"StreamFlows slot={peer.Slot} negotiated={flows.Negotiated} splitActive={flows.SplitActive} connections={flows.Connections} queueRejected={flows.RejectedPackets} receiveRejected={flows.ReceiveRejectedPackets}；按流分离，不对同一数据流逐包轮发");
+                            }
                             if (peer.LocalDrops is {} drops && reportedRouterDrops.GetValueOrDefault(peer.Slot) != drops) {
                                 reportedRouterDrops[peer.Slot] = drops;
                                 if (drops.Total > 0)

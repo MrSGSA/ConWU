@@ -43,6 +43,8 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 .settings-page{max-width:none}
 .server-grid{align-items:stretch}
 .readonly-values{display:grid;gap:0;margin:0}
+.stream-flow-setting{display:flex;align-items:center;justify-content:space-between;gap:20px;margin:16px 0 24px;padding:16px;border:1px solid var(--line);border-radius:10px;background:var(--input)}
+.stream-flow-setting>div{min-width:0}.stream-flow-setting .hint{margin-top:4px}.stream-flow-setting .switch-label{flex-shrink:0}
 .readonly-values>div{display:grid;grid-template-columns:150px minmax(0,1fr);gap:18px;padding:16px 0;border-bottom:1px solid var(--line)}
 .readonly-values>div:first-child{padding-top:0}
 .readonly-values>div:last-child{border-bottom:0;padding-bottom:0}

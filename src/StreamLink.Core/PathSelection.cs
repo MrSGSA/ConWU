@@ -7,12 +7,12 @@ public sealed record PathSelection(PathPolicy Policy = PathPolicy.PreferFakeTcp,
     public void Validate()
     {
         if (!Enum.IsDefined(Policy)) throw new FormatException("选路策略无效");
-        if(Policy is PathPolicy.TcpOnly or PathPolicy.HttpsOnly&&AllowUdpFallback)throw new FormatException("TCP 和 HTTPS 不允许自动协议回退");
+        if(Policy is PathPolicy.TcpOnly or PathPolicy.HttpsOnly or PathPolicy.PhantunOnly or PathPolicy.MimicOnly or PathPolicy.TcpRawOnly&&AllowUdpFallback)throw new FormatException("所选协议不允许自动回退");
     }
     public bool Allows(TraversalProfile profile) => profile switch {
         TraversalProfile.LegacyExplicit => Policy != PathPolicy.UdpOnly,
-        TraversalProfile.FakeTcpHttpSo => Policy is not (PathPolicy.UdpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly),
-        TraversalProfile.UdpDirect => Policy == PathPolicy.UdpOnly || Policy is not (PathPolicy.FakeTcpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly) && AllowUdpFallback,
+        TraversalProfile.FakeTcpHttpSo => Policy is not (PathPolicy.UdpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly or PathPolicy.PhantunOnly or PathPolicy.MimicOnly or PathPolicy.TcpRawOnly),
+        TraversalProfile.UdpDirect => Policy == PathPolicy.UdpOnly || Policy is not (PathPolicy.FakeTcpOnly or PathPolicy.TcpOnly or PathPolicy.HttpsOnly or PathPolicy.PhantunOnly or PathPolicy.MimicOnly or PathPolicy.TcpRawOnly) && AllowUdpFallback,
         _ => false
     };
     public string? Reject(TraversalProfile candidate, TraversalProfile? active, bool activeHealthy, bool qualityApproved = false)

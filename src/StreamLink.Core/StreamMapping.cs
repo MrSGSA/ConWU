@@ -40,6 +40,12 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     public static Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers=null,bool portControl=false)=>Create(port,log,token,servers,portControl,new());
     internal static async Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers,bool portControl,Options options)
     {
+        if(options.DiscoverGateway) {
+            try { return await GatewayMapping.PreferUpnp(port, log, token); }
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException or HttpRequestException) {
+                log("直接 UPnP 入口本轮未就绪，继续观察真实 TCP 接收端口："+ex.GetType().Name);
+            }
+        }
         var choices=(servers??Stun.TcpServers).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if(options.InitialParallelism is <1 or >2)throw new ArgumentOutOfRangeException(nameof(options));
         if(choices.Length>1){var tail=choices[1..];int offset=(int)((uint)(Interlocked.Add(ref rotation,7)-7)%(uint)tail.Length);choices=[choices[0],..tail.Skip(offset),..tail.Take(offset)];}
@@ -63,7 +69,13 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                 last=ex;bool selected=mapping!=null;if(mapping!=null)await mapping.DisposeAsync();socket?.Dispose();if(!selected||round.IsCancellationRequested)break;
             }catch{if(mapping!=null)await mapping.DisposeAsync();socket?.Dispose();throw;}
         }
-        token.ThrowIfCancellationRequested();throw new IOException("真实 TCP 入口未就绪；请检查 STUN、端口或使用已有入口",last);
+        token.ThrowIfCancellationRequested();
+        if(portControl&&options.DiscoverGateway) {
+            try { return await GatewayMapping.Create(PortControlRoute.LocalSources,
+                (local,ct)=>PortControlLease.Create(local,port,0,PortMappingProtocol.Tcp,ct),log,token); }
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException){last=ex;}
+        }
+        throw new IOException("真实 TCP 入口未就绪；请检查 STUN、端口或使用已有入口",last);
     }
     sealed record Observation(Socket Socket,IPEndPoint Public,string Server);
     static async Task<Observation> OpenFirst(int port,string[] servers,int parallelism,CancellationToken token)
@@ -128,9 +140,13 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             var candidate=new Upnp(service);RouterMapping? requested=null;
             try{
                 string external=await candidate.ExternalAddress(token);
-                if(!IPAddress.TryParse(external,out var address)||!address.Equals(PublicEndpoint.Address)){candidate.Dispose();continue;}
+                if(!IPAddress.TryParse(external,out var address)||address.AddressFamily!=AddressFamily.InterNetwork||address.Equals(IPAddress.Any)){candidate.Dispose();continue;}
                 requested=new(PublicEndpoint.Port,port,LocalAddress.ToString(),"TCP","ConWU-stream-"+Guid.NewGuid().ToString("N"));
-                await candidate.Add(requested,token);router=candidate;rule=requested;return;
+                await candidate.Add(requested,token);router=candidate;rule=requested;
+                log(address.Equals(PublicEndpoint.Address)
+                    ?"UPnP 已维护真实 TCP 接收端口的入站规则；候选仍由对端认证验证"
+                    :"UPnP 已维护本层入站规则；外层候选继续使用实际 TCP STUN 观察，不拼接内外层端口，仍需对端认证验证");
+                return;
             }catch(Exception ex)when(ex is IOException or HttpRequestException or OperationCanceledException){
                 if(requested!=null)try{await candidate.RemoveOwned(requested,CancellationToken.None);}catch{}candidate.Dispose();
                 if(token.IsCancellationRequested)break;
@@ -171,11 +187,17 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     }
     async Task RenewRouter(CancellationToken token)
     {
+        long renewed=Environment.TickCount64;int failures=0;var delay=TimeSpan.FromSeconds(60);
         while(true) {
             // The owned UPnP grant lasts 180 seconds. Observation failures must
             // not stop renewal or repeatedly delete and recreate this grant.
-            await Task.Delay(TimeSpan.FromSeconds(60),token);
-            await router!.Add(rule!,token);
+            await Task.Delay(delay,token);
+            try { await router!.Add(rule!,token);renewed=Environment.TickCount64;failures=0;delay=TimeSpan.FromSeconds(60); }
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or HttpRequestException or OperationCanceledException){
+                if(Environment.TickCount64-renewed>=180000)throw new IOException("本层 UPnP 租约已到期，需要重新准备入口",ex);
+                delay=TimeSpan.FromSeconds(Math.Min(20,5<<Math.Min(failures++,2)));
+                log("本层 UPnP 续租暂未确认，保留尚未到期的规则并重试；已有直连继续由对端保活判断");
+            }
         }
     }
     async Task Observe(CancellationToken token)

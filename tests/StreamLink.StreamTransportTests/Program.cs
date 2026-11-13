@@ -10,11 +10,13 @@ using System.Text.Json;
 using StreamLink.Core;
 
 if(args.Length>0&&args[0] is "serve" or "bench"){await StreamBench.Run(args);return;}
+if(args is ["--formal-flow-node"]){await FormalFlowBench.Run();return;}
 if(args is ["--linux-firewall"]){LinuxStreamFirewallChecks.Run();return;}
 if(args is ["--router-bench",var routerMode,var routerMbps,var routerSeconds,var routerReport]){await RouterBench.Run(routerMode,int.Parse(routerMbps),int.Parse(routerSeconds),routerReport);return;}
 if(args is ["--router-bench",var directionMode,var directionMbps,var directionSeconds,var directionReport,var direction]){await RouterBench.Run(directionMode,int.Parse(directionMbps),int.Parse(directionSeconds),directionReport,direction);return;}
 var checks=new List<string>();
 void Check(bool value,string name){if(!value)throw new Exception(name);checks.Add(name);Console.WriteLine("PASS "+name);}
+if(args is ["--flow-lanes"]){await StreamFlowChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 if(args is ["--mapping-recovery"]){await StreamMappingRecoveryChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 if(args is ["--mapping-race"]){await StreamMappingRaceChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 foreach(var mode in new[]{"faketcp","udp","tcp","https"}){
@@ -113,6 +115,7 @@ await SharedStreamChecks.Run(Check);
 await SharedRouteEndpointChecks.Run(Check);
 await StreamSecurityChecks.Run(Check);
 await StreamBatchChecks.Run(Check);
+await StreamFlowChecks.Run(Check);
 StreamIdentityChecks.Run(Check);
 await RunnerStreamChecks.Run(Check);
 await ControlPairStreamChecks.Run(Check);

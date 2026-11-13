@@ -15,7 +15,7 @@ public sealed record StreamTransportIo(long NetworkWrites,long NetworkReads,long
 
 // A bounded datagram bridge for the existing authenticating MeshLink router.
 // The loopback socket is local plumbing; all remote traffic is real TCP/TLS.
-public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
+public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposable,IMeshCarrierRoutes
 {
     public const int MaximumDatagram=2048;
     const string Subprotocol="conwu.stream.v1";
@@ -26,6 +26,16 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
     readonly ConcurrentDictionary<Guid,Task> tasks=new();
     readonly bool https;
     readonly bool batchDatagrams;
+    readonly MeshProfile mesh;
+    readonly bool flowLanes;
+    readonly Func<string,StreamFlowPolicy?> flowPolicy;
+    readonly ConcurrentDictionary<Guid,StreamFlowSession> flowGroups=new();
+    readonly ConcurrentDictionary<StreamFlowSession,byte> flowSessions=new();
+    int pendingHandshakes;
+    public event Action<IPEndPoint>? RouteClosed;
+    public event Action<IPEndPoint>? RouteOpened;
+    public void RetireNetwork(string network) { foreach(var session in flowSessions.Keys.Where(s=>s.Network==network).ToArray())session.Dispose(); }
+    public void RetireRoute(IPEndPoint endpoint,string network) { foreach(var session in flowSessions.Keys.Where(s=>s.Endpoint.Equals(endpoint)&&(s.Network.Length==0||s.Network==network)).ToArray())session.Dispose(); }
     long networkWrites,networkReads,sentDatagrams,receivedDatagrams;
     readonly Task lifetime;
     readonly Socket? local;
@@ -45,11 +55,13 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
     static IEnumerable<Exception> Errors(Exception error){for(int n=0;n<4&&error!=null;n++,error=error.InnerException!)yield return error;}
 
     public StreamMeshTransport(MeshProfile mesh,IPEndPoint target,bool server,int listenPort,
-        Func<X509Certificate2>? certificate=null,bool pairingBootstrap=false,Action<IPEndPoint>? reserveEndpoint=null,Func<IDisposable>? allowListener=null,bool batchDatagrams=true)
+        Func<X509Certificate2>? certificate=null,bool pairingBootstrap=false,Action<IPEndPoint>? reserveEndpoint=null,Func<IDisposable>? allowListener=null,bool batchDatagrams=true,bool flowLanes=false,Func<string,StreamFlowPolicy?>? flowPolicy=null)
     {
         if(!TransportModes.Stream(mesh.Pair.Mode))throw new ArgumentException("真实流传输需要 TCP 或 HTTPS 模式");
         https=mesh.Pair.Mode=="https";
         this.batchDatagrams=batchDatagrams;
+        this.mesh=mesh;this.flowLanes=flowLanes;
+        this.flowPolicy=flowPolicy??(network=>network==mesh.Pair.Network?new(mesh,flowLanes):null);
         if(https&&server&&certificate==null)throw new ArgumentException("HTTPS 监听缺少证书");
         if(https&&!server&&!pairingBootstrap&&mesh.Pair.TransportKeyPin?.Length!=64)throw new IOException("HTTPS 对端尚未通过配对绑定证书身份");
         try{
@@ -67,12 +79,13 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
             }
         }catch{local?.Dispose();listener?.Stop();listenerAccess?.Dispose();stop.Dispose();throw;}
     }
-    static Socket LocalSocket(){var value=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);try{value.ReceiveBufferSize=value.SendBufferSize=1<<20;value.Bind(new IPEndPoint(IPAddress.Loopback,0));return value;}catch{value.Dispose();throw;}}
+    static Socket LocalSocket(){var value=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);try{value.ReceiveBufferSize=value.SendBufferSize=1<<20;value.Bind(new IPEndPoint(IPAddress.Loopback,0));value.Blocking=false;return value;}catch{value.Dispose();throw;}}
     async Task Accept(IPEndPoint target,Func<X509Certificate2>? certificate)
     {
         try{while(!stop.IsCancellationRequested){
             var tcp=await listener!.AcceptTcpClientAsync(stop.Token);tcp.NoDelay=true;
-            if(clients.Count>=16){tcp.Dispose();continue;}
+            if(clients.Count>=80||Volatile.Read(ref pendingHandshakes)>=16){tcp.Dispose();continue;}
+            Interlocked.Increment(ref pendingHandshakes);
             var id=Guid.NewGuid();clients[id]=tcp;
             var serving=ServeAccepted(tcp,target,certificate);
             tasks[id]=serving;
@@ -82,9 +95,11 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
     }
     async Task ServeAccepted(TcpClient tcp,IPEndPoint target,Func<X509Certificate2>? certificate)
     {
-        using var udp=LocalSocket();
-        try{await Bridge(tcp,udp,target,certificate,null,false);}
-        catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref lastConnectionFailure,FailureDetails(ex));}
+        int waiting=1;
+        void Authenticated(){if(Interlocked.Exchange(ref waiting,0)==1)Interlocked.Decrement(ref pendingHandshakes);}
+        try{await Bridge(tcp,null,target,certificate,null,false,authenticated:Authenticated);}
+        catch(Exception ex)when(ex is TimeoutException or IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref lastConnectionFailure,FailureDetails(ex));}
+        finally{Authenticated();}
     }
     async Task Connect(MeshProfile mesh,IPEndPoint target,bool bootstrap)
     {
@@ -93,14 +108,14 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
             using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(stop.Token)){deadline.CancelAfter(10000);await tcp.ConnectAsync(target.Address,target.Port,deadline.Token);}
             await Bridge(tcp,local!,null,null,(target,mesh.Pair.TransportKeyPin??""),bootstrap);
             if(!stop.IsCancellationRequested)Volatile.Write(ref failure,"TCP 对端已关闭连接");
-        }catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref failure,"TCP 连接未完成："+FailureDetails(ex));}
+        }catch(Exception ex)when(ex is TimeoutException or IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref failure,"TCP 连接未完成："+FailureDetails(ex));}
         finally{clients.TryRemove(id,out _);}
     }
     public static string CertificatePin(X509Certificate2 certificate)=>Convert.ToHexString(SHA256.HashData(certificate.PublicKey.ExportSubjectPublicKeyInfo()));
     static bool ValidCertificate(X509Certificate2 certificate)=>certificate.NotBefore.ToUniversalTime()<=DateTime.UtcNow&&certificate.NotAfter.ToUniversalTime()>DateTime.UtcNow;
-    async Task Bridge(TcpClient tcp,Socket udp,IPEndPoint? fixedReceiver,Func<X509Certificate2>? certificate,(IPEndPoint Target,string Pin)? remote,bool bootstrap)
+    async Task Bridge(TcpClient tcp,Socket? udp,IPEndPoint? fixedReceiver,Func<X509Certificate2>? certificate,(IPEndPoint Target,string Pin)? remote,bool bootstrap,StreamFlowSession? group=null,int lane=0,Action? authenticated=null)
     {
-        using var connection=CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+        using var connection=group==null?CancellationTokenSource.CreateLinkedTokenSource(stop.Token):CancellationTokenSource.CreateLinkedTokenSource(stop.Token,group.Token);
         Stream stream=tcp.GetStream();SslStream? tls=null;WebSocket? web=null;
         bool framedBatch=!https&&batchDatagrams;
         try{
@@ -111,8 +126,9 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
                         if(value==null)return false;
                         using var cert=X509CertificateLoader.LoadCertificate(value.GetRawCertData());
                         if(!ValidCertificate(cert))return false;
-                        string actual=CertificatePin(cert);Volatile.Write(ref peerPin,actual);
-                        return peer.Pin.Length==64?CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actual),Encoding.ASCII.GetBytes(peer.Pin.ToUpperInvariant())):bootstrap;
+                        string actual=CertificatePin(cert);
+                        bool accepted=peer.Pin.Length==64?CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(actual),Encoding.ASCII.GetBytes(peer.Pin.ToUpperInvariant())):bootstrap;
+                        if(accepted)Volatile.Write(ref peerPin,actual);return accepted;
                     });
                     await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions{TargetHost=peer.Target.Address.ToString(),EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13,CertificateRevocationCheckMode=X509RevocationMode.NoCheck},handshake.Token);
                     string key=Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
@@ -137,104 +153,8 @@ public sealed class StreamMeshTransport : IMeshTransport,IAsyncDisposable
                 TlsProtocol=tls.SslProtocol.ToString();stream=tls;web=WebSocket.CreateFromStream(stream,remote==null,Subprotocol,TimeSpan.FromSeconds(15));
             }
             BatchingEnabled=framedBatch;
-            IPEndPoint? receiver=fixedReceiver;long lastRead=Environment.TickCount64;
-            async Task ToNetwork()
-            {
-                byte[] buffer = new byte[MaximumBatchBytes];
-                byte[] packetBuffer = new byte[MaximumDatagram + 1];
-                EndPoint any = new IPEndPoint(IPAddress.Loopback, 0);
-                ValueTask<SocketReceiveFromResult>? pending = null;
-                try {
-                    while (!connection.IsCancellationRequested) {
-                        int used = 0, count = 0;
-                        for (int attempt = 0; attempt < MaximumBatchDatagrams; attempt++) {
-                            var receiving = pending ?? udp.ReceiveFromAsync(packetBuffer, SocketFlags.None, any, connection.Token);
-                            pending = null;
-                            var packet = await receiving;
-                            if (packet.ReceivedBytes is >= 1 and <= MaximumDatagram &&
-                                packet.RemoteEndPoint is IPEndPoint sender && IPAddress.IsLoopback(sender.Address) &&
-                                (fixedReceiver == null || sender.Equals(fixedReceiver))) {
-                                receiver ??= sender;
-                                if (sender.Equals(receiver)) {
-                                    BinaryPrimitives.WriteUInt16BigEndian(buffer.AsSpan(used, 2), (ushort)packet.ReceivedBytes);
-                                    packetBuffer.AsSpan(0, packet.ReceivedBytes).CopyTo(buffer.AsSpan(used + 2));
-                                    used += packet.ReceivedBytes + 2;
-                                    count++;
-                                }
-                            }
-                            // Drain only packets already queued. A lone control or
-                            // input packet is sent immediately without a batch timer.
-                            if (!framedBatch || used + MaximumDatagram + 3 > buffer.Length) break;
-                            pending = udp.ReceiveFromAsync(packetBuffer, SocketFlags.None, any, connection.Token);
-                            if (!pending.Value.IsCompleted) break;
-                        }
-                        if (count == 0) continue;
-                        if (web != null) {
-                            var message = framedBatch ? buffer.AsMemory(0, used) : buffer.AsMemory(2, used - 2);
-                            await web.SendAsync(message, WebSocketMessageType.Binary, true, connection.Token);
-                        } else {
-                            await stream.WriteAsync(buffer.AsMemory(0, used), connection.Token);
-                        }
-                        Interlocked.Increment(ref networkWrites);
-                        Interlocked.Add(ref sentDatagrams, count);
-                    }
-                } finally {
-                    if (pending is {} unfinished) {
-                        connection.Cancel();
-                        try { await unfinished; }
-                        catch (Exception ex) when (ex is OperationCanceledException or SocketException or ObjectDisposedException) { }
-                    }
-                }
-            }
-            async Task FromNetwork(){
-                byte[] buffer=new byte[MaximumBatchBytes+1];int buffered=0;
-                while(!connection.IsCancellationRequested){
-                    int length;
-                    if(web!=null){
-                        length=0;ValueWebSocketReceiveResult frame;
-                        int maximum=framedBatch?MaximumBatchBytes:MaximumDatagram;
-                        do{
-                            if(length>maximum)throw new IOException("HTTPS 消息过大");
-                            frame=await web.ReceiveAsync(buffer.AsMemory(length,maximum+1-length),connection.Token);
-                            Interlocked.Increment(ref networkReads);
-                            if(frame.MessageType==WebSocketMessageType.Close)return;
-                            if(frame.MessageType!=WebSocketMessageType.Binary)throw new IOException("HTTPS 只接收二进制数据");
-                            length+=frame.Count;
-                        }while(!frame.EndOfMessage);
-                        if(length<1||length>maximum)throw new IOException("HTTPS 数据报长度无效");
-                        if(!framedBatch){await Deliver(0,length);continue;}
-                        int count=0;
-                        for(int offset=0;offset<length;){
-                            if(length-offset<2||++count>MaximumBatchDatagrams)throw new IOException("HTTPS 批量数据帧无效");
-                            int size=BinaryPrimitives.ReadUInt16BigEndian(buffer.AsSpan(offset,2));
-                            if(size is <1 or >MaximumDatagram||size>length-offset-2)throw new IOException("HTTPS 批量数据帧长度无效");
-                            offset+=size+2;
-                        }
-                    }else{
-                        int read=await stream.ReadAsync(buffer.AsMemory(buffered,MaximumBatchBytes-buffered),connection.Token);
-                        Interlocked.Increment(ref networkReads);
-                        if(read==0)throw new EndOfStreamException("TCP 数据流已关闭");
-                        buffered+=read;length=buffered;
-                    }
-                    int consumed=0;
-                    while(length-consumed>=2){
-                        int size=BinaryPrimitives.ReadUInt16BigEndian(buffer.AsSpan(consumed,2));
-                        if(size is <1 or >MaximumDatagram)throw new IOException("TCP 数据帧长度无效");
-                        if(size>length-consumed-2)break;
-                        await Deliver(consumed+2,size);consumed+=size+2;
-                    }
-                    if(web==null){buffered=length-consumed;buffer.AsSpan(consumed,buffered).CopyTo(buffer);}
-                }
-                async Task Deliver(int offset,int length){
-                    Interlocked.Exchange(ref lastRead,Environment.TickCount64);
-                    if(receiver is {} localTarget)await udp.SendToAsync(buffer.AsMemory(offset,length),SocketFlags.None,localTarget,connection.Token);
-                    Interlocked.Increment(ref receivedDatagrams);
-                }
-            }
-            async Task Watch(){using var timer=new PeriodicTimer(TimeSpan.FromSeconds(5));while(await timer.WaitForNextTickAsync(connection.Token))if(Environment.TickCount64-Interlocked.Read(ref lastRead)>20000)throw new IOException("TCP 对端长时间未回应");}
-            var pumps=new[]{ToNetwork(),FromNetwork(),Watch()};
-            try{await await Task.WhenAny(pumps);}
-            finally{connection.Cancel();tcp.Dispose();try{await Task.WhenAll(pumps);}catch(Exception ex)when(ex is OperationCanceledException or IOException or SocketException or WebSocketException or ObjectDisposedException){}}
+            using var wire=new StreamFlowWire(this,tcp,stream,web,framedBatch);
+            await RunStream(wire,udp,fixedReceiver,remote,bootstrap,group,lane,authenticated,connection.Token);
         }finally{web?.Dispose();tls?.Dispose();}
     }
     static bool Upgrade(Dictionary<string,string> headers)=>headers.TryGetValue("Upgrade",out var upgrade)&&upgrade.Equals("websocket",StringComparison.OrdinalIgnoreCase)&&headers.TryGetValue("Connection",out var connection)&&connection.Split(',').Any(v=>v.Trim().Equals("Upgrade",StringComparison.OrdinalIgnoreCase));

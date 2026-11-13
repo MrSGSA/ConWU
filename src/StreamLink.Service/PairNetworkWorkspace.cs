@@ -80,7 +80,9 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
     {
         var networkStore=new ProfileStore(folder,store);
         var basis=services??MeshRuntimeServices.Default;ControlWorker? worker=null;
-        var runtime=basis with{SessionRoot=Path.Combine(folder,"sessions"),ResolveEntries=basis.ResolveEntries??entryQueries.Resolve,Transport=r=>receivers.Acquire(r,basis.Transport,p=>worker?.AcceptsDirectPairing(p)==true,p=>worker?.AuthenticatedNetworkFrame(p)==true,p=>worker?.DirectPairPriority(p)??0)};
+        var runtime=basis with{SessionRoot=Path.Combine(folder,"sessions"),ResolveEntries=basis.ResolveEntries??entryQueries.Resolve,
+            ResolveEntriesForRecovery=basis.ResolveEntriesForRecovery??basis.ResolveEntries??entryQueries.ResolveRecovering,
+            Transport=r=>receivers.Acquire(r,basis.Transport,p=>worker?.AcceptsDirectPairing(p)==true,p=>worker?.AuthenticatedNetworkFrame(p)==true,p=>worker?.DirectPairPriority(p)??0)};
         PrepareConfigurationAtStartup(info,networkStore);
         if(info.ConfigurationId.Length>0&&configurations.TryGetValue(info.ConfigurationId,out var loaded))info=info with{AppliedConfigurationRevision=loaded.Revision};
         networkStore.ValidateNetworkProfile=p=>ValidateNetwork(info.Id,p);

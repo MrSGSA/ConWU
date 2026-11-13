@@ -25,7 +25,7 @@ foreach($name in ($packages.Keys|Sort-Object)){
 }
 if($Native){
     foreach($item in @(
-        @('WinDivert','2.2.2','https://github.com/basil00/WinDivert','LGPL-3.0-only'),
+        @('WinDivert','2.2.2','https://github.com/basil00/WinDivert','LGPL-3.0-only OR GPL-2.0-only'),
         @('Wintun','0.14.1','https://www.wintun.net/','NOASSERTION'),
         @('udp2raw-http-StreamLink',$Commit,'NOASSERTION','NOASSERTION'),
         @('PolarSSL-vendored-crypto','1.3.x-vendored','NOASSERTION','GPL-2.0-or-later'),
@@ -36,6 +36,12 @@ if($Native){
 }
 $root=[ordered]@{SPDXID='SPDXRef-StreamLink';name='ConWU';versionInfo=$Version;downloadLocation='NOASSERTION';filesAnalyzed=$false;licenseConcluded='NOASSERTION';licenseDeclared='MIT';copyrightText='Copyright (c) 2026 StreamLink contributors';sourceInfo="Exact committed source: $Commit; native crypto keeps its original GPL notices, not covered by the top-level MIT declaration."}
 $fileRows=[Collections.Generic.List[object]]::new();$relationships=[Collections.Generic.List[object]]::new()
+$rustNotices=Join-Path $Directory 'licenses/phantun/dependencies.json'
+if(Test-Path -LiteralPath $rustNotices){
+ foreach($package in (Get-Content -LiteralPath $rustNotices -Raw|ConvertFrom-Json).packages){
+  $rows.Add([ordered]@{SPDXID='SPDXRef-Cargo-'+($package.name+'-'+$package.version -replace '[^A-Za-z0-9.-]','-');name=$package.name;versionInfo=$package.version;downloadLocation=$package.repository;filesAnalyzed=$false;licenseConcluded='NOASSERTION';licenseDeclared=$package.license;copyrightText='NOASSERTION';externalRefs=@(@{referenceCategory='PACKAGE-MANAGER';referenceType='purl';referenceLocator=$package.purl})})
+ }
+}
 $relationships.Add(@{spdxElementId='SPDXRef-DOCUMENT';relationshipType='DESCRIBES';relatedSpdxElement='SPDXRef-StreamLink'})
 foreach($item in $rows){$relationships.Add(@{spdxElementId='SPDXRef-StreamLink';relationshipType='DEPENDS_ON';relatedSpdxElement=$item.SPDXID})}
 $index=0

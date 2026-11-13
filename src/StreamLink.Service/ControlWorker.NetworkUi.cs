@@ -28,10 +28,10 @@ public sealed partial class ControlWorker
     // The listener belongs to the device, not to the saved connection policy.
     // Provisioning and recovery may update it independently. Returning the old
     // policy copy would let an unrelated preference save disable the real role.
-    static UiNetworkSettings PublicSettings(DeviceProfile p) => (p.SavedNetworkSettings??LegacyPublicSettings(p)) with{Ddns=null,Coordinator=p.Coordinator};
+    static UiNetworkSettings PublicSettings(DeviceProfile p) => (p.SavedNetworkSettings??LegacyPublicSettings(p)) with{Ddns=null,Coordinator=p.Coordinator,PortControlMapping=p.PortControlMapping};
     static ExistingEntry[] SavedEntries(ExistingEntry[] entries,bool guest,int introducer=1) => entries.Select(e=>guest&&e.PeerSlot==introducer?e with{PeerSlot=ExistingEntry.NetworkOwner}:e).Distinct().ToArray();
     static UiNetworkSettings LegacyPublicSettings(DeviceProfile p) => new(p.Mesh is {Pair.Direct:false} m?m.Pair.Service:p.CoordinationService, p.Mesh is {Pair.Direct:false} n?n.Pair.CertificatePin:p.CoordinationPin, p.ManualEndpoint, p.PathSelection, p.AllowManualQualityRequests, p.ListenPort, p.SourcePort) {
-        ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
+        StreamFlowLanes=p.StreamFlowLanes,PortControlMapping=p.PortControlMapping,ConnectionSource=p.ManualEndpoint.Length>0?"existing":p.ConnectionSource,
         DirectMode=p.Mesh?.Pair.Direct??p.DirectMode,
         ExistingEntries=p.ExistingEntries.Length>0?p.ExistingEntries:p.ManualEndpoint.Length>0?[new(0,p.ManualEndpoint)]:[],
         Coordinator=p.Coordinator,PkarrPublish=p.PkarrPublish,Ddns=p.Ddns,TcpStun=p.TcpStun,UdpStun=p.UdpStun,RequestedVirtualIp=p.RequestedVirtualIp,EntryRefreshSeconds=p.EntryRefreshSeconds
@@ -394,6 +394,8 @@ public sealed partial class ControlWorker
                 updated.RequestedVirtualIp=settings.RequestedVirtualIp;
                 updated.TcpStun=settings.TcpStun is {Length:0}?Stun.TcpServers.ToArray():settings.TcpStun??updated.TcpStun;updated.UdpStun=settings.UdpStun is {Length:0}?Stun.UdpServers.ToArray():settings.UdpStun??updated.UdpStun;
                 updated.AllowManualQualityRequests = settings.AllowManualQualityRequests;
+                updated.StreamFlowLanes=settings.StreamFlowLanes;
+                updated.PortControlMapping=settings.PortControlMapping;
                 updated.ListenPort = settings.ListenPort; updated.SourcePort = settings.SourcePort;
                 if(explicitDiscovery)ConnectionSettings.Apply(updated,settings);
                 if((action.AutoStart==null)!=(action.ExpectedAutoStart==null))throw new FormatException("启动设置需要对应的前置值");

@@ -8,6 +8,7 @@ using StreamLink.Core;
 int checks = 0;
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; }
 if (args is ["--tcp-maintenance-only"]) { await TcpMappingMaintenanceTests.Run(Check); return; }
+if (args is ["--upnp-entry-only"]) { await UpnpEntryTests.Run(Check); Console.WriteLine($"PASS {checks} direct UPnP entry checks"); return; }
 if (args is ["--tcp-mapping-wake-only", var wakeOutput]) {
     await PortControlTests.TcpMappingWake(Path.GetFullPath(wakeOutput), Check);
     Console.WriteLine($"PASS {checks} real TCP helper mapping refresh checks"); return;
@@ -97,6 +98,7 @@ if (args.Length == 1)
     finally { foreach (string file in new[] { "host.toml", "guest.toml" }) File.Delete(Path.Combine(folder, file)); Directory.Delete(folder); }
 }
 await PortControlTests.Run(Check);
+await UpnpEntryTests.Run(Check);
 await TcpMappingMaintenanceTests.Run(Check);
 Console.WriteLine($"PASS {checks}: streaming UPnP discovery and bounded PCP/NAT-PMP wire protocols, ownership, renewal, epoch, cancellation, product TCP mapping. Loopback only; no live router/adapter changes.");
 

@@ -148,10 +148,16 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
     }
     async Task MaintainRouter(CancellationToken token)
     {
+        long renewed=Environment.TickCount64;int failures=0;int delay=60000;
         while (true) {
             // Refresh hints affect observation only, not the 180-second grant.
-            await Task.Delay(60000, token);
-            await router!.Add(rule!, token);
+            await Task.Delay(delay, token);
+            try { await router!.Add(rule!, token);renewed=Environment.TickCount64;failures=0;delay=60000; }
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or HttpRequestException or OperationCanceledException) {
+                if(Environment.TickCount64-renewed>=180000)throw new IOException("UPnP 租约到期，需要重新准备入口",ex);
+                delay=Math.Min(20000,5000<<Math.Min(failures++,2));
+                log("UPnP 续租暂未确认，保留尚未到期的租约并重试；未关闭已有直连");
+            }
         }
     }
     async Task MaintainHelper(CancellationToken token)

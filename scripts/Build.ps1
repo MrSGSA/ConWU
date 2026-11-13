@@ -15,6 +15,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'CMake configuration failed.' }
     & cmake --build out/native --parallel 4
     if ($LASTEXITCODE -ne 0) { throw 'Native build failed.' }
+    & ./scripts/Build-Phantun.ps1 -Test:$Test
+    if ($LASTEXITCODE -ne 0) { throw 'Phantun build failed.' }
     & .\out\native\udp2raw-native.exe --native-info
     if ($LASTEXITCODE -ne 0) { throw 'Native capability query failed.' }
     if ($Test) {

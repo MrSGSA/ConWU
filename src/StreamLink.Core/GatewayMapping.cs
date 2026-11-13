@@ -31,13 +31,22 @@ public sealed class GatewayMapping : IMapping
     public Task Maintain(CancellationToken token) { ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this); return lease.Maintain(token); }
     public async ValueTask DisposeAsync() { if (Interlocked.Exchange(ref disposed, 1) != 0) return; await lease.DisposeAsync(); log("独立网关入口清理：" + lease.Snapshot.Cleanup); }
 
-    public static Task<IMapping> CreateTcp(int sourcePort, int targetPort, Action<string> log, CancellationToken token,
+    public static async Task<IMapping> CreateTcp(int sourcePort, int targetPort, Action<string> log, CancellationToken token,
         string[]? servers = null, string? owner = null, bool portControl = false)
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
-        return SelectTcp(ct => TcpMapping.Create(sourcePort, targetPort, log, ct, servers, owner), PortControlRoute.LocalSources,
+        try { return await PreferUpnp(targetPort, log, token); }
+        catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or HttpRequestException) {
+            log("直接 UPnP 入口本轮未就绪，继续 TCP STUN 与网关适配：" + ex.GetType().Name);
+        }
+        return await SelectTcp(ct => TcpMapping.Create(sourcePort, targetPort, log, ct, servers, owner), PortControlRoute.LocalSources,
             (ip, ct) => PortControlLease.Create(ip, targetPort, 0, PortMappingProtocol.Tcp, ct), portControl, log, token);
+    }
+    internal static async Task<IMapping> PreferUpnp(int port, Action<string> log, CancellationToken token)
+    {
+        using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(4500);
+        return await UpnpMapping.CreateTcp(port, log, budget.Token);
     }
     internal static async Task<IMapping> SelectTcp(Func<CancellationToken, Task<TcpMapping>> legacy, Func<IPAddress[]> sources,
         Func<IPAddress, CancellationToken, Task<PortControlLease>> open, bool enabled, Action<string> log, CancellationToken token)

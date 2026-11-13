@@ -24,6 +24,7 @@ public sealed record EntryResolution(int PeerSlot, int Index, string Kind, strin
     // an absolute deadline which remains binding through cached failures.
     public long ExpiresAt {get;init;}
     public bool AllowCached {get;init;}=true;
+    public string LookupDetail {get;init;}="";
 }
 
 // These are hints, never membership credentials or proof of connectivity.
@@ -34,17 +35,23 @@ public sealed class ExistingEntryResolver : IDisposable
     readonly HttpClient http;
     readonly Func<string, CancellationToken, Task<IPAddress[]>> addresses;
     readonly Func<string, CancellationToken, Task<string[]>> txt;
+    readonly Func<string,CancellationToken,Task<TxtRecoveryAnswer[]>>? recoverTxt;
+    readonly IDisposable? recoveryOwner;
     readonly Func<long> utcNow;
     readonly Func<PkarrClient>? pkarrFactory;
     internal static readonly HttpRequestOptionsKey<FetchProgress> ProgressKey = new("StreamLink.EntryProgress");
     internal sealed class FetchProgress { public string Stage = "连接／TLS／响应头"; public int Attempt; public IPAddress? LastConnected; }
     readonly Func<IPEndPoint,CancellationToken,Task<Stream>> connect;
-    public ExistingEntryResolver(Func<PkarrClient>? pkarrFactory=null) : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query,pkarrFactory:pkarrFactory) { }
+    public ExistingEntryResolver(Func<PkarrClient>? pkarrFactory=null) : this((host, ct) => Dns.GetHostAddressesAsync(host, ct), DnsTextLookup.Query,pkarrFactory:pkarrFactory)
+    {
+        var recovery=new DnsOverHttpsTextLookup();recoverTxt=recovery.Query;recoveryOwner=recovery;
+    }
     internal ExistingEntryResolver(Func<string,CancellationToken,Task<IPAddress[]>> addresses,
         Func<string,CancellationToken,Task<string[]>> txt, HttpMessageHandler? handler = null,
-        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null, Func<long>? utcNow = null,Func<PkarrClient>? pkarrFactory=null)
+        Func<IPEndPoint,CancellationToken,Task<Stream>>? connect = null, Func<long>? utcNow = null,Func<PkarrClient>? pkarrFactory=null,
+        Func<string,CancellationToken,Task<TxtRecoveryAnswer[]>>? recoverTxt=null)
     {
-        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());this.pkarrFactory=pkarrFactory;
+        this.utcNow = utcNow ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());this.pkarrFactory=pkarrFactory;this.recoverTxt=recoverTxt;
         this.addresses = addresses; this.txt = txt; this.connect = connect ?? ConnectSocket;
         http = new(handler ?? new SocketsHttpHandler {
             UseProxy=false, AllowAutoRedirect=false, UseCookies=false, MaxConnectionsPerServer=2,
@@ -209,34 +216,36 @@ public sealed class ExistingEntryResolver : IDisposable
         if(!EndpointAddress(ip))return false;
         var v=ip.GetAddressBytes();return v[0]!=10 && !(v[0]==172&&v[1]>=16&&v[1]<=31) && !(v[0]==192&&v[1]==168) && !(v[0]==100&&v[1]>=64&&v[1]<=127) && !(v[0]==198&&v[1] is 18 or 19);
     }
-    public async Task<EntryResolution[]> Resolve(ExistingEntry[] entries, string mode, CancellationToken token)
+    public Task<EntryResolution[]> Resolve(ExistingEntry[] entries,string mode,CancellationToken token)=>Resolve(entries,mode,false,token);
+    public Task<EntryResolution[]> ResolveRecovering(ExistingEntry[] entries,string mode,CancellationToken token)=>Resolve(entries,mode,true,token);
+    async Task<EntryResolution[]> Resolve(ExistingEntry[] entries, string mode, bool recovering, CancellationToken token)
     {
         Validate(entries);entries=entries.Distinct().ToArray();
         using var total=CancellationTokenSource.CreateLinkedTokenSource(token);total.CancelAfter(30000);
         using var limit=new SemaphoreSlim(3);
         return await Task.WhenAll(entries.Select(async (entry,index) => {
             bool acquired=false;
-            try {await limit.WaitAsync(total.Token);acquired=true;return await ResolveOne(entry,index,mode,total.Token);}
+            try {await limit.WaitAsync(total.Token);acquired=true;return await ResolveOne(entry,index,mode,recovering,total.Token);}
             catch(OperationCanceledException)when(!token.IsCancellationRequested){return new EntryResolution(entry.PeerSlot,index,Kind(entry.Source),[],"本轮解析已超时");}
             finally {if(acquired)limit.Release();}
         }));
     }
-    async Task<EntryResolution> ResolveOne(ExistingEntry entry,int index,string mode,CancellationToken token)
+    async Task<EntryResolution> ResolveOne(ExistingEntry entry,int index,string mode,bool recovering,CancellationToken token)
     {
         using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(14000);
         long began=Environment.TickCount64;var progress=new FetchProgress {Stage="DNS 查询",Attempt=1};
-        string kind=Kind(entry.Source);bool allowCached=kind!="PKARR";long expires=0;PkarrRecord? signedPkarr=null;
+        string kind=Kind(entry.Source),lookupDetail="";bool allowCached=kind!="PKARR";long expires=0;PkarrRecord? signedPkarr=null;
         try {
             string[] values;
             if(kind=="PKARR"){using var pkarr=pkarrFactory?.Invoke()??new PkarrClient();progress.Stage="PKARR 公告查询";var record=await pkarr.ResolveRecord(entry.Source,mode,deadline.Token);signedPkarr=record;values=record.Announcement.Endpoints;expires=record.Announcement.Expires;}
-            else if(kind=="TXT") values=ParseDocuments(await txt(WithoutSelector(entry.Source)[6..],deadline.Token),RequiresTag(entry.Source),Selector(entry.Source));
+            else if(kind=="TXT") (values,lookupDetail)=await ResolveTxt(entry.Source,mode,recovering,deadline.Token);
             else if(kind is "HTTP" or "HTTPS") values=await Fetch(entry.Source,progress,deadline.Token);
             else values=[entry.Source];
             progress.Stage="入口地址解析";
             if(values.Length is 0 or >MaximumEndpoints)throw new FormatException("每项来源须返回 1–8 个入口");
             var endpoints=new List<string>();
             foreach(var value in values) {
-                if(value.StartsWith("udp://",StringComparison.OrdinalIgnoreCase) && mode!="udp" || value.StartsWith("tcp://",StringComparison.OrdinalIgnoreCase) && mode!="faketcp")
+                if(value.StartsWith("udp://",StringComparison.OrdinalIgnoreCase) && mode!="udp" || value.StartsWith("tcp://",StringComparison.OrdinalIgnoreCase) && (!TransportModes.Valid(mode)||mode=="udp"))
                     throw new FormatException("入口协议与用户选定模式不一致");
                 var (host,port)=ParseEndpoint(value);
                 var ips=IPAddress.TryParse(host,out var literal)?[literal]:await addresses(host,deadline.Token);
@@ -244,13 +253,71 @@ public sealed class ExistingEntryResolver : IDisposable
                 if(endpoints.Count>MaximumEndpoints)throw new FormatException("解析结果超过 8 个入口");
             }
             if(endpoints.Count==0)throw new IOException("没有可用的 IPv4 入口");
-            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt,ExpiresAt=expires,AllowCached=allowCached,Pkarr=signedPkarr};
+            return new(entry.PeerSlot,index,kind,endpoints.ToArray(),""){ElapsedMs=Environment.TickCount64-began,Attempts=progress.Attempt,ExpiresAt=expires,AllowCached=allowCached,Pkarr=signedPkarr,LookupDetail=lookupDetail};
         } catch(Exception ex) when(!token.IsCancellationRequested && ex is IOException or UnauthorizedAccessException or HttpRequestException or SocketException or OperationCanceledException or FormatException or JsonException or DecoderFallbackException) {
             // Never echo a URL/query, body, or provider token into logs.
             string reason=FetchFailure(ex)?.Message??(ex switch { DnsTextLookupException=>ex.Message,OperationCanceledException=>progress.Stage+"超时",HttpRequestException {HttpRequestError:HttpRequestError.SecureConnectionError}=>"TLS 安全连接失败",HttpRequestException=>progress.Stage+"失败",SocketException=>"域名解析失败",FormatException=>ex.Message,_=>"更新内容无效或暂不可用" });
             long elapsed=Environment.TickCount64-began;
             return new(entry.PeerSlot,index,kind,[],reason+$"（{elapsed/1000d:F1} 秒，{progress.Attempt} 次）"){ElapsedMs=elapsed,Attempts=progress.Attempt,AllowCached=allowCached};
         }
+    }
+    async Task<(string[] Values,string Detail)> ResolveTxt(string source,string mode,bool recovering,CancellationToken token)
+    {
+        string host=WithoutSelector(source)[6..];
+        if(!recovering||recoverTxt==null||!DnsOverHttpsTextLookup.PublicName(host))
+            return (ParseDocuments(await txt(host,token),RequiresTag(source),Selector(source)),"");
+        // A valid but stale system answer cannot be fixed by an error-only
+        // fallback. Query independently; bound the system wait only after an
+        // alternate has actually supplied a usable selected record.
+        long began=Environment.TickCount64;
+        using var systemBudget=CancellationTokenSource.CreateLinkedTokenSource(token);
+        using var recoveryBudget=CancellationTokenSource.CreateLinkedTokenSource(token);recoveryBudget.CancelAfter(3500);
+        string[] Selected(string[] documents){
+            var values=ParseDocuments(documents,RequiresTag(source),Selector(source));
+            if(values.Length is 0 or >MaximumEndpoints)throw new FormatException("每项来源须返回 1–8 个入口");
+            foreach(var value in values){
+                if(value.StartsWith("udp://",StringComparison.OrdinalIgnoreCase)&&mode!="udp"||value.StartsWith("tcp://",StringComparison.OrdinalIgnoreCase)&&mode=="udp")
+                    throw new FormatException("入口协议与用户选定模式不一致");
+                ParseEndpoint(value);
+            }
+            return values;
+        }
+        async Task<(string[] Values,Exception? Error)> ReadSystem(){
+            try{return (Selected(await txt(host,systemBudget.Token).WaitAsync(systemBudget.Token)),null);}
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException or FormatException){return ([],ex);}
+        }
+        async Task<TxtRecoveryAnswer[]> ReadRecovery(){
+            try{return await recoverTxt(host,recoveryBudget.Token).WaitAsync(recoveryBudget.Token);}
+            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or HttpRequestException or OperationCanceledException or FormatException){return [];}
+        }
+        var primary=ReadSystem();var backup=ReadRecovery();
+        TxtRecoveryAnswer[] answers;
+        try{answers=await backup;}
+        catch{systemBudget.Cancel();try{await primary;}catch{}throw;}
+        var groups=new List<string[]>();var providers=new List<string>();
+        foreach(var answer in answers){
+            try {
+                var selected=Selected(answer.Documents);
+                // A malformed backend must not poison another backend's valid
+                // selected record, and unrelated labels are never candidates.
+                groups.Add(selected);providers.Add(answer.Resolver);
+            }catch(FormatException){}
+        }
+        if(groups.Count>0&&!primary.IsCompleted)systemBudget.CancelAfter((int)Math.Max(1,3500-(Environment.TickCount64-began)));
+        var system=await primary;
+        groups.Add(system.Values);token.ThrowIfCancellationRequested();
+        // Preserve representation from every usable backend within the global
+        // limit. Eight stale answers from one provider cannot crowd out another
+        // provider's fresh endpoint or all of the system DNS candidates. During
+        // recovery, try independent views before the challenged system answer;
+        // this orders probes and does not establish which answer is authentic.
+        var candidates=Enumerable.Range(0,MaximumEndpoints).SelectMany(i=>groups.Where(g=>g.Length>i).Select(g=>g[i]))
+            .Distinct(StringComparer.OrdinalIgnoreCase).Take(MaximumEndpoints)
+            .OrderBy(value=>system.Values.Contains(value,StringComparer.OrdinalIgnoreCase)?1:0).ToArray();
+        if(candidates.Length==0)throw system.Error??new IOException("TXT 查询未取得可用入口");
+        string detail=providers.Count==0?"系统 DNS；HTTPS DNS 暂不可用":
+            "恢复查询：系统 DNS 与 HTTPS DNS（"+string.Join("、",providers.Distinct())+"）；候选仍需双向认证";
+        return (candidates,detail);
     }
     // Select across the entire TXT answer / HTTP document, before parsing any
     // addresses. A foreign app's record must never poison or join a tagged set.
@@ -297,5 +364,5 @@ public sealed class ExistingEntryResolver : IDisposable
         }
         throw new FormatException("入口 JSON 格式无效");
     }
-    public void Dispose()=>http.Dispose();
+    public void Dispose(){http.Dispose();recoveryOwner?.Dispose();}
 }

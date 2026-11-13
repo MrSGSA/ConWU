@@ -24,7 +24,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                 receiver=new(request,factory,Path.Combine(sessionRoot,Guid.NewGuid().ToString("N")));receivers[key]=receiver;
             }
             if(receiver.Count>0&&(request.Egress!=null||receiver.Exclusive))throw new IOException("此实验出口设置不能与其他网络共用接收端口");
-            return receiver.Subscribe(request.Mesh.Pair.Network,request.Target,acceptsPair,authenticated,pairPriority,()=>Release(key,receiver));
+            return receiver.Subscribe(request.Mesh,request.StreamFlowLanes,request.Target,acceptsPair,authenticated,pairPriority,()=>Release(key,receiver),request.RetireEndpoint);
         }
     }
     void Release(string key,Receiver receiver)
@@ -33,15 +33,18 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
     }
     public void Dispose(){lock(gate){disposed=true;foreach(var receiver in receivers.Values)receiver.Dispose();receivers.Clear();}}
 
-    sealed class Subscription(Receiver owner,string network,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released):IMeshTransport
+    sealed class Subscription(Receiver owner,MeshProfile mesh,bool flowLanes,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released,Action<IPEndPoint>? retireEndpoint):IMeshTransport
     {
-        public string Network {get;}=network;
-        public byte[] NetworkHeader {get;}=PairNetworkFrame.Wrap(network,[]);
+        public MeshProfile Mesh {get;}=mesh;
+        public bool StreamFlowLanes {get;}=flowLanes;
+        public string Network {get;}=mesh.Pair.Network;
+        public byte[] NetworkHeader {get;}=PairNetworkFrame.Wrap(mesh.Pair.Network,[]);
         public IPEndPoint Target {get;}=target;
         public Func<ReadOnlyMemory<byte>,bool> Accepts {get;}=accepts;
         public Func<ReadOnlyMemory<byte>,bool> Authenticated {get;}=authenticated;
         public Func<ReadOnlyMemory<byte>,int> Priority {get;}=priority;
         public long NextValidation;
+        public Action<IPEndPoint>? RetireEndpoint {get;}=retireEndpoint;
         public IPEndPoint? ClientEndpoint=>null;
         public bool ControlsWirePackets=>owner.ControlsWirePackets;
         public bool Exited=>Volatile.Read(ref disposed)!=0||owner.Exited;
@@ -58,8 +61,10 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         public Task? Pump;
         public long LastActive=Environment.TickCount64;
         public bool Pairing;
-        int disposed;
-        public void Dispose(){if(Interlocked.Exchange(ref disposed,1)!=0)return;Stop.Cancel();Socket.Dispose();}
+        public IDisposable? StreamAlias;
+        int disposed, retired;
+        public bool BeginRetire()=>Interlocked.Exchange(ref retired,1)==0;
+        public void Dispose(){if(Interlocked.Exchange(ref disposed,1)!=0)return;StreamAlias?.Dispose();Stop.Cancel();Socket.Dispose();}
     }
     sealed class Receiver:IDisposable
     {
@@ -68,6 +73,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         readonly CancellationTokenSource stop=new();
         readonly List<Subscription> subscriptions=[];
         readonly Dictionary<(IPEndPoint Remote,string Network),Route> routes=[];
+        readonly Dictionary<IPEndPoint,long> closedCarriers=[];
         readonly System.Collections.Concurrent.ConcurrentDictionary<Route,Task> retiring=new();
         readonly IMeshTransport transport;
         readonly Task receive;
@@ -90,23 +96,41 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                 if(OperatingSystem.IsLinux())LinuxPlatform.PrivateDirectory(folder);else Directory.CreateDirectory(folder);
                 created=true;
                 ingress.Bind(new IPEndPoint(IPAddress.Loopback,0));ingress.SendBufferSize=ingress.ReceiveBufferSize=1<<20;ingress.Blocking=false;
-                transport=factory(request with{Target=(IPEndPoint)ingress.LocalEndPoint!,Folder=folder,Mapping=null});receive=Task.Run(Receive);
+                transport=factory(request with{Target=(IPEndPoint)ingress.LocalEndPoint!,Folder=folder,Mapping=null,StreamFlowPolicy=FlowPolicy});
+                if(transport is IMeshCarrierRoutes events){events.RouteClosed+=CarrierClosed;events.RouteOpened+=CarrierOpened;}
+                receive=Task.Run(Receive);
             }
             catch{ingress.Dispose();stop.Dispose();if(created&&Directory.Exists(folder))Directory.Delete(folder,true);throw;}
         }
-        public Subscription Subscribe(string network,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released)
+        StreamFlowPolicy? FlowPolicy(string network) { lock(gate) { var value=subscriptions.FirstOrDefault(s=>s.Network==network);return value==null?null:new(value.Mesh,value.StreamFlowLanes); } }
+        public Subscription Subscribe(MeshProfile mesh,bool flowLanes,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released,Action<IPEndPoint>? retireEndpoint)
         {
             lock(gate){if(subscriptions.Count>=16)throw new IOException("共享接收器网络数已满");
-                if(subscriptions.Any(s=>s.Network==network))throw new IOException("此网络已有接收器，拒绝重复入口");
-                var subscription=new Subscription(this,network,target,accepts,authenticated,priority,released);subscriptions.Add(subscription);return subscription;}
+                if(subscriptions.Any(s=>s.Network==mesh.Pair.Network))throw new IOException("此网络已有接收器，拒绝重复入口");
+                var subscription=new Subscription(this,mesh,flowLanes,target,accepts,authenticated,priority,released,retireEndpoint);subscriptions.Add(subscription);return subscription;}
         }
         public void Unsubscribe(Subscription subscription)
         {
             Route[] removed;lock(gate){subscriptions.Remove(subscription);removed=routes.Where(p=>p.Value.Subscription==subscription).Select(p=>p.Value).ToArray();foreach(var key in routes.Where(p=>p.Value.Subscription==subscription).Select(p=>p.Key).ToArray())routes.Remove(key);}
             foreach(var route in removed)Retire(route);
+            if(transport is StreamMeshTransport stream)stream.RetireNetwork(subscription.Network);
         }
+        void CarrierClosed(IPEndPoint endpoint)
+        {
+            lock(gate){
+                if(disposed)return;
+                if(closedCarriers.Count>=256){foreach(var expired in closedCarriers.OrderBy(p=>p.Value).Take(128).Select(p=>p.Key).ToArray())closedCarriers.Remove(expired);}
+                closedCarriers[endpoint]=Environment.TickCount64;
+                var keys=routes.Keys.Where(k=>k.Remote.Equals(endpoint)).ToArray();
+                foreach(var key in keys)if(routes.Remove(key,out var route))Retire(route);
+            }
+        }
+        void CarrierOpened(IPEndPoint endpoint){lock(gate){if(!disposed)closedCarriers.Remove(endpoint);}}
         void Retire(Route route)
         {
+            if(!route.BeginRetire())return;
+            route.Subscription.RetireEndpoint?.Invoke((IPEndPoint)route.Socket.LocalEndPoint!);
+            if(transport is StreamMeshTransport stream)stream.RetireRoute(route.Remote,route.Subscription.Network);
             route.Dispose();
             var completion=FinishRoute(route);retiring[route]=completion;
             _=completion.ContinueWith(_=>retiring.TryRemove(route,out var ignored),CancellationToken.None,TaskContinuationOptions.ExecuteSynchronously,TaskScheduler.Default);
@@ -123,6 +147,9 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                 var remote=(IPEndPoint)incoming.RemoteEndPoint;if(!IPAddress.IsLoopback(remote.Address))continue;
                 var frame=buffer.AsMemory(0,incoming.ReceivedBytes);Subscription? subscription=null;
                 lock(gate){
+                    // A close notification can overtake already queued UDP.
+                    // Only a native open event may reuse that carrier endpoint.
+                    if(closedCarriers.ContainsKey(remote))continue;
                     if(PairNetworkFrame.IsFrame(frame.Span)){
                         foreach(var candidate in subscriptions)if(frame.Span[..PairNetworkFrame.HeaderSize].SequenceEqual(candidate.NetworkHeader)){
                             subscription=candidate;break;
@@ -158,7 +185,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                             long now=Environment.TickCount64;if(now<subscription.NextValidation)continue;subscription.NextValidation=now+100;
                             if(!subscription.Authenticated(frame))continue;
                         }
-                        foreach(var expired in routes.Where(p=>Environment.TickCount64-p.Value.LastActive>120000||p.Value.Pump?.IsCompleted==true).Select(p=>p.Key).ToArray()){Retire(routes[expired]);routes.Remove(expired);}
+                        foreach(var expired in routes.Where(p=>Environment.TickCount64-p.Value.LastActive>120000||p.Value.Pump?.IsCompleted==true).Select(p=>p.Key).ToArray())if(routes.Remove(expired,out var expiredRoute))Retire(expiredRoute);
                         var belonging=routes.Where(p=>p.Value.Subscription==subscription&&p.Value.Pairing==pairing).OrderBy(p=>p.Value.LastActive).ToArray();
                         if(belonging.Length>=4){
                             // An old authenticated packet can be replayed from
@@ -170,6 +197,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                         if(routes.Count>=128)continue;
                         var socket=new Socket(AddressFamily.InterNetwork,SocketType.Dgram,ProtocolType.Udp);socket.Bind(new IPEndPoint(IPAddress.Loopback,0));socket.SendBufferSize=socket.ReceiveBufferSize=1<<20;socket.Blocking=false;
                         route=new(){Remote=remote,Subscription=subscription,Socket=socket,Stop=CancellationTokenSource.CreateLinkedTokenSource(stop.Token),Pairing=pairing};
+                        if(!pairing)route.StreamAlias=StreamFlowRoutes.Alias(remote,(IPEndPoint)socket.LocalEndPoint!,subscription.Network);
                         routes[key]=route;route.Pump=Task.Run(()=>Return(route));
                     }
                     route.LastActive=Environment.TickCount64;
@@ -190,9 +218,9 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         }
         public void Dispose()
         {
-            Route[] owned;lock(gate){if(disposed)return;disposed=true;stop.Cancel();ingress.Dispose();owned=routes.Values.ToArray();routes.Clear();subscriptions.Clear();}
+            Route[] owned;lock(gate){if(disposed)return;disposed=true;stop.Cancel();ingress.Dispose();owned=routes.Values.ToArray();routes.Clear();closedCarriers.Clear();subscriptions.Clear();}
             foreach(var route in owned)Retire(route);
-            try{Task.WhenAll(retiring.Values.Append(receive)).GetAwaiter().GetResult();}catch(OperationCanceledException){}finally{transport.Dispose();stop.Dispose();}
+            try{Task.WhenAll(retiring.Values.Append(receive)).GetAwaiter().GetResult();}catch(OperationCanceledException){}finally{if(transport is IMeshCarrierRoutes events){events.RouteClosed-=CarrierClosed;events.RouteOpened-=CarrierOpened;}transport.Dispose();stop.Dispose();}
             if(Directory.Exists(folder))Directory.Delete(folder,true);
         }
     }

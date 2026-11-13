@@ -30,16 +30,16 @@ public sealed class ChildJob : IDisposable
     }
     public Process Start(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment = null, IEnumerable<string>? secrets = null)
         => StartObserved(exe,args,logPath,environment,secrets,null);
-    internal Process StartObserved(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment, IEnumerable<string>? secrets, Action<string>? observe)
+    internal Process StartObserved(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment, IEnumerable<string>? secrets, Action<string>? observe,bool redirectInput=false)
     {
         lock(lifecycle) {
             ObjectDisposedException.ThrowIf(disposed,this);
-            return StartOwned(exe,args,logPath,environment,secrets,observe);
+            return StartOwned(exe,args,logPath,environment,secrets,observe,redirectInput);
         }
     }
-    Process StartOwned(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment, IEnumerable<string>? secrets, Action<string>? observe)
+    Process StartOwned(string exe, IEnumerable<string> args, string? logPath, IDictionary<string, string>? environment, IEnumerable<string>? secrets, Action<string>? observe,bool redirectInput)
     {
-        var info = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(exe)!, RedirectStandardOutput = true, RedirectStandardError = true };
+        var info = new ProcessStartInfo(exe) { UseShellExecute = false, CreateNoWindow = true, WorkingDirectory = Path.GetDirectoryName(exe)!, RedirectStandardOutput = true, RedirectStandardError = true,RedirectStandardInput=redirectInput };
         foreach (var key in info.Environment.Keys.Where(k => k.StartsWith("ET_", StringComparison.Ordinal) || k.StartsWith("STREAMLINK_", StringComparison.Ordinal)).ToArray()) info.Environment.Remove(key);
         foreach (var arg in args) info.ArgumentList.Add(arg);
         if (environment != null) foreach (var p in environment) info.Environment[p.Key] = p.Value;
@@ -138,7 +138,7 @@ public static class WindowsHost
         int closed;
         public void Dispose(){if(Interlocked.Exchange(ref closed,1)!=0)return;RemoveFirewall(name);if(folder!=null){File.Delete(Path.Combine(folder,"owner.json"));Directory.Delete(folder);}}
     }
-    public static IDisposable AllowStreamListener(int port,string? recoveryRoot=null)
+    public static IDisposable AllowStreamListener(int port,string? recoveryRoot=null,string? application=null)
     {
         if(port is <1024 or >65535)throw new ArgumentOutOfRangeException(nameof(port));
         string name="StreamLink-"+Guid.NewGuid().ToString("N");
@@ -148,8 +148,8 @@ public static class WindowsHost
         dynamic policy=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FwPolicy2")!)!;
         dynamic rule=Activator.CreateInstance(Type.GetTypeFromProgID("HNetCfg.FWRule")!)!;
         try{
-            rule.Name=name;rule.Description="ConWU TCP/HTTPS 接收端口，所属监听关闭时移除";
-            rule.Protocol=6;rule.LocalPorts=port.ToString(System.Globalization.CultureInfo.InvariantCulture);rule.ApplicationName=Environment.ProcessPath;
+            rule.Name=name;rule.Description="ConWU TCP 接收端口，所属监听关闭时移除";
+            rule.Protocol=6;rule.LocalPorts=port.ToString(System.Globalization.CultureInfo.InvariantCulture);rule.ApplicationName=application??Environment.ProcessPath;
             rule.Direction=1;rule.Action=1;rule.Enabled=true;rule.Profiles=int.MaxValue;policy.Rules.Add(rule);return access;
         }catch{access.Dispose();throw;}
         finally{Marshal.FinalReleaseComObject(rule);Marshal.FinalReleaseComObject(policy);}

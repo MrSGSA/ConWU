@@ -1,8 +1,8 @@
 namespace StreamLink.Service;
 
 // A coordinator supplies presence. Serverless networks have no independent
-// presence channel, so an unanswered entry is checked infrequently after one
-// bounded foreground attempt rather than recreating native workers forever.
+// presence channel. Keep bounded attempts and a short idle pause: a host may
+// restart behind the same address without changing any discovery information.
 internal sealed class PeerReconnectPolicy
 {
     long began,next;
@@ -20,6 +20,6 @@ internal sealed class PeerReconnectPolicy
         if(now<next)return false;
         if(began==0)began=now;
         if(now-began<18000)return true;
-        began=0;next=now+Math.Min(300000,60000L<<Math.Min(failures++,2));return false;
+        began=0;next=now+Math.Min(30000,5000L<<Math.Min(failures++,3));return false;
     }
 }

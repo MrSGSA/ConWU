@@ -24,7 +24,7 @@ public sealed record CompactDirectCode(string Endpoint,string Mode,string RoomCo
         var parsed=ExistingEntryResolver.ParseEndpoint(endpoint);
         if(!IPAddress.TryParse(parsed.Host,out var address)||address.AddressFamily!=AddressFamily.InterNetwork)throw new FormatException("直连码需要已解析的 IPv4 入口");
         var ip=address.GetAddressBytes();uint number=((uint)ip[0]<<24)|((uint)ip[1]<<16)|((uint)ip[2]<<8)|ip[3];
-        int header=mode switch{"faketcp"=>Version<<1,"udp"=>(Version<<1)|1,"tcp"=>4,"https"=>5,_=>throw new FormatException("协议无效")};
+        int header=mode switch{"faketcp"=>Version<<1,"udp"=>(Version<<1)|1,"tcp"=>4,"https"=>5,"phantun"=>6,"mimic"=>7,"tcpraw"=>8,_=>throw new FormatException("协议无效")};
         UInt128 body=((UInt128)header<<68)|((UInt128)number<<36)|((UInt128)(uint)parsed.Port<<20)|(uint)int.Parse(roomCode,System.Globalization.CultureInfo.InvariantCulture);
         Span<byte> bytes=stackalloc byte[9];var remaining=body;
         for(int i=8;i>=0;i--){bytes[i]=(byte)(remaining&255);remaining>>=8;}
@@ -46,11 +46,11 @@ public sealed record CompactDirectCode(string Endpoint,string Mode,string RoomCo
         byte checksum=(byte)(value&255);UInt128 body=value>>8,remaining=body;Span<byte> bytes=stackalloc byte[9];
         for(int i=8;i>=0;i--){bytes[i]=(byte)(remaining&255);remaining>>=8;}
         if(Checksum(bytes)!=checksum)throw new FormatException("直连码校验失败，请检查是否输错或缺少字符");
-        int header=(int)(body>>68);if(header is not (2 or 3 or 4 or 5))throw new FormatException("直连码版本不受支持，请将两端更新到同一版本");
+        int header=(int)(body>>68);if(header is not (2 or 3 or 4 or 5 or 6 or 7 or 8))throw new FormatException("直连码版本不受支持，请将两端更新到同一版本");
         uint number=(uint)((body>>36)&uint.MaxValue);int port=(int)((body>>20)&65535),room=(int)(body&0xfffff);
         if(room>=1_000_000||port==0)throw new FormatException("直连码的入口或会话无效");
         string endpoint=$"{number>>24}.{(number>>16)&255}.{(number>>8)&255}.{number&255}:{port}";
         ExistingEntryResolver.ParseEndpoint(endpoint);
-        return new(endpoint,header switch{2=>"faketcp",3=>"udp",4=>"tcp",_=>"https"},room.ToString("D6",System.Globalization.CultureInfo.InvariantCulture));
+        return new(endpoint,header switch{2=>"faketcp",3=>"udp",4=>"tcp",5=>"https",6=>"phantun",7=>"mimic",_=>"tcpraw"},room.ToString("D6",System.Globalization.CultureInfo.InvariantCulture));
     }
 }

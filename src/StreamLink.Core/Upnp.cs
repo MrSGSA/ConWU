@@ -91,7 +91,9 @@ public sealed class Upnp : IDisposable
         request.Headers.TryAddWithoutValidation("SOAPAction", $"\"{Service.ServiceType}#{action}\"");
         request.Content = new StringContent(body.ToString(SaveOptions.DisableFormatting), Encoding.UTF8, "text/xml");
         using var response = await http.SendAsync(request, token);
-        var xml = XDocument.Parse(await response.Content.ReadAsStringAsync(token));
+        XDocument xml;
+        try { xml = XDocument.Parse(await response.Content.ReadAsStringAsync(token)); }
+        catch (System.Xml.XmlException ex) { throw new IOException("路由器 SOAP 响应不是有效 XML", ex); }
         string? error = xml.Descendants().FirstOrDefault(e => e.Name.LocalName == "errorCode")?.Value;
         if (error != null) throw new UpnpException(error, action);
         response.EnsureSuccessStatusCode();
@@ -104,8 +106,9 @@ public sealed class Upnp : IDisposable
         try
         {
             var xml = await Call("GetSpecificPortMappingEntry", Key(port, protocol), token);
-            string Value(string name) => xml.Descendants().First(e => e.Name.LocalName == name).Value;
-            return new(port, int.Parse(Value("NewInternalPort")), Value("NewInternalClient"), protocol, Value("NewPortMappingDescription"));
+            string Value(string name) => xml.Descendants().FirstOrDefault(e => e.Name.LocalName == name)?.Value ?? throw new IOException("路由器规则响应缺少字段");
+            if (!int.TryParse(Value("NewInternalPort"), out int internalPort) || internalPort is < 1 or > 65535) throw new IOException("路由器返回无效端口");
+            return new(port, internalPort, Value("NewInternalClient"), protocol, Value("NewPortMappingDescription"));
         }
         catch (UpnpException ex) when (ex.Code == "714") { return null; }
     }
@@ -124,12 +127,45 @@ public sealed class Upnp : IDisposable
         await Call("AddPortMapping", args, token);
     }
 
+    // Never replace a foreign rule. Use a small, bounded set of explicit
+    // alternatives, also supported by IGD v1 gateways.
+    public async Task<RouterMapping> Reserve(RouterMapping preferred, CancellationToken token)
+    {
+        Exception? last = null;
+        for (int attempt = 0; attempt < 4; attempt++) {
+            token.ThrowIfCancellationRequested();
+            var rule = attempt == 0 ? preferred : preferred with { ExternalPort = System.Security.Cryptography.RandomNumberGenerator.GetInt32(49152, 65536) };
+            var before = await Get(rule.ExternalPort, rule.Protocol, token);
+            if (before != null && before != rule) { last = new IOException("路由器端口属于其他规则"); continue; }
+            try { await Add(rule, token); return rule; }
+            catch (UpnpException ex) when (before == null && ex.Code is "718" or "729") { last = ex; }
+            catch (IOException ex) when (ex is not UpnpException) {
+                // Only a confirmed collision allows another port. A failed
+                // request may already have succeeded at the gateway.
+                if (before == rule) throw; // existing ownership does not prove renewal
+                RouterMapping? current;
+                try { current = await Get(rule.ExternalPort, rule.Protocol, token); }
+                catch { try { await RemoveOwned(rule, CancellationToken.None); } catch { } throw; }
+                if (current == rule) return rule;
+                if (current == null) throw;
+                last = ex;
+            }
+            catch {
+                // Cancellation/HTTP failure can follow a successful gateway
+                // mutation. The exact attempted tuple is still owned here.
+                if (before == null) try { await RemoveOwned(rule, CancellationToken.None); } catch { }
+                throw;
+            }
+        }
+        throw new IOException("可选路由器端口均已占用；未覆盖已有规则", last);
+    }
+
     public async Task RemoveOwned(RouterMapping mapping, CancellationToken token)
     {
         var current = await Get(mapping.ExternalPort, mapping.Protocol, token);
         if (current == mapping) await Call("DeletePortMapping", Key(mapping.ExternalPort, mapping.Protocol), token);
     }
-    public async Task<string> ExternalAddress(CancellationToken token) => (await Call("GetExternalIPAddress", [], token)).Descendants().First(e => e.Name.LocalName == "NewExternalIPAddress").Value;
+    public async Task<string> ExternalAddress(CancellationToken token) => (await Call("GetExternalIPAddress", [], token)).Descendants().FirstOrDefault(e => e.Name.LocalName == "NewExternalIPAddress")?.Value ?? throw new IOException("路由器未返回外部地址");
     public void Dispose() => http.Dispose();
 }
 public sealed class UpnpException(string code, string action) : IOException($"路由器 {action} 返回 UPnP 错误 {code}") { public string Code { get; } = code; }

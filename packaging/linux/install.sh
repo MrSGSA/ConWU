@@ -12,6 +12,8 @@ sha256sum -c SHA256SUMS >/dev/null
 [[ $(uname -m) == x86_64 ]] || { echo '此包只适用于 Linux x86_64。'; exit 1; }
 ./runtime/conwu help >/dev/null
 ./runtime/components/udp2raw-native --native-info >/dev/null
+./runtime/components/conwu-phantun --conwu-info >/dev/null
+./runtime/components/conwu-raw --conwu-info >/dev/null
 for path in /opt/streamlink /opt/streamlink/releases /var/lib/streamlink; do
     [[ ! -L $path ]] || { echo "拒绝通过符号链接安装：$path"; exit 1; }
 done
@@ -37,7 +39,7 @@ stage=$(mktemp -d /opt/streamlink/releases/.install-XXXXXXXX)
 trap '[[ -z ${stage:-} ]] || rm -rf -- "$stage"' EXIT
 cp -a -- runtime/. "$stage/"
 chown -R root:root "$stage"
-chmod 0755 "$stage/conwu" "$stage/streamlink" "$stage/components/udp2raw-native"
+chmod 0755 "$stage/conwu" "$stage/streamlink" "$stage/components/udp2raw-native" "$stage/components/conwu-phantun" "$stage/components/conwu-raw"
 if [[ ! -d $release ]]; then mv -- "$stage" "$release"; stage=''; fi
 old=$(readlink /opt/streamlink/current || true)
 was_active=false;systemctl is-active --quiet streamlink.service && was_active=true

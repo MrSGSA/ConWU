@@ -1,0 +1,22 @@
+[package]
+name = "fake-tcp"
+version = "0.7.1"
+edition = "2024"
+authors = ["Datong Sun <dndx@idndx.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/dndx/phantun"
+description = "Phantun datagram TCP stack; bounded ConWU native adapter"
+
+[features]
+benchmark = []
+
+[dependencies]
+bytes = "1"
+pnet_packet = "0"
+pnet_base = "0"
+rand = { version = "0", features = ["small_rng"] }
+internet-checksum = "0"
+flume = "0"
+async-trait = "0.1"
+tokio = { workspace = true }
+log = { workspace = true }

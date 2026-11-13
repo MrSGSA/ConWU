@@ -69,6 +69,8 @@ static partial class Program
         if(args is ["--pair-poll-priority-only"]){await PairPollPriority();return;}
         if(args is ["--resolve-entry",var source]){using var resolver=new ExistingEntryResolver();Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(await resolver.Resolve([new(-1,source)],"faketcp",default)));return;}
         if(args is ["--entry-resilience-only"]){await EntryResilience();return;}
+        if(args is ["--txt-recovery-only"]){await TxtRecovery();return;}
+        if(args is ["--resolve-entry-recovery",var recoverySource]){using var resolver=new ExistingEntryResolver();Console.WriteLine(JsonSerializer.Serialize(await resolver.ResolveRecovering([new(-1,recoverySource)],"faketcp",default)));return;}
         if(args is ["--approval-guest-service"]){await ApprovalGuestService();return;}
         if(args is ["--approval-invitation-only"]){await ApprovalInvitations();return;}
         if(args is ["--direct-only"]){await DirectNetworks();return;}
@@ -120,6 +122,7 @@ static partial class Program
         await ExplicitReservationRecovery();
         await TcpTests.Run();
         await ExistingEntries();
+        await TxtRecovery();
         await DirectNetworks();
         await Decentralization();
         await EntryProbeReuse();

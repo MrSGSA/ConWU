@@ -1,0 +1,12 @@
+[workspace]
+resolver = "3"
+members = ["fake-tcp", "conwu-phantun", "conwu-raw"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+log = "0"
+serde = { version = "1", features = ["derive"] }
+
+[profile.release]
+panic = "abort"
+strip = true

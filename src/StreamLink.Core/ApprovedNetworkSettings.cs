@@ -7,6 +7,7 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
     ExistingEntry[] Entries,int EntryRefreshSeconds,string[] TcpStun,string[] UdpStun,
     bool CoordinatorBackup,string Service,string CertificatePin,int HostListenPort)
 {
+    public bool StreamFlowLanes {get;init;}
     public string NetworkName {get;init;}="";
     public string DiscoveryMode {get;init;}="";
     public string PairingService {get;init;}="";
@@ -16,7 +17,7 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
         =>new(settings.PathSelection,settings.ConnectionSource,
             settings.ExistingEntries.Where(e=>e.PeerSlot==0&&(settings.ConnectionSource=="existing"||ExistingEntryResolver.Kind(e.Source)=="PKARR")).Select(e=>e with{PeerSlot=host.Self.Slot}).ToArray(),
             settings.EntryRefreshSeconds,settings.TcpStun??[],settings.UdpStun??[],settings.CoordinatorBackup,
-            host.Pair.Direct?settings.Service:host.Pair.Service,host.Pair.Direct?settings.CertificatePin:host.Pair.CertificatePin,settings.ListenPort){NetworkName=networkName,DiscoveryMode=settings.DiscoveryMode,PairingService=settings.PairingService,PairingCertificatePin=settings.PairingCertificatePin,PkarrGateways=ConnectionSettings.Discovery(settings)=="pkarr"?settings.PkarrGateways.ToArray():PkarrClient.DefaultGateways.ToArray()};
+            host.Pair.Direct?settings.Service:host.Pair.Service,host.Pair.Direct?settings.CertificatePin:host.Pair.CertificatePin,settings.ListenPort){StreamFlowLanes=settings.StreamFlowLanes,NetworkName=networkName,DiscoveryMode=settings.DiscoveryMode,PairingService=settings.PairingService,PairingCertificatePin=settings.PairingCertificatePin,PkarrGateways=ConnectionSettings.Discovery(settings)=="pkarr"?settings.PkarrGateways.ToArray():PkarrClient.DefaultGateways.ToArray()};
 
     public UiNetworkSettings ForGuest(MeshProfile mesh,UiNetworkSettings local)
     {
@@ -30,7 +31,7 @@ public sealed record ApprovedNetworkSettings(string PathSelection,string Connect
         var settings=local with{PathSelection=PathSelection,ConnectionSource=ConnectionSource,DirectMode=mesh.Pair.Direct,
             ExistingEntries=Entries.Select(e=>e with{PeerSlot=ExistingEntry.NetworkOwner}).ToArray(),ManualEndpoint="",
             EntryRefreshSeconds=EntryRefreshSeconds,TcpStun=TcpStun.ToArray(),UdpStun=UdpStun.ToArray(),
-            CoordinatorBackup=CoordinatorBackup,Service=Service,CertificatePin=CertificatePin,PairingService=PairingService,PairingCertificatePin=PairingCertificatePin,RequestedVirtualIp="",
+            CoordinatorBackup=CoordinatorBackup,Service=Service,CertificatePin=CertificatePin,PairingService=PairingService,PairingCertificatePin=PairingCertificatePin,RequestedVirtualIp="",StreamFlowLanes=StreamFlowLanes,
             Coordinator=new(),Ddns=null,PkarrPublish=false,DiscoveryMode=DiscoveryMode,PkarrGateways=PkarrGateways.ToArray()};
         return ConnectionSettings.Normalize(settings,forGuest:true);
     }

@@ -13,6 +13,7 @@ public sealed record UiPeerDto(int Slot,string Name,string VirtualIp,bool Connec
     public long ReceivedBytes {get;init;}
     public long DroppedPackets {get;init;}
     public RouterPeerDrops? LocalDrops {get;init;}
+    public StreamFlowStatus? StreamFlows {get;init;}
     public string Quality {get;init;}="Unknown";
     public string OuterSource {get;init;}="Unknown";
     public string OuterTarget {get;init;}="Unknown";
@@ -95,6 +96,8 @@ public sealed record UiPairingDto(bool Active,bool Owner,string Code,string Veri
 [System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record UiNetworkSettings(string Service="",string CertificatePin="",string ManualEndpoint="",string PathSelection="faketcp-only",bool AllowManualQualityRequests=false,int ListenPort=44680,int SourcePort=44691)
 {
+    public bool StreamFlowLanes {get;init;}
+    public bool PortControlMapping {get;init;}
     public CoordinatorSettings Coordinator {get;init;}=new();
     // Null means an older client omitted this new setting; preserve it.
     public CloudflareDdnsSettings? Ddns {get;init;}

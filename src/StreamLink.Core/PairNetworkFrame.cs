@@ -19,11 +19,12 @@ public static class PairNetworkFrame
     {
         if(!IsFrame(bytes)||Network(bytes)!=mesh.Pair.Network)return false;
         var frame=bytes[HeaderSize..];if(MeshEntryHandshake.IsFrame(frame))return MeshEntryHandshake.Authenticated(mesh,frame);
-        if(frame.Length is <MeshLink.Overhead or >MeshLink.Overhead+MeshLink.Mtu||!frame[..4].SequenceEqual("SLM4"u8)||frame[6]!=mesh.Self.Slot||frame[7]!=0||frame[4] is <1 or >9)return false;
+        if(frame.Length is <MeshLink.Overhead or >MeshLink.Overhead+MeshLink.Mtu||!frame[..4].SequenceEqual("SLM4"u8)||frame[6]!=mesh.Self.Slot||frame[4] is <1 or >9)return false;
+        if(frame[7]!=0&&(!TransportModes.Stream(mesh.Pair.Mode)||frame[7]>3||frame[4]!=4))return false;
         int sourceSlot=frame[5];var member=mesh.Directory?.Members.FirstOrDefault(m=>m.Slot==sourceSlot);if(member==null||member.Slot==mesh.Self.Slot)return false;
         byte[]? secret=null,session=null;
         try{
-            secret=MeshIdentity.SharedKey(mesh,member);session=HKDF.DeriveKey(HashAlgorithmName.SHA256,secret,32,frame.Slice(8,16).ToArray(),Encoding.ASCII.GetBytes($"streamlink-datagram-v4/{frame[5]}/{frame[6]}"));
+            secret=MeshIdentity.SharedKey(mesh,member);session=HKDF.DeriveKey(HashAlgorithmName.SHA256,secret,32,frame.Slice(8,16).ToArray(),Encoding.ASCII.GetBytes(MeshLink.KeyContext(frame[5],frame[6],frame[7])));
             Span<byte> nonce=stackalloc byte[12];nonce.Clear();frame.Slice(40,8).CopyTo(nonce[4..]);
             int count=frame.Length-MeshLink.Overhead;Span<byte> plain=stackalloc byte[count];
             using var cipher=new AesGcm(session,16);cipher.Decrypt(nonce,frame.Slice(MeshLink.HeaderSize,count),frame.Slice(MeshLink.HeaderSize+count,16),plain,frame[..MeshLink.HeaderSize]);return true;
