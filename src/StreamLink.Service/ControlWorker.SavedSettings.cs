@@ -24,7 +24,14 @@ public sealed partial class ControlWorker
             int slot=mesh.IsDecentralized?MeshGovernance.CurrentSlot(mesh.Directory!,hint.PeerSlot):hint.PeerSlot;
             if(slot!=mesh.Self.Slot&&mesh.Directory?.Members.Any(m=>m.Slot==slot)==true)learned.Add(hint with{PeerSlot=slot});
         }
-        var pkarr=PkarrRendezvous.Uses(profile)&&profile.PkarrStateVersion==1?profile.PkarrPeers.Where(p=>PkarrRendezvous.Matches(p,mesh)).Select(p=>new ExistingEntry(p.Slot,p.Source)):[];
+        var pkarr=PkarrRendezvous.Uses(profile)&&profile.PkarrStateVersion==1?profile.PkarrPeers.Where(p=>PkarrRendezvous.Matches(p,mesh)).Select(p=>new ExistingEntry(p.Slot,p.Source)).ToArray():[];
+        // Enrollment endpoints only bootstrap discovery. Once a peer has a
+        // configured source (or an authenticated PKARR binding), that source
+        // replaces its enrollment observations, even while resolution fails.
+        // A local ingress is not a replacement for a remote peer's address.
+        int Target(ExistingEntry entry)=>entry.PeerSlot is ExistingEntry.Network or ExistingEntry.NetworkOwner?mesh.IntroducerSlot:entry.PeerSlot;
+        var current=pkarr.Concat(bound).Where(e=>e.PeerSlot!=0).ToArray();
+        learned.RemoveAll(hint=>current.Any(entry=>entry.PeerSlot==ExistingEntry.Network||Target(entry)==Target(hint)));
         return pkarr.Concat(learned.Take(1)).Concat(bound).Concat(learned.Skip(1)).DistinctBy(e=>e.Source,StringComparer.Ordinal).Take(ExistingEntryResolver.MaximumSources).ToArray();
     }
 

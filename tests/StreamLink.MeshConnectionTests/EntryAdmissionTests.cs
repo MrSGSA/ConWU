@@ -121,10 +121,10 @@ static partial class Program
             Check(change.Ok&&store.Load().UsesExistingEntriesOnly&&store.Load().ExistingEntries.Any(e=>e.Source=="203.0.113.42:44680"),"saving unrelated settings retains the authenticated runtime seed and never enables punching");
             Check(JsonSerializer.Serialize(change.Status!.Settings)==saved,"effective runtime entry choices do not leak into persisted UI preferences");
             var crowded=store.Load();crowded.SavedNetworkSettings=crowded.SavedNetworkSettings! with{ConnectionSource="existing",ExistingEntries=Enumerable.Range(1,12).Select(i=>new ExistingEntry(ExistingEntry.Network,$"203.0.113.{i}:45000")).ToArray()};
-            Check(ControlWorker.RuntimeEntries(crowded).Length==12&&ControlWorker.RuntimeEntries(crowded).Any(e=>e.Source=="203.0.113.42:44680")&&crowded.SavedNetworkSettings.ExistingEntries.Length==12,"runtime source limit reserves the successfully used join seed without changing twelve saved sources");
+            Check(ControlWorker.RuntimeEntries(crowded).SequenceEqual(crowded.SavedNetworkSettings.ExistingEntries),"all twelve configured sources replace the old join seed without losing a saved source");
             crowded.SavedNetworkSettings=crowded.SavedNetworkSettings with{ExistingEntries=[new(1,"203.0.113.42:44680"),new(ExistingEntry.Network,"203.0.113.42:44680")]};
             var duplicate=ControlWorker.RuntimeEntries(crowded);
-            Check(duplicate.Length==1&&duplicate[0].PeerSlot==ExistingEntry.Network,"a saved source and its authenticated join seed use one worker and keep network-scoped discovery");
+            Check(duplicate.Length==1&&duplicate[0]==crowded.SavedNetworkSettings.ExistingEntries[1],"duplicate configured sources use one worker and keep the valid network binding instead of an inactive member slot");
             var left=await Ui(new("leave",ExpectedNetwork:owner.Pair.Network,ConfirmReplace:true));
             Check(left.Ok&&store.Load().Mesh==null&&JsonSerializer.Serialize(left.Status!.Settings)==saved,"exit after entry joining still preserves the same saved settings");
             CryptographicOperations.ZeroMemory(shared);

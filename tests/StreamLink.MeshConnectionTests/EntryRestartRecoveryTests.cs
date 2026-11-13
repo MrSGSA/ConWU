@@ -65,7 +65,12 @@ static partial class Program
         };
         async Task Run(bool recover)
         {
-            var profile=JsonSerializer.Deserialize<DeviceProfile>(saved)!;
+            var store=new ProfileStore(Path.Combine(folder,"membership"));
+            store.Save(JsonSerializer.Deserialize<DeviceProfile>(saved)!);
+            DeviceProfile profile;
+            using(var restored=new ControlWorker(store,services))profile=restored.ProfileSnapshot();
+            Check(profile.ExistingEntries.SequenceEqual(profile.SavedNetworkSettings!.ExistingEntries),"cold startup replaces the old persisted bootstrap cache with the configured subscription");
+            string beforeRun=JsonSerializer.Serialize(profile);
             var runner=new MeshRunner(profile,logs.Enqueue,s=>Volatile.Write(ref status,s),_=>{},_=>{},services);
             using var stop=new CancellationTokenSource();var running=runner.Run(stop.Token);
             try {
@@ -89,8 +94,8 @@ static partial class Program
                 int delivered=restartedPeer.DataPackets;
                 adapter!.Outgoing.Add(Packet(guest.LocalIp,host.LocalIp));
                 await Until(()=>restartedPeer.DataPackets>delivered,"reconnected membership delivers a complete authenticated IP packet");
-                Check(JsonSerializer.Serialize(profile)==saved,"recovery leaves saved settings, network ID and member credentials unchanged");
-                Check(probes==0&&factories==0&&targets.All(t=>t is seed or before or after),"only supplied entry candidates are dialed; no STUN, autonomous punching or protocol fallback");
+                Check(JsonSerializer.Serialize(profile)==beforeRun,"recovery leaves saved settings, network ID and member credentials unchanged");
+                Check(probes==0&&factories==0&&targets.All(t=>t is before or after),"only current subscription candidates are dialed; no historical bootstrap, STUN, autonomous punching or protocol fallback");
             }catch{foreach(string line in logs)Console.WriteLine(line);throw;}
             finally{await Stop(running,stop);status=null;}
             Check(runner.CleanupComplete&&adapter!.Disposed&&transports.All(t=>t.Transport.Disposed),"stopped runner proves adapter and every candidate transport were released");

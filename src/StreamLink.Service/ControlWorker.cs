@@ -66,6 +66,13 @@ public sealed partial class ControlWorker : BackgroundService
                 profile.SavedPeerEntryNetwork=profile.Mesh?.Pair.Network??"";
                 changed=true;
             }
+            // Older versions persisted the first pairing endpoint beside the
+            // inherited subscription. Rebuild only the derived entry cache;
+            // saved preferences and the approved membership remain unchanged.
+            if(profile.Mesh is {} joined&&profile.JoinedEntryNetwork==joined.Pair.Network){
+                var entries=RuntimeEntries(profile);
+                if(!profile.ExistingEntries.SequenceEqual(entries)){profile.ExistingEntries=entries;changed=true;}
+            }
             if(changed)store.Save(profile);
             PublishReply();
             if(enableWorkspace)EnablePairNetworks();

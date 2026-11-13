@@ -37,6 +37,8 @@ static partial class Program
             Check(joined?.Status.ReceivedNetworkSettings!=null,"approved encrypted envelope delivers host network settings");
             var settings=joined!.Status.Settings!;
             Check(settings.EntryRefreshSeconds==137&&settings.ExistingEntries.Any(e=>e.PeerSlot==ExistingEntry.NetworkOwner&&e.Source==desired.ExistingEntries[0].Source),"host source subscription is retained and translated into a target-host entry");
+            DeviceProfile PersistedGuest()=>new ProfileStore(Path.Combine(guest.Store.DirectoryPath,"networks",id),guest.Store).LoadForMaintenance();
+            Check(PersistedGuest().ExistingEntries.SequenceEqual(settings.ExistingEntries),"approved host subscription replaces the address used for the initial pairing request");
             Check(settings.ListenPort==45210&&settings.SourcePort==45211&&settings.Coordinator.Enabled==false,"guest listener resources and local coordination role are not copied from the host");
             Check(joined.Status.VirtualIp!=created.Status.VirtualIp&&joined.ConfigurationId.Length==0,"guest has its own address and no editable shared configuration reference");
             var after=await guest.State();Check(after.DeviceName==before.DeviceName&&JsonSerializer.Serialize(after.DeviceSettings)==beforeDevice,"joining never changes the local device's saved preferences");

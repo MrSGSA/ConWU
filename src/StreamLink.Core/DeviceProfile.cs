@@ -54,8 +54,8 @@ public sealed class DeviceProfile
     public PkarrPeerBinding[] PkarrPeers {get;set;}=[];
     public int PkarrStateVersion {get;set;}
     public string SavedPeerEntryNetwork { get; set; } = "";
-    // Enrollment observations are not user settings. A join may learn a seed
-    // without overwriting saved sources, and saves must not erase that seed.
+    // Enrollment observations are not user settings. A seed remains usable
+    // only until a configured source takes over discovery for the same peer.
     public string JoinedEntryNetwork {get;set;}="";
     public ExistingEntry[] JoinedEntrySources {get;set;}=[];
     public int EntryRefreshSeconds {get;set;}=60;
