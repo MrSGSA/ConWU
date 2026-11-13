@@ -11,7 +11,7 @@ using StreamLink.Core;
 // command-line arguments or ready/results output. No production profile is read.
 static class StreamBench
 {
-    sealed record Configuration(string Mode,string Key,int Port=48443,string Endpoint="",string Pin="",int Mbps=50,int Seconds=8,bool Firewall=false,int LifetimeSeconds=240,bool Autonomous=false,int MaxInFlight=512,bool BatchDatagrams=true);
+    sealed record Configuration(string Mode,string Key,int Port=48443,string Endpoint="",string Pin="",int Mbps=50,int Seconds=8,bool Firewall=false,int LifetimeSeconds=240,bool Autonomous=false,int MaxInFlight=512,bool BatchDatagrams=true,int SourcePort=44691,bool GatewayHelper=false);
     public static async Task Run(string[] args)
     {
         var line=await Console.In.ReadLineAsync()??throw new IOException("Private test input missing");
@@ -32,10 +32,12 @@ static class StreamBench
         using var udp=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));udp.Client.ReceiveBufferSize=udp.Client.SendBufferSize=4<<20;
         await using var transport=new StreamMeshTransport(mesh,(IPEndPoint)udp.Client.LocalEndPoint!,true,c.Port,()=>certificate,allowListener:c.Firewall?()=>OperatingSystem.IsWindows()?WindowsHost.AllowStreamListener(c.Port):LinuxFirewall.AllowStreamListener(c.Port):null,batchDatagrams:c.BatchDatagrams);
         using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(c.LifetimeSeconds));
-        await using var mapping=c.Autonomous?await StreamMapping.Create(c.Port,_=>{},stop.Token):null;
+        await using var mapping=c.Autonomous?(c.GatewayHelper
+            ?await GatewayMapping.CreateTcp(c.SourcePort,c.Port,Console.Error.WriteLine,stop.Token,owner:Guid.NewGuid().ToString("N"))
+            :await StreamMapping.Create(c.Port,Console.Error.WriteLine,stop.Token,sourcePort:c.SourcePort,owner:Guid.NewGuid().ToString("N"))):null;
         var mappingWork=mapping?.Maintain(stop.Token);
         var input=Task.Run(async()=>{try{if(await Console.In.ReadLineAsync().WaitAsync(stop.Token)=="stop")stop.Cancel();}catch(OperationCanceledException){}});
-        Console.WriteLine("CONWU_READY "+JsonSerializer.Serialize(new{mode=c.Mode,port=c.Port,pin=c.Mode=="https"?StreamMeshTransport.CertificatePin(certificate):"",process=Environment.ProcessId,endpoint=mapping?.PublicEndpoint.ToString()??""}));
+        Console.WriteLine("CONWU_READY "+JsonSerializer.Serialize(new{mode=c.Mode,port=c.Port,pin=c.Mode=="https"?StreamMeshTransport.CertificatePin(certificate):"",process=Environment.ProcessId,endpoint=mapping?.PublicEndpoint.ToString()??"",mapping=mapping?.GetType().Name??"none",helper=mapping is TcpMapping tcp?tcp.HelperResource.Local:""}));
         await Console.Out.FlushAsync();
         var peers=new Dictionary<IPEndPoint,MeshLink>();long packets=0,bytes=0,rejected=0;var cpu=Process.GetCurrentProcess().TotalProcessorTime;
         try{while(!stop.IsCancellationRequested){

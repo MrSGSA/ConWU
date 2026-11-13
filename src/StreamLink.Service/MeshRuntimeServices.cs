@@ -52,7 +52,7 @@ internal sealed record MeshRuntimeServices(
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
         async (profile, log, token) => profile.TransportMode == "udp"
             ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.ResourceScope)
-            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping):await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.ResourceScope, profile.PortControlMapping),
+            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping,profile.SourcePort,profile.ResourceScope):await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.ResourceScope, profile.PortControlMapping),
         r => TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint,r.Egress),
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
@@ -72,7 +72,7 @@ internal sealed record MeshRuntimeServices(
         mesh=>Task.Run<IPacketAdapter>(()=>new LinuxTunAdapter(mesh.LocalIp)),
         async (profile,log,token)=>profile.TransportMode=="udp"
             ?await UdpMapping.Create(profile.ListenPort,profile.ListenPort,log,token,profile.UdpStun,profile.ResourceScope)
-            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping):await GatewayMapping.CreateTcp(profile.SourcePort,profile.ListenPort,log,token,profile.OrderedTcp(),profile.ResourceScope,profile.PortControlMapping),
+            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping,profile.SourcePort,profile.ResourceScope):await GatewayMapping.CreateTcp(profile.SourcePort,profile.ListenPort,log,token,profile.OrderedTcp(),profile.ResourceScope,profile.PortControlMapping),
         r=>TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new LinuxMeshTransport(Path.Combine(AppContext.BaseDirectory,"components"),r.Folder,r.Mesh,r.Target,r.Server,r.Port,r.Mapping,r.LogLevel,r.ReserveEndpoint),
         (ip,key,token)=>Quality.Serve(ip,key,token),
         LinuxFirewall.Update,

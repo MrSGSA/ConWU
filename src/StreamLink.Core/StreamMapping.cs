@@ -4,11 +4,13 @@ using System.Net.Sockets;
 
 namespace StreamLink.Core;
 
-// TCP STUN uses the actual receiver port and the ordinary kernel TCP stack.
-// Neither raw injection nor a WinDivert observer participates in this mapping.
+// Prefer an owned gateway mapping, including the retained helper-port chain
+// used by FakeTCP. Only the no-gateway fallback shares the receiver's port.
+// Both paths retain ordinary kernel TCP; the business protocol never changes.
 public sealed class StreamMapping : IMapping, IMappingRefresh
 {
-    internal sealed record Options(bool DiscoverGateway=true,TimeSpan? MaintenancePeriod=null,int InitialParallelism=2);
+    internal sealed record Options(bool DiscoverGateway=true,TimeSpan? MaintenancePeriod=null,int InitialParallelism=2,
+        Func<int,int,CancellationToken,Task<IMapping>>? GatewayFactory=null);
     Socket socket;
     readonly CancellationTokenSource stop=new();
     readonly SemaphoreSlim refresh=new(0,1);
@@ -19,7 +21,6 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     readonly string[] servers;
     readonly int port;
     IPEndPoint reflector;
-    Upnp? router;RouterMapping? rule;PortControlLease? gateway;
     Task maintaining=Task.CompletedTask;
     static int rotation;
     bool disposed,started;
@@ -27,7 +28,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     public IPAddress LocalAddress{get;}
     public IPEndPoint PublicEndpoint{get;private set;}
     public string StunServer{get;private set;}
-    public bool IsValid=>valid&&!Volatile.Read(ref disposed)&&(gateway?.Valid??observationValid);
+    public bool IsValid=>valid&&!Volatile.Read(ref disposed)&&observationValid;
     public event Action<IPEndPoint>? Changed;
     StreamMapping(Socket socket,IPEndPoint endpoint,string server,string[] servers,Action<string> log,Options options)
     {
@@ -37,13 +38,25 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
         LocalAddress=local.Address;port=local.Port;PublicEndpoint=endpoint;
         this.log=log;this.options=options;
     }
-    public static Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers=null,bool portControl=false)=>Create(port,log,token,servers,portControl,new());
-    internal static async Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers,bool portControl,Options options)
+    public static Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers=null,bool portControl=false,int sourcePort=44691,string? owner=null)=>Create(port,log,token,servers,portControl,new(),sourcePort,owner);
+    internal static async Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers,bool portControl,Options options,int sourcePort=44691,string? owner=null)
     {
+        token.ThrowIfCancellationRequested();
         if(options.DiscoverGateway) {
-            try { return await GatewayMapping.PreferUpnp(port, log, token); }
+            try {
+                IMapping? mapped=null;
+                try {
+                    // Never substitute STUN's OUTER port for an inner IGD port.
+                    // This factory retains source P and maps gateway P -> Q,
+                    // while publishing the endpoint observed for that same P.
+                    mapped=await (options.GatewayFactory?.Invoke(sourcePort,port,token)
+                        ??GatewayMapping.CreateTcp(sourcePort,port,log,token,servers,owner,portControl));
+                    token.ThrowIfCancellationRequested();
+                    return mapped;
+                } catch {if(mapped!=null)await mapped.DisposeAsync();throw;}
+            }
             catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException or HttpRequestException) {
-                log("直接 UPnP 入口本轮未就绪，继续观察真实 TCP 接收端口："+ex.GetType().Name);
+                log("TCP 网关映射未就绪，继续观察实际接收端口候选；尚未确认公网入站可达："+ex.GetType().Name);
             }
         }
         var choices=(servers??Stun.TcpServers).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
@@ -60,9 +73,8 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                 mapping=new(socket,opened.Public,opened.Server,choices,log,options);socket=null;
                 // A candidate is never described as proven inbound reachability.
                 log("真实 TCP STUN 已取得接收端口候选 "+mapping.PublicEndpoint+"，等待对端认证验证");
-                if(options.DiscoverGateway)await mapping.TryGateway(port,portControl,round.Token);
                 token.ThrowIfCancellationRequested();
-                using(var check=CancellationTokenSource.CreateLinkedTokenSource(round.Token)){check.CancelAfter(2500);var current=await Pulse(mapping.socket,check.Token);if(mapping.gateway==null)mapping.PublicEndpoint=current;}
+                using(var check=CancellationTokenSource.CreateLinkedTokenSource(round.Token)){check.CancelAfter(2500);mapping.PublicEndpoint=await Pulse(mapping.socket,check.Token);}
                 token.ThrowIfCancellationRequested();
                 return mapping;
             }catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException or ArgumentException){
@@ -70,11 +82,6 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             }catch{if(mapping!=null)await mapping.DisposeAsync();socket?.Dispose();throw;}
         }
         token.ThrowIfCancellationRequested();
-        if(portControl&&options.DiscoverGateway) {
-            try { return await GatewayMapping.Create(PortControlRoute.LocalSources,
-                (local,ct)=>PortControlLease.Create(local,port,0,PortMappingProtocol.Tcp,ct),log,token); }
-            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException){last=ex;}
-        }
         throw new IOException("真实 TCP 入口未就绪；请检查 STUN、端口或使用已有入口",last);
     }
     sealed record Observation(Socket Socket,IPEndPoint Public,string Server);
@@ -134,30 +141,6 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
         byte[] response=new byte[20+length];header.CopyTo(response,0);await stream.ReadExactlyAsync(response.AsMemory(20),token);
         return Stun.Parse(response,request);
     }
-    async Task TryGateway(int port,bool portControl,CancellationToken token)
-    {
-        try{await foreach(var service in Upnp.DiscoverServices(LocalAddress,token)){
-            var candidate=new Upnp(service);RouterMapping? requested=null;
-            try{
-                string external=await candidate.ExternalAddress(token);
-                if(!IPAddress.TryParse(external,out var address)||address.AddressFamily!=AddressFamily.InterNetwork||address.Equals(IPAddress.Any)){candidate.Dispose();continue;}
-                requested=new(PublicEndpoint.Port,port,LocalAddress.ToString(),"TCP","ConWU-stream-"+Guid.NewGuid().ToString("N"));
-                await candidate.Add(requested,token);router=candidate;rule=requested;
-                log(address.Equals(PublicEndpoint.Address)
-                    ?"UPnP 已维护真实 TCP 接收端口的入站规则；候选仍由对端认证验证"
-                    :"UPnP 已维护本层入站规则；外层候选继续使用实际 TCP STUN 观察，不拼接内外层端口，仍需对端认证验证");
-                return;
-            }catch(Exception ex)when(ex is IOException or HttpRequestException or OperationCanceledException){
-                if(requested!=null)try{await candidate.RemoveOwned(requested,CancellationToken.None);}catch{}candidate.Dispose();
-                if(token.IsCancellationRequested)break;
-            }
-        }}catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException or HttpRequestException){}
-        if(portControl&&!token.IsCancellationRequested){
-            PortControlLease? opening=null;
-            try{opening=await PortControlLease.Create(LocalAddress,port,0,PortMappingProtocol.Tcp,token);PublicEndpoint=TcpMapping.GatewayCandidate(opening);gateway=opening;}
-            catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException){if(opening!=null)await opening.DisposeAsync();}
-        }
-    }
     public Task Maintain(CancellationToken token)
     {
         lock(lifecycle) {
@@ -174,30 +157,13 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     async Task Run(CancellationToken token)
     {
         using var linked=CancellationTokenSource.CreateLinkedTokenSource(token,stop.Token);
-        Task? gatewayWork=gateway?.Maintain(linked.Token)??(router!=null?RenewRouter(linked.Token):null);
         var observing=Observe(linked.Token);
         try {
-            if(gatewayWork==null)await observing;
-            else await await Task.WhenAny(observing,gatewayWork);
+            await observing;
         } finally {
             valid=false;linked.Cancel();
-            try {await Task.WhenAll(gatewayWork==null?[observing]:[observing,gatewayWork]);}
+            try {await observing;}
             catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException){}
-        }
-    }
-    async Task RenewRouter(CancellationToken token)
-    {
-        long renewed=Environment.TickCount64;int failures=0;var delay=TimeSpan.FromSeconds(60);
-        while(true) {
-            // The owned UPnP grant lasts 180 seconds. Observation failures must
-            // not stop renewal or repeatedly delete and recreate this grant.
-            await Task.Delay(delay,token);
-            try { await router!.Add(rule!,token);renewed=Environment.TickCount64;failures=0;delay=TimeSpan.FromSeconds(60); }
-            catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or HttpRequestException or OperationCanceledException){
-                if(Environment.TickCount64-renewed>=180000)throw new IOException("本层 UPnP 租约已到期，需要重新准备入口",ex);
-                delay=TimeSpan.FromSeconds(Math.Min(20,5<<Math.Min(failures++,2)));
-                log("本层 UPnP 续租暂未确认，保留尚未到期的规则并重试；已有直连继续由对端保活判断");
-            }
         }
     }
     async Task Observe(CancellationToken token)
@@ -219,7 +185,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                     connected=true;
                     log("真实 TCP STUN 观察已恢复，继续使用原接收端口");
                 }
-                var endpoint=gateway?.External??seen;
+                var endpoint=seen;
                 bool changed=!endpoint.Equals(PublicEndpoint);
                 if(changed)PublicEndpoint=endpoint;
                 observationValid=true;
@@ -270,8 +236,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             try{await maintaining;}catch(Exception ex)when(ex is IOException or SocketException or OperationCanceledException or ObjectDisposedException){}
         } finally {
             socket.Dispose();
-            try{if(gateway!=null)await gateway.DisposeAsync();if(router!=null&&rule!=null)await router.RemoveOwned(rule,CancellationToken.None);}
-            finally{router?.Dispose();stop.Dispose();refresh.Dispose();}
+            stop.Dispose();refresh.Dispose();
         }
     }
 }

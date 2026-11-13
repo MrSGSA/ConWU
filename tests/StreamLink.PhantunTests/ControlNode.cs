@@ -10,7 +10,7 @@ using StreamLink.Service;
 // private temporary profile and are removed when the fixture stops.
 static class ControlNode
 {
-    sealed record Input(bool Host,string Components,string HostIp,int Port,string Mode="phantun");
+    sealed record Input(bool Host,string Components,string HostIp,int Port,string Mode="phantun",bool Autonomous=false,int SourcePort=0,int LifetimeSeconds=300);
     sealed class Adapter:IPacketAdapter
     {
         public readonly BlockingCollection<byte[]> Outgoing=new();
@@ -22,6 +22,9 @@ static class ControlNode
     public static async Task Run()
     {
         var input=JsonSerializer.Deserialize<Input>(await Console.In.ReadLineAsync()??throw new IOException("fixture config missing"),new JsonSerializerOptions{PropertyNameCaseInsensitive=true})!;
+        if(input.LifetimeSeconds is<30 or>600)throw new IOException("bounded control fixture lifetime required");
+        using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(input.LifetimeSeconds));
+        using var resolver=new ExistingEntryResolver();
         string root=Path.Combine(Path.GetTempPath(),"conwu-phantun-control-"+Guid.NewGuid().ToString("N"));
         string? previous=Environment.GetEnvironmentVariable("STREAMLINK_PROFILE_ROOT");
         Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",root);
@@ -30,15 +33,16 @@ static class ControlNode
         try{
             var store=new ProfileStore(root);store.AuthorizeUiUser(user);
             var profile=new DeviceProfile{DeviceName=input.Host?"Phantun Host":"Phantun Guest",ListenPort=input.Port+(input.Host?0:2),SourcePort=input.Port+(input.Host?1:3)};
-            ConnectionSettings.Apply(profile,new(PathSelection:input.Mode+"-only",ListenPort:profile.ListenPort,SourcePort:profile.SourcePort){ConnectionSource="existing",DirectMode=true,DiscoveryMode="existing",ExistingEntries=input.Host?[new(0,input.HostIp+":"+input.Port)]:[]});store.Save(profile);
+            if(input.Host&&input.SourcePort>0)profile.SourcePort=input.SourcePort;
+            ConnectionSettings.Apply(profile,new(PathSelection:input.Mode+"-only",ListenPort:profile.ListenPort,SourcePort:profile.SourcePort){ConnectionSource=input.Autonomous?"custom":"existing",DirectMode=true,DiscoveryMode=input.Autonomous?"direct":"existing",ExistingEntries=input.Host&&!input.Autonomous?[new(0,input.HostIp+":"+input.Port)]:[]});store.Save(profile);
             Task<IPacketAdapter> OpenAdapter(){
                 var adapter=new Adapter();adapters.Enqueue(adapter);return Task.FromResult<IPacketAdapter>(adapter);
             }
-            var runtime=new MeshRuntimeServices(m=>new DirectMeshDiscovery(m),_=>OpenAdapter(),(_,_,_)=>throw new IOException("fixture prohibits autonomous STUN"),r=>{
+            var runtime=new MeshRuntimeServices(m=>new DirectMeshDiscovery(m),_=>OpenAdapter(),(p,log,ct)=>input.Autonomous&&input.Host?GatewayMapping.CreateTcp(p.SourcePort,p.ListenPort,Console.Error.WriteLine,ct,p.OrderedTcp(),p.ResourceScope,p.PortControlMapping):throw new IOException("fixture prohibits guest STUN"),r=>{
                 var carrier=new PacketCarrierTransport(input.Components,r.Folder,r.Mesh,r.Target,r.Server,r.Port,"info",r.ReserveEndpoint);natives.Add(carrier);return carrier;
             },(_,_,token)=>Task.Delay(Timeout.Infinite,token),(_,_,_)=>{},(_,_)=>{},Path.Combine(root,"sessions")){
-                Candidates=(_,_,_,_)=>throw new IOException("fixture prohibits another candidate factory"),NetworkWake=()=>new MeshNetworkWake(false),
-                ResolveEntries=(entries,_,_)=>Task.FromResult(entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,e.Source,[input.HostIp+":"+input.Port],"")).ToArray())
+                Candidates=(_,_,_,_)=>Task.FromResult<IMeshCandidateFactory?>(null),NetworkWake=()=>new MeshNetworkWake(false),
+                ResolveEntries=(entries,mode,ct)=>input.Autonomous?resolver.Resolve(entries,mode,ct):Task.FromResult(entries.Select((e,i)=>new EntryResolution(e.PeerSlot,i,e.Source,[input.HostIp+":"+input.Port],"")).ToArray())
             };
             runtime=runtime with{ProfileAdapter=(_,_,_)=>OpenAdapter()};
             void Start(){worker=new(store,runtime);worker.EnablePairNetworks();worker.StartLocal();}
@@ -51,7 +55,7 @@ static class ControlNode
             }
             void Print(object value)=>Console.WriteLine(JsonSerializer.Serialize(value));
             Print(new{eventName="ready",pid=Environment.ProcessId});
-            while(await Console.In.ReadLineAsync() is string line){
+            while(await Console.In.ReadLineAsync().WaitAsync(deadline.Token) is string line){
                 using var parsed=JsonDocument.Parse(line);var command=parsed.RootElement;string action=command.GetProperty("action").GetString()!;
                 if(action=="stop"){Print(new{eventName="stopping"});return;}
                 if(action=="status"){Print(new{eventName="status",state=Public(await Status())});continue;}

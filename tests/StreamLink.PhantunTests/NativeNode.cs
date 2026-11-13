@@ -2,31 +2,41 @@ using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using StreamLink.Core;
 using StreamLink.Service;
 
-// Invoked only by the namespace integration harness. Ephemeral test identities
+// Invoked only by isolated native integration harnesses. Ephemeral test identities
 // arrive on stdin; no production profile, TUN or configuration is opened.
 static class NativeNode
 {
-    sealed record Input(bool Host,MeshProfile[] Meshes,string Components,string HostIp,int Port);
+    sealed record Input(bool Host,MeshProfile[] Meshes,string Components,string HostIp,int Port,bool Autonomous=false,int SourcePort=0,int LifetimeSeconds=300);
     sealed class Adapter(string local,string peer):IPacketAdapter
     {
         readonly BlockingCollection<byte[]> queue=new(256);
         readonly byte[] localIp=IPAddress.Parse(local).GetAddressBytes(),peerIp=IPAddress.Parse(peer).GetAddressBytes();
-        long received,invalid;int disposed;
+        readonly ConcurrentDictionary<long,byte> sequences=new();
+        long received,invalid,duplicates;int disposed;
         public bool Offer(byte[] packet)=>queue.TryAdd(packet);
         public int Read(byte[] buffer){if(!queue.TryTake(out var packet,30))return 0;packet.CopyTo(buffer,0);return packet.Length;}
         public bool Write(byte[] packet){
             bool valid=packet.Length==1200&&packet.AsSpan(12,4).SequenceEqual(peerIp)&&packet.AsSpan(16,4).SequenceEqual(localIp)&&packet.AsSpan(44).IndexOfAnyExcept((byte)0x6d)<0;
-            if(valid)Interlocked.Increment(ref received);else Interlocked.Increment(ref invalid);return valid;
+            if(valid){Interlocked.Increment(ref received);if(!sequences.TryAdd(BinaryPrimitives.ReadInt64LittleEndian(packet.AsSpan(28)),0))Interlocked.Increment(ref duplicates);}else Interlocked.Increment(ref invalid);return valid;
         }
-        public object Status()=>new{received=Interlocked.Read(ref received),invalid=Interlocked.Read(ref invalid)};
-        public void Reset(){Interlocked.Exchange(ref received,0);Interlocked.Exchange(ref invalid,0);}
+        public object Status()=>new{received=Interlocked.Read(ref received),unique=sequences.Count,invalid=Interlocked.Read(ref invalid),duplicates=Interlocked.Read(ref duplicates)};
+        public void Reset(){sequences.Clear();Interlocked.Exchange(ref received,0);Interlocked.Exchange(ref invalid,0);Interlocked.Exchange(ref duplicates,0);}
         public void Dispose(){if(Interlocked.Exchange(ref disposed,1)==0)queue.CompleteAdding();}
     }
     static void Print(object value)=>Console.WriteLine(JsonSerializer.Serialize(value));
+    sealed class LoadTiming:IDisposable
+    {
+        readonly bool changed;
+        [DllImport("winmm.dll")]static extern uint timeBeginPeriod(uint period);
+        [DllImport("winmm.dll")]static extern uint timeEndPeriod(uint period);
+        public LoadTiming(bool precise){changed=precise&&OperatingSystem.IsWindows()&&timeBeginPeriod(1)==0;}
+        public void Dispose(){if(changed)timeEndPeriod(1);}
+    }
     static string[] CarrierLogs(string root){
         var lines=new List<string>();if(!Directory.Exists(root))return [];
         foreach(string path in Directory.EnumerateFiles(root,"*.log",SearchOption.AllDirectories).Take(12)){
@@ -37,6 +47,9 @@ static class NativeNode
     {
         var input=JsonSerializer.Deserialize<Input>(await Console.In.ReadLineAsync()??throw new IOException("node config missing"),new JsonSerializerOptions{PropertyNameCaseInsensitive=true})!;
         if(input.Meshes.Length!=2||input.Meshes.Any(m=>!TransportModes.PacketCarrier(m.Pair.Mode)))throw new IOException("isolated two-network fixture required");
+        if(input.LifetimeSeconds is <30 or>600||input.Port is <1024 or>65530)throw new IOException("bounded isolated node lifetime and port required");
+        using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(input.LifetimeSeconds));
+        IMapping? mapping=null;Task mappingWork=Task.CompletedTask;
         string root=Path.Combine(Path.GetTempPath(),"conwu-phantun-node-"+Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);Environment.SetEnvironmentVariable("STREAMLINK_PROFILE_ROOT",root);
         var adapters=new Adapter[2];var routers=new MeshRouter[2];var transports=new IMeshTransport?[2];
@@ -61,9 +74,13 @@ static class NativeNode
                     routers[index].SetLegacyListenerControl(true);
                 }else OpenClient(index);
             }
-            object Status()=>new{host=input.Host,serverStarts,nativePids=native.Where(n=>!n.Exited).Select(n=>n.ProcessId).ToArray(),nativeFailures=native.Where(n=>n.Exited).Select(n=>n.FailureReason).ToArray(),carrierLogs=CarrierLogs(root),networks=Enumerable.Range(0,2).Select(i=>new{index=i,healthy=routers[i].HasHealthyPath(Peer(i)),adapter=adapters[i].Status(),transport=routers[i].Status().Single().ActualTransport,router=routers[i].Status().Single(),pump=routers[i].Completion.IsFaulted?routers[i].Completion.Exception?.ToString():"running"})};
-            Print(new{eventName="ready",pid=Environment.ProcessId,status=Status()});
-            while(await Console.In.ReadLineAsync() is string line){
+            if(input.Host&&input.Autonomous){
+                mapping=await GatewayMapping.CreateTcp(input.SourcePort>0?input.SourcePort:input.Port+1,input.Port,Console.Error.WriteLine,deadline.Token,owner:Guid.NewGuid().ToString("N"));
+                mappingWork=mapping.Maintain(deadline.Token);
+            }
+            object Status()=>new{host=input.Host,serverStarts,nativePids=native.Where(n=>!n.Exited).Select(n=>n.ProcessId).ToArray(),nativeFailures=native.Where(n=>n.Exited).Select(n=>n.FailureReason).ToArray(),carrierLogs=CarrierLogs(root),mapping=mapping==null?null:new{kind=mapping.GetType().Name,valid=mapping.IsValid,endpoint=mapping.PublicEndpoint.ToString(),helper=mapping is TcpMapping tcp?tcp.HelperResource.Local:"",maintaining=!mappingWork.IsCompleted},networks=Enumerable.Range(0,2).Select(i=>new{index=i,healthy=routers[i].HasHealthyPath(Peer(i)),adapter=adapters[i].Status(),transport=routers[i].Status().Single().ActualTransport,router=routers[i].Status().Single(),pump=routers[i].Completion.IsFaulted?routers[i].Completion.Exception?.ToString():"running"})};
+            Print(new{eventName="ready",pid=Environment.ProcessId,endpoint=mapping?.PublicEndpoint.ToString()??input.HostIp+":"+input.Port,status=Status()});
+            while(await Console.In.ReadLineAsync().WaitAsync(deadline.Token) is string line){
                 using var document=JsonDocument.Parse(line);var command=document.RootElement;string action=command.GetProperty("action").GetString()!;
                 int index=command.TryGetProperty("index",out var item)?item.GetInt32():0;
                 if(index is<0 or>1)throw new IOException("invalid fixture index");
@@ -84,6 +101,7 @@ static class NativeNode
                     case "send":{
                         int seconds=command.GetProperty("seconds").GetInt32(),mbps=command.GetProperty("mbps").GetInt32();
                         if(seconds is<1 or>20||mbps is<1 or>50)throw new IOException("bounded fixture load required");
+                        using var timing=new LoadTiming(command.TryGetProperty("finePacing",out var fine)&&fine.GetBoolean());
                         var mesh=input.Meshes[index];string peer=MeshAddressing.Address(mesh.Pair.Network,mesh.Directory!.Members.Single(m=>m.Slot!=mesh.Self.Slot));
                         var template=Packet(mesh.LocalIp,peer);long sent=0,rejected=0;double credit=0;
                         long began=Stopwatch.GetTimestamp(),credited=began;
@@ -104,6 +122,9 @@ static class NativeNode
                 }
             }
         }finally{
+            deadline.Cancel();
+            if(mapping!=null)await mapping.DisposeAsync();
+            try{await mappingWork;}catch(Exception error)when(error is OperationCanceledException or IOException){}
             foreach(var transport in transports)transport?.Dispose();
             foreach(var router in routers)if(router!=null)await router.DisposeAsync();
             foreach(var adapter in adapters)adapter?.Dispose();

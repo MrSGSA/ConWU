@@ -10,6 +10,7 @@ public sealed partial class ControlWorker : BackgroundService
     readonly bool networkContext;
     PairNetworkWorkspace? workspace;
     bool automaticCoordinator;
+    readonly Lazy<ReleaseUpdateMonitor> updates;
     readonly object sync = new();
     readonly Queue<UiLogEntryDto> logs = new();
     readonly string logEpoch = Guid.NewGuid().ToString("N");
@@ -39,9 +40,10 @@ public sealed partial class ControlWorker : BackgroundService
     internal ControlWorker(MeshRuntimeServices services):this(new ProfileStore(),services) { }
     public ControlWorker():this(new ProfileStore()){}
     public ControlWorker(bool pairNetworks):this(new ProfileStore(),enableWorkspace:pairNetworks){}
-    internal ControlWorker(ProfileStore profileStore,MeshRuntimeServices? services=null,bool isolatedNetwork=false,bool enableWorkspace=false)
+    internal ControlWorker(ProfileStore profileStore,MeshRuntimeServices? services=null,bool isolatedNetwork=false,bool enableWorkspace=false,ReleaseUpdateMonitor? updateMonitor=null)
     {
         store=profileStore;meshRuntime=services;networkContext=isolatedNetwork;
+        updates=new(()=>updateMonitor??new());
         pkarrCheckpoints=new(()=>new(()=>store.ReadPrivate<PkarrCheckpoint[]>("pkarr-checkpoints.protected")??[],value=>store.WritePrivate("pkarr-checkpoints.protected",value)));
         uiEntryResolver=new(()=>new(CreatePkarrClient));
         lease = new FileStream(Path.Combine(store.DirectoryPath, "runtime.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
@@ -416,10 +418,11 @@ public sealed partial class ControlWorker : BackgroundService
         if(workspace!=null)workspace.Start();
         else{if (profile.Enabled) Begin();StartEntryAdmission();}
         initialized=true;
+        if(!networkContext&&!WindowsInstance.IsValidation)_=updates.Value.Check();
         PublishReply();
     }
     public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopPkarr();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
-    public override void Dispose() {BeginApplicationStop();if(workspace?.HasOutstandingOwnership==true)Volatile.Write(ref resourceShutdownUnproven,true);workspace?.Dispose();base.Dispose();DisposeControlResources();}
+    public override void Dispose() {BeginApplicationStop();if(updates.IsValueCreated)updates.Value.Dispose();if(workspace?.HasOutstandingOwnership==true)Volatile.Write(ref resourceShutdownUnproven,true);workspace?.Dispose();base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StartLocal();

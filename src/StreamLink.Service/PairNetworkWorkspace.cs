@@ -151,7 +151,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             peers.Sum(p=>p.Peer.SentBytes),peers.Sum(p=>p.Peer.ReceivedBytes),peers);
         return chosen with{Configurations=ConfigurationSnapshot(),WorkspaceVersion=2,SelectedNetworkId=selected,Networks=rows,Aggregate=aggregate,
             NetworkDefaults=new(){DirectMode=true,DiscoveryMode="pkarr",PkarrPublish=true,TcpStun=Stun.TcpServers.ToArray(),UdpStun=Stun.UdpServers.ToArray()},
-            DeviceSettings=defaults.Settings,DeviceSettingsRevision=defaults.SettingsRevision,Coordinator=defaults.Coordinator,Desktop=defaults.Desktop,
+            DeviceSettings=defaults.Settings,DeviceSettingsRevision=defaults.SettingsRevision,Coordinator=defaults.Coordinator,Desktop=defaults.Desktop,Update=defaults.Update,
             DeviceName=defaults.DeviceName,LogLevel=defaults.LogLevel,ServiceReady=defaults.ServiceReady,
             Logs=defaults.Logs,LogEntries=defaults.LogEntries};
     }

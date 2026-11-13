@@ -197,6 +197,9 @@ async function api(path,body,valid=()=>true,sessionRetried=false){
 
 async function command(method,extra={},quiet=false){
  if(busy)throw Error('上一项操作仍在进行，请稍候。');if(!online)throw Error('请先恢复面板与后台的连接。');
+ // An operation remains bound to the network submitted with it. The user may
+ // select another network while it runs; polling must keep the original ID.
+ const operationNetwork=extra.networkId??(typeof selectedNetwork==='string'?selectedNetwork:undefined);
  busy=true;busyKind=method==='network'&&extra.network?.action==='settings'?'settings-save':quiet?'background':'action';generation++;joinError='';if($('join-error'))$('join-error').textContent='';controls();if(!quiet)notice(method==='register-service'?'请在 Windows 授权窗口确认服务操作…':'正在处理，请稍候…');
  try{
   const operationId=crypto.randomUUID();let reply;
@@ -213,7 +216,7 @@ async function command(method,extra={},quiet=false){
    const until=Date.now()+100000;
    while(Date.now()<until){
     await new Promise(r=>setTimeout(r,700));let progress;
-    try{progress=await api('/api/status?operation='+encodeURIComponent(operation.id));}
+    try{progress=await api('/api/status?operation='+encodeURIComponent(operation.id)+(operationNetwork?'&networkId='+encodeURIComponent(operationNetwork):''));}
     catch(error){
      if(!error.retryable)throw error;
      // Retry observation only. An accepted mutation must never be resubmitted.

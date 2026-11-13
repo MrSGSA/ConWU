@@ -30,12 +30,23 @@ public sealed partial class ControlWorker
              InactiveEntrySlots=PublicSettings(p).ExistingEntries.Where(e=>e.PeerSlot>0&&ActiveSavedPeerSlot(p,e.PeerSlot)==0).Select(e=>e.PeerSlot).Distinct().ToArray(),
              NetworkEstablishedAt=p.NetworkEstablishedAt,NetworkCreatedHere=p.NetworkCreatedHere,EntryResolutions=Volatile.Read(ref uiEntryResolutions),EntryPreparation=p.Enabled&&meshRunner?.EntryPreparation is {} entry?entry with{Detail=PublicText(entry.Detail,p,400)}:null,Desktop=networkContext?null:StartupSettings.Read(full.ServiceReady),Coordinator=Volatile.Read(ref coordinatorStatus),
 
-             QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),LogEntries=Volatile.Read(ref uiLogEntries),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger)};
+             QualityText=full.Quality.Length>0?PublicText(full.Quality,p,400):"质量尚未测量",LastQuality=Volatile.Read(ref lastQuality),Logs=full.Logs.TakeLast(40).ToArray(),LogEntries=Volatile.Read(ref uiLogEntries),Operation=PublicOperation(full.Operation,p),Stages=Volatile.Read(ref stageLedger),Update=updates.IsValueCreated?updates.Value.Status:null};
     }
     static ConnectionProgress? PublicProgress(ConnectionProgress? progress,DeviceProfile profile) => progress == null ? null :
         progress with { Detail = PublicText(progress.Detail,profile,400) };
     internal Task<UiControlReply> HandleUi(UiControlRequest request,string callerSid,CancellationToken token)
-        =>workspace?.Handle(request,callerSid,token)??HandleSingleUi(request,callerSid,token);
+    {
+        if(request.Method=="update-check"){
+            if(store.AuthorizedUiUser()!=callerSid)return Task.FromResult(new UiControlReply(false,"该本机用户未获UI控制授权",null));
+            if(request.Patch!=null||request.Network!=null||request.Configuration!=null||request.SettingsBatch!=null)
+                return Task.FromResult(new UiControlReply(false,"更新检查不接受网络或设置修改",UiSnapshot()));
+            token.ThrowIfCancellationRequested();_=updates.Value.Check(force:true);
+            return Task.FromResult(new UiControlReply(true,"",UiSnapshot() with{Update=updates.Value.Status},Operation:
+                new(request.OperationId,"update-check","已开始检查更新",true,false,"")));
+        }
+        if(request.Method=="status"&&!networkContext&&!WindowsInstance.IsValidation&&store.AuthorizedUiUser()==callerSid)_=updates.Value.Check();
+        return workspace?.Handle(request,callerSid,token)??HandleSingleUi(request,callerSid,token);
+    }
     internal async Task<UiControlReply> HandleSingleUi(UiControlRequest request,string callerSid,CancellationToken token)
     {
         if(store.AuthorizedUiUser()!=callerSid)return new(false,"该本机用户未获UI控制授权",null);
@@ -61,7 +72,7 @@ public sealed partial class ControlWorker
                 if(caller!=allowed)return;
                 authorized=true;stage="read-request";
                 var request=await ServiceProtocol.Read<UiControlRequest>(pipe,deadline.Token);
-                method=request.Method is "status" or "network" or "patch" or "start" or "stop" or "retry" or "cancel" or "check" or "quality"?request.Method:"unknown";
+                method=request.Method is "status" or "network" or "patch" or "start" or "stop" or "retry" or "cancel" or "check" or "quality" or "update-check"?request.Method:"unknown";
                 stage="handle-request";
                 handledAt=elapsed.ElapsedMilliseconds;
                 // Cancellation callbacks, DPAPI and Windows resource operations

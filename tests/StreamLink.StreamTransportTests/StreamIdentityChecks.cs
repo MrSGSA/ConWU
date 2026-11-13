@@ -28,6 +28,9 @@ static class StreamIdentityChecks
                     check(Directory.GetFiles(journal,"owner.json",SearchOption.AllDirectories).Length==1,"Windows stream listener records its exact firewall owner and recovery preserves a live lease");
                 }
                 check(!Directory.EnumerateDirectories(journal).Any(),"Windows stream listener releases its firewall ownership journal on normal shutdown");
+                using(var access=WindowsHost.AllowStreamListener(48446,journal,Environment.ProcessPath!.Replace('\\','/')))
+                    check(Directory.GetFiles(journal,"owner.json",SearchOption.AllDirectories).Length==1,"Windows firewall accepts a forward-slash executable path after exact application normalization");
+                check(!Directory.EnumerateDirectories(journal).Any(),"normalized executable rule and ownership journal are released together");
             }
         }finally{if(Directory.Exists(folder))Directory.Delete(folder,true);}
     }

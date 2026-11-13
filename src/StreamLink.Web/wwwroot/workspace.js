@@ -94,7 +94,9 @@ joinMethodHelp=function(){const existing=saved.network.mode==='existing';if(!exi
 const originalBindJoinInput=bindJoinInput;
 bindJoinInput=function(){const direct=pairingKind()==='invite',input=$(direct?'join-invite':'join-code');if(!input)return;input.oninput=()=>{if(direct)joinInviteValue=input.value;else{joinCodeValue=input.value.replace(/\D/g,'').slice(0,6);input.value=joinCodeValue;input.closest('.digits-input').querySelectorAll('.digit').forEach((e,i)=>{e.textContent=joinCodeValue[i]||'';e.classList.toggle('filled',!!joinCodeValue[i]);});}joinError='';if($('join-error'))$('join-error').textContent='';};if($('join-device-name'))$('join-device-name').oninput=e=>joinName=e.target.value;$('join-form').onsubmit=e=>{e.preventDefault();run(joinNetwork).catch(()=>{});};};
 api=async function(path,body,valid,sessionRetried){
- if(path.startsWith('/api/status')&&selectedNetwork&&!path.includes('networkId='))path+=(path.includes('?')?'&':'?')+'networkId='+encodeURIComponent(selectedNetwork);
+ // Operation queries carry the original action's scope. Omitted networkId
+ // means a workspace/device operation, independent of the current selection.
+ if(path.startsWith('/api/status')&&selectedNetwork&&!path.includes('networkId=')&&!path.includes('operation='))path+=(path.includes('?')?'&':'?')+'networkId='+encodeURIComponent(selectedNetwork);
  if(body&&path==='/api/command'){
   body={networkId:selectedNetwork,...body};
   if(body.method==='network'&&['create','create-direct','join','join-target','join-direct-short','join-invitation','join-compact','join-entry'].includes(body.network?.action))body={...body,networkId:'',network:{...body.network,configurationId:body.network.autoConfigure?'':selectedConfiguration,requestedVirtualIp:body.network.autoConfigure?'':newNetworkIp.trim(),name:body.network.name||newNetworkName}};

@@ -88,7 +88,7 @@ const check=(value,text)=>{if(!value)throw Error(text);checks.push(text);};
  const updated=await page.evaluate(()=>workspaceState.configurations);
  check(updated.length===baseline.length+1&&baseline.every(c=>JSON.stringify(updated.find(n=>n.id===c.id))===JSON.stringify(c)),'saving new independent settings leaves every earlier configuration unchanged');
  await page.locator('[data-ui-action="help-create"]').click();check((await page.locator('#help-content').innerText()).includes('在本机生成16位“直连码”。'),'creating help displays the approved instructions');await page.locator('#help-dialog [data-ui-action="close-help"]').first().click();
- await page.locator('.nav[data-page="settings"]').click();check(await page.locator('.settings-section').count()===3,'device settings retain startup, name and merged logging appearance');
+ await page.locator('.nav[data-page="settings"]').click();check(JSON.stringify(await page.locator('.settings-section h2').allTextContents())===JSON.stringify(['启动与服务','本机设备名','日志设置','软件更新']),'device settings retain startup, name, merged logging appearance and release checks');
  const before=await page.evaluate(()=>workspaceState.deviceSettings.coordinator);
  await page.locator('#device-name').fill('真实后台设置保存');await page.locator('[data-ui-key="terminal"]').selectOption('light');await page.locator('#save-device').click();await page.waitForFunction(()=>!busy&&workspaceState.deviceName==='真实后台设置保存');
  check(await page.locator('#save-device').isDisabled(),'global save clears dirty state only after the real service accepts it');

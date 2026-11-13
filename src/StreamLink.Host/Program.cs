@@ -47,6 +47,7 @@ try {
 ConWU · Linux
   run [--no-web]               运行后台；默认提供仅本机可访问的 WebUI
   status                      查看本机、成员、连接及协调状态
+  update check                检查官方正式版并显示适配的下载地址
   web                         获取本机 WebUI 的一次性登录链接
   remote-admin set <HTTPS来源> 从标准输入设置远程管理密码，重启服务生效
   remote-admin disable        关闭远程管理，重启服务生效
@@ -112,6 +113,10 @@ ConWU · Linux
         return;
     }
     if(args[0]=="web") {var result=await UnixControlProtocol.Call(new(OpenPanel:true),stop.Token);if(result.Error.Length>0)throw new IOException(result.Error);Console.WriteLine(result.Panel);return;}
+    if(args is ["update","check"]){
+        using var monitor=new ReleaseUpdateMonitor();var update=await monitor.Check(force:true,stop.Token);Print(update);
+        if(update.State=="Error")Environment.ExitCode=1;return;
+    }
     if(args[0]=="coordinator" && args.Length>=2 && args[1]!="status") {
         Print(CoordinationMaintenance.Execute(args[1..],Path.Combine(ProfileStore.Root,"coordination")));return;
     }

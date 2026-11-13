@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-android</TargetFramework>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings>
+    <SupportedOSPlatformVersion>26.0</SupportedOSPlatformVersion>
+    <ApplicationId>io.github.mrsgsa.conwu</ApplicationId>
+    <ApplicationTitle>ConWU</ApplicationTitle>
+    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationDisplayVersion>1.4.0-preview.2</ApplicationDisplayVersion>
+    <StreamLinkReleaseVersion>1.4.0-preview.2</StreamLinkReleaseVersion>
+    <RuntimeIdentifiers>android-arm64;android-x64</RuntimeIdentifiers>
+    <AndroidPackageFormats>apk</AndroidPackageFormats>
+    <EmbedAssembliesIntoApk>true</EmbedAssembliesIntoApk>
+    <PublishTrimmed>false</PublishTrimmed>
+    <RunAOTCompilation>false</RunAOTCompilation>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <!-- Keep managed JNI registration for this untrimmed preview; incremental
+         native marshal tables otherwise miss changed Activity callbacks. -->
+    <AndroidEnableMarshalMethods>false</AndroidEnableMarshalMethods>
+  </PropertyGroup>
+  <ItemGroup><ProjectReference Include="../ConWU.Mobile/ConWU.Mobile.csproj" /></ItemGroup>
+  <ItemGroup>
+    <AndroidAsset Include="../../LICENSE" Link="licenses/ConWU-MIT.txt" />
+    <AndroidAsset Include="../../docs/licenses/BouncyCastle-Cryptography-LICENSE.txt" Link="licenses/BouncyCastle-LICENSE.txt" />
+  </ItemGroup>
+</Project>

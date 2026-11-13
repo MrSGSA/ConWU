@@ -20,7 +20,7 @@ static class StreamMappingRaceChecks
             listener.Start();int port=((IPEndPoint)listener.LocalEndpoint).Port;
             try{
                 var clock=Stopwatch.StartNew();
-                await using(var mapping=await StreamMapping.Create(port,_=>{},token,[slow.Address,fast.Address],false,new(false,InitialParallelism:parallelism))){
+                await using(var mapping=await StreamMapping.Create(port,_=>{},token,[slow.Address,fast.Address],false,options:new(false,InitialParallelism:parallelism))){
                     samples.Add((parallelism,clock.Elapsed.TotalMilliseconds));
                     check(mapping.IsValid&&((StreamMapping)mapping).StunServer==fast.Address&&mapping.PublicEndpoint.Port==48011,
                         $"TCP discovery concurrency {parallelism}: unresponsive first reflector cannot mask a valid configured candidate");
@@ -43,7 +43,7 @@ static class StreamMappingRaceChecks
         await using(var healthy=new StreamMappingRecoveryChecks.Reflector(48012))
         await using(var unused=new StreamMappingRecoveryChecks.Reflector(48013)){
             int port=FreePort();
-            await using var mapping=await StreamMapping.Create(port,_=>{},token,[healthy.Address,unused.Address],false,new(false));
+            await using var mapping=await StreamMapping.Create(port,_=>{},token,[healthy.Address,unused.Address],false,options:new(false));
             check(((StreamMapping)mapping).StunServer==healthy.Address&&healthy.SourcePorts.Count==1&&unused.SourcePorts.Count==0,
                 "a promptly responding preferred reflector does not open an unnecessary speculative flow");
         }
@@ -54,14 +54,14 @@ static class StreamMappingRaceChecks
             var reflectors=new[]{a,b,c,d};
             using var cancel=CancellationTokenSource.CreateLinkedTokenSource(token);cancel.CancelAfter(650);
             bool cancelled=false;
-            try{await StreamMapping.Create(FreePort(),_=>{},cancel.Token,reflectors.Select(r=>r.Address).ToArray(),false,new(false));}
+            try{await StreamMapping.Create(FreePort(),_=>{},cancel.Token,reflectors.Select(r=>r.Address).ToArray(),false,options:new(false));}
             catch(OperationCanceledException)when(cancel.IsCancellationRequested){cancelled=true;}
             await Until(()=>reflectors.All(r=>Volatile.Read(ref r.Active)==0),token);
             check(cancelled&&a.SourcePorts.Count==1&&reflectors.Sum(r=>r.SourcePorts.Count)==2,"four configured blocked reflectors open at most two flows; cancellation joins and closes both");
         }
         await using(var unstable=new StreamMappingRecoveryChecks.Reflector(48018){Mode=4})
         await using(var valid=new StreamMappingRecoveryChecks.Reflector(48019)){
-            await using var mapping=await StreamMapping.Create(FreePort(),_=>{},token,[unstable.Address,valid.Address],false,new(false));
+            await using var mapping=await StreamMapping.Create(FreePort(),_=>{},token,[unstable.Address,valid.Address],false,options:new(false));
             await Until(()=>Volatile.Read(ref unstable.Active)==0,token);
             check(((StreamMapping)mapping).StunServer==valid.Address&&mapping.PublicEndpoint.Port==48019&&valid.Requests>=2,
                 "a first-response winner that fails its follow-up transaction is retired before another candidate is selected");

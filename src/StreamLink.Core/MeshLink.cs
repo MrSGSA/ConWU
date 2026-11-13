@@ -16,13 +16,13 @@ public sealed class MeshLink : IDisposable
     readonly object gate = new();
     readonly byte local, remote;
     readonly byte[] secret, epoch = RandomNumberGenerator.GetBytes(16);
-    AesGcm sendCipher;
-    AesGcm? receiveCipher;
+    MeshAesGcm sendCipher;
+    MeshAesGcm? receiveCipher;
     // Stream lanes have independent keys, nonces and replay windows. The
     // original lane zero is byte-for-byte compatible with existing peers.
     sealed class Lane : IDisposable
     {
-        public AesGcm? Send, Receive;
+        public MeshAesGcm? Send, Receive;
         public ulong Counter, Highest;
         public readonly ulong[] Seen = new ulong[4096];
         public void Dispose() { Send?.Dispose(); Receive?.Dispose(); }
@@ -43,10 +43,10 @@ public sealed class MeshLink : IDisposable
         if (localSlot is < 1 or > 254 || remoteSlot is < 1 or > 254 || localSlot == remoteSlot || sharedKey.Length != 32) throw new ArgumentException("链路身份无效");
         local = (byte)localSlot; remote = (byte)remoteSlot; secret = sharedKey.ToArray(); sendCipher = Cipher(epoch, local, remote);
     }
-    AesGcm Cipher(ReadOnlySpan<byte> session, int from, int to, byte lane = 0)
+    MeshAesGcm Cipher(ReadOnlySpan<byte> session, int from, int to, byte lane = 0)
     {
         byte[] key = HKDF.DeriveKey(HashAlgorithmName.SHA256, secret, 32, session.ToArray(), Encoding.ASCII.GetBytes(KeyContext(from, to, lane)));
-        try { return new AesGcm(key, 16); } finally { CryptographicOperations.ZeroMemory(key); }
+        try { return new MeshAesGcm(key); } finally { CryptographicOperations.ZeroMemory(key); }
     }
     internal static string KeyContext(int from, int to, byte lane) => $"streamlink-datagram-v4/{from}/{to}" + (lane == 0 ? "" : $"/stream-lane/{lane}");
     byte[] Encode(byte kind, ReadOnlySpan<byte> destinationEpoch, ReadOnlySpan<byte> payload, byte lane = 0)
@@ -122,7 +122,7 @@ public sealed class MeshLink : IDisposable
             // Hello cannot replace an established session or advance its replay window.
             if (kind != 1 && same && (sequence <= top && top - sequence >= (ulong)replay.Length || replay[sequence % (ulong)replay.Length] == sequence)) return new(false);
             byte[] plain = new byte[message.Length - Overhead]; Span<byte> nonce = stackalloc byte[12]; nonce.Clear(); message.Slice(40, 8).CopyTo(nonce[4..]);
-            AesGcm? temporary = null;
+            MeshAesGcm? temporary = null;
             try {
                 var cipher = same ? state == null ? receiveCipher! : state.Receive ??= Cipher(senderEpoch, remote, local, lane) : temporary = Cipher(senderEpoch, remote, local);
                 cipher.Decrypt(nonce, message.Slice(HeaderSize, plain.Length), message[^16..], plain, message[..HeaderSize]);

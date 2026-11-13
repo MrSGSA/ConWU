@@ -61,7 +61,7 @@ function networkList(host){
  return `<article class="card network-list-card" id="${host?'owned':'joined'}-networks"><div class="table-title"><h2>本机${host?'创建':'加入'}的网络</h2><span class="small">${rows.length} 个网络</span></div>${rows.length?rows.map(n=>{
   const s=n.status,p=s.peers[0],live=online&&!!p?.connected;
   const status=live?'已直连 '+p.name:!online?'状态待确认':!s.networkEnabled?'网络已停止':p?'等待 '+p.name+' 上线':'等待另一台设备加入';
-  return `<div class="list-row ${host&&n.id===ui.hostId?'selected':''}" data-network-row="${esc(n.id)}"><div class="grow">${host?`<button class="network-name-button" data-ui-action="select-host" data-network="${esc(n.id)}" title="查看直连码">${esc(n.name)}</button>`:`<strong>${esc(n.name)}</strong>`}<div class="network-local-ip">本机虚拟 IP：<span class="mono">${esc(s.virtualIp||'待分配')}</span></div><div class="network-peer"><span class="dot ${live?'good':''}"></span><span>${esc(status)}</span></div><div class="network-peer-ip">对机虚拟 IP：<span class="mono">${esc(p?.virtualIp||'待分配')}</span></div>${!s.networkEnabled?`<button class="text-btn" data-ui-action="start-network" data-network="${esc(n.id)}">连接网络</button>`:''}</div><div class="network-row-actions"><button class="btn compact" data-ui-action="open-editor" data-network="${esc(n.id)}">${icon(host?'settings':'shield')}${host?'网络设置':'查看设置'}</button><button class="text-btn danger-text" data-ui-action="remove-network" data-network="${esc(n.id)}">${host?'删除网络':'退出网络'}</button></div></div>`;
+  return `<div class="list-row ${host&&n.id===ui.hostId?'selected':''}" data-network-row="${esc(n.id)}"><div class="grow">${host?`<button class="network-name-button" data-ui-action="select-host" data-network="${esc(n.id)}" title="查看此网络的直连码">${esc(n.name)}</button>`:`<strong>${esc(n.name)}</strong>`}<div class="network-local-ip">本机虚拟 IP：<span class="mono">${esc(s.virtualIp||'待分配')}</span></div><div class="network-peer"><span class="dot ${live?'good':''}"></span><span>${esc(status)}</span></div><div class="network-peer-ip">对机虚拟 IP：<span class="mono">${esc(p?.virtualIp||'待分配')}</span></div>${!s.networkEnabled?`<button class="text-btn" data-ui-action="start-network" data-network="${esc(n.id)}">连接网络</button>`:''}</div><div class="network-row-actions">${host?`<button class="btn compact ${n.id===ui.hostId?'primary':''}" data-ui-action="select-host" data-network="${esc(n.id)}" aria-pressed="${n.id===ui.hostId}">${icon('link')}${n.id===ui.hostId?'已选择直连码':'查看直连码'}</button>`:''}<button class="btn compact" data-ui-action="open-editor" data-network="${esc(n.id)}">${icon(host?'settings':'shield')}${host?'网络设置':'查看设置'}</button><button class="text-btn danger-text" data-ui-action="remove-network" data-network="${esc(n.id)}">${host?'删除网络':'退出网络'}</button></div></div>`;
  }).join(''):`<div class="empty">${icon(host?'create':'join')}<h2>还没有${host?'创建':'加入'}网络</h2><p>${host?'在左侧创建后，会在这里显示。':'通过主机审批后，会在这里显示。'}</p></div>`}</article>`;
 }
 function currentCreateSettings(){return row(ui.hostId)?.status.settings||workspaceState?.configurations.find(c=>c.id===ui.newConfig)?.settings||newConfigurationSettings();}
@@ -98,8 +98,16 @@ function liveSettingsPage(){
    <label class="field"><span>日志等级</span><select data-ui-scope="device" data-ui-key="level">${[['error','仅错误'],['warn','警告与错误'],['info','常规信息'],['debug','详细调试'],['off','关闭记录']].map(([v,t])=>`<option value="${v}" ${d.level===v?'selected':''}>${t}</option>`).join('')}</select></label>
    <label class="field"><span>终端外观</span><select data-ui-scope="device" data-ui-key="terminal">${[['auto','跟随界面'],['dark','深色'],['light','浅色']].map(([v,t])=>`<option value="${v}" ${d.terminal===v?'selected':''}>${t}</option>`).join('')}</select></label><button class="text-btn" data-page="logs">打开日志${icon('chevron')}</button>
   </div></section>
+  <section class="settings-section"><div><h2>软件更新</h2><p class="intro">检查 ConWU 官方正式版</p></div>${updateDetails()}</section>
  </article>`;
 }
+function updateDetails(){
+ const u=workspaceState?.update;
+ const safeLink=value=>{try{const p=new URL(value);return p.protocol==='https:'&&p.hostname==='github.com'&&!p.username&&!p.password&&p.port===''&&p.pathname.startsWith('/MrSGSA/ConWU/releases/')?p.href:'';}catch{return '';}};
+ const pageUrl=safeLink(u?.releaseUrl||''),download=safeLink(u?.package?.url||'');
+ return `<div id="software-update-details" data-update-signature="${esc(updateSignature())}"><p>当前版本：<span class="mono">${esc((workspaceState?.version||'读取中').split('+')[0])}</span></p><p role="status" id="update-state">${esc(u?.message||'尚未检查更新')}</p>${u?.checkedAt?`<p class="hint">上次检查：${esc(new Date(u.checkedAt*1000).toLocaleString())}</p>`:''}<div class="row section-spacer"><button class="btn compact" data-ui-action="check-update" ${u?.state==='Checking'?'disabled':''}>${icon('refresh')}${u?.state==='Checking'?'正在检查…':'检查更新'}</button>${u?.updateAvailable&&download?`<a class="btn primary compact" href="${esc(download)}" target="_blank" rel="noopener noreferrer">下载 ${esc(u.latestVersion)}</a>`:''}${pageUrl?`<a class="text-btn" href="${esc(pageUrl)}" target="_blank" rel="noopener noreferrer">版本说明</a>`:''}</div><p class="hint">更新检查不会自动安装或更改设置。</p></div>`;
+}
+function updateSignature(){const u=workspaceState?.update;return JSON.stringify([workspaceState?.version,u?.state,u?.message,u?.latestVersion,u?.checkedAt,u?.updateAvailable,u?.releaseUrl,u?.package?.url]);}
 function coordinationPage(){
  const host=deviceSettings().coordinator||{},status=workspaceState.coordinator,clients=status?.clients||[];
  const running=online&&status?.running;
@@ -127,9 +135,9 @@ function renderCoordinatorEditor(){
   ${readRows([['本机证书指纹',workspaceState.coordinator?.certificatePin||'尚未启用 HTTPS 监听']])}`;
  controls();
 }
-async function saveCoordinatorSettings(settings){
+async function saveCoordinatorSettings(settings,quiet=false){
  const action={action:'settings',settings:{...deviceSettings(),coordinator:settings},expectedRevision:workspaceState.deviceSettingsRevision,confirmReplace:true};
- await command('save-settings',{networkId:'',settingsBatch:{device:action,networks:[]}});
+ await command('save-settings',{networkId:'',settingsBatch:{device:action,networks:[]}},quiet);
 }
 async function toggleCoordinator(enabled){
  const draft=clone(ui.coordination),base=ui.coordinationBase;
@@ -144,7 +152,7 @@ async function saveCoordinator(){
  if(!/^\d+$/.test(port)||Number(port)<1024||Number(port)>65535)throw Error('监听端口需为 1024–65535。');
  if(!!settings.certificateFile.trim()!==!!settings.certificateKeyFile.trim())throw Error('证书与私钥需要同时填写，也可以同时留空。');
  const address=new URL(settings.listenUrl);address.port=String(Number(port));
- await saveCoordinatorSettings({...settings,listenUrl:address.href,certificateFile:settings.certificateFile.trim(),certificateKeyFile:settings.certificateKeyFile.trim()});
+ await saveCoordinatorSettings({...settings,listenUrl:address.href,certificateFile:settings.certificateFile.trim(),certificateKeyFile:settings.certificateKeyFile.trim()},true);
  ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);renderCoordinatorEditor();render();notify('本机协调设置已保存');
 }
 function sampleTraffic(next){const now=performance.now(),old=ui.sample,a=next.aggregate,peers=new Map(all().flatMap(n=>(n.status.peers||[]).map(p=>[n.id+':'+p.slot,p])));if(!a)return;const dt=old?(now-old.time)/1000:0,valid=old&&dt>=.1&&dt<=10;ui.rates.clear();if(valid)for(const [id,p]of peers){const q=old.peers.get(id);if(q&&p.sentBytes>=q.sentBytes&&p.receivedBytes>=q.receivedBytes)ui.rates.set(id,{up:(p.sentBytes-q.sentBytes)/dt,down:(p.receivedBytes-q.receivedBytes)/dt});}if(valid&&a.sentBytes>=old.sent&&a.receivedBytes>=old.received)ui.chart.push({time:now,up:(a.sentBytes-old.sent)/dt,down:(a.receivedBytes-old.received)/dt});ui.chart=ui.chart.filter(p=>now-p.time<3600000);ui.sample={time:now,sent:a.sentBytes,received:a.receivedBytes,peers};}
@@ -187,6 +195,7 @@ updateShell=function(){
  $('app-version').textContent=workspaceState?.version?'v'+workspaceState.version.split('+')[0]:'';
 };
 controls=function(){
+ const updateRoot=$('software-update-details');if(updateRoot&&updateRoot.dataset.updateSignature!==updateSignature())updateRoot.outerHTML=updateDetails();
  const ready=online&&!expired&&state?.serviceReady&&!busy&&!ui.preparingCommand;
  for(const b of document.querySelectorAll('[data-ui-action]')){
   const action=b.dataset.uiAction;
@@ -194,6 +203,8 @@ controls=function(){
   else if(['range-60','range-3600'].includes(action))b.disabled=false;
   else b.disabled=!ready;
  }
+ for(const b of document.querySelectorAll('[data-ui-action="close-coordination-settings"]'))b.disabled=!!ui.savingCoordination;
+ const updateButton=document.querySelector('[data-ui-action="check-update"]');if(updateButton)updateButton.disabled=!ready||workspaceState?.update?.state==='Checking';
  if($('save-device')){
   const changed=!same(ui.device,ui.deviceBase);$('save-device').disabled=!ready||!changed;
   $('revert-device').disabled=!!ui.savingDevice||!changed;$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
@@ -328,21 +339,41 @@ function openEditor(id=''){
 }
 function editorChanged(){return !!ui.editor&&(!same(saved,drafts)||newNetworkIp!==ui.editor.baseIp||!ui.editor.id&&ui.editor.ipMode!==ui.editor.baseIpMode||configurationName.trim()!==baseConfigurationName);}
 async function closeEditor(){if(!ui.editor||ui.editor.saving)return;if(!ui.editor.readOnly&&editorChanged()&&!await confirmAction('放弃未保存的设置？','已保存设置保持不变。','放弃修改'))return;if(!ui.editor.readOnly){configurationDrafts.delete(selectedConfiguration||'new');newNetworkIp=ui.editor.baseIp;drafts=clone(saved);configurationName=baseConfigurationName;}$('network-dialog').close();ui.editor=null;render();}
+function showDialogError(dialogId,errorId,error,focus){
+ const dialog=$(dialogId),target=$(errorId);if(!dialog.open||!target)return;
+ target.textContent=error.message||String(error);
+ if(focus?.isConnected&&dialog.contains(focus)&&!focus.disabled)focus.focus({preventScroll:true});
+ target.scrollIntoView({block:'nearest'});
+}
+async function dialogAction(action,dialogId,errorId,current,focus){
+ try{return await action();}catch(error){
+  // Only the action's original dialog owns this error. A delayed address test
+  // must not report against edited sources or a subsequently opened dialog.
+  if(current())showDialogError(dialogId,errorId,error,focus);
+  if(expired)throw error; // Session expiration also retains its global notice.
+ }
+}
+const entryTestSource=()=>JSON.stringify([drafts.network.mode,drafts.network.entries.local]);
+function editorAction(action,test=false){
+ const editor=ui.editor,source=test?entryTestSource():null;if(!editor)return;
+ return dialogAction(action,'network-dialog','settings-error',()=>ui.editor===editor&&(!test||section==='entry'&&entryTestSource()===source),editor.focus);
+}
+function showEditorError(message){showDialogError('network-dialog','settings-error',Error(message),$('settings-fields')?.querySelector(':invalid')||ui.editor?.focus);}
 async function saveEditor(){
  if(!ui.editor||ui.editor.readOnly)return;
  if(ui.editor.configurationId!==selectedConfiguration||ui.editor.id&&!row(ui.editor.id))throw Error('当前网络或设置已在其他窗口变更，请关闭后重新打开设置。');
- for(const [key] of editorSections()){const error=validateSection(key);if(error){section=key;renderEditor();$('settings-error').textContent=error;$('settings-error').scrollIntoView({block:'nearest'});return;}}
+ for(const [key] of editorSections()){const error=validateSection(key);if(error){if(section!==key){section=key;renderEditor();}showEditorError(error);return;}}
  if(!ui.editor.id&&newNetworkIp.trim()){
   const ip=newNetworkIp.trim().split('.').map(Number),valid=ip.length===4&&ip.every(v=>Number.isInteger(v)&&v>=0&&v<=255)&&ip[3]>0&&ip[3]<255&&(ip[0]===10||ip[0]===172&&ip[1]>=16&&ip[1]<=31||ip[0]===192&&ip[1]===168);
-  if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(newNetworkIp.trim())||!valid){section='virtual';renderEditor();$('settings-error').textContent='请填写有效的私有 IPv4，或留空自动分配。';return;}
+  if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(newNetworkIp.trim())||!valid){if(section!=='virtual'){section='virtual';renderEditor();}showEditorError('请填写有效的私有 IPv4，或留空自动分配。');return;}
  }
  const target=row(ui.editor.id),fork=!!configuration()?.networks.some(n=>n.networkId!==ui.editor.id),assign=!!target&&(fork||target.configurationId!==selectedConfiguration),write=fork||!selectedConfiguration||!same(saved,drafts)||configurationName.trim()!==baseConfigurationName;
  if(target&&(write||assign)&&!await confirmAction('保存并应用网络设置？','仅更新：'+target.name+'。需要时会重新连接，其它网络保持不变。','保存并应用'))return;
  ui.editor.saving=true;
  try{
   const previous=selectedConfiguration||'new';
-  if(write){const reply=await command('configuration',{networkId:target?.id||'',configuration:{action:'save',id:fork?'':selectedConfiguration,name:configurationName.trim()||newNetworkName||'网络设置',expectedRevision:fork?0:configurationRevision,settings:settingsDto(),confirmReconnect:true,independent:true}});selectedConfiguration=reply.configurationId||selectedConfiguration;if(!selectedConfiguration)throw Error('后台未返回独立设置编号，请保留当前草稿并重试。');ui.editor.configurationId=selectedConfiguration;configurationRevision=configuration()?.revision||1;saved=clone(drafts);baseConfigurationName=configurationName;}
-  if(target&&target.configurationId!==selectedConfiguration)await command('configuration',{networkId:target.id,configuration:{action:'assign',id:selectedConfiguration,expectedRevision:configurationRevision,confirmReconnect:true,independent:true}});
+  if(write){const reply=await command('configuration',{networkId:target?.id||'',configuration:{action:'save',id:fork?'':selectedConfiguration,name:configurationName.trim()||newNetworkName||'网络设置',expectedRevision:fork?0:configurationRevision,settings:settingsDto(),confirmReconnect:true,independent:true}},true);selectedConfiguration=reply.configurationId||selectedConfiguration;if(!selectedConfiguration)throw Error('后台未返回独立设置编号，请保留当前草稿并重试。');ui.editor.configurationId=selectedConfiguration;configurationRevision=configuration()?.revision||1;saved=clone(drafts);baseConfigurationName=configurationName;}
+  if(target&&target.configurationId!==selectedConfiguration)await command('configuration',{networkId:target.id,configuration:{action:'assign',id:selectedConfiguration,expectedRevision:configurationRevision,confirmReconnect:true,independent:true}},true);
   if(!ui.editor.id){ui.newConfig=selectedConfiguration;try{localStorage.setItem('conwu-create-configuration-draft',ui.newConfig);localStorage.setItem('conwu-create-ip-draft',newNetworkIp.trim());}catch{}}
   configurationDrafts.delete(previous);configurationDrafts.delete(selectedConfiguration);$('network-dialog').close();ui.editor=null;settingsHydrated=false;render();notify('网络设置已保存');
  }finally{if(ui.editor)ui.editor.saving=false;controls();}
@@ -420,8 +451,13 @@ async function generateFor(id){
  if(s.pairing?.candidate&&!await confirmAction('重新生成直连码？','当前尚未处理的申请将被取消。','重新生成'))return;
  await command('network',{networkId:id,network:{action:'invite-compact',expectedNetwork:s.networkId}});render();notify('直连码已生成');
 }
-async function testEntry(){const values=drafts.network.entries.local.filter(v=>v.trim());if(!values.length)throw Error('请先填写本机入口。');await command('network',{networkId:'',network:{action:'resolve-entries',settings:{...settingsDto(),existingEntries:values.map(source=>({peerSlot:0,source}))}}});if(!$('test-results'))return;const results=workspaceState.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="note" style="margin-bottom:8px">${esc(r.error||r.endpoints.join('、'))}</div>`).join('');}
+async function testEntry(){const editor=ui.editor,source=entryTestSource(),values=drafts.network.entries.local.filter(v=>v.trim());if(!values.length)throw Error('请先填写本机入口。');await command('network',{networkId:'',network:{action:'resolve-entries',settings:{...settingsDto(),existingEntries:values.map(source=>({peerSlot:0,source}))}}},true);if(ui.editor!==editor||entryTestSource()!==source||!$('test-results'))return;const results=workspaceState.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="note" style="margin-bottom:8px">${esc(r.error||r.endpoints.join('、'))}</div>`).join('');}
 
+document.addEventListener('focusin',e=>{
+ if(!e.target.matches('input,select,textarea'))return;
+ if(ui.editor&&$('network-dialog').contains(e.target))ui.editor.focus=e.target;
+ if(ui.coordinationEditor&&$('coordination-dialog').contains(e.target))ui.coordinationEditor.focus=e.target;
+});
 document.addEventListener('input',e=>{
  const el=e.target,scope=el.dataset.uiScope,key=el.dataset.uiKey;
  if(scope==='coordinationSwitch'){void run(()=>lockedSave('savingCoordination',()=>toggleCoordinator(el.checked))).catch(()=>{});return;}
@@ -434,27 +470,29 @@ document.addEventListener('click',e=>{
  if(b.dataset.uiSection){section=b.dataset.uiSection;renderEditor();$('network-settings-body').scrollTop=0;return;}
  void run(async()=>{const id=b.dataset.network;switch(b.dataset.uiAction){
   case 'help-create':openHelp('create');break;case 'help-join':openHelp('join');break;case 'close-help':$('help-dialog').close();break;
-  case 'open-editor':openEditor(id||'');break;case 'close-editor':await closeEditor();break;case 'save-editor':await saveEditor();break;
+  case 'open-editor':openEditor(id||'');break;case 'close-editor':await editorAction(closeEditor);break;case 'save-editor':await editorAction(saveEditor);break;
   case 'restore-editor':drafts=clone(saved);configurationName=baseConfigurationName;newNetworkIp=ui.editor.baseIp;ui.editor.ipMode=ui.editor.baseIpMode;ui.editor.customIp=newNetworkIp;renderEditor();break;
   case 'new-create':{const abandoned=workspaceState.configurations.find(c=>c.id===ui.newConfig);if(abandoned&&!abandoned.networks.length)await command('configuration',{networkId:'',configuration:{action:'delete',id:abandoned.id,expectedRevision:abandoned.revision}});ui.hostId='';ui.newConfig='';configurationDrafts.delete('new');newNetworkName='';newNetworkIp='';try{localStorage.removeItem('conwu-create-ip-draft');localStorage.removeItem('conwu-create-configuration-draft');}catch{}render();break;}
-  case 'select-host':ui.hostId=id;render();break;case 'generate':await generateFor(id);break;case 'copy-pair':await copyText(formatCompact(row(ui.hostId)?.status.pairing?.code||''));break;
+  case 'select-host':{const target=row(id);if(!target?.status.isOwner)throw Error('此网络不是本机创建的网络。');ui.hostId=id;selectedNetwork=id;render();break;}case 'generate':await generateFor(id);break;case 'copy-pair':await copyText(formatCompact(row(ui.hostId)?.status.pairing?.code||''));break;
   case 'another-join':ui.joinId='';joinInviteValue='';joinError='';render();break;
   case 'cancel-join':await command('network',{networkId:id,network:{action:'pair-cancel'}});ui.joinId=row(id)?.status.networkId?id:'';render();if(ui.joinId)notify('申请已获批准，可在右侧退出不再需要的网络。');break;
   case 'approve':case 'reject':{const n=row(id),p=n.status.pairing;await command('network',{networkId:id,network:{action:b.dataset.uiAction,verification:p.verification,candidate:p.candidate,proposedIp:p.proposedIp,expectedNetwork:n.status.networkId}});render();break;}
   case 'remove-network':await removeNetwork(id);break;case 'choose-exit':chooseExit();break;case 'close-exit':$('exit-dialog').close();break;
   case 'confirm-exit':{const target=$('exit-network-select').value;$('exit-dialog').close();await removeNetwork(target,true);break;}
   case 'start-network':await command('start',{networkId:id});break;case 'save-device':await lockedSave('savingDevice',saveDevice);break;
-  case 'open-coordination-settings':renderCoordinatorEditor();$('coordination-dialog').showModal();break;
-  case 'close-coordination-settings':$('coordination-dialog').close();break;
+  case 'open-coordination-settings':ui.coordinationEditor={};renderCoordinatorEditor();$('coordination-dialog').showModal();break;
+  case 'close-coordination-settings':if(!ui.savingCoordination){$('coordination-dialog').close();ui.coordinationEditor=null;}break;
   case 'restore-coordination':ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);renderCoordinatorEditor();break;
-  case 'save-coordination':try{await lockedSave('savingCoordination',saveCoordinator);}catch(error){$('coordination-error').textContent=error.message;throw error;}break;
+  case 'save-coordination':{const editor=ui.coordinationEditor;await dialogAction(()=>lockedSave('savingCoordination',saveCoordinator),'coordination-dialog','coordination-error',()=>ui.coordinationEditor===editor,editor?.focus);break;}
   case 'restore-device':ui.device=clone(ui.deviceBase);render();break;case 'default-device':ui.device=defaultDevice();render();break;
   case 'register-service':await command('register-service',{networkId:''});break;
+  case 'check-update':{const reply=await api('/api/command',{method:'update-check',operationId:crypto.randomUUID()});if(!reply.ok)throw Error(reply.error||'暂时无法开始更新检查');if(reply.status)render(reply.status);break;}
   case 'refresh-pkarr':await command('network',{networkId:id,network:{action:'refresh-pkarr',expectedNetwork:row(id).status.networkId}});notify('已请求刷新发现信息');break;
-  case 'range-60':ui.range=60;render();break;case 'range-3600':ui.range=3600;render();break;case 'test-entry':await testEntry();break;
+  case 'range-60':ui.range=60;render();break;case 'range-3600':ui.range=3600;render();break;case 'test-entry':await editorAction(testEntry,true);break;
  }}).catch(()=>{});
 });
-$('network-dialog').addEventListener('cancel',e=>{e.preventDefault();void run(closeEditor).catch(()=>{});});
+$('network-dialog').addEventListener('cancel',e=>{e.preventDefault();void run(()=>editorAction(closeEditor)).catch(()=>{});});
+$('coordination-dialog').addEventListener('cancel',e=>{if(ui.savingCoordination)e.preventDefault();else ui.coordinationEditor=null;});
 // Passive pairing observation has its own cancellable operation. It must not
 // acquire the UI's foreground busy flag or make Cancel/Exit unclickable.
 const foregroundCommand=command;
@@ -472,7 +510,7 @@ pollPair=async function(){
   while(reply.operation&&!reply.operation.completed&&!probe.cancelled&&online&&!expired){
    if(reply.status&&generation===probe.version&&!busy)render(reply.status);
    await new Promise(resolve=>setTimeout(resolve,700));
-   reply=await api('/api/status?operation='+encodeURIComponent(probe.id),undefined,()=>!probe.cancelled&&generation===probe.version);
+   reply=await api('/api/status?operation='+encodeURIComponent(probe.id)+'&networkId='+encodeURIComponent(probe.target),undefined,()=>!probe.cancelled&&generation===probe.version);
   }
   if(probe.cancelled||generation!==probe.version)return;
   if(reply.status&&!busy)render(reply.status);

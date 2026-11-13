@@ -24,6 +24,7 @@ static partial class Program
     { cancellation.Cancel(); try { await task.WaitAsync(TimeSpan.FromSeconds(3)); } catch (OperationCanceledException) { } }
     public static async Task Main(string[] args)
     {
+        if(args is ["--update-ui"]){await UpdateUi();return;}
         if(args is ["--entry-source-authority"]){EntrySourceAuthority();return;}
         if(args is ["--entry-restart-recovery"]){await EntryRestartRecovery();return;}
         if(args is ["--release-discovery"]){await ReleaseDiscovery();return;}

@@ -4,12 +4,14 @@
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。
 
-[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [版本说明](docs/releases/1.3.1.md) · [使用文档](docs/README.md)
+[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [版本说明](docs/releases/1.4.0.md) · [使用文档](docs/README.md)
 
 | 系统 | 下载与安装 |
 | --- | --- |
 | Windows x64 | 下载 Release 中的 `.msi`，安装后从托盘打开 WebUI |
 | Linux x86_64 / glibc | 下载 `.tar.gz`，解压后执行 `sudo ./install.sh`；提供 WebUI 和 CLI |
+
+Android 从机已进入本地测试，支持纯 TCP 与 HTTPS，见[Android 测试版说明](docs/Android使用.md)。尚未发布 Android 正式附件或完成真机串流验收；iOS 暂待构建条件。
 
 ## 怎么连接
 
@@ -35,6 +37,8 @@
 本版另提供实验性的 **Mimic** 与 **TCPRAW**。Mimic 使用报文转换承载数据报；TCPRAW 由系统完成真实 TCP 握手后，通过原始 TCP 报文交付数据。两者不等待外层可靠字节流重传，Windows 使用现有 WinDivert，Linux 使用原始报文收发；主机仍需可达，TCPRAW 仍需要 TCP 建连成功。新协议需要两端升级并重新配对，不自动改变已有网络。
 
 自主打洞优先尝试短期 UPnP 映射，处理外部端口占用与续租；端口设置中可选 PCP／NAT-PMP 后备。已有入口模式不申请映射或启动另一套打洞。路由器的 NAT1 等功能仍由用户设置，网关授权或 STUN 候选均需对端认证验证。
+
+1.4.0 修复 TCP／HTTPS 自主入口将外层公网端口用于内层转发的问题，统一复用独立探测端口的网关映射。多网络可分别选择、生成和复制直连码，设置错误显示在当前浮窗。Windows／Linux 设置页新增更新检测，Linux 也可运行 `conwu update check`；只查询官方正式版，不自动安装或修改设置。
 
 本版为纯 TCP 和 HTTPS 提供可选的“按流分离连接”，在网络设置的“连接方式”中开启。不同流使用独立连接，同一流保持顺序；不增加网络或重新配对，对端不支持时使用单连接。默认关闭，适合大流量影响控制或音频时按实测开启，不保证提高视频吞吐。
 

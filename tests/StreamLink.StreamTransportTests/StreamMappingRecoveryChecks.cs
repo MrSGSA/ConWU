@@ -102,7 +102,7 @@ static class StreamMappingRecoveryChecks
         }
 
         await using (var mapping = await StreamMapping.Create(port, _ => { }, token,
-            [first.Address, backup.Address], false, new(false, TimeSpan.FromMilliseconds(75)))) {
+            [first.Address, backup.Address], false, options:new(false, TimeSpan.FromMilliseconds(75)))) {
             var maintaining = mapping.Maintain(token);
             var replaced = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool validAtChange = false;
@@ -135,7 +135,7 @@ static class StreamMappingRecoveryChecks
 
         Volatile.Write(ref first.Mode, 0);
         await using (var mapping = await StreamMapping.Create(port, _ => { }, token, [first.Address], false,
-            new(false, TimeSpan.FromMinutes(10)))) {
+            options:new(false, TimeSpan.FromMinutes(10)))) {
             var maintaining = mapping.Maintain(token);
             Volatile.Write(ref first.Mode, 3);
             ((IMappingRefresh)mapping).RequestRefresh();

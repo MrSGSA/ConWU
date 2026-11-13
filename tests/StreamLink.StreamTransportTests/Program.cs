@@ -19,6 +19,8 @@ void Check(bool value,string name){if(!value)throw new Exception(name);checks.Ad
 if(args is ["--flow-lanes"]){await StreamFlowChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 if(args is ["--mapping-recovery"]){await StreamMappingRecoveryChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 if(args is ["--mapping-race"]){await StreamMappingRaceChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
+if(args is ["--mapping-gateway"]){await StreamGatewayMappingChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
+if(args is ["--stream-identity"]){StreamIdentityChecks.Run(Check);Console.WriteLine(JsonSerializer.Serialize(new{status="Pass",checks=checks.Count,cases=checks}));return;}
 foreach(var mode in new[]{"faketcp","udp","tcp","https"}){
     var text=CompactDirectCode.Issue("203.0.113.42:44680",mode,"123456");var decoded=CompactDirectCode.Import(text.ToLowerInvariant());
     Check(text.Length==19&&decoded.Mode==mode&&decoded.RoomCode=="123456",mode+" retains sixteen-symbol code with an unambiguous protocol");
@@ -111,6 +113,7 @@ foreach(string mode in new[]{"tcp","https"}){
 await StreamMappingChecks.Run(Check);
 await StreamMappingRecoveryChecks.Run(Check);
 await StreamMappingRaceChecks.Run(Check);
+await StreamGatewayMappingChecks.Run(Check);
 await SharedStreamChecks.Run(Check);
 await SharedRouteEndpointChecks.Run(Check);
 await StreamSecurityChecks.Run(Check);

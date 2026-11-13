@@ -29,7 +29,7 @@ static class StreamMappingChecks
         using var sink=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));
         try{
             await using(var listener=new StreamMeshTransport(owner,(IPEndPoint)sink.Client.LocalEndPoint!,true,port)){
-                var mapping=await StreamMapping.Create(port,_=>{},stop.Token,[reflector.LocalEndpoint.ToString()!],false,new(false,TimeSpan.FromMilliseconds(75)));
+                var mapping=await StreamMapping.Create(port,_=>{},stop.Token,[reflector.LocalEndpoint.ToString()!],false,options:new(false,TimeSpan.FromMilliseconds(75)));
                 check(mapping.IsValid&&observedPort==port&&queries>=2,"real TCP STUN binds the receiver's exact port while its listener is active");
                 check(mapping.PublicEndpoint.Equals(new IPEndPoint(IPAddress.Parse("203.0.113.20"),48000)),"TCP STUN candidate is parsed from an actual framed response");
                 var changed=new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);mapping.Changed+=ep=>changed.TrySetResult(ep);
@@ -41,7 +41,7 @@ static class StreamMappingChecks
                 check(inbound.Connected,"the kernel TCP listener still accepts connections after mapping release");
                 withhold=true;
                 using var canceled=new CancellationTokenSource(250);bool wasCanceled=false;
-                try{await StreamMapping.Create(port,_=>{},canceled.Token,[reflector.LocalEndpoint.ToString()!],false,new(false));}catch(OperationCanceledException){wasCanceled=true;}
+                try{await StreamMapping.Create(port,_=>{},canceled.Token,[reflector.LocalEndpoint.ToString()!],false,options:new(false));}catch(OperationCanceledException){wasCanceled=true;}
                 check(wasCanceled&&!listener.Exited,"canceling an incomplete TCP STUN query releases only its own outbound socket");
             }
             var reused=new TcpListener(IPAddress.Loopback,port);reused.Start();reused.Stop();check(true,"TCP mapping and listener together release their exact port");

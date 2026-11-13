@@ -60,7 +60,10 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         log($"TCP helper 独占资源 lease={owner.LeaseId:N} generation={owner.Generation:N} local={owner.Local} reflector={owner.Reflector}");
     }
 
-    public static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false)
+    public static Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false)
+        =>Create(sourcePort,targetPort,log,token,servers,owner,portControl,Upnp.DiscoverServices);
+    internal static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers, string? owner, bool portControl,
+        Func<IPAddress,CancellationToken,IAsyncEnumerable<RouterService>> discover)
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
@@ -72,7 +75,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         {
             log($"TCP STUN 返回 {result.Public}，正在发现路由器；尚未确认入站可达");
             Exception? last = null;
-            await foreach (var service in Upnp.DiscoverServices(result.Local.Address, token))
+            await foreach (var service in discover(result.Local.Address, token))
             {
                 timeline.Mark("发现路由器候选，立即尝试租约");
                 var router = new Upnp(service);

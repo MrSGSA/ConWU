@@ -157,6 +157,18 @@ public sealed class DirectPairHost : IShortPairClient
 public sealed class DirectPairClient : IShortPairClient
 {
     public string PeerCertificatePin=>transport is StreamMeshTransport stream?stream.PeerCertificatePin:"";
+    public StreamConnectionStatus? StreamConnection=>transport is StreamMeshTransport stream?stream.ClientConnection:null;
+    IOException Unanswered()
+    {
+        var connection=StreamConnection;string stage=connection?.Phase=="Failed"?connection.FailedAt:connection?.Phase??"";
+        return new IOException(stage switch{
+            "TcpConnecting"=>"无法连接主机的 TCP 入口。自主打洞取得的 STUN 地址仅是候选，仍可能受 NAT 限制；请检查公网端口映射，或改用可达的已有入口。",
+            "TlsHandshake"=>"TCP 入口已连接，但 HTTPS 握手未完成。请检查入口是否指向 ConWU，以及双方协议和设备时间。",
+            "HttpUpgrade"=>"HTTPS 已连接，但 ConWU 通道协商未完成。请检查入口端口、反向代理和双方协议。",
+            "Ready" or "Closed"=>"承载通道已连接，但主机未回应配对。请重新生成并核对目标网络的直连码，确认旧码没有过期或被替换。",
+            _=>"主机入口未回应配对。请确认主机在线、配对凭据有效，且入口指向 ConWU、双方协议相同"
+        });
+    }
     readonly string targetNetwork;
     readonly UdpClient socket=new(new IPEndPoint(IPAddress.Loopback,0));
     readonly IMeshTransport transport;
@@ -176,7 +188,7 @@ public sealed class DirectPairClient : IShortPairClient
             using var deadline=CancellationTokenSource.CreateLinkedTokenSource(cancel,lifetime.Token);deadline.CancelAfter(10000);
             var packet=DirectPairWire.Encode(request);Task<UdpReceiveResult>? pending=null;
             try{while(true){
-                deadline.Token.ThrowIfCancellationRequested();if(transport.Exited)throw new IOException("主机入口的配对传输已退出，请检查协议和端口");
+                deadline.Token.ThrowIfCancellationRequested();if(transport.Exited)throw Unanswered();
                 await socket.SendAsync(packet,target,deadline.Token);
                 long until=Environment.TickCount64+500;
                 while(Environment.TickCount64<until){
@@ -188,7 +200,7 @@ public sealed class DirectPairClient : IShortPairClient
                     DirectPairReply reply;try{reply=DirectPairWire.Decode<DirectPairReply>(received.Buffer);}catch{continue;}
                     if(reply.Id!=request.Id)continue;if(reply.Error.Length>0){if(entryAdmission&&reply.Retryable){await Task.Delay(500,deadline.Token);break;}throw new IOException(reply.Error);}return reply;
                 }
-            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw new IOException("主机入口未回应配对。请确认主机在线、配对凭据有效，且入口指向 ConWU、双方协议相同");}
+            }}catch(OperationCanceledException)when(!cancel.IsCancellationRequested){throw Unanswered();}
             finally{deadline.Cancel();if(pending!=null)try{await pending;}catch(OperationCanceledException){}catch(SocketException){}}
         }finally{gate.Release();}
     }

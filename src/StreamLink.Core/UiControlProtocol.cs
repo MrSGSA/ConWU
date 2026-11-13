@@ -62,9 +62,10 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public int[] InactiveEntrySlots {get;init;}=[];
     public UiDesktopStatus? Desktop {get;init;}
     public CoordinatorStatus? Coordinator {get;init;}
+    public ReleaseUpdateStatus? Update {get;init;}
     public CloudflareDdnsStatus? Ddns {get;init;}
     public bool DdnsCredentialConfigured {get;init;}
-    public string Platform {get;init;}=OperatingSystem.IsLinux()?"linux":"windows";
+    public string Platform {get;init;}=ReleaseUpdateClient.CurrentPlatform;
 }
 public sealed record UiLogEntryDto(string Id,long Timestamp,string Text);
 public sealed record UiNetworkDto(string Id,string Name,UiStatusDto Status)

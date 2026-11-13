@@ -27,7 +27,7 @@ public static class PairNetworkFrame
             secret=MeshIdentity.SharedKey(mesh,member);session=HKDF.DeriveKey(HashAlgorithmName.SHA256,secret,32,frame.Slice(8,16).ToArray(),Encoding.ASCII.GetBytes(MeshLink.KeyContext(frame[5],frame[6],frame[7])));
             Span<byte> nonce=stackalloc byte[12];nonce.Clear();frame.Slice(40,8).CopyTo(nonce[4..]);
             int count=frame.Length-MeshLink.Overhead;Span<byte> plain=stackalloc byte[count];
-            using var cipher=new AesGcm(session,16);cipher.Decrypt(nonce,frame.Slice(MeshLink.HeaderSize,count),frame.Slice(MeshLink.HeaderSize+count,16),plain,frame[..MeshLink.HeaderSize]);return true;
+            using var cipher=new MeshAesGcm(session);cipher.Decrypt(nonce,frame.Slice(MeshLink.HeaderSize,count),frame.Slice(MeshLink.HeaderSize+count,16),plain,frame[..MeshLink.HeaderSize]);return true;
         }catch(Exception ex)when(ex is CryptographicException or FormatException or ArgumentException){return false;}
         finally{if(secret!=null)CryptographicOperations.ZeroMemory(secret);if(session!=null)CryptographicOperations.ZeroMemory(session);}
     }

@@ -12,6 +12,7 @@ using System.Text;
 namespace StreamLink.Core;
 
 public sealed record StreamTransportIo(long NetworkWrites,long NetworkReads,long SentDatagrams,long ReceivedDatagrams);
+public sealed record StreamConnectionStatus(string Phase,string FailedAt="",string ErrorType="",string SocketError="");
 
 // A bounded datagram bridge for the existing authenticating MeshLink router.
 // The loopback socket is local plumbing; all remote traffic is real TCP/TLS.
@@ -43,6 +44,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     readonly IDisposable? listenerAccess;
     int disposed;
     string failure="",peerPin="",lastConnectionFailure="";
+    StreamConnectionStatus clientConnection=new("TcpConnecting");
     public IPEndPoint? ClientEndpoint {get;}
     public string PeerCertificatePin=>Volatile.Read(ref peerPin);
     public string TlsProtocol {get;private set;}="";
@@ -51,6 +53,8 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     public bool Exited=>Volatile.Read(ref disposed)!=0||lifetime.IsCompleted;
     public string FailureReason=>Volatile.Read(ref failure);
     public string LastConnectionFailure=>Volatile.Read(ref lastConnectionFailure);
+    public StreamConnectionStatus ClientConnection=>Volatile.Read(ref clientConnection);
+    void ClientPhase(string phase)=>Volatile.Write(ref clientConnection,new(phase));
     static string FailureDetails(Exception error)=>string.Join(" / ",Errors(error).Select(e=>e.GetType().Name+" (0x"+e.HResult.ToString("X8")+(e is System.ComponentModel.Win32Exception native?", native="+native.NativeErrorCode:"")+")"));
     static IEnumerable<Exception> Errors(Exception error){for(int n=0;n<4&&error!=null;n++,error=error.InnerException!)yield return error;}
 
@@ -106,9 +110,13 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
         using var tcp=new TcpClient(target.AddressFamily){NoDelay=true};var id=Guid.NewGuid();clients[id]=tcp;
         try{
             using(var deadline=CancellationTokenSource.CreateLinkedTokenSource(stop.Token)){deadline.CancelAfter(10000);await tcp.ConnectAsync(target.Address,target.Port,deadline.Token);}
+            ClientPhase("TcpConnected");
             await Bridge(tcp,local!,null,null,(target,mesh.Pair.TransportKeyPin??""),bootstrap);
-            if(!stop.IsCancellationRequested)Volatile.Write(ref failure,"TCP 对端已关闭连接");
-        }catch(Exception ex)when(ex is TimeoutException or IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref failure,"TCP 连接未完成："+FailureDetails(ex));}
+            if(!stop.IsCancellationRequested){ClientPhase("Closed");Volatile.Write(ref failure,"TCP 对端已关闭连接");}
+        }catch(Exception ex)when(ex is TimeoutException or IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested){
+            var prior=ClientConnection;Volatile.Write(ref clientConnection,new("Failed",prior.Phase,ex.GetBaseException().GetType().Name,Errors(ex).OfType<SocketException>().FirstOrDefault()?.SocketErrorCode.ToString()??""));
+            Volatile.Write(ref failure,"TCP 连接未完成："+FailureDetails(ex));
+        }}
         finally{clients.TryRemove(id,out _);}
     }
     public static string CertificatePin(X509Certificate2 certificate)=>Convert.ToHexString(SHA256.HashData(certificate.PublicKey.ExportSubjectPublicKeyInfo()));
@@ -122,6 +130,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
             if(https){
                 using var handshake=CancellationTokenSource.CreateLinkedTokenSource(connection.Token);handshake.CancelAfter(8000);
                 if(remote is {} peer){
+                    if(group==null)ClientPhase("TlsHandshake");
                     tls=new SslStream(stream,false,(_,value,_,_)=>{
                         if(value==null)return false;
                         using var cert=X509CertificateLoader.LoadCertificate(value.GetRawCertData());
@@ -131,6 +140,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
                         if(accepted)Volatile.Write(ref peerPin,actual);return accepted;
                     });
                     await tls.AuthenticateAsClientAsync(new SslClientAuthenticationOptions{TargetHost=peer.Target.Address.ToString(),EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13,CertificateRevocationCheckMode=X509RevocationMode.NoCheck},handshake.Token);
+                    if(group==null)ClientPhase("HttpUpgrade");
                     string key=Convert.ToBase64String(RandomNumberGenerator.GetBytes(16));
                     string batching=batchDatagrams?$"{BatchHeader}: 1\r\n":"";
                     await WriteHttp(tls,$"GET /conwu/stream HTTP/1.1\r\nHost: {peer.Target}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Protocol: {Subprotocol}\r\n{batching}\r\n",handshake.Token);
@@ -154,6 +164,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
             }
             BatchingEnabled=framedBatch;
             using var wire=new StreamFlowWire(this,tcp,stream,web,framedBatch);
+            if(remote!=null&&group==null)ClientPhase("Ready");
             await RunStream(wire,udp,fixedReceiver,remote,bootstrap,group,lane,authenticated,connection.Token);
         }finally{web?.Dispose();tls?.Dispose();}
     }

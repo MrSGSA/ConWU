@@ -24,6 +24,8 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--skip-upload", action="store_true")
     p.add_argument("--autonomous", action="store_true")
+    p.add_argument("--gateway-helper", action="store_true", help="Use the retained helper-port gateway mapping for the isolated autonomous comparison")
+    p.add_argument("--source-port", type=int, default=44691)
     p.add_argument("--local", action="store_true")
     p.add_argument("--in-flight", type=int, default=512)
     p.add_argument("--no-batching", action="store_true")
@@ -82,7 +84,7 @@ def main():
     results = []
     for mode in ("tcp", "https"):
         key = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
-        config = {"Mode": mode, "Key": key, "Port": a.port, "Firewall": not a.local, "LifetimeSeconds": 240, "Autonomous": a.autonomous, "MaxInFlight": a.in_flight, "BatchDatagrams": not a.no_batching}
+        config = {"Mode": mode, "Key": key, "Port": a.port, "Firewall": not a.local, "LifetimeSeconds": 240, "Autonomous": a.autonomous, "MaxInFlight": a.in_flight, "BatchDatagrams": not a.no_batching, "SourcePort": a.source_port, "GatewayHelper": a.gateway_helper}
         pipes = dict(stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         server = subprocess.Popen([str(binary), "serve"], **pipes, creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0) if a.local else ssh(f"& '{remote_exe}' serve;exit $LASTEXITCODE", **pipes)
         pin_measurement(server)
@@ -125,7 +127,9 @@ def main():
                 result = next((json.loads(line.removeprefix("CONWU_BENCH_RESULT ")) for line in completed.stdout.splitlines() if line.startswith("CONWU_BENCH_RESULT ")), None)
                 if result is None:
                     result = {"status": "Fail", "mode": mode, "targetMbps": rate, "error": (completed.stdout + completed.stderr)[-2000:]}
-                result.update({"host": "local" if a.local else a.desktop, "endpoint": target, "path": "desktop TCP STUN candidate" if a.autonomous else "loopback" if a.local else a.path_label, "measurementAffinity": hex(a.affinity) if a.affinity else "default"})
+                result.update({"host": "local" if a.local else a.desktop, "endpoint": target, "path": "desktop TCP STUN candidate" if a.autonomous else "loopback" if a.local else a.path_label, "measurementAffinity": hex(a.affinity) if a.affinity else "default", "mapping": ready.get("mapping", ""), "helper": ready.get("helper", "")})
+                if a.autonomous and not a.local and result["status"] == "Pass":
+                    result["scope"] = "Isolated desktop-to-laptop public-candidate stream and encrypted MeshLink echo; no production TUN, Android or Moonlight verification"
                 results.append(result)
                 (a.output / ("loopback-results.json" if a.local else "desktop-results.json")).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
                 print(json.dumps(result, ensure_ascii=False), flush=True)

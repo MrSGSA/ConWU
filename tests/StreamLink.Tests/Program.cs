@@ -16,6 +16,22 @@ if(args.Length>0 && args[0]=="--child-output") {
 int passed=0;
 void Check(bool yes,string message) { if(!yes) throw new Exception(message); passed++; }
 void Reject(Action action,string message) { try {action();} catch(Exception ex) when(ex is IOException or FormatException or ArgumentException) {passed++; return;} throw new Exception(message); }
+void CheckMobileAead()
+{
+    byte[] key=new byte[32],nonce=new byte[12],tag=new byte[16];
+    using var compat=new MeshAesGcm(key,managedEmpty:true);using var native=new AesGcm(key,16);
+    foreach(var aad in new byte[][]{[],RandomNumberGenerator.GetBytes(48)}){
+        byte[] expected=new byte[16];native.Encrypt(nonce,Array.Empty<byte>(),Array.Empty<byte>(),expected,aad);compat.Encrypt(nonce,[],[],tag,aad);
+        Check(tag.SequenceEqual(expected),"Android empty-payload GMAC must exactly match native AES-GCM");
+        compat.Decrypt(nonce,[],expected,[],aad);
+        tag[0]^=1;bool tampered=false;try{compat.Decrypt(nonce,[],tag,[],aad);}catch(AuthenticationTagMismatchException){tampered=true;}
+        Check(tampered,"Android empty-payload handshake must reject modified authentication tags");
+    }
+    byte[] data=RandomNumberGenerator.GetBytes(1280),encrypted=new byte[1280],opened=new byte[1280];
+    compat.Encrypt(nonce,data,encrypted,tag,[]);native.Decrypt(nonce,encrypted,tag,opened,Array.Empty<byte>());
+    Check(opened.SequenceEqual(data),"Android compatibility path preserves native bulk data encryption");
+}
+CheckMobileAead();
 Check(ReleaseVersion.TryParse("1.0.0-rc.10",out var rc10)&&ReleaseVersion.TryParse("1.0.0-rc.2",out var rc2)&&rc10.CompareTo(rc2)>0,"numeric prerelease ordering failed");
 Check(ReleaseVersion.TryParse("1.0.0",out var stable)&&stable.CompareTo(rc10)>0,"stable does not outrank RC");
 Check(!ReleaseVersion.TryParse("1.0.0-rc.01",out _)&&!ReleaseVersion.TryParse("01.0.0",out _),"noncanonical semantic version accepted");
