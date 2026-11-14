@@ -56,7 +56,10 @@ $xml=[xml]@'
   <CustomAction Id="LaunchApp" FileRef="LauncherExe" ExeCommand="ARGS" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
   <InstallExecuteSequence>
    <Custom Action="SetArpLocation" After="CostFinalize" />
-   <Custom Action="NewTransaction" After="InstallInitialize" Condition="NOT UPGRADINGPRODUCTCODE" />
+   <!-- Explicit dependency: PrepareUpgrade now runs before early product
+        removal, so merely sharing After=InstallInitialize would allow WiX to
+        resolve its CustomActionData before the transaction ID was created. -->
+   <Custom Action="NewTransaction" Before="SetRollback" Condition="NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetRollback" Before="RollbackUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="RollbackUpgrade" Before="SetPrepare" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetPrepare" Before="PrepareUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
