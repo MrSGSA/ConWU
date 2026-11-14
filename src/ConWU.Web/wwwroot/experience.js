@@ -3,7 +3,7 @@
 // Live workspace presentation. Pairing, operation tracking and local session
 // renewal continue to use app.js; this layer never simulates connection success.
 (()=>{
-Object.assign(titles,{requests:'加入申请',coordination:'对外协调',uu:'UU 远程接管'});
+Object.assign(titles,{requests:'加入申请',coordination:'对外协调',uu:'UU远程'});
 delete titles.coordinator;
 let terminalTheme='auto';try{terminalTheme=localStorage.getItem('streamlink-terminal-theme')||'auto';}catch{}
 const liveLogView=updateLogView;
@@ -198,7 +198,7 @@ overviewPage=function(){
   return `<tr data-peer-row="${esc(n.id)}"><td><strong class="peer-name">${esc(p?.name||'等待另一台设备')}</strong></td><td>${esc(n.name)}</td><td class="role-value">${pairs('role',[s.isOwner?'主机':'从机',s.isOwner?'从机':'主机'])}</td><td>${pairs('ip',[s.virtualIp,p?.virtualIp],true)}</td><td><div class="cell-status"><span class="dot ${connected?'good':''}"></span>${connected?'已直连':!online?'状态待确认':!s.networkEnabled?'已停止':esc(phaseNames[p?.connection?.phase]||'等待设备')}</div><div class="cell-sub">${protocolOf(s.settings)}</div>${connected?`<div class="cell-sub">已直连 <span data-network-duration="${elapsed}" data-duration-sample="${performance.now()}">${connectedDuration(elapsed)}</span></div>`:''}<div class="cell-sub entry">${esc(connected?'实际入口：':'上次入口：')}${esc(p?.outerTarget&&p.outerTarget!=='Unknown'?p.outerTarget:p?.entryDirection==='Inbound'?'入站直连 · 本机端口 '+s.settings.listenPort:'待认证连接')}</div></td><td class="mono">${connected&&p.rttMs!=null?p.rttMs.toFixed(1)+' ms':'—'}</td><td><div class="traffic-cell"><div><span class="up">↑</span> ${total(p?.sentBytes||0)}<div class="rate">${speed(online?r?.up:null)}</div></div><div><span class="down">↓</span> ${total(p?.receivedBytes||0)}<div class="rate">${speed(online?r?.down:null)}</div></div></div></td></tr>`;
  }).join('')}</tbody></table></div><div class="device-table-foot"><span class="dot ${online&&live?'good':''}"></span><span>${networks.length} 个网络</span><span>·</span><span class="direct-total">与其余 ${online?live:0} 台设备直连</span></div></article>`;
 };
-function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU 远程接管','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage};return pages[page]();}
+function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU远程','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage};return pages[page]();}
 function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?workspaceState?.coordinator?.clients:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;

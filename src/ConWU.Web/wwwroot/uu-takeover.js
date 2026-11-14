@@ -7,11 +7,9 @@ const uuTakeoverUi=(()=>{
  function section(root){
   if(root?.platform==='linux'||root?.uuTakeover?.supported===false)return '<article class="card pad"><h2>本机暂不支持 UU 通道接管</h2><p>Windows 端可自动引导 UU 使用 ConWU 直连通道。</p></article>';
   const u=root?.uuTakeover;
-  return `<div class="network-columns" id="uu-takeover-section"><article class="card pad"><h2>UU 远程通道接管</h2>
+  return `<div class="network-columns" id="uu-takeover-section"><article class="card pad"><h2>UU远程</h2>
    <div class="switch-row"><div><h3>开启接管</h3><p>开启后重新连接 UU 会话；关闭或网络断开时撤下临时限制。</p></div><label class="switch"><input id="uu-takeover-enabled" type="checkbox" aria-label="开启 UU 远程通道接管" ${u?.settings?.enabled?'checked':''}><span class="switch-track"></span></label></div>
    <div class="row section-spacer" role="status"><span class="dot" id="uu-takeover-dot"></span><span id="uu-takeover-state"></span></div>
-   <p class="hint" id="uu-takeover-detail"></p><div class="small mono" id="uu-takeover-traffic"></div>
-   <p class="hint">开关自动保存。本机所有已直连网络自动参与，随 UU 的目标设备切换通道；照常在 UU 中选择设备，登录和设备授权仍由 UU 处理。</p>
    <div class="field-error" id="uu-takeover-error" role="alert"></div>
   </article><article class="card pad"><h2>网络与接管状态</h2><p class="hint">网络上线后自动加入，离线后自动移除。</p><div id="uu-takeover-networks" role="list"></div></article></div>`;
  }
@@ -23,9 +21,7 @@ const uuTakeoverUi=(()=>{
   const names={Disabled:'未开启',Applying:'正在应用',WaitingNetwork:'等待 ConWU 直连',ChooseNetwork:'请选择网络',WaitingUu:'等待 UU 启动',Ready:'已就绪，等待 UU 连接',Idle:'已检测到 UU 数据 · 当前低流量',Transmitting:'检测到 UU 经由 ConWU 传输',Error:'接管暂不可用',Stopped:'接管已停止',Unsupported:'本机暂不支持'};
   document.getElementById('uu-takeover-state').textContent=pending?'正在保存…':!ready?'状态待刷新':names[current?.state]||'后台尚未支持此功能';
   document.getElementById('uu-takeover-dot').className='dot'+(ready&&current?.rulesActive&&current?.trafficObserved?' good':'');
-  document.getElementById('uu-takeover-detail').textContent=current?(current.networkName?current.networkName+' · '+current.virtualIp+'：':'')+current.message:'请使用支持 UU 接管的新版后台。';
-  document.getElementById('uu-takeover-traffic').textContent=current?.rulesActive?`UU 进程 ${current.processIds?.length||0} 个 · 接收 ${fmt(current.receivedBytes)} · 发送 ${fmt(current.sentBytes)} · 最近 ${((current.recentBytesPerSecond||0)*8/1000000).toFixed(2)} Mbps`:'';
-  document.getElementById('uu-takeover-error').textContent=error;
+  document.getElementById('uu-takeover-error').textContent=error||(current?.state==='Error'?current.message:'');
   const list=document.getElementById('uu-takeover-networks');
   const rows=networks.map(n=>{const live=current?.networks?.find(v=>v.id===n.id),connected=ready&&n.status?.directPeers>0;
    const label=!desired.enabled?'接管未开启':!connected?'等待网络直连':!current?.rulesActive?'等待 UU 启动':live?.trafficObserved?'检测到 UU 流量':'已自动就绪';

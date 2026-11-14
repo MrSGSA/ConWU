@@ -39,6 +39,7 @@ function decorate(body){
  await page.locator('#device-name').fill('保持本机名草稿');
  await page.locator('.nav[data-page="uu"]').click();
  await page.locator('#uu-takeover-section').waitFor();
+ check(await page.locator('.nav[data-page="uu"]').innerText()==='UU远程'&&await page.locator('#uu-takeover-detail,#uu-takeover-traffic').count()===0,'UU navigation is concise and duplicate status details are removed');
  check(!await page.locator('#uu-takeover-enabled').isChecked(),'takeover is a separate default-off setting');
  check(await page.locator('#uu-takeover-networks [role="listitem"]').count()===2&&await page.locator('#uu-takeover-section select').count()===0,'all networks appear automatically with no manual network selector');
  check(writes.length===0,'opening the page does not write settings');
@@ -50,9 +51,9 @@ function decorate(body){
  metadata={state:'Ready',rulesActive:true,trafficObserved:false,message:'接管已就绪；请新建或重新连接 UU 会话',networkId:first,networkName:'主机—笔记本',virtualIp:'10.203.1.2',processIds:[123]};
  await page.evaluate(()=>refresh());await page.locator('#uu-takeover-state').filter({hasText:'等待 UU 连接'}).waitFor();
  check(!await page.locator('#uu-takeover-dot').evaluate(el=>el.classList.contains('good')),'installed rules are distinct from observed UU traffic');
- metadata={...metadata,state:'Transmitting',message:'已检测到 UU 持续流量经过 ConWU',trafficObserved:true,receivedBytes:3145728,sentBytes:65536,recentBytesPerSecond:1000000};
+ metadata={...metadata,state:'Transmitting',message:'已检测到 UU 持续流量经过 ConWU',trafficObserved:true,receivedBytes:3145728,sentBytes:65536,recentBytesPerSecond:1000000,networks:[{id:first,trafficObserved:true,receivedBytes:3145728,sentBytes:65536}]};
  await page.evaluate(()=>refresh());await page.locator('#uu-takeover-state').filter({hasText:'经由 ConWU 传输'}).waitFor();
- check(await page.locator('#uu-takeover-dot').evaluate(el=>el.classList.contains('good'))&&await page.locator('#uu-takeover-traffic').innerText().then(t=>t.includes('3.00 MiB')&&t.includes('8.00 Mbps')),'live traffic state and counters update in place');
+ check(await page.locator('#uu-takeover-dot').evaluate(el=>el.classList.contains('good'))&&await page.locator(`#uu-takeover-networks [data-uu-network="${first}"]`).innerText().then(t=>t.includes('3.00 MiB')&&t.includes('0.06 MiB')&&t.includes('检测到 UU 流量')),'live traffic state and per-network counters update in place');
  check(writes.length===1&&writes[0].uuTakeover.settings.enabled===true&&!writes[0].uuTakeover.settings.networkId,'only the enabled option is saved; no network selection is persisted');
  check(await page.evaluate(()=>!busy),'live traffic polling never locks other pages');
  metadata={...metadata,state:'Idle',message:'已检测到 UU 数据，当前流量较少或会话空闲',trafficObserved:false,recentBytesPerSecond:500};
@@ -67,8 +68,12 @@ function decorate(body){
  rejectNext=true;await page.locator('#uu-takeover-enabled').uncheck();
  await page.locator('#uu-takeover-error').filter({hasText:'模拟设置冲突'}).waitFor();
  check(await page.locator('#uu-takeover-enabled').isChecked()&&await page.evaluate(()=>!busy),'rejected save restores persisted intent and leaves unrelated actions usable');
- metadata={...metadata,message:'<img src=x onerror=alert(1)>'};await page.evaluate(()=>refresh());
- check(await page.locator('#uu-takeover-detail img').count()===0&&await page.locator('#uu-takeover-detail').innerText().then(t=>t.includes('<img')),'runtime error text cannot inject markup');
+ metadata={...metadata,state:'Error',message:'<img src=x onerror=alert(1)>'};
+ await page.locator('#uu-takeover-enabled').uncheck();
+ await page.waitForFunction(()=>workspaceState?.uuTakeover?.settings?.enabled===false);
+ await page.locator('#uu-takeover-enabled').check();
+ await page.locator('#uu-takeover-error').filter({hasText:'<img'}).waitFor();
+ check(await page.locator('#uu-takeover-error img').count()===0,'runtime error text cannot inject markup');
  await page.locator('#uu-takeover-enabled').uncheck();
  await page.waitForFunction(()=>workspaceState?.uuTakeover?.settings?.enabled===false);
  await page.locator('.nav[data-page="settings"]').click();
