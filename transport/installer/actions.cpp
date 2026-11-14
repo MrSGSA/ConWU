@@ -91,12 +91,15 @@ void close_clients(MSIHANDLE h,const context &c,bool includeLegacy){
     UINT message=RegisterWindowMessageW(L"StreamLink.ExitUi.AQ1.v1");handle snapshot{CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS,0)};if(snapshot.value==INVALID_HANDLE_VALUE)throw std::wstring(L"无法查询现有界面。");
     PROCESSENTRY32W entry{};entry.dwSize=sizeof(entry);if(!Process32FirstW(snapshot.value,&entry))return;
     do {
-        bool web=_wcsicmp(entry.szExeFile,L"StreamLink.Web.exe")==0,desktop=_wcsicmp(entry.szExeFile,L"StreamLink.exe")==0||_wcsicmp(entry.szExeFile,L"ConWU.exe")==0;
+        // Recognize both generations during an upgrade, without shipping a
+        // second legacy launcher or changing service/data identity.
+        bool web=_wcsicmp(entry.szExeFile,L"ConWU.Web.exe")==0||_wcsicmp(entry.szExeFile,L"StreamLink.Web.exe")==0;
+        bool desktop=_wcsicmp(entry.szExeFile,L"ConWU.exe")==0||_wcsicmp(entry.szExeFile,L"StreamLink.exe")==0;
         if(!web&&!desktop)continue;
         handle process{OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION|SYNCHRONIZE|PROCESS_TERMINATE,FALSE,entry.th32ProcessID)};if(!process.value)continue;
         std::vector<wchar_t> path(32768);DWORD length=static_cast<DWORD>(path.size());if(!QueryFullProcessImageNameW(process.value,0,path.data(),&length))continue;std::wstring file(path.data(),length);
         auto current=c.folder;while(!current.empty()&&(current.back()==L'\\'||current.back()==L'/'))current.pop_back();
-        bool managed=under(file,current+L"\\app")||_wcsicmp(file.c_str(),(current+L"\\StreamLink.exe").c_str())==0||_wcsicmp(file.c_str(),(current+L"\\ConWU.exe").c_str())==0;
+        bool managed=under(file,current+L"\\app")||_wcsicmp(file.c_str(),(current+L"\\ConWU.exe").c_str())==0||_wcsicmp(file.c_str(),(current+L"\\StreamLink.exe").c_str())==0;
         if(includeLegacy&&!c.validation)managed=managed||under(file,legacy)||under(file,personal);
         // Validation packages are confined to this instance, including its
         // earlier manual installer folder. They cannot close the daily UI.

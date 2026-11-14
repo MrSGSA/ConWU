@@ -1,6 +1,6 @@
 param([Parameter(Mandatory)][string]$Bundle,[string]$OutputDirectory)
 $ErrorActionPreference='Stop'
-function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'ConWU.exe')}
 $Bundle=[IO.Path]::GetFullPath($Bundle)
 if(Test-Path -LiteralPath (Join-Path $Bundle 'layout-manifest.json')){$Bundle=Join-Path $Bundle 'app'}
 $scope=[guid]::NewGuid().ToString('N');$service='StreamLink-Validation-'+$scope
@@ -42,7 +42,7 @@ try {
     $good=Join-Path $OutputDirectory 'good';$bad=Join-Path $OutputDirectory 'fault'
     Copy-Item -LiteralPath $Bundle -Destination $good -Recurse;Copy-Item -LiteralPath $Bundle -Destination $bad -Recurse
     # Only this copied fault fixture is modified; the fixed bundle stays intact.
-    'intentionally invalid runtime JSON'|Set-Content -LiteralPath (Join-Path $bad 'StreamLink.Service.runtimeconfig.json') -Encoding utf8
+    'intentionally invalid runtime JSON'|Set-Content -LiteralPath (Join-Path $bad 'ConWU.Service.runtimeconfig.json') -Encoding utf8
     Rehash $bad
     # This is an explicit same-account fixture selection, NOT cross-account UAC evidence.
     Invoke-App $good @('--install','--ui-user-account',$identity.Name)

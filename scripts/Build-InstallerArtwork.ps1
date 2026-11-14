@@ -48,7 +48,7 @@ if($Preview){
  # Render the same authored control rectangles without launching msiexec.
  # These PNGs are DESIGN PREVIEWS, not screenshots of an installed MSI dialog.
  $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
- [xml]$ui=Get-Content -LiteralPath (Join-Path $repo 'installer/StreamLinkUI.wxs') -Raw
+ [xml]$ui=Get-Content -LiteralPath (Join-Path $repo 'installer/ConWUUI.wxs') -Raw
  [xml]$sidebar=Get-Content -LiteralPath (Join-Path $repo 'installer/Sidebar.wxi') -Raw
  $styles=@{};foreach($style in $ui.SelectNodes('//*[local-name()="TextStyle"]')){$styles[$style.Id]=$style}
  $format=[Drawing.StringFormat]::GenericTypographic.Clone();$format.Trimming='EllipsisCharacter';$format.HotkeyPrefix='Show'

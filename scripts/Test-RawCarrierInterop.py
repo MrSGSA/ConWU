@@ -31,7 +31,7 @@ def main():
     linux_ip = json.loads(run([*wsl, "ip", "-j", "-4", "address", "show", "dev", "eth0"]))[0]["addr_info"][0]["local"]
     windows_ip = json.loads(run([*wsl, "ip", "-j", "-4", "route", "show", "default"]))[0]["gateway"]
     linux_root = run([*wsl, "wslpath", "-a", root.as_posix()]).strip()
-    win_app = ["dotnet", str(root / "tests/StreamLink.PhantunTests/bin/Release/net10.0/StreamLink.PhantunTests.dll")]
+    win_app = ["dotnet", str(root / "tests/ConWU.PhantunTests/bin/Release/net10.0/ConWU.PhantunTests.dll")]
     linux_app = [*wsl, linux_root + "/out/raw-carrier-lab/linux/StreamLink.PhantunTests"]
     identities = json.loads(run([*win_app, "--identities", args.carrier]))
     host_ip = linux_ip if args.host == "linux" else windows_ip

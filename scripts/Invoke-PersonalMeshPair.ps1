@@ -34,7 +34,7 @@ try{
  if($LASTEXITCODE){throw 'Remote runner copy failed'}
  for($round=1;$round -le $Rounds;$round++){
   $tag='mesh-v3-'+[guid]::NewGuid().ToString('N');$prepared=Join-Path $Bundle $tag
-  & (Join-Path $Bundle 'StreamLink.MeshHarness.exe') traversal-prepare $prepared $coord $LocalIp $PeerIp $Kind $DataRoute > (Join-Path $Output "round-$round-addresses.json")
+  & (Join-Path $Bundle 'ConWU.MeshHarness.exe') traversal-prepare $prepared $coord $LocalIp $PeerIp $Kind $DataRoute > (Join-Path $Output "round-$round-addresses.json")
   if($LASTEXITCODE){throw 'Isolated Mesh profiles failed'}
   $a=Get-Content -LiteralPath (Join-Path $prepared 'local.private.json') -Raw|ConvertFrom-Json
   $b=Get-Content -LiteralPath (Join-Path $prepared 'remote.private.json') -Raw|ConvertFrom-Json

@@ -9,7 +9,7 @@ $folder=Split-Path -Parent $Configuration
 $node=Get-Content -LiteralPath $Configuration -Raw | ConvertFrom-Json
 $rule='StreamLink-M4-Network-'+[guid]::NewGuid().ToString('N')
 try {
- $hashes=@('StreamLink.MeshHarness.dll','StreamLink.Core.dll','StreamLink.Service.dll','components\udp2raw-native.exe','components\streamlink-tun.dll','components\wintun.dll','components\WinDivert.dll','components\WinDivert64.sys') | ForEach-Object {
+ $hashes=@('ConWU.MeshHarness.dll','ConWU.Core.dll','ConWU.Service.dll','components\udp2raw-native.exe','components\conwu-tun.dll','components\wintun.dll','components\WinDivert.dll','components\WinDivert64.sys') | ForEach-Object {
   $path=Join-Path $folder $_
   if(Test-Path -LiteralPath $path){[pscustomobject]@{file=$_;sha256=(File-Sha256 $path)}}
  }
@@ -22,7 +22,7 @@ try {
   $protocol=if($node.Kind -ne 'udp'){'TCP'}else{'UDP'}
   New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Inbound -Action Allow -Protocol $protocol -LocalAddress $node.Local -RemoteAddress $node.Peer -LocalPort @([string]$node.SourcePort,[string]$node.ReflectorPort) | Out-Null
  }
- $start=[Diagnostics.ProcessStartInfo]::new((Join-Path $folder 'StreamLink.MeshHarness.exe'))
+ $start=[Diagnostics.ProcessStartInfo]::new((Join-Path $folder 'ConWU.MeshHarness.exe'))
  $start.UseShellExecute=$false;$start.CreateNoWindow=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
  $start.Arguments='traversal-run "'+$Configuration+'" "'+$Output+'"'
  $owned=[Diagnostics.Process]::Start($start);$stdout=$owned.StandardOutput.ReadToEndAsync();$stderr=$owned.StandardError.ReadToEndAsync()

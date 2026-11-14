@@ -3,7 +3,7 @@
 param([Parameter(Mandatory)][string]$PreviousMsi,[Parameter(Mandatory)][string]$CandidateMsi,
       [Parameter(Mandatory)][string]$Harness,[Parameter(Mandatory)][string]$OutputDirectory,[switch]$UseInstalledPrevious)
 $ErrorActionPreference='Stop'
-function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'ConWU.exe')}
 $PreviousMsi=[IO.Path]::GetFullPath($PreviousMsi);$CandidateMsi=[IO.Path]::GetFullPath($CandidateMsi);$Harness=[IO.Path]::GetFullPath($Harness)
 $old=Get-Content ($PreviousMsi+'.json') -Raw|ConvertFrom-Json;$new=Get-Content ($CandidateMsi+'.json') -Raw|ConvertFrom-Json
 $instance=[string]$new.validationInstance;$guid=[guid]::Empty
@@ -44,8 +44,8 @@ function Ready([string]$Label,[switch]$ServiceOnly){
   $state|Add-Member profileHash $state.ProfileSha256
  }else{Check ($state.Ok -and $state.ServiceReady -and $state.status.Adapter.Loaded) ($Label+' real official adapter opened')}
  $manifest=Get-Content (Join-Path $runtime 'manifest.json') -Raw|ConvertFrom-Json
- $binary=(Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash
- Check ($binary -eq ($manifest.files|Where-Object path -eq 'StreamLink.Service.dll').sha256) ($Label+' installed service matches bundle manifest')
+ $binary=(Get-FileHash (Join-Path $runtime 'ConWU.Service.dll')).Hash
+ Check ($binary -eq ($manifest.files|Where-Object path -eq 'ConWU.Service.dll').sha256) ($Label+' installed service matches bundle manifest')
  $state|Add-Member release $manifest.version
  $state|Add-Member sourceCommit $manifest.sourceCommit
  $state|Add-Member serviceHash $binary

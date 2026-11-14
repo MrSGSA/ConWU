@@ -8,7 +8,7 @@ param(
  [string]$LegacyBundle
 )
 $ErrorActionPreference='Stop'
-function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'ConWU.exe')}
 $id=[guid]::Empty
 if(-not[guid]::TryParseExact($ValidationInstance,'N',[ref]$id) -or $id -eq [guid]::Empty){throw 'An isolated canonical validation GUID is required'}
 $Msi=[IO.Path]::GetFullPath($Msi)
@@ -61,16 +61,16 @@ function Same([object]$Before,[object]$After,[string]$Label){
 function StartTray([string]$Label,[switch]$Manual){
  $trayArguments=@('--validation-instance',$ValidationInstance)
  if(-not $Manual){$trayArguments+='--startup'}
- & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'StreamLink.exe') -Arguments $trayArguments -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
+ & (Join-Path $PSScriptRoot 'Invoke-AqOrdinaryUser.ps1') -Executable (Join-Path $install 'ConWU.exe') -Arguments $trayArguments -OutputDirectory (Join-Path $OutputDirectory $Label)|Out-Null
  $launch=Get-Content (Join-Path $OutputDirectory ($Label+'/launch-result.json')) -Raw|ConvertFrom-Json
  Check ($launch.exit -eq 0 -and $launch.admin -eq $false -and -not $launch.error) ($Label+' ordinary launcher')
  $watch=[Diagnostics.Stopwatch]::StartNew()
  do {
-  $processes=@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='ConWU.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)})
-  if(@($processes|Where-Object Name -eq 'StreamLink.Web.exe').Count){break}
+  $processes=@(Get-CimInstance Win32_Process -Filter "Name='ConWU.exe' OR Name='ConWU.exe' OR Name='ConWU.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)})
+  if(@($processes|Where-Object Name -eq 'ConWU.Web.exe').Count){break}
   Start-Sleep -Milliseconds 200
  }while($watch.Elapsed.TotalSeconds -lt 15)
- Check (@($processes|Where-Object Name -in @('StreamLink.exe','ConWU.exe')).Count -eq 1 -and @($processes|Where-Object Name -eq 'StreamLink.Web.exe').Count -eq 1) ($Label+' real tray and Web processes started')
+ Check (@($processes|Where-Object Name -in @('ConWU.exe','ConWU.exe')).Count -eq 1 -and @($processes|Where-Object Name -eq 'ConWU.Web.exe').Count -eq 1) ($Label+' real tray and Web processes started')
  return ,@($processes.ProcessId)
 }
 function Gone([uint32[]]$Pids,[string]$Label){
@@ -95,7 +95,7 @@ function Uninstall([string]$Label){
  MsiRun '/x' $Msi $Label
  Gone $ui $Label
  Check (-not(Get-Service -Name $service -ErrorAction SilentlyContinue)) ($Label+' removes owned service')
- Check (-not(Test-Path (Join-Path $runtime 'StreamLink.Service.exe'))) ($Label+' removes program')
+ Check (-not(Test-Path (Join-Path $runtime 'ConWU.Service.exe'))) ($Label+' removes program')
  Check ((Test-Path (Join-Path $data 'profile.dpapi')) -and (Get-FileHash (Join-Path $data 'profile.dpapi')).Hash -eq $profile) ($Label+' retains protected configuration')
  Check (-not(Test-Path ('HKLM:\Software\StreamLink\Validation\'+$ValidationInstance))) ($Label+' removes MSI registration')
  # Get-ItemPropertyValue terminates on a missing value; absence is success here.
@@ -103,10 +103,10 @@ function Uninstall([string]$Label){
 }
 try {
  $preUi=@()
- if(Test-Path (Join-Path $install 'StreamLink.exe')){$preUi=StartTray 'before-update'}
+ if(Test-Path (Join-Path $install 'ConWU.exe')){$preUi=StartTray 'before-update'}
  MsiRun '/i' $Msi 'install-or-upgrade'
  $startup=Get-ItemPropertyValue -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run' -Name $service
- Check ($startup -eq ('"'+(Join-Path $install 'StreamLink.exe')+'" --validation-instance '+$ValidationInstance+' --startup')) 'MSI owns the exact quoted login startup command'
+ Check ($startup -eq ('"'+(Join-Path $install 'ConWU.exe')+'" --validation-instance '+$ValidationInstance+' --startup')) 'MSI owns the exact quoted login startup command'
  $shell=New-Object -ComObject WScript.Shell
  foreach($folder in @([Environment]::GetFolderPath('CommonDesktopDirectory'),(Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'ConWU'))){
   $link=Join-Path $folder ('ConWU Validation '+$ValidationInstance.Substring(0,8)+'.lnk')
@@ -133,10 +133,10 @@ try {
   DistinctPolicy
   $policy=FailurePolicy
   $image=(Get-CimInstance Win32_Service -Filter "Name='$service'").PathName
-  $hash=(Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash
+  $hash=(Get-FileHash (Join-Path $runtime 'ConWU.Service.dll')).Hash
   MsiRun '/i' $FaultMsi 'failed-update' -ExpectedFailure
   Same $before (State $runtime 'after-failed-update') 'failed update rollback'
-  Check ((Get-CimInstance Win32_Service -Filter "Name='$service'").PathName -eq $image -and (Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash -eq $hash) 'failed update restores ImagePath and original binary'
+  Check ((Get-CimInstance Win32_Service -Filter "Name='$service'").PathName -eq $image -and (Get-FileHash (Join-Path $runtime 'ConWU.Service.dll')).Hash -eq $hash) 'failed update restores ImagePath and original binary'
   Check ((FailurePolicy) -eq $policy) 'failed update restores SCM failure actions and description'
  }
  App $runtime @('--acceptance-disable-startup')
@@ -145,7 +145,7 @@ try {
  Same $startupBefore (State $runtime 'startup-disabled-after-repair') 'disabled startup repair'
  Check ((Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$service)).Start -eq 3) 'repair preserves explicitly disabled automatic service startup'
  App $runtime @('--startup')
- Check (@(Get-CimInstance Win32_Process -Filter "Name='StreamLink.exe' OR Name='ConWU.exe' OR Name='StreamLink.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0) 'disabled login startup exits without tray or Web processes'
+ Check (@(Get-CimInstance Win32_Process -Filter "Name='ConWU.exe' OR Name='ConWU.exe' OR Name='ConWU.Web.exe'"|Where-Object {$_.ExecutablePath -and $_.ExecutablePath.StartsWith($runtime+'\',[StringComparison]::OrdinalIgnoreCase)}).Count -eq 0) 'disabled login startup exits without tray or Web processes'
  Uninstall 'uninstall'
  if($LegacyBundle){
   App $LegacyBundle @('--install','--ui-user-account',[Security.Principal.WindowsIdentity]::GetCurrent().Name)

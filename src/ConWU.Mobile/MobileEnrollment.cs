@@ -30,6 +30,7 @@ public sealed class MobileDeviceState
     [JsonRequired] public string DeviceName {get;set;}="手机";
     [JsonRequired] public string SigningPrivate {get;set;}=NodeIdentityProof.GeneratePrivate();
     [JsonRequired] public MobileNetwork[] Networks {get;set;}=[];
+    public bool UuTakeoverEnabled {get;set;}
     public string DeviceId=>MeshIdentity.NetworkId(MeshIdentity.PublicSigning(SigningPrivate));
     public void Validate()
     {

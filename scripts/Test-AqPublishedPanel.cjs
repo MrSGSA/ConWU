@@ -5,7 +5,7 @@ const fs=require('fs'),path=require('path');
 const [bundle,id,out,...flags]=process.argv.slice(2),readOnly=flags.includes('--read-only');
 if(!/^[0-9a-f]{32}$/.test(id)&&!(id==='daily'&&readOnly))throw Error('Validation ID required; daily verification must be read-only');
 fs.mkdirSync(out,{recursive:true});
-const child=spawn(path.join(bundle,'web','StreamLink.Web.exe'),[...(id==='daily'?[]:['--validation-instance',id]),'--controlled'],{windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(path.join(bundle,'web','ConWU.Web.exe'),[...(id==='daily'?[]:['--validation-instance',id]),'--controlled'],{windowsHide:true,stdio:['pipe','pipe','pipe']});
 let stderr='',browser,page,checks=[];child.stderr.on('data',d=>stderr+=d.toString());
 const lines=createInterface({input:child.stdout}),queue=[],waiting=[];
 lines.on('line',l=>waiting.length?waiting.shift()(l):queue.push(l));

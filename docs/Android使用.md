@@ -1,6 +1,6 @@
 # Android 从机测试版
 
-Android 先行，iOS 暂待 Mac、Xcode 与签名条件。当前为 `1.4.0-preview.2`，不属于桌面正式版 Release。
+Android 先行，iOS 暂待 Mac、Xcode 与签名条件。当前为本地测试版，与桌面本轮一起构建，不上传正式 Release。
 
 ## 安装与连接
 
@@ -13,7 +13,7 @@ Android 先行，iOS 暂待 Mac、Xcode 与签名条件。当前为 `1.4.0-previ
 3. 在手机输入直连码并请求加入，允许系统 VPN 授权，核对双方校验码，由主机批准。主机审批后自动继承配置，不需要手机重复填写入口。
 4. 手机显示已直连后，将“主机虚拟 IP”填入原版 Moonlight。Sunshine 与 Moonlight 的自身配对仍按原流程操作。
 
-手机仅提供加入、连接、重试、断开、退出、日志和更新检测，不创建网络或提供协调服务。手机仅支持 TCP 与 HTTPS；FakeTCP、Phantun、Mimic、TCPRAW 和直接 UDP 会明确提示不支持，不自动改用其他协议。主机的多个逻辑网络使用独立身份和虚拟地址，手机合并为一个系统 VPN。
+手机提供加入、连接、重试、断开、退出、日志、更新及配合主机的 UU 接管，不创建网络或提供协调服务。手机仅支持 TCP 与 HTTPS；FakeTCP、Phantun、Mimic、TCPRAW 和直接 UDP 会明确提示不支持，不自动改用其他协议。主机的多个逻辑网络使用独立身份和虚拟地址，手机合并为一个系统 VPN。
 
 ## 恢复与配置
 
@@ -29,7 +29,15 @@ Android 先行，iOS 暂待 Mac、Xcode 与签名条件。当前为 `1.4.0-previ
 
 ## 软件更新
 
-Windows、Linux WebUI 的设置页和 Android 提供“检查更新”；Linux 也可执行 `conwu update check`，无需后台先启动。检测官方 GitHub 正式 Release，根据平台及 CPU 架构选择下载附件，不自动安装、不改网络设置，不向更新服务发送网络身份或配对凭据。当前不查询预览版渠道；暂未提供 Android 正式附件时会说明，不能下载桌面包代替。
+Windows、Linux WebUI 的设置页和 Android 提供“检查更新”；Linux 也可执行 `conwu update check`，无需后台先启动。只查询官方 GitHub 正式 Release，按平台及 CPU 架构选择附件，不发送网络身份或配对凭据。当前不查询预览版渠道；没有 Android 附件时不会下载桌面包代替。
+
+Windows 安装版可下载完整 MSI，校验后由用户确认，由独立本机更新程序继续安装并恢复后台及已启用网络。Android 可在应用内下载完整 APK，核对哈希、应用身份、版本号和签名后交给系统安装；需要系统允许 ConWU 安装应用并确认，不能静默绕过 Android 的要求。覆盖安装保留 Keystore 与网络，系统包替换通知会尝试恢复 VPN；厂商限制后台启动时需打开 ConWU。Linux 仍由用户部署下载包。
+
+## UU 远程接管
+
+先在 Windows 主机开启“UU 远程接管”，再连接手机 ConWU 网络并重连 UU 会话。Android 页面的开关保留在本机，所有已直连网络自动参与，按 UU 选择的目标设备通信，不需要选网络。Android 10 及以上使用系统连接归属接口，仅将属于 `com.netease.uuremote` 且确实通过 VPN 的流量统计为 UU；其他版本不宣称已按应用核验。
+
+Windows 使用已验证的临时套接字规则，Android 配合主机并使用现有系统 VPN，不提供 root hook 或独立替换 UU 的信令。手机上“VPN 已就绪”不代表 UU 已经走 ConWU，必须看到实际 UU 流量；没有经过手机实测前，不宣称 UU Android 串流接管完成。UU 终端、文件和端口转发不在本轮验收范围。
 
 ## 构建
 

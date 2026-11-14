@@ -18,7 +18,10 @@ $file=Join-Path $work 'Package.wxs'
 $xml=[xml]@'
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
  <Package Name="ConWU" Manufacturer="ConWU" Version="1.0.3" UpgradeCode="AD076018-A9B8-47F5-B098-97479A363416" Language="2052" Scope="perMachine" InstallerVersion="500">
-  <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="已安装较新的 ConWU，请使用相同或更新版本的安装包。" />
+  <!-- Remove the old service/file components inside the upgrade transaction
+       before registering the renamed executable. Late removal would delete
+       the newly registered service when the old key-path filename changes. -->
+  <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="已安装较新的 ConWU，请使用相同或更新版本的安装包。" />
   <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
   <Property Id="ARPPRODUCTICON" Value="AppIcon" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
@@ -57,7 +60,7 @@ $xml=[xml]@'
    <Custom Action="SetRollback" Before="RollbackUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="RollbackUpgrade" Before="SetPrepare" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetPrepare" Before="PrepareUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
-   <Custom Action="PrepareUpgrade" Before="StopServices" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+   <Custom Action="PrepareUpgrade" Before="RemoveExistingProducts" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetClose" Before="CloseClients" Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="CloseClients" Before="StopServices" Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="RollbackAuthorization" After="InstallServices" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
@@ -87,7 +90,7 @@ foreach($item in $all){
   foreach($part in $parent.Split('/',[StringSplitOptions]::RemoveEmptyEntries)){$at=if($at){$at+'/'+$part}else{$part};if(-not $dirs.ContainsKey($at)){$id='D'+[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($at))).Substring(0,20);$child=Node 'Directory' @{Id=$id;Name=$part};$node.AppendChild($child)|Out-Null;$dirs[$at]=$child};$node=$dirs[$at]}
  }
  $hash=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($relative))).Substring(0,24);$componentId='C'+$hash;$fileId='F'+$hash
- if($relative -eq 'StreamLink.exe'){$fileId='LauncherExe'}elseif($relative -eq 'ConWU.exe'){$fileId='ConwuLauncherExe'}elseif($relative -eq 'app/ConWU.exe'){$fileId='ServiceUiExe'}elseif($relative -eq 'app/StreamLink.Service.exe'){$fileId='ServiceExe'}
+ if($relative -eq 'ConWU.exe'){$fileId='LauncherExe'}elseif($relative -eq 'app/ConWU.exe'){$fileId='ServiceUiExe'}elseif($relative -eq 'app/ConWU.Service.exe'){$fileId='ServiceExe'}
  $component=Node 'Component' @{Id=$componentId;Guid='*';Bitness='always64'};$fileNode=Node 'File' @{Id=$fileId;Source=$item.FullName;KeyPath='yes'};$component.AppendChild($fileNode)|Out-Null
  # These official components are pinned to the same release across upgrades.
  # Never schedule an identical in-use driver for replacement/reboot. The app's
@@ -103,22 +106,22 @@ foreach($item in $all){
   $component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key='Software\Microsoft\Windows\CurrentVersion\Run';Name=$startupName;Type='string';Value=('"[#LauncherExe]" '+$validationArgs+'--startup')}))|Out-Null
   foreach($value in @(@('ProductCode','[ProductCode]'),@('InstallLocation','[INSTALLFOLDER]'))){$component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key=$registryKey;Name=$value[0];Type='string';Value=$value[1]}))|Out-Null}
  }
- if($fileId -eq 'ConwuLauncherExe'){
+ if($fileId -eq 'LauncherExe'){
   # Remove only the exact shortcuts previously installed for this instance.
   $oldName=if($ValidationInstance){'StreamLink Validation '+$ValidationInstance.Substring(0,8)}else{'StreamLink'}
   $component.AppendChild((Node 'RemoveFile' @{Id='OldDesktopShortcut';Directory='DesktopFolder';Name=($oldName+'.lnk');On='install'}))|Out-Null
   $component.AppendChild((Node 'RemoveFile' @{Id='OldMenuShortcut';Directory='LegacyApplicationMenuFolder';Name=($oldName+'.lnk');On='install'}))|Out-Null
   $component.AppendChild((Node 'RemoveFile' @{Id='OldUninstallShortcut';Directory='LegacyApplicationMenuFolder';Name=('卸载 '+$oldName+'.lnk');On='install'}))|Out-Null
   $component.AppendChild((Node 'RemoveFolder' @{Id='OldMenuFolder';Directory='LegacyApplicationMenuFolder';On='install'}))|Out-Null
-  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#ConwuLauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
-  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#ConwuLauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='StartMenuApp';Directory='ApplicationMenuFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
+  $component.AppendChild((Node 'Shortcut' @{Id='DesktopApp';Directory='DesktopFolder';Name=$productName;Target='[#LauncherExe]';WorkingDirectory='INSTALLFOLDER';Arguments=$validationArgs.Trim();Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'Shortcut' @{Id='StartMenuUninstall';Directory='ApplicationMenuFolder';Name='卸载 '+$productName;Target='[SystemFolder]msiexec.exe';Arguments='/x [ProductCode]';Icon='AppIcon';Advertise='no'}))|Out-Null
   $component.AppendChild((Node 'RemoveFolder' @{Id='RemoveApplicationMenu';Directory='ApplicationMenuFolder';On='uninstall'}))|Out-Null
  }
  $dirs[$parent].AppendChild($component)|Out-Null;$feature.AppendChild((Node 'ComponentRef' @{Id=$componentId}))|Out-Null
 }
 foreach($node in $xml.SelectNodes('//*')){foreach($attr in @($node.Attributes)){
- if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/StreamLink.App/Assets/streamlink.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/streamlink-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
+ if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/ConWU.App/Assets/conwu.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/conwu-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
 }}
 $notice="ConWU · 开源许可与第三方声明`n`nConWU 无需购买授权、激活或输入许可密钥。以下是软件及随包组件的开源使用条款。`n安装与更新会关闭当前版本的窗口并重启后台，保留配对和设备配置。卸载保留个人配置与共享驱动。`n`nConWU · MIT License`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
 $thirdParty=Join-Path $BundleRoot 'app/licenses'
@@ -136,7 +139,7 @@ foreach($character in $notice.ToCharArray()){
 $xml.Save($file)
 $artwork=Join-Path $work 'artwork'
 & (Join-Path $repo 'scripts/Build-InstallerArtwork.ps1') -OutputDirectory $artwork | Out-Null
-$ui=Join-Path $repo 'installer/StreamLinkUI.wxs'
+$ui=Join-Path $repo 'installer/ConWUUI.wxs'
 & $wix build -arch x64 -culture zh-cn -ext WixToolset.UI.wixext -ext WixToolset.Util.wixext -I (Join-Path $repo 'installer') -d "StreamLinkArtwork=$artwork" -d "StreamLinkLicenseRtf=$(Join-Path $work 'License.rtf')" -o $OutputPath $file $ui > (Join-Path $work 'wix-build.log') 2>&1
 if($LASTEXITCODE){throw ('MSI build failed: '+(Join-Path $work 'wix-build.log'))}
 [ordered]@{version=$manifest.version;msiVersion=$MsiVersion;sourceCommit=$manifest.sourceCommit;service=$service;validationInstance=$ValidationInstance;upgradeCode=$upgrade;publisherSignature='UnsignedCandidate';sha256=(Get-FileHash -LiteralPath $OutputPath).Hash;files=$all.Count;installerUi='StreamLinkUI';installerUiSha256=(Get-FileHash -LiteralPath $ui).Hash;installerSidebarSha256=(Get-FileHash -LiteralPath (Join-Path $repo 'installer/Sidebar.wxi')).Hash;installerArtworkSourceSha256=(Get-FileHash -LiteralPath (Join-Path $repo 'scripts/Build-InstallerArtwork.ps1')).Hash}|ConvertTo-Json|Set-Content ($OutputPath+'.json') -Encoding utf8NoBOM

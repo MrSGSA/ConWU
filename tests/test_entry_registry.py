@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from contextlib import closing
 
-spec = importlib.util.spec_from_file_location("entries", Path(__file__).resolve().parents[1] / "scripts/entry-registry/streamlink_entries.py")
+spec = importlib.util.spec_from_file_location("entries", Path(__file__).resolve().parents[1] / "scripts/entry-registry/conwu_entries.py")
 entries = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(entries)
 

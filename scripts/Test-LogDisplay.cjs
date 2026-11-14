@@ -4,8 +4,8 @@ const {spawn}=require('node:child_process'),{createInterface}=require('node:read
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),out=path.join(root,'artifacts/maintenance-1.4.1/log-browser');
 fs.mkdirSync(out,{recursive:true});
-const fixture=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),
- ['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot'),'--pair-workspace'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const fixture=spawn(path.join(root,'tests/ConWU.WebTests/bin/Release/net10.0-windows/ConWU.WebTests.exe'),
+ ['--browser-fixture',path.join(root,'src/ConWU.Web/wwwroot'),'--pair-workspace'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
 const lines=createInterface({input:fixture.stdout});let browser,stderr='',checks=0;
 fixture.stderr.on('data',x=>stderr+=x);
 const link=new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(stderr||'fixture timeout')),25000);lines.once('line',line=>{clearTimeout(timer);resolve(line);});});

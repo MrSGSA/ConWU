@@ -27,7 +27,7 @@ try {
   Write-Output "$Name $($row.status)"
  }
  function Managed([string]$Name,[string[]]$Extra=@(),[int]$Seconds=300) {
-  Run $Name 'dotnet' (@('run','--project',"tests/StreamLink.$Name",'-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--')+$Extra) $Seconds
+  Run $Name 'dotnet' (@('run','--project',"tests/ConWU.$Name",'-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--')+$Extra) $Seconds
  }
  $native=Join-Path $repo 'out/native/udp2raw-protocol-test.exe'
  Run 'native-parser' (Join-Path $repo 'out/native/udp2raw-parser-test.exe') @() 120 @{STREAMLINK_PARSER_CORPUS=(Join-Path $OutputDirectory 'parser-corpus.txt')}
@@ -39,7 +39,7 @@ try {
   # Keep every case's own deadline; allow the sequential suite to finish.
   if($name -eq 'MeshConnectionTests'){Managed $name @() 600}else{Managed $name}
  }
- Run 'runner-retry-wake' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--network-wake-only',(Join-Path $OutputDirectory 'retry-wake.json'))
+ Run 'runner-retry-wake' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--network-wake-only',(Join-Path $OutputDirectory 'retry-wake.json'))
  Managed 'PersonalFeatureTests' @((Join-Path $OutputDirectory 'personal.json'))
  Managed 'RenderingTests' @((Join-Path $OutputDirectory 'tray/result.json'))
  Managed 'WebTests'
@@ -54,33 +54,33 @@ try {
  Run 'legacy-wire-native' 'py' @('-3','tests/legacy_wire_loopback.py','--output',(Join-Path $OutputDirectory 'legacy-native.json'))
  Managed 'LegacyWireTests' @('--native-report',(Join-Path $OutputDirectory 'legacy-native.json'),'--output',(Join-Path $OutputDirectory 'legacy-wire.json'))
  Managed 'LegacyControlTests' @('--native',$native,'--output',(Join-Path $OutputDirectory 'legacy-control.json'),'--rounds',$repeatRounds) 900
- Run 'mesh-native-wire' 'dotnet' @('run','--project','tests/StreamLink.MeshTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--raw',$native)
- Run 'direct-short-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-native',$native,(Join-Path $OutputDirectory 'direct-short-native'))
- Run 'approval-invitation' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-invitation-only')
- Run 'entry-admission' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--entry-admission-only')
- Run 'approval-guest-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-guest-service')
- Run 'coordination-faults' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--coordination-faults')
- Run 'leave-timeouts' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--leave-timeout-only')
+ Run 'mesh-native-wire' 'dotnet' @('run','--project','tests/ConWU.MeshTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--raw',$native)
+ Run 'direct-short-native' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-native',$native,(Join-Path $OutputDirectory 'direct-short-native'))
+ Run 'approval-invitation' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-invitation-only')
+ Run 'entry-admission' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--entry-admission-only')
+ Run 'approval-guest-service' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--approval-guest-service')
+ Run 'coordination-faults' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--coordination-faults')
+ Run 'leave-timeouts' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--leave-timeout-only')
  foreach($case in @('only','integration','coordination','concurrent-identity','recovery','operations','budgets')) {
   $argument=if($case -eq 'only'){'--pair-workspace-only'}else{'--pair-workspace-'+$case}
-  Run "pair-workspace-$case" 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',$argument) 300
+  Run "pair-workspace-$case" 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',$argument) 300
  }
- Run 'pair-workspace-native' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-workspace-native',$native,(Join-Path $OutputDirectory 'pair-workspace-native')) 300
+ Run 'pair-workspace-native' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-workspace-native',$native,(Join-Path $OutputDirectory 'pair-workspace-native')) 300
  foreach($newCase in @('auto-settings','auto-coordination','auto-entry-backup','pkarr-only','pkarr-resilience','pkarr-lifecycle','pkarr-publisher','pkarr-pairing','pkarr-duplex','autonomous-invitation','existing-invitation','compact-code','compact-integration','release-discovery')) {
-  Run $newCase 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',"--$newCase") 300
+  Run $newCase 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--',"--$newCase") 300
  }
- Run 'saved-settings' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')
- Run 'pairing-options' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pairing-options')
- Run 'control-lifecycle' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--control-lifecycle-only')
- Run 'pair-poll-priority' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-poll-priority-only')
- Run 'connection-view' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--connection-view-only')
- Run 'ui-responsiveness' 'dotnet' @('run','--project','tests/StreamLink.WebTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--ui-responsiveness')
- Run 'direct-short-service' 'dotnet' @('run','--project','tests/StreamLink.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-service')
+ Run 'saved-settings' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--saved-settings-only')
+ Run 'pairing-options' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pairing-options')
+ Run 'control-lifecycle' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--control-lifecycle-only')
+ Run 'pair-poll-priority' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--pair-poll-priority-only')
+ Run 'connection-view' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--connection-view-only')
+ Run 'ui-responsiveness' 'dotnet' @('run','--project','tests/ConWU.WebTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--ui-responsiveness')
+ Run 'direct-short-service' 'dotnet' @('run','--project','tests/ConWU.MeshConnectionTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--direct-short-service')
  # Enabled personal paths: 30 SO/UDP deterministic rounds plus real factory
  # source-learning, resource cancellation, stale-network and failure cleanup.
  foreach($mode in @('baseline','source','network','shutdown-failure')) {
   $rounds=if($mode -eq 'baseline'){$repeatRounds}else{'1'}
-  Run "runner-$mode" 'dotnet' @('run','--project','tests/StreamLink.MeshRunnerTraversalTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--native',$native,'--rounds',$rounds,'--output',(Join-Path $OutputDirectory "runner-$mode.json"),"--$mode-only") 1500
+  Run "runner-$mode" 'dotnet' @('run','--project','tests/ConWU.MeshRunnerTraversalTests','-c','Release','-p:StreamLinkPersonalFeature=true',"-p:StreamLinkReleaseVersion=$Version",'--','--native',$native,'--rounds',$rounds,'--output',(Join-Path $OutputDirectory "runner-$mode.json"),"--$mode-only") 1500
  }
  Run 'browser' 'node' @('scripts/Test-AqBrowser.cjs',(Join-Path $OutputDirectory 'browser')) 180
  Run 'https-coordination' 'pwsh' @('-NoProfile','-File','scripts/Test-Coordination.ps1') 180 @{StreamLinkPersonalFeature='true';StreamLinkReleaseVersion=$Version}

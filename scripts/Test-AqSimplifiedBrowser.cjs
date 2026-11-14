@@ -4,8 +4,8 @@ const {spawn}=require('node:child_process'),{createInterface}=require('node:read
 const fs=require('node:fs'),path=require('node:path');
 const root=path.resolve(__dirname,'..'),out=path.resolve(process.argv[2]||path.join(root,'artifacts/simplified-browser'));
 fs.mkdirSync(out,{recursive:true});
-const assets=process.argv[3]?path.resolve(process.argv[3]):path.join(root,'src/StreamLink.Web/wwwroot');
-const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',assets,'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const assets=process.argv[3]?path.resolve(process.argv[3]):path.join(root,'src/ConWU.Web/wwwroot');
+const child=spawn(path.join(root,'tests/ConWU.WebTests/bin/Release/net10.0-windows/ConWU.WebTests.exe'),['--browser-fixture',assets,'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
 let waiting,stderr='',browser,browserServer,page;const lines=[],findings=[];
 fs.writeFileSync(path.join(out,'processes.json'),JSON.stringify({node:process.pid,fixture:child.pid}));
 child.stderr.on('data',d=>stderr+=d);createInterface({input:child.stdout}).on('line',l=>waiting?(waiting(l),waiting=null):lines.push(l));

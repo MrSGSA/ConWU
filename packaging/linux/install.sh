@@ -53,7 +53,7 @@ ln -sfn -- /opt/streamlink/current/streamlink /usr/local/bin/streamlink
 # Both commands follow the same atomic current link, including rollback to a
 # pre-rename release. Keep the service/data identity to inherit saved settings.
 ln -sfn -- /opt/streamlink/current/streamlink /usr/local/bin/conwu
-install -m 0644 streamlink.service "$unit"
+install -m 0644 conwu.service "$unit"
 systemctl daemon-reload
 if [[ $first == true ]]; then systemctl enable streamlink.service; fi
 if [[ ${1:-} != '--no-start' && ( $was_active == true || $first == true ) ]]; then

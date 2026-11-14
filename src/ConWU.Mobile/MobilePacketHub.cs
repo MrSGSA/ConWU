@@ -15,10 +15,11 @@ public sealed class MobilePacketHub : IAsyncDisposable
     readonly CancellationTokenSource stop=new();
     readonly Task reading;
     readonly uint? systemLocal;
+    readonly Action<string,ReadOnlyMemory<byte>,bool>? observe;
     int disposed;
-    public MobilePacketHub(IPacketAdapter tun,IEnumerable<MobileNetwork> networks,string? systemLocalIp=null)
+    public MobilePacketHub(IPacketAdapter tun,IEnumerable<MobileNetwork> networks,string? systemLocalIp=null,Action<string,ReadOnlyMemory<byte>,bool>? observe=null)
     {
-        this.tun=tun;
+        this.tun=tun;this.observe=observe;
         try{
             systemLocal=systemLocalIp==null?null:Address(systemLocalIp);
             foreach(var network in networks){var port=new Port(this,network);if(!ports.TryAdd(Address(network.HostIp),port))throw new FormatException("多个网络使用了相同的目标虚拟 IP");}
@@ -38,6 +39,7 @@ public sealed class MobilePacketHub : IAsyncDisposable
             uint target=BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(16)),source=BinaryPrimitives.ReadUInt32BigEndian(buffer.AsSpan(12));
             if(ports.TryGetValue(target,out var port)&&(systemLocal??port.Local)==source){
                 var packet=buffer.AsSpan(0,count).ToArray();
+                observe?.Invoke(port.Network,packet,false);
                 if(systemLocal!=null)MobileIpv4Translation.Rewrite(packet,12,port.Local);
                 port.Enqueue(packet);
             }
@@ -62,7 +64,11 @@ public sealed class MobilePacketHub : IAsyncDisposable
             if(Volatile.Read(ref stopped)!=0||packet.Length is <20 or >MeshLink.Mtu||packet[0]>>4!=4||(packet[0]&15)<5||(packet[0]&15)*4>packet.Length||BinaryPrimitives.ReadUInt16BigEndian(packet.AsSpan(2))!=packet.Length||
                 BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(12))!=remote||BinaryPrimitives.ReadUInt32BigEndian(packet.AsSpan(16))!=Local)return false;
             if(owner.systemLocal is {} systemIp&&systemIp!=Local){packet=packet.ToArray();MobileIpv4Translation.Rewrite(packet,16,systemIp);}
-            lock(owner.writeGate)return Volatile.Read(ref stopped)==0&&!owner.stop.IsCancellationRequested&&owner.tun.Write(packet);
+            lock(owner.writeGate){
+                bool written=Volatile.Read(ref stopped)==0&&!owner.stop.IsCancellationRequested&&owner.tun.Write(packet);
+                if(written)owner.observe?.Invoke(Network,packet,true);
+                return written;
+            }
         }
         public void Stop(){if(Interlocked.Exchange(ref stopped,1)==0){incoming.CompleteAdding();while(incoming.TryTake(out _)){} }}
         public void Dispose()=>Stop();

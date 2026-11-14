@@ -1,5 +1,5 @@
 # Deterministic rendering of the repository's vector mark; no image service.
-param([string]$Destination=(Join-Path $PSScriptRoot '../src/StreamLink.App/Assets/streamlink.ico'))
+param([string]$Destination=(Join-Path $PSScriptRoot '../src/ConWU.App/Assets/conwu.ico'))
 $ErrorActionPreference='Stop'
 Add-Type -AssemblyName System.Drawing
 $images=[Collections.Generic.List[byte[]]]::new()

@@ -23,6 +23,8 @@ sealed class MobileRuntime
     public object? ConnectionsOwner {get;set;}
     public ConcurrentDictionary<string,MobileConnectionStatus> Connections {get;}=new();
     public ReleaseUpdateMonitor Updates {get;}
+    public AndroidLocalUpdates LocalUpdates {get;}
+    public AndroidUuTakeover Uu {get;}
     public string Version {get;}
     public Task Initialization {get;}
     MobileRuntime(Context context)
@@ -30,10 +32,11 @@ sealed class MobileRuntime
         store=new(context);
         Version=context.PackageManager!.GetPackageInfo(context.PackageName!,0)!.VersionName??"1.4.0-preview.1";
         Updates=new(current:Version,platform:"android");
+        LocalUpdates=new(context);Uu=new(context);
         // Keystore initialization and first-time identity creation must not
         // occupy Android's main thread or delay the first usable window.
         Initialization=Task.Run(()=>{
-            try{var restored=store.Load();Volatile.Write(ref state,restored);}
+            try{var restored=store.Load();Volatile.Write(ref state,restored);LocalUpdates.Restore();}
             catch(Exception ex){SetError("无法读取保存的配置，原文件已保留。请检查设备存储或密钥状态。");Log("读取配置失败："+ex.GetType().Name);}
         });
     }
@@ -59,14 +62,16 @@ sealed class MobileRuntime
     public void CancelOwnedPair(CancellationTokenSource? pending)
     {if(pending==null)return;lock(pairGate){if(pairStop!=pending)return;} _=Task.Run(()=>{try{pending.Cancel();}catch(ObjectDisposedException){} });}
     public void EndPair(CancellationTokenSource pending){lock(pairGate){if(pairStop==pending)pairStop=null;}pending.Dispose();}
-    void Commit(MobileNetwork[] networks)
+    void Commit(MobileNetwork[] networks,bool? uuEnabled=null)
     {
         if(state==null)throw new IOException(Error);
-        var updated=new MobileDeviceState{SigningPrivate=state.SigningPrivate,DeviceName=state.DeviceName,Networks=networks};
+        var updated=new MobileDeviceState{SigningPrivate=state.SigningPrivate,DeviceName=state.DeviceName,Networks=networks,UuTakeoverEnabled=uuEnabled??state.UuTakeoverEnabled};
         store.Save(updated);Volatile.Write(ref state,updated);
     }
     public void Add(MobileNetwork network){lock(gate){if(state==null)throw new IOException(Error);if(state.Networks.Any(n=>n.Id==network.Id))throw new IOException("此网络已经加入，无需重复保存");Commit(state.Networks.Append(network).ToArray());}}
     public void SetEnabled(string id,bool enabled){lock(gate){if(state==null)throw new IOException(Error);if(!state.Networks.Any(n=>n.Id==id))throw new IOException("未找到网络");Commit(state.Networks.Select(n=>n.Id==id?n with{Enabled=enabled}:n).ToArray());}}
     public void SetAllDisabled(){lock(gate){if(state!=null)Commit(state.Networks.Select(n=>n with{Enabled=false}).ToArray());}}
     public void Remove(string id){lock(gate){if(state==null)throw new IOException(Error);Commit(state.Networks.Where(n=>n.Id!=id).ToArray());Connections.TryRemove(id,out _);}}
+    public void SetUuTakeover(bool enabled){lock(gate){if(state==null)throw new IOException(Error);Commit(state.Networks,enabled);}}
+    public void ObserveVpn(string network,ReadOnlyMemory<byte> packet,bool received){if(Volatile.Read(ref state)?.UuTakeoverEnabled==true)Uu.Observe(network,packet,received);}
 }

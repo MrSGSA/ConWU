@@ -2,7 +2,7 @@
 const path = require('node:path');
 const root = path.resolve(__dirname, '..');
 const { chromium } = require(process.env.CONWU_BROWSER_TOOLS || path.resolve(root, '../StreamLink/out/browser-tools/node_modules/playwright'));
-const assets = path.join(root, 'src/StreamLink.Web/wwwroot');
+const assets = path.join(root, 'src/ConWU.Web/wwwroot');
 const settings = { service: '', pathSelection: 'faketcp-only', connectionSource: 'existing', directMode: true, listenPort: 44680, sourcePort: 44691, existingEntries: [], tcpStun: [], udpStun: [], coordinator: { enabled: false } };
 const status = { version: 'test', deviceName: 'Log fixture', state: '就绪', serviceReady: true, networkEnabled: false, directPeers: 0, totalPeers: 0, peers: [], logLevel: 'info', settings, settingsRevision: '1', logs: [], logEntries: [] };
 const baseTime = Date.parse('2026-11-10T15:59:59Z');

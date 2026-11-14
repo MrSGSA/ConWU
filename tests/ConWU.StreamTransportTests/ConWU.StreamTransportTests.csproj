@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><RootNamespace>StreamLink.StreamTransportTests</RootNamespace><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/ConWU.Core/ConWU.Core.csproj" /><ProjectReference Include="../../src/ConWU.Service/ConWU.Service.csproj" /></ItemGroup>
+</Project>

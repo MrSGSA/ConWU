@@ -60,7 +60,8 @@ var failed=await monitor.Check(force:true);
 Check(failed.State=="Error"&&failed.UpdateAvailable&&failed.Package==available.Package,"a transient check failure retains the previously verified update and leaves connectivity independent");
 clock.Advance(TimeSpan.FromMinutes(2));await monitor.Check();Check(calls==2,"failed automatic checks respect a bounded retry interval");
 clock.Advance(TimeSpan.FromMinutes(16));fail=false;await monitor.Check();Check(calls==3&&monitor.Status.State=="Available","automatic retry clears the previous error after recovery");
-Console.WriteLine($"PASS {checks} update detection checks; isolated HTTP fixtures");
+checks+=await LocalUpdateChecks.Run();
+Console.WriteLine($"PASS {checks} update checks; isolated HTTP and installer fixtures");
 
 sealed class Handler(Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> send):HttpMessageHandler
 {protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,CancellationToken token)=>send(request,token);}

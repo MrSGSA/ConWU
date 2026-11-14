@@ -108,7 +108,7 @@ public sealed class ConwuVpnService : VpnService
             string systemIp=networks[0].Mesh.LocalIp;builder.AddAddress(systemIp,32);
             foreach(var network in networks)builder.AddRoute(network.HostIp,32);
             var handle=builder.Establish()??throw new IOException("系统未建立 VPN 接口，请确认没有其他 VPN 接管连接");
-            var hub=new MobilePacketHub(new AndroidTunAdapter(handle),networks,systemIp);
+            var hub=new MobilePacketHub(new AndroidTunAdapter(handle),networks,systemIp,runtime.ObserveVpn);
             var stop=new CancellationTokenSource();runtime.ConnectionsStop=stop;runtime.ConnectionsOwner=this;
             runtime.ConnectionsTask=RunNetworks(hub,networks,stop);
         }finally{runtime.AutoConnectFinished();runtime.ConnectionsGate.Release();}

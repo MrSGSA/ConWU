@@ -3,7 +3,7 @@ const path=require('node:path'),fs=require('node:fs'),{spawn}=require('node:chil
 const root=path.resolve(__dirname,'..');
 const {chromium}=require(process.env.CONWU_BROWSER_TOOLS||path.resolve(root,'../StreamLink/out/browser-tools/node_modules/playwright'));
 const output=process.env.CONWU_BROWSER_OUTPUT||path.join(root,'artifacts/release-implementation-20261110/real-browser');fs.mkdirSync(output,{recursive:true});
-const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot'),'--pair-workspace','--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(path.join(root,'tests/ConWU.WebTests/bin/Release/net10.0-windows/ConWU.WebTests.exe'),['--browser-fixture',path.join(root,'src/ConWU.Web/wwwroot'),'--pair-workspace','--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
 const lines=createInterface({input:child.stdout}),stderr=[],checks=[];let browser;
 child.stderr.on('data',x=>stderr.push(x.toString()));
 const link=new Promise((resolve,reject)=>{lines.once('line',resolve);child.once('exit',code=>reject(Error('Fixture exited: '+code+' '+stderr.join(''))));});child.stdin.write('open\n');

@@ -37,7 +37,7 @@ try{
  ExecuteMsi '/i' $Msi 'install';$installed=$true
  Check ((Get-Service -Name $service).Status -eq 'Running') 'isolated service runs'
  Stop-Service -Name $service
- & dotnet (Join-Path $repo 'tests/StreamLink.MeshConnectionTests/bin/Release/net10.0-windows/StreamLink.MeshConnectionTests.dll') --seed-configuration-upgrade $ValidationInstance > (Join-Path $OutputDirectory 'seed.log')
+ & dotnet (Join-Path $repo 'tests/ConWU.MeshConnectionTests/bin/Release/net10.0-windows/ConWU.MeshConnectionTests.dll') --seed-configuration-upgrade $ValidationInstance > (Join-Path $OutputDirectory 'seed.log')
  if($LASTEXITCODE){throw 'Configuration fixture failed'}
  Start-Service -Name $service
  $before=ConfigurationFingerprint

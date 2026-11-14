@@ -4,5 +4,5 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup><ProjectReference Include="../../src/StreamLink.Core/StreamLink.Core.csproj" /></ItemGroup>
+  <ItemGroup><ProjectReference Include="../../src/ConWU.Core/ConWU.Core.csproj" /></ItemGroup>
 </Project>

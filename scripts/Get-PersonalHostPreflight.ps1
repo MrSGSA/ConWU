@@ -30,7 +30,7 @@ Observe 'streamlinkServices' {
     })
 }
 Observe 'runningComponents' {
-    @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^(StreamLink\.|StreamLink$|udp2raw|easytier|vmware-vmx|vmwp)' |
+    @(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^(ConWU\.|ConWU$|StreamLink\.|StreamLink$|udp2raw|easytier|vmware-vmx|vmwp)' |
         ForEach-Object { [ordered]@{name=$_.ProcessName;pid=$_.Id;path=$_.Path;fileVersion=$_.FileVersion} })
 }
 Observe 'drivers' {
@@ -49,7 +49,7 @@ Observe 'overlayAddresses' {
         Select-Object IPAddress,PrefixLength,InterfaceIndex,InterfaceAlias)
 }
 Observe 'componentListeners' {
-    $componentPids=@(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^(StreamLink\.|StreamLink$|udp2raw|easytier)' | Select-Object -ExpandProperty Id)
+    $componentPids=@(Get-Process -ErrorAction SilentlyContinue | Where-Object ProcessName -match '^(ConWU\.|ConWU$|StreamLink\.|StreamLink$|udp2raw|easytier)' | Select-Object -ExpandProperty Id)
     [ordered]@{
         tcp=@(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $componentPids -contains $_.OwningProcess } | Select-Object LocalAddress,LocalPort,OwningProcess)
         udp=@(Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { $componentPids -contains $_.OwningProcess } | Select-Object LocalAddress,LocalPort,OwningProcess)

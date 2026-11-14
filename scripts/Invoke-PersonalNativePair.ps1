@@ -12,7 +12,7 @@ if($RemoteDirectory -notmatch '^[A-Za-z]:/[A-Za-z0-9_./-]+$'){throw 'Remote stag
 New-Item -ItemType Directory -Path $Output | Out-Null
 $ssh=@('-o','BatchMode=yes','-o','StrictHostKeyChecking=yes','-o',"HostKeyAlias=$HostKeyAlias",'-o','ConnectTimeout=5')
 $tag='v3-'+[guid]::NewGuid().ToString('N');$configs=Join-Path $Bundle $tag
-& (Join-Path $Bundle 'StreamLink.EndpointPoc.exe') --prepare-router-network $configs
+& (Join-Path $Bundle 'ConWU.EndpointPoc.exe') --prepare-router-network $configs
 if($LASTEXITCODE){throw 'Private fixture generation failed'}
 $a=Get-Content -LiteralPath (Join-Path $configs 'local-private.json') -Raw|ConvertFrom-Json
 $b=Get-Content -LiteralPath (Join-Path $configs 'remote-private.json') -Raw|ConvertFrom-Json
@@ -43,7 +43,7 @@ try {
  $remoteCopy=$LASTEXITCODE
  if(Test-Path -LiteralPath (Join-Path $Bundle $a.Output)){Copy-Item -LiteralPath (Join-Path $Bundle $a.Output) -Destination (Join-Path $Output 'local.json')}
  [ordered]@{scenario=$Scenario;requestedRounds=$Rounds;localExit=$localCode;remoteExit=$remote.ExitCode;remoteResultCopy=$remoteCopy;evidenceLevel='RealIO-over-overlay';physicalNatCoverage=$false;stableServiceChanged=$false;
-  hashes=@('StreamLink.Core.dll','StreamLink.EndpointPoc.dll','udp2raw-native.exe')|ForEach-Object{[ordered]@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $Bundle $_)).Hash}}}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $Output 'scope.json')
+  hashes=@('ConWU.Core.dll','ConWU.EndpointPoc.dll','udp2raw-native.exe')|ForEach-Object{[ordered]@{file=$_;sha256=(Get-FileHash -LiteralPath (Join-Path $Bundle $_)).Hash}}}|ConvertTo-Json -Depth 6|Set-Content (Join-Path $Output 'scope.json')
  if($localCode -or $remote.ExitCode -or $remoteCopy){throw 'Pair failed; retained evidence, no unchanged-input retry'}
 }finally {
  if(-not $remote.HasExited){$remote.Kill();$remote.WaitForExit(5000)|Out-Null}

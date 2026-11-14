@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup><RootNamespace>StreamLink.MeshTraversalTests</RootNamespace><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/ConWU.Core/ConWU.Core.csproj" />
+    <ProjectReference Include="../../src/ConWU.Discovery/ConWU.Discovery.csproj" />
+    <Compile Include="../ConWU.EndpointPoc/Reflector.cs" Link="Reflector.cs" />
+    <Compile Include="../ConWU.EndpointPoc/RawProtocolProxy.cs" Link="RawProtocolProxy.cs" />
+  </ItemGroup>
+</Project>

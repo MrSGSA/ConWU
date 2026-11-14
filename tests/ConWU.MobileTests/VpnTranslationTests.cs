@@ -39,9 +39,12 @@ static class VpnTranslationTests
         MobileIpv4Translation.Rewrite(error,16,Address(system));
         IPAddress.Parse(system).GetAddressBytes().CopyTo(original,12);Write(original,26,0);ushort expected=Checksum(Pseudo(original));if(expected==0)expected=65535;
         check(MeshPackets.Valid(error)&&ValidPayload(error)&&Read(error,54)==expected&&Checksum(error.AsSpan(28,20))==0,"ICMP errors restore the quoted local address, quoted UDP checksum and outer ICMP checksum");
-        var adapter=new TestAdapter();await using var hub=new MobilePacketHub(adapter,networks,system);var port=hub.Adapter(second.Id);
+        var observations=new System.Collections.Concurrent.ConcurrentQueue<(string Network,bool Received,string Local)>();
+        var adapter=new TestAdapter();await using var hub=new MobilePacketHub(adapter,networks,system,(id,packet,received)=>observations.Enqueue((id,received,new IPAddress(packet.Span.Slice(received?16:12,4)).ToString())));var port=hub.Adapter(second.Id);
         adapter.Outgoing.Add(Packet(system,remote,17));byte[] buffer=new byte[MeshLink.Mtu];using var stop=new CancellationTokenSource(3000);int count=await Task.Run(()=>port.Read(buffer,stop.Token));
         check(MeshPackets.Valid(buffer.AsSpan(0,count))&&ValidPayload(buffer.AsSpan(0,count).ToArray())&&new IPAddress(buffer.AsSpan(12,4)).ToString()==local,"the second network receives the correct authenticated local IP from Android's common source");
         check(port.Write(Packet(remote,local,6))&&adapter.Received.TryPeek(out var restored)&&new IPAddress(restored.AsSpan(16,4)).ToString()==system&&ValidPayload(restored),"the second host's reply returns to the original OS socket with a valid checksum");
+        check(observations.Count==2&&observations.All(o=>o.Network==second.Id&&o.Local==system)&&observations.Any(o=>o.Received)&&observations.Any(o=>!o.Received),"UU flow observers receive the exact network and OS-side socket addresses in both directions");
+        int observed=observations.Count;check(!port.Write(Packet("203.0.113.9",local,17))&&observations.Count==observed,"unapproved packets cannot create successful VPN traffic observations");
     }
 }

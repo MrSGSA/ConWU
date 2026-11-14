@@ -1,7 +1,7 @@
 const {chromium}=require('../out/browser-tools/node_modules/playwright');
 const {spawn}=require('node:child_process'),{createInterface}=require('node:readline'),path=require('node:path');
 const root=path.resolve(__dirname,'..');
-const child=spawn(path.join(root,'tests/StreamLink.WebTests/bin/Release/net10.0-windows/StreamLink.WebTests.exe'),['--browser-fixture',path.join(root,'src/StreamLink.Web/wwwroot'),'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
+const child=spawn(path.join(root,'tests/ConWU.WebTests/bin/Release/net10.0-windows/ConWU.WebTests.exe'),['--browser-fixture',path.join(root,'src/ConWU.Web/wwwroot'),'--deferred'],{cwd:root,windowsHide:true,stdio:['pipe','pipe','pipe']});
 let browser;const lines=createInterface({input:child.stdout});
 const link=new Promise(resolve=>lines.once('line',resolve));child.stdin.write('open\n');
 (async()=>{try{browser=await chromium.launch({executablePath:'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',headless:true});const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(await link);await page.locator('#backend-state').filter({hasText:'后台运行中'}).waitFor();

@@ -15,7 +15,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/"scripts/entry-registry"))
-import streamlink_entries as entries
+import conwu_entries as entries
 
 for key in ("A_WRITE_TOKEN", "A_READ_TOKEN", "B_WRITE_TOKEN", "B_READ_TOKEN", "ADMIN_TOKEN"):
     os.environ[key] = "fixture-"+key

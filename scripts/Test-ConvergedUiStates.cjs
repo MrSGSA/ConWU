@@ -1,7 +1,7 @@
 // Deterministic slow-API checks using the production assets. This complements
 // Test-ConvergedBrowser's actual WebPanel/service fixture; no public requests.
 const path=require('node:path'),fs=require('node:fs');
-const root=path.resolve(__dirname,'..'),assets=path.join(root,'src/StreamLink.Web/wwwroot');
+const root=path.resolve(__dirname,'..'),assets=path.join(root,'src/ConWU.Web/wwwroot');
 const {chromium}=require(process.env.CONWU_BROWSER_TOOLS||path.resolve(root,'../StreamLink/out/browser-tools/node_modules/playwright'));
 const output=process.env.CONWU_UI_STATES_OUTPUT||path.join(root,'artifacts/release-implementation-20261110/ui-states');fs.mkdirSync(output,{recursive:true});
 const settings={service:'https://coord.example.com/',certificatePin:'',manualEndpoint:'',pathSelection:'faketcp-only',listenPort:44680,sourcePort:44691,connectionSource:'existing',directMode:true,discoveryMode:'existing',pkarrGateways:['https://pkarr.pubky.app','https://pkarr.pubky.org'],coordinatorBackup:false,existingEntries:[{peerSlot:0,source:'https://entry.example.com/current#streamlink1'}],entryRefreshSeconds:60,tcpStun:['stun.example.com:3478'],udpStun:['stun.example.com:3478'],requestedVirtualIp:'',pkarrPublish:false,coordinator:{enabled:false,listenUrl:'http://127.0.0.1:47822',publicUrl:'',certificateFile:'',certificateKeyFile:'',publicCertificatePin:'',trustCloudflare:false}};

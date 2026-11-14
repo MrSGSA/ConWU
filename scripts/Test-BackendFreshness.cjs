@@ -1,6 +1,6 @@
 // Exercise delayed, superseded status replies against the production WebUI.
 const fs=require('node:fs'),path=require('node:path');
-const root=path.resolve(__dirname,'..'),assets=path.join(root,'src/StreamLink.Web/wwwroot');
+const root=path.resolve(__dirname,'..'),assets=path.join(root,'src/ConWU.Web/wwwroot');
 const remote=process.argv.includes('--remote');
 const {chromium}=require(process.env.CONWU_BROWSER_TOOLS||path.resolve(root,'../StreamLink/out/browser-tools/node_modules/playwright'));
 const settings={service:'',certificatePin:'',manualEndpoint:'',pathSelection:'faketcp-only',listenPort:44680,sourcePort:44691,connectionSource:'custom',directMode:true,discoveryMode:'pkarr',pkarrPublish:true,pkarrGateways:['https://pkarr.pubky.app'],existingEntries:[],entryRefreshSeconds:60,requestedVirtualIp:'',tcpStun:[],udpStun:[],coordinator:{enabled:false}};

@@ -3,7 +3,7 @@
 param([Parameter(Mandatory)][string]$OldMsi,[Parameter(Mandatory)][string]$NewMsi,
       [Parameter(Mandatory)][string]$ValidationInstance,[Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
-function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'ConWU.exe')}
 $id=[guid]::Empty
 if(-not [guid]::TryParseExact($ValidationInstance,'N',[ref]$id) -or $id -eq [guid]::Empty){throw 'Isolated validation GUID required'}
 $OldMsi=[IO.Path]::GetFullPath($OldMsi);$NewMsi=[IO.Path]::GetFullPath($NewMsi)
@@ -56,7 +56,7 @@ function Snapshot {
  # Compare persisted credentials and signed membership, not newly introduced
  # computed convenience properties such as IsDecentralized / CanManage.
  $m=$p.Mesh;$identity=[ordered]@{device=$p.Device;pair=$p.Pair;mesh=if($m){[ordered]@{pair=$m.Pair;ownerKey=$m.OwnerKey;ownerPrivate=$m.OwnerPrivate;self=$m.Self;signing=$m.SigningPrivate;exchange=$m.ExchangePrivate;directory=$m.Directory;introducer=if($null -eq $m.IntroducerSlot){1}else{$m.IntroducerSlot}}}else{$null}}
- [ordered]@{settingsSha256=(Digest $settings);identitySha256=(Digest $identity);uiSidSha256=(Digest (Get-Content -LiteralPath (Join-Path $data 'ui-user.sid') -Raw));serviceStart=(Get-ItemPropertyValue ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$name) -Name Start);productVersion=(Get-Item (Join-Path $runtime 'StreamLink.Service.dll')).VersionInfo.ProductVersion;serviceHash=(Get-FileHash (Join-Path $runtime 'StreamLink.Service.dll')).Hash}
+ [ordered]@{settingsSha256=(Digest $settings);identitySha256=(Digest $identity);uiSidSha256=(Digest (Get-Content -LiteralPath (Join-Path $data 'ui-user.sid') -Raw));serviceStart=(Get-ItemPropertyValue ('HKLM:\SYSTEM\CurrentControlSet\Services\'+$name) -Name Start);productVersion=(Get-Item (Join-Path $runtime 'ConWU.Service.dll')).VersionInfo.ProductVersion;serviceHash=(Get-FileHash (Join-Path $runtime 'ConWU.Service.dll')).Hash}
 }
 try{
  Msi '/i' $OldMsi 'install-old';$installed=$OldMsi

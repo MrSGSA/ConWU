@@ -4,14 +4,14 @@ $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
 try {
- if(@(& git status --porcelain).Count){throw 'Freeze the candidate source before packaging'}
+ if(@(& git status --porcelain --untracked-files=no).Count -or @(& git ls-files --others --exclude-standard -- src transport installer packaging).Count){throw 'Freeze all package inputs before packaging; unrelated untracked research is excluded'}
  $commit=(& git rev-parse HEAD).Trim()
  $out=[IO.Path]::GetFullPath($OutputDirectory)
  if(Test-Path -LiteralPath $out){throw 'Use a fresh package directory'}
  $bundle=Join-Path $out "ConWU-$Version-linux-x64"
  $runtime=Join-Path $bundle 'runtime'
  New-Item -ItemType Directory -Path $runtime -Force|Out-Null
- & dotnet publish src/StreamLink.Host -c Release -r linux-x64 --self-contained true -m:1 -nr:false -p:UseSharedCompilation=false -p:NuGetAudit=false -p:RuntimeFrameworkVersion=10.0.12 -p:StreamLinkPersonalFeature=true "-p:StreamLinkReleaseVersion=$Version" -o $runtime *> (Join-Path $out 'publish.log')
+ & dotnet publish src/ConWU.Host -c Release -r linux-x64 --self-contained true -m:1 -nr:false -p:UseSharedCompilation=false -p:NuGetAudit=false -p:RuntimeFrameworkVersion=10.0.12 -p:StreamLinkPersonalFeature=true "-p:StreamLinkReleaseVersion=$Version" -o $runtime *> (Join-Path $out 'publish.log')
  if($LASTEXITCODE){throw 'Linux managed publish failed'}
  # Preserve the old service ExecStart and rollback target without a second host.
  $compatCommand=@'
@@ -34,7 +34,7 @@ exec "$(dirname -- "$(readlink -f -- "$0")")/conwu" "$@"
  Copy-Item -Path packaging/linux/* -Destination $bundle
  # Earlier Windows-produced packages carried a CRLF systemd unit. Accept that
  # exact old format when upgrading, but always ship LF for future operations.
- $unitPath=Join-Path $bundle 'streamlink.service'
+ $unitPath=Join-Path $bundle 'conwu.service'
  [IO.File]::WriteAllText($unitPath,[IO.File]::ReadAllText($unitPath).Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false))
  Copy-Item -LiteralPath docs/ConWU-入口与配置.md -Destination (Join-Path $bundle '入口与配置.md')
  Copy-Item -LiteralPath docs/协调服务与升级.md -Destination (Join-Path $bundle '协调服务与升级.md')

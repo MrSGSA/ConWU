@@ -11,7 +11,7 @@ try {
  if($MsiVersion -notmatch '^(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,2})\.(0|[1-9][0-9]{0,4})$' -or [int]$Matches[1] -gt 255 -or [int]$Matches[2] -gt 255 -or [int]$Matches[3] -gt 65535){throw 'Explicit monotonic MSI version required'}
  $fileVersion=$MsiVersion+'.0'
  $commit=(& git rev-parse HEAD).Trim()
- if($LASTEXITCODE -or @(& git status --porcelain).Count){throw 'Commit and freeze the exact candidate first'}
+ if($LASTEXITCODE -or @(& git status --porcelain --untracked-files=no).Count -or @(& git ls-files --others --exclude-standard -- src transport installer packaging).Count){throw 'Commit and freeze all package inputs first; unrelated untracked research is excluded'}
  $candidate=Join-Path ([IO.Path]::GetFullPath($OutputRoot)) "ConWU-$Version-$($commit.Substring(0,8))"
  if(Test-Path -LiteralPath $candidate){throw 'A frozen candidate cannot be overwritten'}
  $stage=Join-Path $candidate 'windows';$runtime=Join-Path $stage 'app';$logs=Join-Path $candidate 'build-evidence'
@@ -20,11 +20,11 @@ try {
  if($LASTEXITCODE){throw 'Exact source archive failed'}
  & ./scripts/Build.ps1 -Test -FileVersion $fileVersion *> (Join-Path $logs 'native-build.log')
  if($LASTEXITCODE){throw 'Native build failed'}
- foreach($project in @('StreamLink.App','StreamLink.Service','StreamLink.Web')) {
+ foreach($project in @('ConWU.App','ConWU.Service','ConWU.Web')) {
   $published=Join-Path $repo "out/aq-publish-$Version-$project"
-  & dotnet publish "src/$project" -f $(if($project -eq 'StreamLink.Web'){'net10.0'}else{'net10.0-windows'}) -c Release -r win-x64 --self-contained true -m:1 -nr:false -p:UseSharedCompilation=false -p:NuGetAudit=false -p:PublishSingleFile=false -p:RuntimeFrameworkVersion=10.0.12 -p:StreamLinkPersonalFeature=true "-p:StreamLinkReleaseVersion=$Version" "-p:FileVersion=$fileVersion" -o $published *> (Join-Path $logs "$project-publish.log")
+  & dotnet publish "src/$project" -f $(if($project -eq 'ConWU.Web'){'net10.0'}else{'net10.0-windows'}) -c Release -r win-x64 --self-contained true -m:1 -nr:false -p:UseSharedCompilation=false -p:NuGetAudit=false -p:PublishSingleFile=false -p:RuntimeFrameworkVersion=10.0.12 -p:StreamLinkPersonalFeature=true "-p:StreamLinkReleaseVersion=$Version" "-p:FileVersion=$fileVersion" -o $published *> (Join-Path $logs "$project-publish.log")
   if($LASTEXITCODE){throw "Publish failed: $project"}
-  $destination=if($project -eq 'StreamLink.Web'){Join-Path $runtime 'web'}else{$runtime}
+  $destination=if($project -eq 'ConWU.Web'){Join-Path $runtime 'web'}else{$runtime}
   foreach($file in Get-ChildItem -LiteralPath $published -File -Recurse) {
    $relative=[IO.Path]::GetRelativePath($published,$file.FullName)
    if($file.Extension -eq '.pdb' -or $relative -match '^(cs|de|es|fr|it|ja|ko|pl|pt-BR|ru|tr|zh-Hant)[\\/]'){continue}
@@ -34,15 +34,12 @@ try {
    else{Copy-Item -LiteralPath $file.FullName -Destination $target}
   }
  }
- Copy-Item -LiteralPath out/native/streamlink-launcher.exe -Destination (Join-Path $stage 'ConWU.exe')
- # Keep the old MSI component key path and its owned startup/installation
- # registry values. Both launchers start the same ConWU application instance.
- Copy-Item -LiteralPath out/native/streamlink-launcher.exe -Destination (Join-Path $stage 'StreamLink.exe')
+ Copy-Item -LiteralPath out/native/conwu-launcher.exe -Destination (Join-Path $stage 'ConWU.exe')
  $components=Join-Path $runtime 'components';New-Item -ItemType Directory -Path $components|Out-Null
  $wd=Join-Path $DependencyCache 'WinDivert-2.2.2-A';$wt=Join-Path $DependencyCache 'wintun'
  if((Get-AuthenticodeSignature -LiteralPath "$wd/x64/WinDivert64.sys").Status -ne 'Valid'){throw 'Official WinDivert signature invalid'}
  if((Get-FileHash -LiteralPath "$wt/bin/amd64/wintun.dll").Hash -ne 'E5DA8447DC2C320EDC0FC52FA01885C103DE8C118481F683643CACC3220DAFCE'){throw 'Pinned official Wintun mismatch'}
- Copy-Item -LiteralPath out/native/udp2raw-native.exe,out/native/streamlink-tun.dll,"$wd/x64/WinDivert.dll","$wd/x64/WinDivert64.sys","$wt/bin/amd64/wintun.dll" -Destination $components
+ Copy-Item -LiteralPath out/native/udp2raw-native.exe,out/native/conwu-tun.dll,out/native/conwu-updater.exe,"$wd/x64/WinDivert.dll","$wd/x64/WinDivert64.sys","$wt/bin/amd64/wintun.dll" -Destination $components
  Copy-Item -LiteralPath out/phantun-native/x86_64-pc-windows-msvc/release/conwu-phantun.exe,out/phantun-native/x86_64-pc-windows-msvc/release/conwu-raw.exe -Destination $components
  $phantun=& (Join-Path $components 'conwu-phantun.exe') --conwu-info|ConvertFrom-Json
  if($LASTEXITCODE -or $phantun.component -ne 'ConWU.Phantun' -or $phantun.abi -ne 1){throw 'Wrong Phantun component/ABI'}
@@ -65,7 +62,7 @@ try {
  if($LASTEXITCODE){throw 'Phantun dependency notices failed'}
  $sources=Join-Path $runtime 'sources';New-Item -ItemType Directory -Path $sources|Out-Null
  Copy-Item -LiteralPath (Join-Path $candidate "ConWU-$Version-source.zip"),(Join-Path $DependencyCache 'WinDivert-v2.2.2-source.zip') -Destination $sources
- & ./scripts/Write-RcSbom.ps1 -Directory $runtime -Version $Version -Commit $commit -Assets @('src/StreamLink.App/obj/project.assets.json','src/StreamLink.Service/obj/project.assets.json','src/StreamLink.Web/obj/project.assets.json') -Native
+ & ./scripts/Write-RcSbom.ps1 -Directory $runtime -Version $Version -Commit $commit -Assets @('src/ConWU.App/obj/project.assets.json','src/ConWU.Service/obj/project.assets.json','src/ConWU.Web/obj/project.assets.json') -Native
  $files=@(Get-ChildItem -LiteralPath $runtime -File -Recurse|ForEach-Object{[ordered]@{path=[IO.Path]::GetRelativePath($runtime,$_.FullName).Replace('\','/');length=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
  [ordered]@{schemaVersion=2;version=$Version;sourceCommit=$commit;sourceDirty=$false;architecture='win-x64';tunAbi=2;meshProtocol=4;personalContract='AQ-1-personal';releaseLevel=$(if($stable){'stable'}else{'engineering-candidate'});releaseGate='PackagePreflightOnly';releaseVerification="ConWU-$Version-verification.json";
   provenance=@{publisherSignature='UnsignedCandidate';officialDrivers='WinDivert Authenticode valid; pinned Wintun SHA256';hashesAreNotSourceAuthentication=$true};

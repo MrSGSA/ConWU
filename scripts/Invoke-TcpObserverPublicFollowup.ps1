@@ -13,7 +13,7 @@ if ($HostName -notmatch '^[a-zA-Z0-9@.-]+$' -or $RemoteDirectory -notmatch '^/tm
 if (Get-NetTCPConnection -State Listen -LocalPort 43983 -ErrorAction SilentlyContinue) { throw 'Isolated control port already in use' }
 $stamp=Get-Date -Format 'yyyyMMdd-HHmmss'
 $prefix=Join-Path (Resolve-Path artifacts) "m5-observer-public-$stamp"
-$client=Join-Path (Get-Location) 'tests/StreamLink.TcpObserverTests/bin/Release/net10.0/StreamLink.TcpObserverTests.dll'
+$client=Join-Path (Get-Location) 'tests/ConWU.TcpObserverTests/bin/Release/net10.0/ConWU.TcpObserverTests.dll'
 $remoteCommand="cd $RemoteDirectory && timeout 160 ./StreamLink.TcpObserverTests --serve-syn $ObserverAddress $RemoteDirectory/followup-config.json $FirstPort $SecondPort"
 $sshArgs="-o BatchMode=yes -o ConnectTimeout=6 -o StrictHostKeyChecking=yes -o ExitOnForwardFailure=yes -L 127.0.0.1:43983:127.0.0.1:43983 $HostName `"$remoteCommand`""
 $forward=Start-Process ssh -ArgumentList $sshArgs -WindowStyle Hidden -PassThru -RedirectStandardOutput "$prefix-server.log" -RedirectStandardError "$prefix-server-error.log"

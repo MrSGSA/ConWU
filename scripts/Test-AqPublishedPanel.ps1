@@ -1,6 +1,6 @@
 param([Parameter(Mandatory)][string]$Bundle,[Parameter(Mandatory)][string]$OutputDirectory)
 $ErrorActionPreference='Stop'
-function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'StreamLink.exe')}
+function ProductApp([string]$Folder){$current=Join-Path $Folder 'ConWU.exe';if(Test-Path -LiteralPath $current){return $current};return (Join-Path $Folder 'ConWU.exe')}
 $Bundle=[IO.Path]::GetFullPath($Bundle);$OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)
 if(Test-Path -LiteralPath $OutputDirectory){throw 'Fresh evidence required'}
 New-Item -ItemType Directory -Path $OutputDirectory|Out-Null

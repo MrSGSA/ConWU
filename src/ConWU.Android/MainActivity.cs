@@ -18,6 +18,7 @@ public sealed class MainActivity : Activity
     MobileRuntime runtime=null!;
     EditText code=null!;TextView error=null!,pairing=null!,updateState=null!,empty=null!;
     Button join=null!,cancel=null!,check=null!,download=null!;LinearLayout networkList=null!;
+    CheckBox uuEnabled=null!;TextView uuState=null!,uuNetworks=null!;
     readonly Handler handler=new(Looper.MainLooper!);
     Java.Lang.Runnable? pulse;
     readonly Dictionary<string,(TextView Info,Button Connect)> rows=new();
@@ -49,10 +50,16 @@ public sealed class MainActivity : Activity
         empty=Label("暂无网络。手机仅作为从机，主机请使用 Windows 或 Linux 版。",14);body.AddView(empty);
         networkList=new LinearLayout(this){Orientation=Orientation.Vertical};body.AddView(networkList);
         body.AddView(Label("HTTPS 与纯 TCP 可用于手机；其他协议请在主机另建兼容网络。仅 ConWU 虚拟地址进入 VPN。",13),Spacing());
+        body.AddView(Label("UU 远程接管",22,true),Spacing());
+        uuEnabled=new CheckBox(this){Text="配合主机接管 UU 串流"};
+        uuEnabled.CheckedChange+=(_,_)=>{if(runtime.Ready&&runtime.State.UuTakeoverEnabled!=uuEnabled.Checked){try{runtime.SetUuTakeover(uuEnabled.Checked);}catch(Exception){runtime.SetError("UU 接管设置未能保存");}Update();}};body.AddView(uuEnabled);
+        body.AddView(Label("先在目标 Windows 主机开启 UU 接管，再连接 ConWU 网络并重连 UU。所有已直连网络自动参与；只有观察到 UU 应用经过 VPN 的持续流量才显示传输成功。",13));
+        uuState=Label("未开启",14);body.AddView(uuState);uuNetworks=Label("",13);body.AddView(uuNetworks);
+        body.AddView(Action("打开 UU 远程",()=>{var intent=PackageManager!.GetLaunchIntentForPackage(AndroidUuTakeover.Package)??throw new IOException("请先安装 UU 远程");StartActivity(intent);}));
         body.AddView(Label("软件更新",22,true),Spacing());body.AddView(Label("当前版本："+runtime.Version,14));
         updateState=Label("尚未检查更新",14);body.AddView(updateState);
         check=Action("检查更新",async()=>{try{await runtime.Updates.Check(force:true);}catch(Exception){runtime.SetError("暂时无法检查更新");}Update();});body.AddView(check);
-        download=Action("打开新版下载",()=>{var update=runtime.Updates.Status;string url=update.Package?.Url??update.ReleaseUrl;if(url.Length>0)StartActivity(new Intent(Intent.ActionView,global::Android.Net.Uri.Parse(url)));});body.AddView(download);
+        download=Action("下载新版",RequestUpdate);body.AddView(download);
         body.AddView(Action("查看日志",ShowLogs),Spacing());
         body.AddView(Action("开源许可",ShowLicenses));
         _=runtime.Updates.Check();Update();
@@ -64,6 +71,16 @@ public sealed class MainActivity : Activity
     {var button=new Button(this){Text=title};button.Click+=(_,_)=>{try{action();}catch(Exception ex){runtime.SetError(ex is FormatException or NotSupportedException?ex.Message:"操作未完成，请稍后重试");Update();}};if(primary){var background=new GradientDrawable();background.SetColor(Color.Rgb(15,118,110));background.SetCornerRadius(Dp(8));button.Background=background;button.SetTextColor(Color.White);}return button;}
     void ShowLogs(){using var dialog=new AlertDialog.Builder(this);dialog.SetTitle("ConWU 日志");dialog.SetMessage(string.Join("\n",runtime.Logs));dialog.SetPositiveButton("关闭",(_,_)=>{});dialog.Show();}
     void ShowLicenses(){var text=new System.Text.StringBuilder();foreach(string file in new[]{"ConWU-MIT.txt","BouncyCastle-LICENSE.txt","dotnet-LICENSE.txt","dotnet-THIRD-PARTY-NOTICES.txt"}){using var reader=new StreamReader(Assets!.Open("licenses/"+file));text.AppendLine(file).AppendLine(reader.ReadToEnd()).AppendLine();}using var dialog=new AlertDialog.Builder(this);dialog.SetTitle("开源许可");dialog.SetMessage(text.ToString());dialog.SetPositiveButton("关闭",(_,_)=>{});dialog.Show();}
+    void RequestUpdate()
+    {
+        if(runtime.LocalUpdates.Status.CanInstall){
+            if(OperatingSystem.IsAndroidVersionAtLeast(26)&&!PackageManager!.CanRequestPackageInstalls()){
+                StartActivity(new Intent(global::Android.Provider.Settings.ActionManageUnknownAppSources,global::Android.Net.Uri.Parse("package:"+PackageName)));return;
+            }
+            using var dialog=new AlertDialog.Builder(this);dialog.SetTitle("安装 ConWU 更新？");dialog.SetMessage("APK 已完整下载并核对签名。系统会再要求确认安装；安装期间 VPN 暂时中断，完成后恢复已启用的网络。原配置和身份会保留。");dialog.SetNegativeButton("取消",(_,_)=>{});
+            dialog.SetPositiveButton("确认更新",async(_,_)=>{try{await runtime.LocalUpdates.Install();}catch(Exception ex){runtime.SetError(ex is IOException?ex.Message:"系统安装暂未开始，请重试");}Update();});dialog.Show();
+        }else StartForegroundService(new Intent(this,typeof(AndroidUpdateService)));
+    }
     void Leave(string id,string name){using var dialog=new AlertDialog.Builder(this);dialog.SetTitle("退出 "+name+"？");dialog.SetMessage("移除此手机保存的网络和凭据。主机端授权不会因此自动撤销。");dialog.SetNegativeButton("取消",(_,_)=>{});dialog.SetPositiveButton("退出",(_,_)=>Start("leave","",id));dialog.Show();}
     void Request(string action,string input="",string network="")
     {
@@ -115,7 +132,13 @@ public sealed class MainActivity : Activity
                 (connected?"\n延迟："+(status!.RttMs?.ToString("F0")??"—")+" ms · 上传 "+Bytes(status.SentBytes)+" · 下载 "+Bytes(status.ReceivedBytes):""));
             Text(views.Connect,connected?"断开":network.Enabled?"重试":"连接");
         }
-        var update=runtime.Updates.Status;Text(updateState,update.Message);check.Enabled=update.State!="Checking";Text(download,update.Package==null?"查看版本说明":"下载新版");download.Visibility=update.UpdateAvailable&&update.ReleaseUrl.Length>0?ViewStates.Visible:ViewStates.Gone;
+        uuEnabled.Enabled=runtime.Ready;uuEnabled.Checked=runtime.Ready&&runtime.State.UuTakeoverEnabled;
+        var uu=runtime.Ready?runtime.Uu.Snapshot(runtime):[];bool observed=uu.Any(n=>n.TrafficObserved);
+        Text(uuState,!uuEnabled.Checked?"未开启":!runtime.Uu.Installed?"等待安装 UU 远程":!runtime.Connections.Values.Any(s=>s.Connected)?"等待 ConWU 直连":observed?"已检测到 UU 经由 ConWU 传输":!OperatingSystem.IsAndroidVersionAtLeast(29)?"VPN 已就绪；当前 Android 版本不支持按应用核对流量":"VPN 已就绪，尚未确认 UU 串流经过 ConWU");
+        Text(uuNetworks,uuEnabled.Checked?string.Join("\n",uu.Select(n=>n.Name+" · 接收 "+Bytes(n.ReceivedBytes)+" · 发送 "+Bytes(n.SentBytes))):"");
+        var update=runtime.Updates.Status;var local=runtime.LocalUpdates.Status;
+        Text(updateState,update.Message+(local.State!="Idle"?"\n"+local.Message+(local.State=="Downloading"?" "+(local.DownloadedBytes*100/Math.Max(1,local.TotalBytes))+"%":""):""));check.Enabled=update.State!="Checking";
+        Text(download,local.CanInstall?"安装已下载的更新":"下载新版");download.Enabled=!local.Busy&&local.State!="AwaitingSystemConfirmation";download.Visibility=local.CanInstall||update.UpdateAvailable&&update.Package!=null?ViewStates.Visible:ViewStates.Gone;
     }
     static string Bytes(long bytes)=>bytes>=1048576?(bytes/1048576d).ToString("F1")+" MiB":(bytes/1024d).ToString("F0")+" KiB";
     sealed class CodeWatcher(EditText input):Java.Lang.Object,ITextWatcher

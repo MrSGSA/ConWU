@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><RootNamespace>StreamLink.UnifiedHostTests</RootNamespace><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><Nullable>enable</Nullable><ImplicitUsings>enable</ImplicitUsings></PropertyGroup>
+  <ItemGroup><ProjectReference Include="../../src/ConWU.Core/ConWU.Core.csproj" /><ProjectReference Include="../../src/ConWU.Discovery/ConWU.Discovery.csproj" /><ProjectReference Include="../../src/ConWU.Service/ConWU.Service.csproj" /></ItemGroup>
+  <!-- Retired DNS publishing tests remain in source history; preview.2 removes this contract. -->
+  <ItemGroup><Compile Remove="CloudflareDdnsTests.cs;DdnsEntryTests.cs" /></ItemGroup>
+</Project>

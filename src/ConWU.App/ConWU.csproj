@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\ConWU.Core\ConWU.Core.csproj" />
+    <ProjectReference Include="..\ConWU.Service\ConWU.Service.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>ConWU</AssemblyName>
+    <RootNamespace>StreamLink</RootNamespace>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\conwu.ico</ApplicationIcon>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+  <ItemGroup><EmbeddedResource Include="Assets\conwu.ico" LogicalName="ConWU.AppIcon.ico" /></ItemGroup>
+
+</Project>
