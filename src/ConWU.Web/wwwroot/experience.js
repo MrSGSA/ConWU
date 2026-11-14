@@ -134,9 +134,11 @@ unavailable=function(message){if(installingLocally()){online=false;notice('正�
 async function localUpdate(install){
  const l=workspaceState?.localUpdate,u=workspaceState?.update;
  if(install&&!await confirmAction('安装 ConWU '+l.version+'？','安装包已下载并校验。确认后在本机继续安装，期间远程连接会暂时中断；完成后自动恢复后台和原先启用的网络。','确认更新'))return;
- const reply=await api('/api/command',{method:install?'update-install':'update-download',operationId:crypto.randomUUID(),localUpdate:{version:install?l.version:u.latestVersion,ticket:install?l.ticket:''}});
- if(!reply.ok)throw Error(reply.error||'更新任务未被受理');
  if(install)try{localStorage.setItem('conwu-local-update',String(Date.now()));}catch{}
+ let reply;
+ try{reply=await api('/api/command',{method:install?'update-install':'update-download',operationId:crypto.randomUUID(),localUpdate:{version:install?l.version:u.latestVersion,ticket:install?l.ticket:''}});}
+ catch(error){if(install&&error.retryable){notify('已发送本机更新确认，正在等待安装状态。请稍候自动恢复后台。');void refresh();return;}if(install)try{localStorage.removeItem('conwu-local-update');}catch{}throw error;}
+ if(!reply.ok){if(install)try{localStorage.removeItem('conwu-local-update');}catch{}throw Error(reply.error||'更新任务未被受理');}
  if(reply.status)render(reply.status);
 }
 function coordinationPage(){

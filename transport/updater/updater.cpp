@@ -74,9 +74,17 @@ void resume_ui(SC_HANDLE svc,const std::wstring &sid){
   handle token;if(!WTSQueryUserToken(sessions[i].SessionId,&token.value))continue;
   DWORD bytes=0;GetTokenInformation(token.value,TokenUser,nullptr,0,&bytes);std::vector<BYTE> user(bytes);if(!GetTokenInformation(token.value,TokenUser,user.data(),bytes,&bytes))continue;
   PWSTR actual=nullptr;if(!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER*>(user.data())->User.Sid,&actual))continue;bool match=sid==actual;LocalFree(actual);if(!match)continue;
-  void *environment=nullptr;if(!CreateEnvironmentBlock(&environment,token.value,FALSE))continue;
+  // The UI deliberately refuses administrator tokens. WTS can return one on
+  // machines with nonstandard UAC settings; restrict it to ordinary integrity.
+  PSID admin=nullptr,medium=nullptr;
+  if(!ConvertStringSidToSidW(L"S-1-5-32-544",&admin))continue;
+  SID_AND_ATTRIBUTES deny{admin,0};handle ordinary;
+  bool restricted=CreateRestrictedToken(token.value,DISABLE_MAX_PRIVILEGE,1,&deny,0,nullptr,0,nullptr,&ordinary.value)!=FALSE;LocalFree(admin);if(!restricted)continue;
+  if(!ConvertStringSidToSidW(L"S-1-16-8192",&medium))continue;
+  TOKEN_MANDATORY_LABEL label{{medium,SE_GROUP_INTEGRITY}};bool labeled=SetTokenInformation(ordinary.value,TokenIntegrityLevel,&label,sizeof(label)+GetLengthSid(medium))!=FALSE;LocalFree(medium);if(!labeled)continue;
+  void *environment=nullptr;if(!CreateEnvironmentBlock(&environment,ordinary.value,FALSE))continue;
   std::wstring command=L"\""+exe.wstring()+L"\" --desktop";STARTUPINFOW startup{};startup.cb=sizeof(startup);startup.lpDesktop=const_cast<PWSTR>(L"winsta0\\default");PROCESS_INFORMATION process{};
-  if(CreateProcessAsUserW(token.value,exe.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT|CREATE_NO_WINDOW,environment,exe.parent_path().c_str(),&startup,&process)){CloseHandle(process.hThread);CloseHandle(process.hProcess);}
+  if(CreateProcessAsUserW(ordinary.value,exe.c_str(),command.data(),nullptr,nullptr,FALSE,CREATE_UNICODE_ENVIRONMENT|CREATE_NO_WINDOW|CREATE_BREAKAWAY_FROM_JOB,environment,exe.parent_path().c_str(),&startup,&process)){CloseHandle(process.hThread);CloseHandle(process.hProcess);}
   DestroyEnvironmentBlock(environment);break;
  }
  WTSFreeMemory(sessions);

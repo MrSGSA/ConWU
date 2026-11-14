@@ -126,7 +126,7 @@ foreach($item in $all){
  $dirs[$parent].AppendChild($component)|Out-Null;$feature.AppendChild((Node 'ComponentRef' @{Id=$componentId}))|Out-Null
 }
 foreach($node in $xml.SelectNodes('//*')){foreach($attr in @($node.Attributes)){
- if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/ConWU.App/Assets/conwu.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/conwu-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
+  if($attr.Value -eq 'ICON'){$attr.Value=Join-Path $repo 'src/ConWU.App/Assets/conwu.ico'}elseif($attr.Value -eq 'ACTIONS'){$attr.Value=Join-Path $repo 'out/native/conwu-installer-actions.dll'}elseif($attr.Value -eq 'CAD'){$attr.Value='[INSTALLFOLDER]|'+$service+'|[STREAMLINK_TRANSACTION]|[ProductCode]'}elseif($attr.Value.StartsWith('ARGS')){$attr.Value=$validationArgs+$attr.Value.Substring(4)}elseif($attr.Value -eq 'DISPLAYVERSION'){$attr.Value=[string]$manifest.version}
 }}
 $notice="ConWU · 开源许可与第三方声明`n`nConWU 无需购买授权、激活或输入许可密钥。以下是软件及随包组件的开源使用条款。`n安装与更新会关闭当前版本的窗口并重启后台，保留配对和设备配置。卸载保留个人配置与共享驱动。`n`nConWU · MIT License`n`n"+(Get-Content -LiteralPath (Join-Path $repo 'LICENSE') -Raw)
 $thirdParty=Join-Path $BundleRoot 'app/licenses'

@@ -13,15 +13,16 @@ namespace {
 struct handle { HANDLE value=nullptr; ~handle(){if(value&&value!=INVALID_HANDLE_VALUE)CloseHandle(value);} };
 struct service_handle { SC_HANDLE value=nullptr; ~service_handle(){if(value)CloseServiceHandle(value);} };
 struct registry { HKEY value=nullptr; ~registry(){if(value)RegCloseKey(value);} };
-struct context { std::wstring folder,service,attempt,transaction; bool validation=false; };
+struct context { std::wstring folder,service,attempt,transaction; bool validation=false; std::wstring product; };
 void log(MSIHANDLE install,const std::wstring &message,bool error=false){MSIHANDLE record=MsiCreateRecord(0);MsiRecordSetStringW(record,0,(L"ConWU: "+message).c_str());MsiProcessMessage(install,error?INSTALLMESSAGE_ERROR:INSTALLMESSAGE_INFO,record);MsiCloseHandle(record);}
 std::wstring property(MSIHANDLE h,const wchar_t *name){DWORD size=0;wchar_t empty=0;MsiGetPropertyW(h,name,&empty,&size);std::vector<wchar_t> text(size+1);++size;if(MsiGetPropertyW(h,name,text.data(),&size)!=ERROR_SUCCESS)return {};return text.data();}
 bool under(std::wstring file,std::wstring root){std::transform(file.begin(),file.end(),file.begin(),towlower);std::transform(root.begin(),root.end(),root.begin(),towlower);while(!root.empty()&&(root.back()==L'\\'||root.back()==L'/'))root.pop_back();return file.size()>root.size()&&file.compare(0,root.size(),root)==0&&(file[root.size()]==L'\\'||file[root.size()]==L'/');}
 context parameters(MSIHANDLE h){
     std::wstring raw=property(h,L"CustomActionData");std::vector<std::wstring> parts;size_t at=0,next;
     while((next=raw.find(L'|',at))!=std::wstring::npos){parts.push_back(raw.substr(at,next-at));at=next+1;}parts.push_back(raw.substr(at));
-    if(parts.size()!=3||parts[0].empty()||parts[1].empty()||parts[2].size()!=38)throw std::wstring(L"安装参数无效。");
+    if((parts.size()!=3&&parts.size()!=4)||parts[0].empty()||parts[1].empty()||parts[2].size()!=38)throw std::wstring(L"安装参数无效。");
     context c{parts[0],parts[1],parts[2],L"",false};c.validation=c.service.rfind(L"StreamLink-Validation-",0)==0;
+    if(parts.size()==4){GUID product{};if(parts[3].size()!=38||FAILED(CLSIDFromString(parts[3].c_str(),&product)))throw std::wstring(L"安装产品身份无效。");c.product=parts[3];}
     std::vector<wchar_t> absolute(32768);DWORD length=GetFullPathNameW(c.folder.c_str(),static_cast<DWORD>(absolute.size()),absolute.data(),nullptr);
     if(!length||length>=absolute.size())throw std::wstring(L"安装目录无效。");
     c.folder.assign(absolute.data(),length);
@@ -182,6 +183,17 @@ void repair_current_service(MSIHANDLE h,const context &c){
         log(h,L"Recreated renamed backend after prior product removal");
     }
     if(read_number(saved.value,L"Existed"))restore_policy(service.value,saved.value);
+    // Earlier packages attached these shared resources to the renamed UI
+    // component. Its removal can erase the new launcher's registration too.
+    // Reassert only values already declared by this MSI, within its transaction.
+    if(c.product.empty())throw std::wstring(L"安装产品身份缺失。");
+    std::wstring registration=c.validation?L"Software\\StreamLink\\Validation\\"+c.service.substr(22):L"Software\\StreamLink\\Installation";
+    registry installed;if(RegCreateKeyExW(HKEY_LOCAL_MACHINE,registration.c_str(),0,nullptr,0,KEY_SET_VALUE|KEY_WOW64_64KEY,nullptr,&installed.value,nullptr)!=ERROR_SUCCESS)throw std::wstring(L"无法恢复安装登记。");
+    set_string(installed.value,L"ProductCode",c.product);set_string(installed.value,L"InstallLocation",c.folder);
+    std::wstring folder=c.folder;while(!folder.empty()&&(folder.back()==L'\\'||folder.back()==L'/'))folder.pop_back();
+    std::wstring startup=L"\""+folder+L"\\ConWU.exe\" "+(c.validation?L"--validation-instance "+c.service.substr(22)+L" ":L"")+L"--startup";
+    registry run;if(RegCreateKeyExW(HKEY_LOCAL_MACHINE,L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",0,nullptr,0,KEY_SET_VALUE|KEY_WOW64_64KEY,nullptr,&run.value,nullptr)!=ERROR_SUCCESS)throw std::wstring(L"无法恢复托盘启动登记。");
+    set_string(run.value,c.validation?c.service.c_str():L"StreamLink",startup);
 }
 template<class F>UINT action(MSIHANDLE h,F operation){try{context c=parameters(h);operation(c);return ERROR_SUCCESS;}catch(const std::wstring &message){log(h,message,true);return ERROR_INSTALL_FAILURE;}catch(...){log(h,L"安装操作发生异常，正在按安装事务恢复。",true);return ERROR_INSTALL_FAILURE;}}
 }
