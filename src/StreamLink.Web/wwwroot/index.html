@@ -59,6 +59,10 @@
  <footer class="footer"><span>ConWU · 让设备连起来</span><span><span id="app-version"></span></span></footer>
 </div>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<dialog class="small-dialog invitation-dialog" id="invitation-dialog" aria-labelledby="invitation-title">
+ <div class="modal-header"><h2 id="invitation-title"></h2><button class="btn icon-only" data-ui-action="close-invitation" aria-label="关闭直连码"><svg class="icon"><use href="#i-x"/></svg></button></div>
+ <div class="pad"><div class="code-label-row"><h3>本机直连码</h3><span class="hint">16 位</span></div><div class="code-control direct-code-control direct-code-readonly" id="invitation-code" role="group" aria-label="尚未生成直连码"></div><div class="error" id="invitation-error" role="status"></div><div class="code-actions"><button class="btn primary" id="invitation-generate" data-ui-action="generate">生成直连码</button><button class="btn compact" data-ui-action="copy-pair"><svg class="icon"><use href="#i-copy"/></svg>复制</button></div></div>
+</dialog>
 <dialog id="confirm-dialog" aria-labelledby="dialog-title" aria-describedby="dialog-description"><h2 id="dialog-title"></h2><p id="dialog-description"></p><div class="row"><button class="btn" id="dialog-cancel">取消</button><button class="btn danger" id="dialog-confirm">确认</button></div></dialog>
 <script src="/app.js" defer></script>
 <script src="/workspace.js" defer></script>

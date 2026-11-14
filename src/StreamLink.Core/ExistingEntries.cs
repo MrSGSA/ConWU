@@ -265,7 +265,7 @@ public sealed class ExistingEntryResolver : IDisposable
     {
         string host=WithoutSelector(source)[6..];
         if(!recovering||recoverTxt==null||!DnsOverHttpsTextLookup.PublicName(host))
-            return (ParseDocuments(await txt(host,token),RequiresTag(source),Selector(source)),"");
+            return (ParseDocuments(await txt(host,token),RequiresTag(source),Selector(source)),"系统 DNS");
         // A valid but stale system answer cannot be fixed by an error-only
         // fallback. Query independently; bound the system wait only after an
         // alternate has actually supplied a usable selected record.

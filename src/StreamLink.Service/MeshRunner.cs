@@ -260,7 +260,7 @@ public sealed class MeshRunner
         }
         try {
             if(!existingOnly)gatheringFactory = sharedEgress!=null&&services.CandidatesWithEgress!=null?services.CandidatesWithEgress(profile,folder,log,stop,sharedEgress):services.Candidates(profile, folder, log, stop);
-            else log(coordinatorBackup?"已有入口优先，备用协调仅提供地址；不执行 STUN、自动映射或自主打洞":"仅使用已有入口：不执行 STUN、自动映射或自主打洞；入口不可用时请检查入口，或手动切换到自选服务器模式");
+            else log(coordinatorBackup?"已有入口优先，备用协调仅提供地址；不执行 STUN、自动映射或自主打洞":"仅使用已有入口：按已保存的地址或订阅连接，不执行 STUN、自动映射或自主打洞");
             timeline.Mark("原生网络开始启动");
             report(new("正在创建虚拟网卡", mesh.LocalIp, "", mesh.Pair.Mode, false, null, existingOnly?"正在准备虚拟网卡与已有入口":"正在准备原生组网，同时探测公网入口") {Adapter=adapterStatus,Connection=new("StartingAdapter","正在准备虚拟网卡与本机入口。")});
             opening = services.ProfileAdapter is {} create ? create(profile, phase => {
@@ -350,7 +350,7 @@ public sealed class MeshRunner
                             return EntryResolutionCache.Merge(item,previous.FirstOrDefault(p=>p.PeerSlot==item.PeerSlot&&p.Index==item.Index),DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                         }).ToArray();localExisting=LocalEntries();
                         string current=string.Join('|',resolved.Select(r=>$"{r.PeerSlot}:{r.Index}:{r.Error}:{string.Join(',',r.Endpoints)}:{r.LookupDetail}"));
-                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用地址，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址：{string.Join(", ",item.Endpoints)}；仍需验证直连")+(item.LookupDetail.Length>0?"；"+item.LookupDetail:""));}
+                        if(current!=resolutionState){resolutionState=current;foreach(var item in resolved)log($"已有入口 {item.Index+1}（{item.Kind}）查询候选："+(item.Error.Length>0?item.Error+(item.Endpoints.Length>0?"；暂用上次可用候选，继续定时更新":""):$"已解析 {item.Endpoints.Length} 个地址：{string.Join(", ",item.Endpoints)}；"+(entriesHealthy?"当前已验证的直连保持不变":"等待对端认证验证"))+(item.LookupDetail.Length>0?"；"+item.LookupDetail:""));}
                     }catch(Exception ex)when(!stop.IsCancellationRequested){
                         if(externalSources.Any(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")){Volatile.Write(ref pkarrQueryError,"PKARR 查询暂未完成");resolved=resolved.Select(r=>r.Kind=="PKARR"?r with{Endpoints=[],Pkarr=null,Error="PKARR 查询暂未完成",AllowCached=false}:r).ToArray();localExisting=LocalEntries();}
                         log("入口解析暂未完成："+ex.GetType().Name);

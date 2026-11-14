@@ -77,7 +77,7 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
                     if (preparationStop!.IsCancellationRequested) prepared.Dispose();
                     else {
                         pending = (preparationEndpoint, prepared); started = preparationBegan;
-                        log($"设备 {slot} 传输准备完成，排队与启动耗时 {now - preparationBegan} ms");
+                        log($"设备 {slot} 传输准备完成，目标入口 {preparationEndpoint}，排队与启动耗时 {now - preparationBegan} ms");
                     }
                 } catch (OperationCanceledException) when (preparationStop!.IsCancellationRequested) { }
                 catch (Exception ex) { Retry(now); log($"设备 {slot} 传输重试：{ex.Message}"); }
@@ -95,11 +95,11 @@ internal sealed class MeshPeerTransports : IDisposable, IAsyncDisposable
         if ((!keepPending || endpoint.Length == 0) && pending != null) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; }
         if (pending != null && (pending.Value.Transport.Exited || now - started >= 15000)) {
             if(pending.Value.Transport.Exited){
-                log($"设备 {slot} 候选传输失效：{pending.Value.Transport.FailureReason}");
+                log($"设备 {slot} 候选入口 {pending.Value.Endpoint} 传输失效：{pending.Value.Transport.FailureReason}");
                 router.FailLegacyTransport(slot,pending.Value.Transport.ClientEndpoint);
             }
             router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; Retry(now);
-            log($"设备 {slot} 新路径暂不可用，保留已有路径");
+            log(router.HasHealthyPath(slot)?$"设备 {slot} 新候选入口验证未完成，继续使用当前已验证的直连":$"设备 {slot} 当前候选入口验证未完成，后台将继续尝试连接");
         }
         if (pending != null && endpoint.Length > 0 && endpoint != pending.Value.Endpoint) { router.CancelLegacyCandidate(slot, pending.Value.Transport.ClientEndpoint); Close(pending); pending = null; nextAttempt = 0; }
         // A live native process can have a dead wire path (NAT state cleared,

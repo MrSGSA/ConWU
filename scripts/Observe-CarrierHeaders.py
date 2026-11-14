@@ -74,12 +74,18 @@ def main():
                     counts["maxBulkPacketsPer1ms"] = max(counts["maxBulkPacketsPer1ms"], buckets[bucket])
     def snapshot():
         with lock:
-            return {**counts, "bulkIpLengths": dict(lengths), "bulkPayloadLengths": dict(payloads)}
+            return {**counts, "bulkIpLengths": dict(lengths), "bulkPayloadLengths": dict(payloads),
+                    "captureLossAccountingAvailable": False,
+                    "comparisonProvesWireLoss": False}
     thread = threading.Thread(target=capture, daemon=True)
     deadline = threading.Timer(180, lambda: os._exit(3))
     deadline.daemon = True
     try:
-        for key, value in ((0, 4096), (1, 100), (2, 4 << 20)):
+        # A 100 ms observation queue can expire during an ordinary scheduling
+        # pause. More headroom does not establish capture completeness: this
+        # WinDivert API does not expose an observer loss counter. Counts are
+        # observed lower bounds and cannot independently locate wire loss.
+        for key, value in ((0, 4096), (1, 2000), (2, 32 << 20)):
             if not api.WinDivertSetParam(handle, key, value):
                 raise ctypes.WinError(ctypes.get_last_error())
         thread.start()

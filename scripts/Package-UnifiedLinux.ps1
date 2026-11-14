@@ -56,7 +56,8 @@ exec "$(dirname -- "$(readlink -f -- "$0")")/conwu" "$@"
  $linuxBundle=(& wsl -d $Distro -- wslpath -a $bundle.Replace('\','/')).Trim()
  if($LASTEXITCODE -or -not $linuxBundle.StartsWith('/')){throw 'Cannot resolve package path in WSL'}
  & wsl -d $Distro -- chmod 755 "$linuxBundle/install.sh" "$linuxBundle/uninstall.sh" "$linuxBundle/fresh-install.sh" "$linuxBundle/runtime/conwu" "$linuxBundle/runtime/streamlink" "$linuxBundle/runtime/components/udp2raw-native" "$linuxBundle/runtime/components/conwu-phantun" "$linuxBundle/runtime/components/conwu-raw"
- & wsl -d $Distro -- tar -czf "$linuxBundle.tar.gz" -C ([IO.Path]::GetDirectoryName($linuxBundle).Replace('\','/')) ([IO.Path]::GetFileName($bundle))
+ $linuxParent=$linuxBundle.Substring(0,$linuxBundle.LastIndexOf('/'))
+ & wsl -d $Distro -- tar -czf "$linuxBundle.tar.gz" -C $linuxParent ([IO.Path]::GetFileName($bundle))
  if($LASTEXITCODE){throw 'Linux archive failed'}
  Get-FileHash -LiteralPath "$bundle.tar.gz" | Format-List
 } finally {Pop-Location}
