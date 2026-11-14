@@ -11,9 +11,10 @@ public sealed class TcpBinding : IDisposable
 {
     readonly TcpEndpointLease lease;
     readonly string server;
+    readonly string[] servers;
     int disposed;
     static int fallbackOffset;
-    TcpBinding(TcpEndpointLease lease, string server) { this.lease = lease; this.server = server; }
+    TcpBinding(TcpEndpointLease lease, string server, string[] servers) { this.lease = lease; this.server = server; this.servers = servers; }
     public TcpBindingSnapshot Snapshot => new(lease.Id, lease.NetworkGeneration, lease.Local.ToString(), lease.Reflector.ToString(), server, lease.QueryUsable, lease.Closed);
     public static Task<(TcpBinding Binding, StunResult Result)> Connect(int port, IPAddress? local, Action<string> log, CancellationToken token, IEnumerable<string>? servers = null)
     {
@@ -45,7 +46,7 @@ public sealed class TcpBinding : IDisposable
         using var preferredStop = CancellationTokenSource.CreateLinkedTokenSource(round.Token);
         // Only ONE socket ever uses the actual source port. Other sockets screen
         // server health on ephemeral ports; their observed endpoints are discarded.
-        var preferred = Open(choices[0], port, local, preferredStop.Token);
+        var preferred = Open(choices[0], port, local, preferredStop.Token, choices);
         var ready = Channel.CreateBounded<string>(new BoundedChannelOptions(3) { FullMode = BoundedChannelFullMode.Wait });
         string[] tail = choices.Skip(1).ToArray();
         // Rotate the tail between rounds so a long list with a dead prefix does
@@ -88,7 +89,7 @@ public sealed class TcpBinding : IDisposable
             // The preferred socket has been fully closed before rebinding.
             while (await ready.Reader.WaitToReadAsync(round.Token)) {
                 while (ready.Reader.TryRead(out string? candidate)) {
-                    try { var result = await Open(candidate, port, local, round.Token); winner = result.Binding; return result; }
+                    try { var result = await Open(candidate, port, local, round.Token, choices); winner = result.Binding; return result; }
                     catch (Exception ex) when (!round.IsCancellationRequested && ex is not TcpEndpointBusyException) { log("TCP STUN 固定端口复核失败：" + Failure(ex)); }
                 }
             }
@@ -112,7 +113,7 @@ public sealed class TcpBinding : IDisposable
         }
     }
     static string Failure(Exception ex) => ex is OperationCanceledException ? "超时" : ex is SocketException socket ? socket.SocketErrorCode.ToString() : ex.Message;
-    static async Task<(TcpBinding Binding, StunResult Result)> Open(string server, int port, IPAddress? local, CancellationToken token)
+    static async Task<(TcpBinding Binding, StunResult Result)> Open(string server, int port, IPAddress? local, CancellationToken token, string[] servers)
     {
         TcpEndpointLease? lease = null;
         TcpBinding? connection = null;
@@ -120,7 +121,7 @@ public sealed class TcpBinding : IDisposable
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(token); timeout.CancelAfter(4000);
             var endpoint = await Stun.Resolve(server, timeout.Token);
             lease = await TcpEndpointLease.Open(new(local ?? Stun.LocalAddress(endpoint), port), endpoint, Guid.NewGuid(), timeout.Token, TcpHelperPurpose.LegacyEntry);
-            connection = new TcpBinding(lease, server);
+            connection = new TcpBinding(lease, server, servers);
             return (connection, await connection.Pulse(timeout.Token));
         } catch { connection?.Dispose(); lease?.Dispose(); throw; }
     }
@@ -129,7 +130,9 @@ public sealed class TcpBinding : IDisposable
         ObjectDisposedException.ThrowIf(Volatile.Read(ref disposed) != 0, this);
         if (!lease.QueryUsable) throw new IOException("STUN 辅助资源在失败事务后不可再查询");
         using var reference = lease.AcquireAttempt(lease.NetworkGeneration);
-        return (await reference.Observe(token)) with { Server = server };
+        var observation = (await reference.Observe(token)) with { Server = server };
+        await StunObservationValidation.Validate(observation, lease.Reflector, servers, token);
+        return observation;
     }
     public void Dispose() { if (Interlocked.Exchange(ref disposed, 1) == 0) lease.Dispose(); }
 }

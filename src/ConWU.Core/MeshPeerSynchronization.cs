@@ -18,6 +18,7 @@ public sealed class MeshPeerSynchronization : IDisposable
     readonly Dictionary<int, Outbound> outgoing = [];
     readonly Dictionary<int, long> nextSend = [];
     MeshRouter? router;
+    bool localConnectionPaused;
     public long Version { get; private set; }
     public long DirectoryRevision => directory?.Revision ?? 0;
     sealed class Assembly(Guid id, int length, long expires)
@@ -39,7 +40,15 @@ public sealed class MeshPeerSynchronization : IDisposable
         profile.Validate(); this.profile = profile;
         if (profile.Directory is {} known) SetDirectory(known);
     }
-    public void Attach(MeshRouter value) => router = value;
+    public void Attach(MeshRouter value)
+    {
+        router = value;
+        if(directory==null)return;
+        foreach(var member in directory.Members.Where(m=>m.Slot!=profile.Self.Slot))
+            if(nodes.TryGetValue(member.Slot,out var envelope))
+                try{router.SetRemotePaused(member.Slot,MeshMetadata.Open(profile,member,envelope).ConnectionPaused);}
+                catch(Exception error)when(error is FormatException or CryptographicException or JsonException){}
+    }
     public void SetDirectory(MeshDirectory value)
     {
         MeshIdentity.ValidateDirectory(value, profile.Pair.Network, profile.OwnerKey);
@@ -56,6 +65,7 @@ public sealed class MeshPeerSynchronization : IDisposable
     }
     public void Publish(MeshAnnouncement announcement)
     {
+        if(localConnectionPaused!=announcement.ConnectionPaused){localConnectionPaused=announcement.ConnectionPaused;nextSend.Clear();outgoing.Clear();}
         nodes[profile.Self.Slot] = MeshMetadata.Seal(profile, announcement); Version++;
     }
     public MeshSnapshot? Read() => directory == null ? null : new(directory, FreshNodes());
@@ -82,10 +92,11 @@ public sealed class MeshPeerSynchronization : IDisposable
         foreach (var envelope in snapshot.Nodes) {
             var member = directory!.Members.FirstOrDefault(m => m.Slot == envelope.Slot);
             if (member == null || !snapshot.Directory.Members.Contains(member) || member.Slot == profile.Self.Slot) continue;
-            try { MeshMetadata.Open(profile, member, envelope); }
+            MeshAnnouncement announcement;
+            try { announcement=MeshMetadata.Open(profile, member, envelope); }
             catch (Exception ex) when (ex is FormatException or CryptographicException or JsonException) { continue; }
             if (envelope.Revision <= (nodes.GetValueOrDefault(member.Slot)?.Revision ?? 0)) continue;
-            nodes[member.Slot] = envelope; Version++;
+            nodes[member.Slot] = envelope;router?.SetRemotePaused(member.Slot,announcement.ConnectionPaused);Version++;
         }
     }
     public void Tick(long now)

@@ -74,7 +74,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                 // A candidate is never described as proven inbound reachability.
                 log("真实 TCP STUN 已取得接收端口候选 "+mapping.PublicEndpoint+"，等待对端认证验证");
                 token.ThrowIfCancellationRequested();
-                using(var check=CancellationTokenSource.CreateLinkedTokenSource(round.Token)){check.CancelAfter(2500);mapping.PublicEndpoint=await Pulse(mapping.socket,check.Token);}
+                using(var check=CancellationTokenSource.CreateLinkedTokenSource(round.Token)){check.CancelAfter(2500);mapping.PublicEndpoint=await Pulse(mapping.socket,check.Token,choices);}
                 token.ThrowIfCancellationRequested();
                 return mapping;
             }catch(Exception ex)when(!token.IsCancellationRequested&&ex is IOException or SocketException or OperationCanceledException or ArgumentException){
@@ -96,7 +96,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             await slots.WaitAsync(race.Token);
             try{
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(race.Token);attempt.CancelAfter(2500);
-                var opened=await Open(port,null,server,attempt.Token);
+                var opened=await Open(port,null,server,attempt.Token,servers);
                 return new(opened.Socket,opened.Public,server);
             }finally{slots.Release();}
         }
@@ -119,7 +119,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             foreach(var task in attempts.Where(t=>!ReferenceEquals(t,winner)))try{(await task).Socket.Dispose();}catch{}
         }
     }
-    static async Task<(Socket Socket,IPEndPoint Public)> Open(int port,IPAddress? local,string server,CancellationToken token)
+    static async Task<(Socket Socket,IPEndPoint Public)> Open(int port,IPAddress? local,string server,CancellationToken token,string[] servers)
     {
         var remote=await Stun.Resolve(server,token);
         // Reopen only the owned control flow on its original source tuple.
@@ -129,17 +129,20 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             socket.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);
             socket.Bind(new IPEndPoint(local??Stun.LocalAddress(remote),port));
             await socket.ConnectAsync(remote,token);
-            return(socket,await Pulse(socket,token));
+            return(socket,await Pulse(socket,token,servers));
         } catch {socket.Dispose();throw;}
     }
-    static async Task<IPEndPoint> Pulse(Socket socket,CancellationToken token)
+    static async Task<IPEndPoint> Pulse(Socket socket,CancellationToken token,string[] servers)
     {
         using var stream=new NetworkStream(socket,false);
         byte[] request=Stun.Request(),header=new byte[20];await stream.WriteAsync(request,token);
         await stream.ReadExactlyAsync(header,token);int length=BinaryPrimitives.ReadUInt16BigEndian(header.AsSpan(2));
         if(length>4096||length%4!=0)throw new IOException("TCP STUN 响应长度无效");
         byte[] response=new byte[20+length];header.CopyTo(response,0);await stream.ReadExactlyAsync(response.AsMemory(20),token);
-        return Stun.Parse(response,request);
+        var mapped=Stun.Parse(response,request);
+        var local=(IPEndPoint)socket.LocalEndPoint!;var remote=(IPEndPoint)socket.RemoteEndPoint!;
+        await StunObservationValidation.Validate(new("tcp",remote.ToString(),local,mapped),remote,servers,token);
+        return mapped;
     }
     public Task Maintain(CancellationToken token)
     {
@@ -179,7 +182,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                 if(connected) {
                     using var pulse=CancellationTokenSource.CreateLinkedTokenSource(token);
                     pulse.CancelAfter(4000);
-                    seen=await Pulse(socket,pulse.Token);
+                    seen=await Pulse(socket,pulse.Token,servers);
                 } else {
                     seen=await Reconnect(token);
                     connected=true;
@@ -215,7 +218,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             try {
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(round.Token);
                 attempt.CancelAfter(2500);
-                var opened=await Open(port,LocalAddress,server,attempt.Token);opening=opened.Socket;
+                var opened=await Open(port,LocalAddress,server,attempt.Token,servers);opening=opened.Socket;
                 token.ThrowIfCancellationRequested();
                 socket=opening;opening=null;StunServer=server;
                 reflector=(IPEndPoint)socket.RemoteEndPoint!;

@@ -56,6 +56,7 @@ public sealed partial class MeshRouter
     // Called under gate, after AEAD verification and path/source authorization.
     bool Deliver(Peer peer, byte[] packet, bool allowed)
     {
+        if(!businessEnabled||peer.RemotePaused)return false;
         if (!allowed) { peer.Dropped++; peer.ReceivePolicyDrops++; return false; }
         if (!adapter.Write(packet)) { peer.Dropped++; peer.AdapterWriteDrops++; return false; }
         return true;

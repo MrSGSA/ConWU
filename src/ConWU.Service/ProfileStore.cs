@@ -6,7 +6,7 @@ using StreamLink.Core;
 
 namespace StreamLink.Service;
 
-public sealed class ProfileStore
+public sealed partial class ProfileStore
 {
     readonly ProfileStore? deviceStore;
     readonly object persistenceGate;

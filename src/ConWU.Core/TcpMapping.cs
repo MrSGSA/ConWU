@@ -203,6 +203,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         catch (System.Net.NetworkInformation.NetworkInformationException) { return true; } // unknown is not removal proof
     }
     internal static string HelperFailure(Exception error) => error switch {
+        StunReflectionException => "UntrustedReflection",
         EndOfStreamException => "RemoteClosed",
         OperationCanceledException => "QueryTimeoutOrCancellation",
         System.Net.Sockets.SocketException socket => "Socket:" + socket.SocketErrorCode,

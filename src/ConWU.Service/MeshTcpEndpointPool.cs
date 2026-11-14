@@ -8,7 +8,7 @@ namespace StreamLink.Service;
 // block candidates or keepalives that use a different retained source.
 internal sealed class MeshTcpEndpointPool(Guid generation,
     Func<IPEndPoint, IPEndPoint, IEndpointPacketIo> open,
-    TraversalResources? resources = null, EgressPacer? pacer = null, TimeProvider? time = null) : IAsyncDisposable
+    TraversalResources? resources = null, EgressPacer? pacer = null, TimeProvider? time = null,string[]? reflectors=null) : IAsyncDisposable
 {
     readonly object gate = new();
     readonly Dictionary<string, Slot> slots = [];
@@ -103,7 +103,7 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
                 reference.Dispose();
                 // Do not keep a failed, unused helper occupying a scarce slot
                 // until the next maintenance tick before trying another server.
-                if (!entry.Lease.QueryUsable || entry.Owner.Failed) { slot.Current = null; await Retire(entry); }
+                if (!entry.Lease.QueryUsable || entry.Owner.Failed || entry.Observed==null) { slot.Current = null; await Retire(entry); }
                 throw;
             }
         } finally {
@@ -117,6 +117,8 @@ internal sealed class MeshTcpEndpointPool(Guid generation,
     async Task Observe(Entry entry, TcpEndpointLease.Reference reference, CancellationToken token)
     {
         var observation = await reference.Observe(token);
+        try{await StunObservationValidation.Validate(observation,entry.Lease.Reflector,reflectors??[],token);}
+        catch{entry.Observed=null;throw;}
         entry.Observed = observation.Public; entry.ObservedTick = clock.GetTimestamp(); entry.ObservedAt = clock.GetUtcNow();
     }
     // Make room for a different strategy without evicting a borrowed candidate,

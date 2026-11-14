@@ -8,6 +8,7 @@ namespace StreamLink.Core;
 
 public sealed record MeshPeerStatus(int Slot, string Ip, string Name, bool Connected, double? RttMs, string Detail, long SentBytes = 0, long ReceivedBytes = 0, long DroppedPackets = 0)
 {
+    public bool ConnectionPaused {get;init;}
     public PeerLiveness? Liveness { get; init; }
     public ConnectionProgress? Connection { get; init; }
     public bool Degraded { get; init; }
@@ -53,12 +54,16 @@ public sealed partial class MeshRouter : IAsyncDisposable
         public Guid LegacyPathId;
         public long NextLegacyControl;
         public bool LegacyTransportFailed;
+        public bool RemotePaused;
         public readonly Dictionary<IPEndPoint, bool> NativeControlSources = [];
         public readonly HashSet<IPEndPoint> LegacyListenerSources = [];
         public readonly HashSet<IPEndPoint> CancelledCandidates = [];
         public readonly Queue<IPEndPoint> CancelledOrder = [];
     }
     readonly object gate = new();
+    volatile bool businessEnabled=true;
+    public void SetDataEnabled(bool enabled){lock(gate)businessEnabled=enabled;}
+    public void SetRemotePaused(int slot,bool paused){lock(gate)if(peers.TryGetValue(slot,out var peer))peer.RemotePaused=paused;}
     bool legacyListenerControlsWire;
     public void SetLegacyListenerControl(bool controlsWire) { lock (gate) legacyListenerControlsWire = controlsWire; }
     readonly MeshProfile profile;
@@ -230,7 +235,7 @@ public sealed partial class MeshRouter : IAsyncDisposable
             bool degraded = healthy && udp && Selection.Policy != PathPolicy.UdpOnly;
             return new MeshPeerStatus(p.Member.Slot, MeshAddressing.Address(profile.Pair.Network, p.Member), p.Name.Length > 0 ? p.Name : $"设备 {p.Member.Slot}", healthy,
                 p.Managed != null ? p.Managed.Active?.RttMs : p.Link.RttMs, healthy ? udp ? "UDP 直连 · 目标负载质量单独评估" : "P2P 直连" : p.Detail,
-                p.Sent, p.Received, p.Dropped) { Degraded = degraded, Liveness = Liveness(p),
+                p.Sent, p.Received, p.Dropped) { ConnectionPaused=!businessEnabled||p.RemotePaused,Degraded = degraded, Liveness = Liveness(p),
                     TraversalMethod = !healthy ? "None" : p.Managed?.Active?.Identity.Profile switch {
                         TraversalProfile.FakeTcpHttpSo => OperatingSystem.IsWindows() && p.Managed?.Active?.Transport is NativeDatagramPath {Diagnostics.PeerSource.Learned:true} ? "FakeTCP-SO+source-learning" : "FakeTCP-SO",
                         TraversalProfile.UdpDirect => "UDP-same-socket", _ => "ExplicitEntry" },
@@ -279,8 +284,9 @@ public sealed partial class MeshRouter : IAsyncDisposable
         var framed = new byte[PairNetworkFrame.HeaderSize + MeshLink.Overhead + MeshLink.Mtu];
         while (!stop.IsCancellationRequested) {
             int count = adapter.Read(buffer,stop.Token); if (count == 0) continue;
+            if(!businessEnabled)continue;
             var packet = buffer.AsSpan(0, count); int slot = MeshPackets.Destination(packet, local); if (slot == 0) continue;
-            lock (gate) if (peersByHost.TryGetValue(slot,out var peer)) {
+            lock (gate) if (businessEnabled&&peersByHost.TryGetValue(slot,out var peer)&&!peer.RemotePaused) {
                 byte[]? encoded = null; bool delivered = false;
                 bool direct = Healthy(peer) && LegacyAllowed && peer.Managed == null && TransportModes.Stream(profile.Pair.Mode) &&
                     StreamFlowRoutes.TrySendPacket(peer.Active, LocalEndpoint, profile.Pair.Network, profile.Self.Slot, peer.Member.Slot, packet, peer.Link, out encoded, out delivered);

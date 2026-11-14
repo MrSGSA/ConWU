@@ -102,13 +102,15 @@ public sealed partial class ControlWorker
         }
     }
     void ClearPendingMembership(){lock(sync){var next=ProfileChanges.Copy(profile);next.PendingMembership=null;store.Save(next);profile=next;}}
-    async Task ForgetLocalNetwork(Operation operation)
+    async Task ForgetLocalNetwork(Operation operation,bool retainRejoin=true)
     {
         SetOperation(operation,"停止本机网络并保留用户设置",false);
         await End(operation.Stop.Token,phase=>SetOperation(operation,phase,false));
         lock(sync){
-            var left=ProfileChanges.Copy(profile);left.RejoinCredential=MeshRejoin.Retain(profile.Mesh);
+            var left=ProfileChanges.Copy(profile);left.RejoinCredential=retainRejoin?MeshRejoin.Retain(profile.Mesh):null;
             left.RejoinHistory=[];left.PendingMembership=null;left.Mesh=null;left.Pair=null;left.Enabled=false;left.NetworkEstablishedAt=0;left.NetworkCreatedHere=false;left.JoinedEntryNetwork="";left.JoinedEntrySources=[];
+            left.ConnectionPaused=false;
+            if(!retainRejoin){left.PkarrPeers=[];left.PkarrSeed="";left.PkarrSequence=0;left.PkarrStateVersion=0;left.AutoConfigureJoin=false;left.ReceivedNetworkSettings=null;}
             RestoreSavedNetworkSettings(left);store.Save(left);profile=left;
         }
     }

@@ -23,6 +23,7 @@ public sealed class DeviceProfile
     public MeshRejoinHistory[] RejoinHistory {get;set;}=[];
     public int Slot { get; set; } = 1;
     public bool Enabled { get; set; }
+    public bool ConnectionPaused {get;set;}
     public bool AutoStart {get;set;}=true;
     public UuTakeoverSettings UuTakeover {get;set;}=new();
     public CoordinatorSettings Coordinator {get;set;}=new();

@@ -106,7 +106,7 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
     MeshTcpEndpointPool Pool { get { lock (poolGate) {
         if (operationEpoch.Value is {} epoch) RequireEpoch(epoch);
         return pool ??= new(generation,
-            (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer, time: EndpointTimeForTest);
+            (local, helper) => OpenCaptureForTest?.Invoke(local, helper) ?? new WinDivertEndpointIo(Path.Combine(Path.GetDirectoryName(binary)!, "WinDivert.dll"), local, helper), pacer: pacer, time: EndpointTimeForTest,reflectors:options.OrderedTcp());
     } } }
     public TraversalProfile[] Profiles => profiles;
     public bool SupportsUdpIpv6 => options.UdpIpv6 && profiles.Contains(TraversalProfile.UdpDirect);
@@ -245,7 +245,8 @@ internal sealed partial class MeshCandidateFactory(DeviceProfile profile, string
                 } else {
                     using var connect = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token); connect.CancelAfter(3500);
                     tcp = await TcpEndpointLease.Open(local, target, generation, connect.Token);
-                    using var reference = tcp.AcquireAttempt(generation); mapped = (await reference.Observe(deadline.Token)).Public;
+                    using var reference = tcp.AcquireAttempt(generation);var observed=await reference.Observe(deadline.Token);
+                    await StunObservationValidation.Validate(observed,target,options.OrderedTcp(),deadline.Token);mapped=observed.Public;
                 }
                 CheckRoute(mapped, gatewayCandidate: useGateway);
                 long now = (pooled?.ObservedAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds();

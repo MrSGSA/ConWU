@@ -13,10 +13,11 @@ public sealed partial class ControlWorker
     bool uiEntryAdmission;
     ExistingEntry[] uiEntrySources=[];
 
-    byte[]? HandleDirectPairing(ReadOnlyMemory<byte> packet)
+    internal byte[]? HandleDirectPairing(ReadOnlyMemory<byte> packet)
     {
         DirectPairRequest request;
         try{request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);}catch{return null;}
+        if(request.Method=="member-leave")return HandleDeparture(request);
         if(networkContext&&request.Method=="join"&&!NodeIdentityProof.Valid(request.Identity,request.Commitment))return DirectPairWire.Encode(new DirectPairReply(request.Id,"此版本需要新版 ConWU 设备身份，请先更新对端再申请"));
         return (request.EntryAdmission?entryAdmissionHost:uiDirectHost).Handle(packet);
     }
@@ -24,6 +25,7 @@ public sealed partial class ControlWorker
     {
         try{
             var request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);
+            if(request.Method=="member-leave")return MatchesDeparture(request);
             if(request.EntryAdmission&&request.Method=="join"&&profile.Mesh?.Directory is {Pairwise:true,Members.Length:>=2} full&&request.Rejoin?.Network!=profile.Mesh.Pair.Network&&
                 !(NodeIdentityProof.Valid(request.Identity,request.Commitment)&&full.Members.Any(m=>m.Slot!=profile.Mesh.Self.Slot&&m.Device==request.Identity!.DeviceId)))return false;
             return (request.EntryAdmission?entryAdmissionHost:uiDirectHost).Matches(request);
@@ -34,6 +36,7 @@ public sealed partial class ControlWorker
     internal int DirectPairPriority(ReadOnlyMemory<byte> packet)
     {
         try{var request=DirectPairWire.Decode<DirectPairRequest>(packet.Span);
+            if(request.Method=="member-leave")return MatchesDeparture(request)?3:0;
             if(profile.Mesh?.CanManage!=true)return 0;
             if(request.EntryAdmission&&request.Method=="join"){
                 if(NodeIdentityProof.Valid(request.Identity,request.Commitment)&&profile.Mesh.Directory?.Members.Any(m=>m.Slot!=profile.Mesh.Self.Slot&&m.Device==request.Identity!.DeviceId)==true)return 2;

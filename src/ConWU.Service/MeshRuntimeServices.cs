@@ -3,6 +3,7 @@ using StreamLink.Core;
  [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.UuTakeoverTests")]
 
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MeshConnectionTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.NetworkLifecycleTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MeshRunnerTraversalTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MeshHarness")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.StreamTransportTests")]

@@ -12,6 +12,8 @@ public sealed record DirectPairRequest(string Id,string Method,string Room="",st
     public string TargetNetwork {get;init;}="";
     public NodeIdentityProof? Identity {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public NetworkDeparture? Departure {get;init;}
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public MeshRejoinProof? Rejoin {get;init;}
     public string RequestedIp {get;init;}="";
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
@@ -19,6 +21,8 @@ public sealed record DirectPairRequest(string Id,string Method,string Room="",st
 }
 public sealed record DirectPairReply(string Id,string Error="",PairRoomTicket? Ticket=null,PairRoomState? State=null,string Part="",int Total=0)
 {
+    [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public NetworkDepartureReceipt? Departure {get;init;}
     [System.Text.Json.Serialization.JsonIgnore(Condition=System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingDefault)]
     public bool Retryable {get;init;}
 }
@@ -205,6 +209,15 @@ public sealed class DirectPairClient : IShortPairClient
         }finally{gate.Release();}
     }
     DirectPairRequest Request(string method,PairRoomTicket? ticket=null)=>new(Guid.NewGuid().ToString("N"),method,ticket?.Room??"",ticket?.Token??""){EntryAdmission=entryAdmission,TargetNetwork=targetNetwork};
+    public async Task<NetworkDepartureReceipt> Depart(NetworkDeparture notice,string owner,CancellationToken cancel)
+    {
+        notice.Validate(owner);
+        while(true){
+            var reply=await Send(Request("member-leave") with{TargetNetwork=notice.Network,Departure=notice},cancel);
+            if(reply.Departure is {} receipt){receipt.Validate(owner,notice);return receipt;}
+            await Task.Delay(200,cancel);
+        }
+    }
     public Task<PairRoomTicket> Create(PairKeyExchange key,string name,CancellationToken cancel)=>throw new NotSupportedException();
     public async Task<PairRoomTicket> Join(string code,PairKeyExchange key,string name,CancellationToken cancel,string requestedIp="",MeshRejoinProof? rejoin=null)
     {

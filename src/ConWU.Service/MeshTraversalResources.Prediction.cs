@@ -93,6 +93,7 @@ internal sealed partial class MeshCandidateFactory
                 using var query = lease.AcquireAttempt(generation);
                 while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, limit.Token);
                 var observed = await query.Observe(limit.Token);
+                await StunObservationValidation.Validate(observed,target,options.OrderedTcp(),limit.Token);
                 limit.Token.ThrowIfCancellationRequested();
                 transferred = true; return (lease, capture, target, observed);
             } catch (Exception ex) when (reflection && !token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or ArgumentException) {

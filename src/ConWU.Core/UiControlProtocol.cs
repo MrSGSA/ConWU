@@ -38,6 +38,7 @@ public sealed record UiStatusDto(string Version,string DeviceName,string Virtual
     public bool IsDecentralized {get;init;}
     public bool CanManageNetwork {get;init;}
     public bool NetworkDirect {get;init;}
+    public bool NetworkPaused {get;init;}
     public int EntryTargetSlot {get;init;}=1;
     public bool PendingMembership {get;init;}
     public bool NetworkClosed {get;init;}

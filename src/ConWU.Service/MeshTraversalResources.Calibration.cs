@@ -86,7 +86,8 @@ internal sealed partial class MeshCandidateFactory
                         await capture.Ready.WaitAsync(windowStop.Token);
                         using var reference = lease.AcquireAttempt(generation);
                         while (!TraversalResources.Shared.TrySend(20, maintenance: true)) await Task.Delay(25, windowStop.Token);
-                        await reference.Observe(windowStop.Token); // helper remains alive throughout this window
+                        var observation=await reference.Observe(windowStop.Token); // helper remains alive throughout this window
+                        await StunObservationValidation.Validate(observation,reflector,options.OrderedTcp(),windowStop.Token);
                         var result = await TcpShapeProbe.RunCalibration(capture, observer, () => observationBudget.Take(),
                             ep => CheckRoute(ep, source), interference, windowStop.Token,
                             registrationConfirmed: () => calibrationRegistered = Stopwatch.GetTimestamp());

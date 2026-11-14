@@ -94,6 +94,10 @@ public sealed class MeshRunner
         return sources.Length==0&&profile.ManualEndpoint.Length>0?[new(0,profile.ManualEndpoint)]:sources;
     }
     MeshRouter? router;
+    string[] latestHostEndpoints=[];
+    public string[] LatestHostEndpoints=>Volatile.Read(ref latestHostEndpoints).ToArray();
+    int dataStateChanged;
+    public void SetConnectionPaused(bool paused){lock(gate){profile.ConnectionPaused=paused;router?.SetDataEnabled(!paused);}Interlocked.Exchange(ref dataStateChanged,1);}
     internal object? ExitDiagnostics { get; private set; }
     internal bool CleanupComplete {get;private set;}
     readonly List<object> unprovenOwners=[];
@@ -255,6 +259,7 @@ public sealed class MeshRunner
                     try{RememberPkarrPeer?.Invoke(binding);}catch(IOException ex){log("PKARR 对端绑定未保存："+ex.Message);}
                 }
                 revisions[member.Slot] = announcement.Revision; announcements[member.Slot] = announcement;
+                router?.SetRemotePaused(member.Slot,announcement.ConnectionPaused);
             }
             synchronizedVersion = synchronization.Version;
         }
@@ -406,6 +411,7 @@ public sealed class MeshRunner
                     lock (gate) {
                         wireMesh.Directory = mesh.Directory;
                         router = new(wireMesh, adapter, (discovery as IMeshTraversalDiscovery)?.BootId, profile.Selection());
+                        router.SetDataEnabled(!profile.ConnectionPaused);
                         router.DirectPairing=packet=>DirectPairing?.Invoke(packet);
                         synchronization.Attach(router);
                         pendingAdapter = null;
@@ -546,11 +552,13 @@ public sealed class MeshRunner
                     nextRead = now + (watching && traversal != null ? 100 : watching ? 2500 : allConnected ? 5000 : 2500);
                 }
                 string candidate = Candidate();
+                if(Interlocked.Exchange(ref dataStateChanged,0)!=0)lastPublish=0;
                 if (publishing == null && (lastPublish == 0 || now - lastPublish >= (candidate != publishedEndpoint ? 2500 : 15000)) && (traversal == null || requestBudget.Take())) {
                     publishingEndpoint = candidate; lastPublish = now;
                     var announcement = new MeshAnnouncement(mesh.Self.Slot, mesh.Self.Device, ++revision, DateTimeOffset.UtcNow.AddSeconds(120).ToUnixTimeSeconds(), candidate, profile.DeviceName, traversal?.Capabilities) {
                         ExistingEndpoints=server!=null&&!server.Exited&&localExisting.Length>0?localExisting:null,
                         ExistingEntryOnly=existingOnly,
+                        ConnectionPaused=profile.ConnectionPaused,
                         PkarrSource=PkarrRendezvous.Uses(profile)&&profile.PkarrSeed.Length>0?PkarrPacket.Source(profile.PkarrSeed):null
                     };
                     peerSynchronization?.Publish(announcement);
@@ -632,6 +640,8 @@ public sealed class MeshRunner
                 }
                 // Locally configured peer entries also count as explicit hints to the scheduler.
                 var scheduling=announcements.ToDictionary(p=>p.Key,p=>selectedEntries.TryGetValue(p.Key,out var chosen)&&chosen.Length>0?p.Value with {Endpoint=chosen}:p.Value);
+                if(!mesh.IsOwner&&scheduling.TryGetValue(mesh.IntroducerSlot,out var currentHost))
+                    Volatile.Write(ref latestHostEndpoints,(currentHost.ExistingEndpoints??[]).Concat(currentHost.Endpoint.Length>0?[currentHost.Endpoint]:[]).Distinct().Take(16).ToArray());
                 traversal?.Tick(scheduling, candidate,priorityPeers,onlyEntryPeers);
                 foreach (var member in members) {
                     if(TransportModes.OutboundGuest(profile.TransportMode)&&mesh.IsOwner){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}

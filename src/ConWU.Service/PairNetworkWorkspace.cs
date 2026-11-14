@@ -308,7 +308,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                 return status with{Status=Snapshot(selected)};
             }
             if(selected.Length==0){
-                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "invite-compact" or "refresh-pkarr" or "approve" or "reject")
+                if(request.Method is "start" or "stop" or "retry" or "quality"||request.Network?.Action is "disconnect" or "reconnect" or "leave" or "forget-network" or "delete-network" or "invite" or "invite-code" or "invite-direct" or "invite-compact" or "refresh-pkarr" or "approve" or "reject")
                     throw new IOException("请先选择要操作的网络");
                 bool saving=request.Method=="patch"||request.Network?.Action=="settings";
                 if(saving)await WaitGate(sharedSettings,request.OperationId,token);

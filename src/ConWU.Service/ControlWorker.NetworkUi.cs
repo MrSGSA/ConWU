@@ -443,6 +443,21 @@ public sealed partial class ControlWorker
                 await ForgetLocalNetwork(operation);
                 Log("已从本机移除网络，设置保留；未确认远端成员撤销或全网解散");
                 break;
+            case "disconnect":
+            case "reconnect":
+                RequireUiNetwork(action.ExpectedNetwork);
+                if(profile.Mesh is not {IsOwner:false} guestConnection)throw new IOException("请选择本机加入的网络");
+                bool disconnecting=action.Action=="disconnect";
+                if(!disconnecting)await PersonalPacketAdapters.Preflight(profile,token);
+                lock(sync){
+                    var connection=ProfileChanges.Copy(profile);connection.ConnectionPaused=disconnecting;connection.Enabled=true;
+                    store.Save(connection);profile=connection;
+                    if(runningProfile is {} activeConnection)activeConnection.ConnectionPaused=disconnecting;
+                }
+                meshRunner?.SetConnectionPaused(disconnecting);
+                if(running?.IsCompleted!=false)Begin();
+                Log(disconnecting?"已断开业务连接，保留身份、入口发现和控制保活；可直接重新连接":"正在重新连接已保存网络，无需重新配对");
+                break;
             case "pause-network":
                 RequireUiNetwork(action.ExpectedNetwork);
                 if (profile.Mesh == null || !action.ConfirmReplace) throw new IOException("暂时离开当前网络需要确认");
@@ -466,6 +481,11 @@ public sealed partial class ControlWorker
                 if (action.Action == "leave" && profile.Mesh?.IsOwner == true) throw new IOException("创建者可暂时离开并保留网络；解散网络请使用删除网络");
                 if(!action.ConfirmReplace)throw new IOException("退出网络需要确认");
                 await CloseUiPair(token);
+                if(action.Action=="leave"&&profile.Mesh is {IsOwner:false,IsDecentralized:false}){
+                    SetOperation(operation,"保存退出通知并移除本机网络记录",false);
+                    store.DeviceStore.QueueDeparture(NetworkDepartureDelivery.Create(ProfileChanges.Copy(profile),NetworkDisplayName,meshRunner?.LatestHostEndpoints??[]));
+                    Log("已保存本人签名的退出通知；主机可达时自动删除对应从机记录");
+                }
                 // Retire issued members before deleting the host credentials.
                 // Legacy many-member networks require server confirmation;
                 // pairwise networks keep local management independent of it.
@@ -491,7 +511,7 @@ public sealed partial class ControlWorker
                     if(meshRunner!=null)await meshRunner.NotifyDirectClosure(retired.Mesh!.Directory!,token);
                     lock(sync){store.Save(retired);profile=retired;meshRunner?.UpdateDirectory(retired.Mesh!.Directory!);}
                 }
-                await ForgetLocalNetwork(operation);
+                await ForgetLocalNetwork(operation,retainRejoin:false);
                 break;
             default: throw new FormatException("不支持的网络操作");
         }

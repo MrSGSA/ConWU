@@ -14,7 +14,7 @@ const connectedDuration=ms=>{const seconds=Math.max(0,Math.floor(ms/1000));retur
 function connectedTime(p){return online&&p.connected&&p.connection?.phase==='Connected'?connectedDuration((p.connection.elapsedMs||0)+Math.max(0,performance.now()-lastStatusAt)):'—';}
 function updateConnectedTimes(){for(const element of document.querySelectorAll('[data-connected-slot]')){const peer=state?.peers.find(p=>p.slot===Number(element.dataset.connectedSlot));element.textContent=peer?connectedTime(peer):'—';}}
 function entryDescription(p){if(p.outerTarget&&p.outerTarget!=='Unknown')return p.outerTarget;return p.entryDirection==='Inbound'?`入站直连 · 本机接收端口 ${state?.settings?.listenPort||'—'}`:'尚未取得已认证入口信息';}
-const phaseNames={Idle:'网络已就绪',Offline:'设备未在线',StartingAdapter:'准备虚拟网卡',WaitingPeer:'等待设备响应',WaitingEntry:'寻找入口',EntryUnavailable:'已有入口不可用',Connecting:'正在连接',Queued:'排队连接',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Connected:'已直连'};
+const phaseNames={Idle:'网络已就绪',Offline:'设备未在线',StartingAdapter:'准备虚拟网卡',WaitingPeer:'等待设备响应',WaitingEntry:'寻找入口',EntryUnavailable:'已有入口不可用',Connecting:'正在连接',Queued:'排队连接',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Paused:'已断开连接',Connected:'已直连'};
 try{theme=localStorage.getItem('streamlink-theme')==='light'?'light':'dark';}catch{}
 
 function notify(message){clearTimeout(toastTimer);$('toast').innerHTML=icon('check')+`<span>${esc(message)}</span>`;$('toast').classList.add('show');toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3400);}

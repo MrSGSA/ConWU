@@ -25,6 +25,7 @@ public static class ProfileChanges
         comparable.AllowManualQualityRequests=before.AllowManualQualityRequests;
         comparable.RequestedVirtualIp=before.RequestedVirtualIp; // next enrollment only; never silently renumber a live network
         comparable.AutoStart=before.AutoStart;
+        comparable.ConnectionPaused=before.ConnectionPaused;
         comparable.UuTakeover=before.UuTakeover;
         comparable.Coordinator=before.Coordinator; // independent host role; never rebuild healthy data paths
         comparable.CoordinatorRoleVersion=before.CoordinatorRoleVersion;

@@ -95,7 +95,7 @@ public sealed partial class ControlWorker : BackgroundService
     }
     internal DeviceProfile ProfileSnapshot()=>ProfileChanges.Copy(Volatile.Read(ref snapshot)!.Profile!);
     internal bool IsOperationComplete(Guid id)=>OperationState(id)?.Completed!=false;
-    internal bool HasOutstandingOwnership{get{lock(operationGate)return Volatile.Read(ref resourceShutdownUnproven)||running?.IsCompleted==false||measuring?.IsCompleted==false||acceptingEntries?.IsCompleted==false||publishingPkarr?.IsCompleted==false||operations.Values.Any(o=>!o.Completed);}}
+    internal bool HasOutstandingOwnership{get{lock(operationGate)return Volatile.Read(ref resourceShutdownUnproven)||running?.IsCompleted==false||measuring?.IsCompleted==false||acceptingEntries?.IsCompleted==false||publishingPkarr?.IsCompleted==false||departureDelivery?.IsCompleted==false||departingMembers.Values.Any(t=>!t.IsCompleted)||operations.Values.Any(o=>!o.Completed);}}
     internal void BeginApplicationStop()=>Volatile.Write(ref applicationStopping,true);
     internal async Task RestoreSettings(DeviceProfile before,CancellationToken token)
     {
@@ -189,7 +189,7 @@ public sealed partial class ControlWorker : BackgroundService
                         if (profile.Mesh is {} current && copy.Mesh?.Directory is {} revoked &&
                             revoked.Network == current.Pair.Network && revoked.OwnerKey == current.OwnerKey &&
                             revoked.Revision > (current.Directory?.Revision ?? 0)) current.Directory = revoked;
-                        profile.Enabled = false; store.Save(profile);
+                        profile.Enabled = false;profile.ConnectionPaused=false;store.Save(profile);
                         status = new(profile.Mesh?.Directory?.Closed==true?"网络已解散":"已移出网络", "", "", "faketcp", false, null, ex.Message);
                     }
                     Log(ex.Message); break;
@@ -395,7 +395,7 @@ public sealed partial class ControlWorker : BackgroundService
                     meshRunner?.RequestRetry();lock(sync)retryWake?.TrySetResult();
                     Log("用户请求重新探测；健康直连与虚拟网卡保持运行");break;
                 case "quality":
-                    if (status?.Connected != true || runner == null && meshRunner == null) throw new IOException("请先连接对端");
+                    if (profile.ConnectionPaused||status?.Connected != true || runner == null && meshRunner == null) throw new IOException("请先连接对端");
                     if (request.Mbps is < 1 or > 60) throw new FormatException("测试速率需为 1–60 Mbps");
                     if (measuring != null && !measuring.IsCompleted) throw new IOException("已有质量测试在运行");
                     quality = "正在测试，20 秒后显示结果";
@@ -417,6 +417,7 @@ public sealed partial class ControlWorker : BackgroundService
         Recovery.Recover(Log, Path.Combine(store.DirectoryPath, "sessions"));
         if(!networkContext)StartCoordinator();else StartPkarr();
         Log("ConWU 已启动");
+        StartDepartureDelivery();
         if(workspace!=null)workspace.Start();
         else{if (profile.Enabled) Begin();StartEntryAdmission();}
         initialized=true;
@@ -425,7 +426,7 @@ public sealed partial class ControlWorker : BackgroundService
         StartLocalUpdateRecovery();
         PublishReply();
     }
-    public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();await StopTakeover();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopPkarr();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
+    public async Task StopLocal(CancellationToken token=default) { BeginApplicationStop();await StopDepartureDelivery();await StopTakeover();if(workspace!=null)await workspace.Stop(token);await StopEntryAdmission();await StopPkarr();await StopCoordinator();await End(token); runStop?.Dispose();runStop=null; }
     public override void Dispose() {BeginApplicationStop();DisposeTakeover();if(localUpdates.IsValueCreated)localUpdates.Value.Dispose();if(updates.IsValueCreated)updates.Value.Dispose();if(workspace?.HasOutstandingOwnership==true)Volatile.Write(ref resourceShutdownUnproven,true);workspace?.Dispose();base.Dispose();DisposeControlResources();}
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
