@@ -617,7 +617,12 @@ public sealed class MeshRunner
                             bool wasBackup=backupPlan.UsingBackup;
                             selectedEntries[member.Slot]=backupPlan.Select(primaryHints,remoteHints,router.HasHealthyPath(member.Slot),now);
                             if(!wasBackup&&backupPlan.UsingBackup)log($"设备 {member.Slot} 的已配置入口尚未通过认证，改用备用协调提供的已有入口；不执行自主打洞");
-                        }else selectedEntries[member.Slot]=router.HasHealthyPath(member.Slot)||hints.Length==0?"":hints[(int)((now-began)/15000%hints.Length)];
+                        }else{
+                            // Adapter/discovery preparation is not a failed dial.
+                            // Start each peer's rotation when its candidates become
+                            // eligible, so slow startup cannot skip the first hint.
+                            selectedEntries[member.Slot]=plan.Select(hints,"",localExisting.Length>0,router.HasHealthyPath(member.Slot),now,existingOnly:true);
+                        }
                         if(!router.HasHealthyPath(member.Slot))priorityPeers.Add(member.Slot);
                         continue;
                     }

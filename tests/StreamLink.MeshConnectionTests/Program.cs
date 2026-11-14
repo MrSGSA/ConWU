@@ -27,6 +27,7 @@ static partial class Program
         if(args is ["--update-ui"]){await UpdateUi();return;}
         if(args is ["--entry-source-authority"]){EntrySourceAuthority();return;}
         if(args is ["--entry-restart-recovery"]){await EntryRestartRecovery();return;}
+        if(args is ["--entry-startup-order"]){await EntryCandidateOrderAfterDelayedAdapter();return;}
         if(args is ["--release-discovery"]){await ReleaseDiscovery();return;}
         if(args is ["--pkarr-resilience"]){await PkarrResilience();return;}
         if(args is ["--pkarr-lifecycle"]){await PkarrLifecycle();return;}

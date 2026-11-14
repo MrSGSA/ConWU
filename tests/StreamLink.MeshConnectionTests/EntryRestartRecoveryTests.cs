@@ -18,6 +18,42 @@ static partial class Program
         Console.WriteLine($"PASS {checks} entry restart/recovery checks; real encrypted loopback paths, simulated subscription and transport mappings; no installed service changes");
     }
 
+    static async Task EntryCandidateOrderAfterDelayedAdapter()
+    {
+        const string fresh="203.0.113.33:1778",stale="203.0.113.34:8414";
+        var owner=MeshIdentity.Create("","","phantun",direct:true);var guest=Guest(owner);guest.Directory=owner.Directory;
+        byte[] key=MeshIdentity.SharedKey(owner,guest.Self);using var link=new MeshLink(owner.Self.Slot,guest.Self.Slot,key);CryptographicOperations.ZeroMemory(key);
+        await using var peer=new PeerEndpoint(link);using var sink=new UdpClient(new IPEndPoint(IPAddress.Loopback,0));
+        var requested=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var ready=new TaskCompletionSource<IPacketAdapter>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var adapter=new MemoryAdapter();var targets=new ConcurrentQueue<string>();var transports=new ConcurrentBag<ForwardingTransport>();
+        string folder=Path.Combine(Path.GetTempPath(),"conwu-entry-startup-order-"+Guid.NewGuid().ToString("N"));
+        var profile=new DeviceProfile{Mesh=guest,ConnectionSource="existing",EntryRefreshSeconds=60,ExistingEntries=[new(owner.Self.Slot,"txt://fixture.example#streamlink1")]};
+        profile.SelectTransport("phantun-only");int probes=0;SessionStatus? status=null;
+        var services=new MeshRuntimeServices(mesh=>new DirectMeshDiscovery(mesh),_=>{requested.TrySetResult();return ready.Task;},(_,_,_)=>{probes++;throw new Exception("no autonomous probe");},r=>{
+            if(r.Server)return new StubTransport(null);
+            string target=r.Target.ToString();targets.Enqueue(target);
+            var transport=new ForwardingTransport(target==fresh?peer.Endpoint:(IPEndPoint)sink.Client.LocalEndPoint!,toleratePeerOffline:true);transports.Add(transport);return transport;
+        },(_,_,ct)=>Task.Delay(Timeout.Infinite,ct),(_,_,_)=>{},(_,_)=>{},folder){
+            Candidates=(_,_,_,_)=>throw new Exception("no candidate factory"),NetworkWake=()=>new MeshNetworkWake(false),
+            ResolveEntries=(_,_,_)=>Task.FromResult(new[]{new EntryResolution(owner.Self.Slot,0,"TXT",[fresh,stale],"")})
+        };
+        var runner=new MeshRunner(profile,_=>{},s=>Volatile.Write(ref status,s),_=>{},_=>{},services);
+        using var stop=new CancellationTokenSource(TimeSpan.FromSeconds(40));var running=runner.Run(stop.Token);
+        try{
+            await requested.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            await Task.Delay(16200,stop.Token);ready.TrySetResult(adapter);
+            await Until(()=>targets.Count>0,"delayed startup eventually opens the selected carrier",3000);
+            Check(targets.First()==fresh,"first dial starts with the first supplied candidate after sixteen seconds of adapter preparation");
+            await Until(()=>Volatile.Read(ref status)?.Connected==true,"fresh first candidate immediately establishes authenticated connectivity",6000);
+            Check(probes==0&&targets.All(t=>t==fresh),"startup delay cannot rotate into the stale candidate or enable autonomous work");
+        }finally{
+            ready.TrySetResult(adapter);await Stop(running,stop);if(Directory.Exists(folder))Directory.Delete(folder,true);
+        }
+        Check(runner.CleanupComplete&&adapter.Disposed&&transports.All(t=>t.Disposed),"delayed-startup regression releases its adapter and transports");
+        Console.WriteLine($"PASS {checks} delayed-entry startup checks; real encrypted loopback, no installed service changes");
+    }
+
     static async Task EntryRefreshAfterPathLoss()
     {
         var host=MeshIdentity.Create("","","faketcp",direct:true);
