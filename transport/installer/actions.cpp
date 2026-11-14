@@ -152,6 +152,37 @@ void restore_service(MSIHANDLE h,const context &c){
     if(read_number(saved.value,L"Running")&&!StartServiceW(service.value,0,nullptr)&&GetLastError()!=ERROR_SERVICE_ALREADY_RUNNING)throw std::wstring(L"原服务配置已恢复，但启动失败。");
 }
 void remove_snapshot(const context &c){RegDeleteTreeW(HKEY_LOCAL_MACHINE,c.transaction.c_str());}
+
+void repair_current_service(MSIHANDLE h,const context &c){
+    // The pre-rename MSI owns a different file component but the same SCM
+    // name. Its late removal can delete the newly configured SCM entry.
+    // Recreate only our validated instance, after removal and before readiness.
+    registry saved;if(RegOpenKeyExW(HKEY_LOCAL_MACHINE,c.transaction.c_str(),0,KEY_READ|KEY_WOW64_64KEY,&saved.value)!=ERROR_SUCCESS||!read_number(saved.value,L"Complete"))throw std::wstring(L"服务升级恢复凭据缺失。");
+    std::wstring executable=c.folder+L"\\app\\ConWU.Service.exe";
+    DWORD attributes=GetFileAttributesW(executable.c_str());if(attributes==INVALID_FILE_ATTRIBUTES||(attributes&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT)))throw std::wstring(L"新版后台文件不可用。");
+    std::wstring image=L"\""+executable+L"\"";
+    if(c.validation)image+=L" --validation-instance "+c.service.substr(22);
+    service_handle manager{OpenSCManagerW(nullptr,nullptr,SC_MANAGER_CONNECT|SC_MANAGER_CREATE_SERVICE)};if(!manager.value)throw std::wstring(L"无法修复升级后的服务登记。");
+    service_handle service;
+    for(int attempt=0;attempt<50;attempt++){
+        service.value=OpenServiceW(manager.value,c.service.c_str(),SERVICE_QUERY_CONFIG|SERVICE_QUERY_STATUS|SERVICE_CHANGE_CONFIG|SERVICE_START);
+        if(service.value)break;DWORD error=GetLastError();
+        if(error==ERROR_SERVICE_DOES_NOT_EXIST)break;
+        if(error!=ERROR_SERVICE_MARKED_FOR_DELETE)throw std::wstring(L"升级后的服务状态不可读取。");
+        Sleep(100);
+    }
+    DWORD start=read_number(saved.value,L"Existed")?read_number(saved.value,L"Start"):SERVICE_AUTO_START;
+    if(service.value){
+        DWORD size=0;QueryServiceConfigW(service.value,nullptr,0,&size);std::vector<BYTE> bytes(size);
+        if(!QueryServiceConfigW(service.value,reinterpret_cast<QUERY_SERVICE_CONFIGW*>(bytes.data()),size,&size)||_wcsicmp(reinterpret_cast<QUERY_SERVICE_CONFIGW*>(bytes.data())->lpServiceStartName,L"LocalSystem")!=0)throw std::wstring(L"升级后的服务账户不符。");
+        if(!ChangeServiceConfigW(service.value,SERVICE_NO_CHANGE,start,SERVICE_NO_CHANGE,image.c_str(),nullptr,nullptr,nullptr,nullptr,nullptr,nullptr))throw std::wstring(L"无法更新后台执行路径。");
+    }else{
+        service.value=CreateServiceW(manager.value,c.service.c_str(),L"ConWU Network",SERVICE_QUERY_CONFIG|SERVICE_QUERY_STATUS|SERVICE_CHANGE_CONFIG|SERVICE_START,SERVICE_WIN32_OWN_PROCESS,start,SERVICE_ERROR_NORMAL,image.c_str(),nullptr,nullptr,nullptr,L"LocalSystem",nullptr);
+        if(!service.value)throw std::wstring(L"无法重建升级后的后台服务。");
+        log(h,L"Recreated renamed backend after prior product removal");
+    }
+    if(read_number(saved.value,L"Existed"))restore_policy(service.value,saved.value);
+}
 template<class F>UINT action(MSIHANDLE h,F operation){try{context c=parameters(h);operation(c);return ERROR_SUCCESS;}catch(const std::wstring &message){log(h,message,true);return ERROR_INSTALL_FAILURE;}catch(...){log(h,L"安装操作发生异常，正在按安装事务恢复。",true);return ERROR_INSTALL_FAILURE;}}
 }
 extern "C" __declspec(dllexport) UINT __stdcall NewTransaction(MSIHANDLE h){GUID id{};wchar_t text[40]{};if(FAILED(CoCreateGuid(&id))||!StringFromGUID2(id,text,40))return ERROR_INSTALL_FAILURE;return MsiSetPropertyW(h,L"STREAMLINK_TRANSACTION",text);}
@@ -159,3 +190,4 @@ extern "C" __declspec(dllexport) UINT __stdcall PrepareUpgrade(MSIHANDLE h){retu
 extern "C" __declspec(dllexport) UINT __stdcall CloseClients(MSIHANDLE h){return action(h,[&](const context &c){close_clients(h,c,false);});}
 extern "C" __declspec(dllexport) UINT __stdcall RollbackUpgrade(MSIHANDLE h){return action(h,[&](const context &c){restore_service(h,c);remove_snapshot(c);});}
 extern "C" __declspec(dllexport) UINT __stdcall CommitUpgrade(MSIHANDLE h){return action(h,[&](const context &c){remove_snapshot(c);});}
+extern "C" __declspec(dllexport) UINT __stdcall RepairUpgradeService(MSIHANDLE h){return action(h,[&](const context &c){repair_current_service(h,c);});}

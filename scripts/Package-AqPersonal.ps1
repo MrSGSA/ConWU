@@ -1,7 +1,7 @@
 #requires -Version 7.0
 [CmdletBinding()]
 param([Parameter(Mandatory)][string]$OutputRoot,[Parameter(Mandatory)][string]$DependencyCache,
-      [string]$Version='1.2.0',[string]$MsiVersion='1.2.3',[switch]$PublicationApproved)
+      [string]$Version='1.2.0',[string]$MsiVersion='1.2.3',[ValidateSet('high','mszip')][string]$Compression='high',[switch]$PublicationApproved)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 Push-Location -LiteralPath $repo
@@ -73,7 +73,7 @@ try {
  if($p.ExitCode){throw 'Actual app rejected bundle'}
  # Linux member/coordinator uses the same integrated host, packaged by
  # Package-UnifiedLinux.ps1. Do not ship a second coordinator-only application.
- & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "ConWU-$Version-x64.msi") -MsiVersion $MsiVersion
+ & ./scripts/Build-Msi.ps1 -BundleRoot $stage -OutputPath (Join-Path $candidate "ConWU-$Version-x64.msi") -MsiVersion $MsiVersion -Compression $Compression
  Compress-Archive -LiteralPath $stage -DestinationPath ($stage+'.zip') -CompressionLevel Optimal
  $hashes=@(Get-ChildItem -LiteralPath $candidate -File|Where-Object Extension -in '.zip','.msi'|ForEach-Object{[ordered]@{file=$_.Name;bytes=$_.Length;sha256=(Get-FileHash -LiteralPath $_.FullName).Hash}})
  [ordered]@{version=$Version;sourceCommit=$commit;publicReleaseApproved=[bool]$PublicationApproved;releaseGate='PackagePreflightOnly';releaseVerification="ConWU-$Version-verification.json";files=$hashes}|ConvertTo-Json -Depth 5|Set-Content (Join-Path $candidate 'artifact-hashes.json') -Encoding utf8NoBOM

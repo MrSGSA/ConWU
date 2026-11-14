@@ -18,10 +18,10 @@ $file=Join-Path $work 'Package.wxs'
 $xml=[xml]@'
 <Wix xmlns="http://wixtoolset.org/schemas/v4/wxs" xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
  <Package Name="ConWU" Manufacturer="ConWU" Version="1.0.3" UpgradeCode="AD076018-A9B8-47F5-B098-97479A363416" Language="2052" Scope="perMachine" InstallerVersion="500">
-  <!-- Remove the old service/file components inside the upgrade transaction
-       before registering the renamed executable. Late removal would delete
-       the newly registered service when the old key-path filename changes. -->
-  <MajorUpgrade Schedule="afterInstallInitialize" DowngradeErrorMessage="已安装较新的 ConWU，请使用相同或更新版本的安装包。" />
+  <!-- Keep preparation inside the rollback transaction. An early removal
+       cannot follow deferred actions (MSI error 2613). RepairUpgradeService
+       handles removal of the older, differently named service component. -->
+  <MajorUpgrade Schedule="afterInstallExecute" DowngradeErrorMessage="已安装较新的 ConWU，请使用相同或更新版本的安装包。" />
   <MediaTemplate EmbedCab="yes" CompressionLevel="high" />
   <Property Id="ARPPRODUCTICON" Value="AppIcon" />
   <Property Id="MSIRESTARTMANAGERCONTROL" Value="DisableShutdown" />
@@ -47,6 +47,8 @@ $xml=[xml]@'
   <CustomAction Id="RollbackUpgrade" BinaryRef="InstallerActions" DllEntry="RollbackUpgrade" Execute="rollback" Impersonate="no" Return="check" />
   <CustomAction Id="SetCommit" Property="CommitUpgrade" Value="CAD" />
   <CustomAction Id="CommitUpgrade" BinaryRef="InstallerActions" DllEntry="CommitUpgrade" Execute="commit" Impersonate="no" Return="ignore" />
+  <CustomAction Id="SetRepairService" Property="RepairUpgradeService" Value="CAD" />
+  <CustomAction Id="RepairUpgradeService" BinaryRef="InstallerActions" DllEntry="RepairUpgradeService" Execute="deferred" Impersonate="no" Return="check" />
   <CustomAction Id="SetClose" Property="CloseClients" Value="CAD" />
   <CustomAction Id="CloseClients" BinaryRef="InstallerActions" DllEntry="CloseClients" Execute="deferred" Impersonate="no" Return="check" />
   <CustomAction Id="RollbackAuthorization" FileRef="ServiceUiExe" ExeCommand="ARGS--msi-rollback &quot;[STREAMLINK_TRANSACTION]&quot;" Execute="rollback" Impersonate="no" Return="check" />
@@ -56,19 +58,19 @@ $xml=[xml]@'
   <CustomAction Id="LaunchApp" FileRef="LauncherExe" ExeCommand="ARGS" Execute="immediate" Impersonate="yes" Return="asyncNoWait" />
   <InstallExecuteSequence>
    <Custom Action="SetArpLocation" After="CostFinalize" />
-   <!-- Explicit dependency: PrepareUpgrade now runs before early product
-        removal, so merely sharing After=InstallInitialize would allow WiX to
-        resolve its CustomActionData before the transaction ID was created. -->
+   <!-- Resolve every deferred action's data after creating the transaction. -->
    <Custom Action="NewTransaction" Before="SetRollback" Condition="NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetRollback" Before="RollbackUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="RollbackUpgrade" Before="SetPrepare" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetPrepare" Before="PrepareUpgrade" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
-   <Custom Action="PrepareUpgrade" Before="RemoveExistingProducts" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+   <Custom Action="PrepareUpgrade" Before="StopServices" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetClose" Before="CloseClients" Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="CloseClients" Before="StopServices" Condition="REMOVE ~= &quot;ALL&quot; AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="RollbackAuthorization" After="InstallServices" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="ConfigureAuthorization" After="RollbackAuthorization" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
-   <Custom Action="VerifyReady" After="StartServices" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+   <Custom Action="SetRepairService" Before="RepairUpgradeService" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+   <Custom Action="RepairUpgradeService" After="RemoveExistingProducts" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
+   <Custom Action="VerifyReady" After="RepairUpgradeService" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="CommitAuthorization" After="VerifyReady" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="SetCommit" After="CommitAuthorization" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
    <Custom Action="CommitUpgrade" After="SetCommit" Condition="NOT (REMOVE ~= &quot;ALL&quot;) AND NOT UPGRADINGPRODUCTCODE" />
