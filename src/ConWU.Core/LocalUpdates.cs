@@ -77,7 +77,7 @@ public sealed class LocalUpdateManager:IDisposable
                         lock(gate)if(!disposed)Volatile.Write(ref status,Status with{DownloadedBytes=done,TotalBytes=total});
                     },stop.Token);
                     lock(gate){if(disposed)return;prepared=value;Volatile.Write(ref status,Ready(value));}
-                }catch(Exception ex){lock(gate)if(!disposed)Volatile.Write(ref status,Status with{State="Error",Message="安装包准备未完成："+ex.Message,CanInstall=false});}
+                }catch(Exception ex){lock(gate)if(!disposed)Volatile.Write(ref status,Status with{State="Error",Message=ex is OperationCanceledException?"更新下载超时或中断，可重试；当前网络保持运行":"安装包准备未完成："+ex.Message,CanInstall=false});}
             },CancellationToken.None);
         }
     }

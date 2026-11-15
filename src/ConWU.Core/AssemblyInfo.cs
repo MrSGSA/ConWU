@@ -1,4 +1,5 @@
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MappingTests")]
+[assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.UpdateTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.StreamTransportTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MeshConnectionTests")]
 [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.MeshRunnerTraversalTests")]

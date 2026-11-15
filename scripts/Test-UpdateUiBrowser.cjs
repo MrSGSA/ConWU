@@ -54,6 +54,9 @@ function check(ok,label){if(!ok)throw Error(label);checks++;console.log('PASS '+
  check(installs===1&&await page.evaluate(()=>!!localStorage.getItem('conwu-local-update')),'confirmed local installation records an expected service restart');
  local={...local,state:'Completed',message:'更新完成，后台和网络已恢复',busy:false};await page.evaluate(()=>refresh());
  check(await page.evaluate(()=>!localStorage.getItem('conwu-local-update')),'verified recovery clears the temporary restart notice');
+ local={supported:true,state:'Error',version:'9.0.0',message:'更新下载中断，已保留已有进度',busy:false,canInstall:false,totalBytes:1000,downloadedBytes:400};
+ await page.evaluate(()=>refresh());
+ check((await page.locator('[data-ui-action="download-update"]').innerText()).includes('继续下载')&&Number(await page.locator('progress[aria-label="安装包下载进度"]').getAttribute('value'))===400,'an interrupted package keeps its progress and exposes a resume action');
  local={supported:false,state:'Idle'};
  metadata={state:'Error',message:'<img src=x onerror=alert(1)>',updateAvailable:true,releaseUrl:'https://evil.example/release',package:{url:'javascript:alert(1)'}};
  await page.evaluate(()=>refresh());await page.locator('#update-state').filter({hasText:'<img src=x'}).waitFor();

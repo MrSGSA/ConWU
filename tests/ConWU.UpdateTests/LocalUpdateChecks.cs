@@ -26,6 +26,10 @@ static class LocalUpdateChecks
             Check(!manager.Status.Busy&&!manager.Status.CanInstall,"independent installer completion reaches observers without reopening the original page");
         }
         Check(host.Disposed&&host.Launches==1,"disposing the service-side monitor does not relaunch the installer");
+        var timedOut=new UpdateHost();using(var manager=new LocalUpdateManager(timedOut)){
+            manager.BeginDownload(release);timedOut.Ready.SetCanceled();await Until(()=>manager.Status.State=="Error");
+            Check(manager.Status.Message.Contains("下载超时")&&!manager.Status.Message.Contains("canceled",StringComparison.OrdinalIgnoreCase)&&!manager.Status.Busy&&timedOut.Launches==0,"a download cancellation exposes a clear retry message without launching or stopping the installed application");
+        }
         var recovered=new UpdateHost();recovered.Prepared=new(Guid.NewGuid().ToString("N"),"2.0.0","private-dir","local-package",new string('a',64),4096);
         using(var manager=new LocalUpdateManager(recovered))Check(manager.Status.CanInstall&&manager.Status.Ticket==recovered.Prepared.Ticket,"downloaded packages waiting for confirmation survive a backend restart");
         var failed=new UpdateHost{FailLaunch=true};failed.Ready.SetResult();using(var manager=new LocalUpdateManager(failed)){

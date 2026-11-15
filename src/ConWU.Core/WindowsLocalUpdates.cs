@@ -68,34 +68,26 @@ public sealed class WindowsLocalUpdateHost:ILocalUpdateHost
         if(tag!=release.LatestVersion&&tag!="v"+release.LatestVersion)throw new IOException("更新版本来源无效");
         if(ReleaseUpdateClient.CurrentArchitecture!="x64"||package.Name!=expected||package.Url!=ReleaseUpdateClient.Repository+"/releases/download/"+tag+"/"+expected||
             package.Bytes is <1024 or >1_073_741_824||package.Sha256.Length!=64||!package.Sha256.All(char.IsAsciiHexDigit))throw new IOException("更新包的来源、架构或校验信息不完整");
-        string ticket=Guid.NewGuid().ToString("N"),directory=Job(ticket);PrivateDirectory(root);PrivateDirectory(directory);
-        string partial=Path.Combine(directory,"package.partial"),target=Path.Combine(directory,"package.msi");
-        using var deadline=CancellationTokenSource.CreateLinkedTokenSource(token);deadline.CancelAfter(TimeSpan.FromMinutes(15));
-        Uri url=new(package.Url);HttpResponseMessage? response=null;
-        try{
-            for(int redirects=0;redirects<5;redirects++){
-                using var request=new HttpRequestMessage(HttpMethod.Get,url);request.Headers.UserAgent.ParseAdd("ConWU-LocalUpdate/1");
-                response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,deadline.Token);
-                if((int)response.StatusCode is >=300 and <=399){
-                    var next=response.Headers.Location??throw new IOException("更新下载重定向无效");if(!next.IsAbsoluteUri)next=new(url,next);
-                    if(next.Scheme!="https"||next.UserInfo.Length>0||!next.IsDefaultPort||next.Host is not("github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com"))throw new IOException("更新下载跳转到了未认可的来源");
-                    response.Dispose();response=null;url=next;continue;
-                }
-                break;
-            }
-            if(response==null||!response.IsSuccessStatusCode)throw new IOException("暂时无法下载安装包");
-            if(response.Content.Headers.ContentLength is {} bytes&&bytes!=package.Bytes)throw new IOException("安装包长度与发布信息不一致");
-            await using(var input=await response.Content.ReadAsStreamAsync(deadline.Token))await using(var output=new FileStream(partial,FileMode.CreateNew,FileAccess.Write,FileShare.None,131072,FileOptions.Asynchronous|FileOptions.WriteThrough)){
-                byte[] buffer=new byte[131072];long received=0;using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-                while(true){int n=await input.ReadAsync(buffer,deadline.Token);if(n==0)break;received+=n;if(received>package.Bytes)throw new IOException("安装包超过预期长度");await output.WriteAsync(buffer.AsMemory(0,n),deadline.Token);hash.AppendData(buffer,0,n);progress(received,package.Bytes);}
-                await output.FlushAsync(deadline.Token);
-                if(received!=package.Bytes||!Convert.ToHexString(hash.GetHashAndReset()).Equals(package.Sha256,StringComparison.OrdinalIgnoreCase))throw new IOException("安装包下载不完整或校验失败，未停止网络");
-            }
-            ValidateMsi(partial);File.Move(partial,target,false);
-            var ready=new PreparedLocalUpdate(ticket,release.LatestVersion,directory,target,package.Sha256,package.Bytes);
-            AtomicWrite(Path.Combine(directory,"prepared.json"),JsonSerializer.Serialize(ready));
-            AtomicWrite(Path.Combine(root,"ready-job.id"),ticket);PruneJobs();return ready;
-        }finally{response?.Dispose();if(File.Exists(partial))File.Delete(partial);}
+        string cache=Path.Combine(root,"downloads");PrivateDirectory(root);PrivateDirectory(cache);
+        string cached=Path.Combine(cache,package.Sha256.ToLowerInvariant()+".msi");CheckAncestors(cached);
+        await OfficialUpdatePackage.Download(package,cached,progress,token,http);
+        ValidateMsi(cached);token.ThrowIfCancellationRequested();
+        string ticket=Guid.NewGuid().ToString("N"),directory=Job(ticket);PrivateDirectory(directory);
+        string target=Path.Combine(directory,"package.msi");File.Move(cached,target,false);
+        var ready=new PreparedLocalUpdate(ticket,release.LatestVersion,directory,target,package.Sha256,package.Bytes);
+        AtomicWrite(Path.Combine(directory,"prepared.json"),JsonSerializer.Serialize(ready));
+        AtomicWrite(Path.Combine(root,"ready-job.id"),ticket);PruneJobs();PruneDownloads(cache);return ready;
+    }
+    static void PruneDownloads(string cache)
+    {
+        // Only our hash-addressed transfer cache is disposable. Installer jobs,
+        // registered MSI sources and the previous rollback stay in PruneJobs.
+        CheckAncestors(cache);
+        foreach(string file in Directory.EnumerateFiles(cache)){
+            string name=Path.GetFileName(file);
+            if(!System.Text.RegularExpressions.Regex.IsMatch(name,@"\A[0-9a-f]{64}\.msi(?:\.partial(?:\.json)?)?\z"))continue;
+            CheckAncestors(file);File.Delete(file);
+        }
     }
     public PreparedLocalUpdate? RestorePrepared()
     {
