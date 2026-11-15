@@ -31,6 +31,11 @@ pub struct Config {
     pub remote: SocketAddrV4,
     pub parent: u32,
     pub carrier: Carrier,
+    /// A kernel TCP control connection sharing this local port. Its exact
+    /// inbound tuple must bypass raw capture so STUN can remain connected.
+    pub protected_tcp_peer: Option<SocketAddrV4>,
+    pub control_peer: std::sync::Arc<std::sync::RwLock<Option<SocketAddrV4>>>,
+    pub peer_reflexive: bool,
 }
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -39,7 +44,13 @@ fn arguments() -> io::Result<Config> {
     let mut flags = std::collections::HashMap::new();
     let mut args = std::env::args().skip(1);
     let mut server = None;
+    let mut peer_reflexive = false;
     while let Some(flag) = args.next() {
+        if flag == "--peer-reflexive" {
+            if peer_reflexive { return Err(invalid("duplicate peer-reflexive flag")); }
+            peer_reflexive = true;
+            continue;
+        }
         if matches!(flag.as_str(), "--server" | "--client") {
             if server.replace(flag == "--server").is_some() {
                 return Err(invalid("duplicate role"));
@@ -48,7 +59,7 @@ fn arguments() -> io::Result<Config> {
         }
         if !matches!(
             flag.as_str(),
-            "--source" | "--remote" | "--parent" | "--carrier"
+            "--source" | "--remote" | "--parent" | "--carrier" | "--protected-tcp-peer"
         ) {
             return Err(invalid("unknown argument"));
         }
@@ -59,6 +70,9 @@ fn arguments() -> io::Result<Config> {
             return Err(invalid("duplicate argument"));
         }
     }
+    let protected_tcp_peer = flags.remove("--protected-tcp-peer")
+        .map(|value| value.parse().map_err(|_| invalid("invalid protected TCP peer")))
+        .transpose()?;
     let mut take = |name| {
         flags
             .remove(name)
@@ -80,6 +94,9 @@ fn arguments() -> io::Result<Config> {
             "tcpraw" => Carrier::TcpRaw,
             _ => return Err(invalid("invalid carrier")),
         },
+        protected_tcp_peer,
+        control_peer: std::sync::Arc::new(std::sync::RwLock::new(protected_tcp_peer)),
+        peer_reflexive,
     };
     if config.parent == 0
         || config.parent == std::process::id()
@@ -95,6 +112,15 @@ fn arguments() -> io::Result<Config> {
             && (config.source.ip().is_unspecified() || config.source.ip().is_loopback())
     {
         return Err(invalid("invalid owned carrier endpoint"));
+    }
+    if config.peer_reflexive && (!cfg!(target_os = "windows") || config.server || config.carrier != Carrier::Mimic) {
+        return Err(invalid("peer-reflexive learning requires a Windows Mimic client"));
+    }
+    if config.protected_tcp_peer.is_some_and(|peer| {
+        config.source.ip().is_unspecified() || peer.port() == 0
+            || peer.ip().is_unspecified() || peer.ip().is_multicast() || peer.ip().is_broadcast()
+    }) {
+        return Err(invalid("protected TCP peer requires an explicit source"));
     }
     Ok(config)
 }
@@ -119,7 +145,7 @@ fn main() {
     if std::env::args().skip(1).collect::<Vec<_>>() == ["--conwu-info"] {
         println!(
             "{}",
-            json!({"component":"ConWU.RawCarriers","abi":1,"platform":std::env::consts::OS,"carriers":["mimic-v1-zero-padding","tcpraw-v1-kernel-handshake"],"maxDatagram":MAX_DATAGRAM,"fixedSourcePort":true,"boundedConnections":true,"parentWatchdog":true,"inputStop":true,"routeCloseEvents":true,"routeOpenEvents":true})
+            json!({"component":"ConWU.RawCarriers","abi":1,"platform":std::env::consts::OS,"carriers":["mimic-v1-zero-padding","tcpraw-v1-kernel-handshake"],"maxDatagram":MAX_DATAGRAM,"fixedSourcePort":true,"boundedConnections":true,"parentWatchdog":true,"inputStop":true,"routeCloseEvents":true,"routeOpenEvents":true,"samePortMimic":true,"samePortTcpraw":true,"tcpControlGuard":1,"assistedPunch":1})
         );
         return;
     }

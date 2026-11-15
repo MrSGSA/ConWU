@@ -1,11 +1,17 @@
-using System.Net;
+﻿using System.Net;
 using System.Text.Json;
 using StreamLink.Core;
+
+Console.OutputEncoding=new System.Text.UTF8Encoding(false);
+Console.SetError(new StreamWriter(Console.OpenStandardError(),new System.Text.UTF8Encoding(false)){AutoFlush=true});
 
 if(args is ["--native",var components]){await NativeChecks.Run(Path.GetFullPath(components));return;}
 if(args is ["--native",var nativeComponents,var nativeMode]){await NativeChecks.Run(Path.GetFullPath(nativeComponents),nativeMode);return;}
 if(args is ["--node"]){await NativeNode.Run();return;}
 if(args is ["--control-node"]){await ControlNode.Run();return;}
+if(args is ["--assist-helper"]){await AssistHelperNode.Run();return;}
+if(args is ["--assist-helper",var listen]){await AssistHelperNode.Run(listen);return;}
+if(args is ["--assist-helper-daemon",var helperListen,var seconds]){await AssistHelperNode.Run(helperListen,int.Parse(seconds));return;}
 if(args.Length is 1 or 2&&args[0]=="--identities"){
     string mode=args.Length==2?args[1]:"phantun";if(!TransportModes.PacketCarrier(mode))throw new FormatException("test carrier required");
     var owners=Enumerable.Range(0,2).Select(_=>MeshIdentity.Create("","",mode,direct:true,pairwise:true)).ToArray();

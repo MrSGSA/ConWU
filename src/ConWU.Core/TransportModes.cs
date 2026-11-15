@@ -4,6 +4,7 @@ public static class TransportModes
 {
     public static bool Valid(string? mode)=>mode is "faketcp" or "udp" or "tcp" or "https" or "phantun" or "mimic" or "tcpraw";
     public static bool Stream(string? mode)=>mode is "tcp" or "https";
+    public static bool TcpAssistance(string? mode)=>mode is "faketcp" or "tcp" or "https" or "phantun" or "mimic" or "tcpraw";
     public static bool PacketCarrier(string? mode)=>mode is "phantun" or "mimic" or "tcpraw";
     public static bool OutboundGuest(string? mode)=>Stream(mode)||PacketCarrier(mode);
     public static bool ManagedCandidates(string? mode)=>mode is "faketcp" or "udp";

@@ -81,8 +81,15 @@ function updateInvitationDialog(){
  const code=invitationCode(),display=$('invitation-code');
  display.setAttribute('aria-label',code?'本机直连码：'+formatCompact(code):'尚未生成直连码');
  if(display.dataset.code!==code){display.innerHTML=directGroups(code,true);display.dataset.code=code;}
+ const entry=n.status.entryPreparation,existing=n.status.settings?.connectionSource==='existing';
+ let entryText=entry?.receiverError?'本机接收入口启动失败：'+entry.receiverError:entry?.detail||'正在准备本机入口';
+ if(!entry?.receiverError&&entry?.receiverReady===false)entryText+='；本机接收入口尚未就绪';
+ if(existing&&entry?.receiverReady)entryText='本机接收入口已就绪，生成时解析已配置的主机入口。';
+ if(entry?.state==='Unavailable'&&entry.retryAt){const wait=Math.max(0,Math.ceil(entry.retryAt-Date.now()/1000));entryText+=wait?'；约 '+wait+' 秒后自动重试':'；等待重试，也可点击下方按钮立即重试';}
+ if(entry?.attempt)entryText+='（第 '+entry.attempt+' 次'+(entry.elapsedMilliseconds?'，本轮 '+(entry.elapsedMilliseconds/1000).toFixed(1)+' 秒':'')+'）';
+ $('invitation-status').textContent=entryText;
  $('invitation-generate').dataset.network=n.id;
- $('invitation-generate').innerHTML=icon('refresh')+(code?'重新生成直连码':'生成直连码');
+ $('invitation-generate').innerHTML=icon('refresh')+(code?'重新生成直连码':entry?.state==='Unavailable'?'重试并生成直连码':'生成直连码');
 }
 function openInvitation(id){
  const n=row(id);if(!n?.status.isOwner)throw Error('此网络不是本机创建的网络。');
@@ -162,11 +169,12 @@ function coordinationPage(){
  const host=deviceSettings().coordinator||{},status=workspaceState.coordinator,clients=status?.clients||[];
  const running=online&&status?.running;
  const label=!online?'等待后台状态':status?.enabled!==host.enabled?(host.enabled?'正在启动':'正在停止'):status?.state||'正在读取';
- return heading('对外协调','由本机提供配对与地址发现服务。')+`
+ return heading('对外协调','由本机提供配对、地址发现与自主打洞辅助服务。')+`
  <div class="network-columns coordination-columns">
   <article class="card pad">
    <div class="switch-row"><div><h2>本机协调服务</h2><p class="hint">为选用本机协调地址的设备提供服务。</p></div>${uiToggle('coordinationSwitch','enabled',host.enabled,'开启本机协调服务')}</div>
    <div class="kv provider-status"><span>当前状态</span><span class="row" id="coordinator-state"><span class="dot ${running?'good':''}"></span>${esc(label)}</span></div>
+   ${running&&status?.punchAssist?`<div class="kv"><span>首次配对辅助</span><span>等待 ${Number(status.punchAssist.waiting)||0} · 已安排探测 ${Number(status.punchAssist.scheduled)||0}</span></div><p class="hint">仅协助自主打洞，业务保持设备直连；已有入口不参与。</p>`:''}
    <button class="settings-launch" data-ui-action="open-coordination-settings"><span>${icon('settings')}</span><span class="grow"><strong>本机协调设置</strong><small>监听端口 ${esc(coordinatorValue().port)}</small></span><span class="open-label">打开设置${icon('chevron')}</span></button>
   </article>
   <article class="card table-card">
@@ -216,7 +224,7 @@ overviewPage=function(){
  }).join('')}</tbody></table></div><div class="device-table-foot"><span class="dot ${online&&live?'good':''}"></span><span>${networks.length} 个网络</span><span>·</span><span class="direct-total">与其余 ${online?live:0} 台设备直连</span></div></article>`;
 };
 function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU远程','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage};return pages[page]();}
-function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?workspaceState?.coordinator?.clients:null,ui.coordinationBase]);}
+function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;
  if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';if(noticeSource==='backend'||noticeSource==='pair'&&!next.networks.some(n=>n.status.pairing?.active)){lastPairError='';notice('');}appendStatusLogs(next);initializeDrafts();if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&!row(ui.joinId))ui.joinId='';if(observed)sampleTraffic(next);}
@@ -513,6 +521,7 @@ async function saveDevice(){
 async function generateFor(id){
  const n=row(id);if(!n)throw Error('此网络已被移除。');const s=n.status;
  if(s.pairing?.candidate&&!await confirmAction('重新生成直连码？','当前尚未处理的申请将被取消。','重新生成'))return;
+ if(ui.codeId===id)$('invitation-error').textContent='';
  await command('network',{networkId:id,network:{action:'invite-compact',expectedNetwork:s.networkId}},true);render();notify('直连码已生成');
 }
 async function testEntry(){const editor=ui.editor,source=entryTestSource(),values=drafts.network.entries.local.filter(v=>v.trim());if(!values.length)throw Error('请先填写本机入口。');await command('network',{networkId:'',network:{action:'resolve-entries',settings:{...settingsDto(),existingEntries:values.map(source=>({peerSlot:0,source}))}}},true);if(ui.editor!==editor||entryTestSource()!==source||!$('test-results'))return;const results=workspaceState.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="note" style="margin-bottom:8px">${esc(r.error||r.endpoints.join('、'))}</div>`).join('');}

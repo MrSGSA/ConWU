@@ -79,7 +79,16 @@ public sealed record UiNetworkDto(string Id,string Name,UiStatusDto Status)
 public sealed record UiAggregatePeerDto(string NetworkId,string DeviceId,string Role,UiPeerDto Peer,long ConnectedSince);
 public sealed record UiAggregateDto(int NetworkCount,int ConnectedNetworks,int ConnectingNetworks,int OfflineNetworks,int TotalDevices,long SentBytes,long ReceivedBytes,UiAggregatePeerDto[] Peers);
 public sealed record UiDesktopStatus(bool ServiceRegistered,bool AutoStart,string ServiceState);
-public sealed record UiEntryPreparation(string State,string Detail,string Endpoint="");
+public sealed record UiEntryPreparation(string State,string Detail,string Endpoint="")
+{
+    public string Stage {get;init;}="";
+    public string FailureCode {get;init;}="";
+    public int Attempt {get;init;}
+    public long ElapsedMilliseconds {get;init;}
+    public long RetryAt {get;init;}
+    public bool ReceiverReady {get;init;}
+    public string ReceiverError {get;init;}="";
+}
 public sealed record UiLegacyStage(Guid ResourceId,int ProcessId,string Mode,string Listener,string Target,
     LegacyBusinessHandoffReport? Handoff,LegacyBusinessEgressStats? Egress,EgressRouteWitness[] Routes);
 public sealed record UiStageLedger(PacketAdapterStatistics? Adapter,EgressStats? Egress,UiLegacyStage[] ExplicitWorkers)

@@ -9,6 +9,7 @@ use tokio::io::unix::AsyncFd;
 pub struct Device {
     receive: AsyncFd<OwnedFd>,
     transmit: AsyncFd<OwnedFd>,
+    control_peer: std::sync::Arc<std::sync::RwLock<Option<std::net::SocketAddrV4>>>,
 }
 
 fn fd(value: i32) -> io::Result<OwnedFd> {
@@ -136,7 +137,7 @@ impl Device {
         // registered. This upholds Tokio's explicit I/O lifetime contract.
         let receive = unsafe { AsyncFd::register(receive) }.map_err(io::Error::other)?;
         let transmit = unsafe { AsyncFd::register(transmit) }.map_err(io::Error::other)?;
-        Ok(Self { receive, transmit })
+        Ok(Self { receive, transmit,control_peer:config.control_peer.clone() })
     }
 
     fn inject(&self, buffer: &[u8]) -> io::Result<()> {
@@ -201,7 +202,12 @@ impl TunDevice for Device {
                 Ok((count as usize, source.sll_pkttype))
             });
             match packet {
-                Ok(Ok((size, kind))) if kind != libc::PACKET_OUTGOING => return Ok(size),
+                Ok(Ok((size, kind))) if kind != libc::PACKET_OUTGOING => {
+                    let protected=*self.control_peer.read().unwrap();
+                    let control=protected.is_some_and(|peer|fake_tcp::packet::parse_ip_packet(&buffer[..size]).is_some_and(|(ip,tcp)|
+                        ip.get_source()==std::net::IpAddr::V4(*peer.ip())&&tcp.get_source()==peer.port()));
+                    if !control{return Ok(size);}
+                },
                 Ok(Ok(_)) | Err(_) => continue,
                 Ok(Err(error)) => return Err(error),
             }

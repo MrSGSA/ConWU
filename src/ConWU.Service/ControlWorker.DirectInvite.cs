@@ -32,26 +32,42 @@ public sealed partial class ControlWorker
         _=CompactDirectCode.Issue(endpoint,profile.TransportMode,"000000");
         await OpenDirectShortPair(operation.Stop.Token,publish:false);
         uiCompactInvitation=true;uiEntrySources=entries;
-        uiApprovalCode=CompactDirectCode.Issue(endpoint,profile.TransportMode,uiRoom!.Code);
+        if(await OpenCoordinatorPunchInvitation(endpoint,operation))return;
+        bool punch=OperatingSystem.IsWindows()&&profile.TransportMode=="mimic"&&PkarrRendezvous.Uses(profile)&&(meshRuntime??MeshRuntimeServices.Default).MimicPortSharing;
+        uiApprovalCode=CompactDirectCode.Issue(endpoint,profile.TransportMode,uiRoom!.Code,punch);
+        if(punch)StartCompactPunch(CompactDirectCode.Import(uiApprovalCode),uiRoom.Expires);
         PairSnapshot("直连码有效 5 分钟；另一台输入后仍需核对双方校验码并由主机批准");
     }
     async Task<ExistingEntry[]> PrepareUiInvitationEntries(Operation operation)
     {
         var token=operation.Stop.Token;
         if(!profile.Enabled)throw new IOException("请先连接本机网络，再生成直连邀请");
-        if(networkContext){
-            long deadline=Environment.TickCount64+15000;
-            while(meshRunner?.ReceiverReady!=true){
-                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("本机接收入口仍在启动，请查看连接状态后再次生成邀请");
-                SetOperation(operation,"等待本机接收入口准备，再生成邀请",true);await Task.Delay(100,token);
-            }
-        }else if(meshRunner==null)throw new IOException("请先连接本机网络，再生成直连邀请");
-        if(!profile.UsesExistingEntriesOnly&&meshRunner is {} autonomous&&autonomous.PreparedInvitationEntries.Length==0){
-            autonomous.RequestInvitationEntry();long deadline=Environment.TickCount64+30000;
-            while(autonomous.PreparedInvitationEntries.Length==0){
-                token.ThrowIfCancellationRequested();if(Environment.TickCount64>=deadline)throw new IOException("暂未取得可分享的主机入口，当前网络仍保留。请等待入口准备，或检查入口设置后重新生成直连码");
-                SetOperation(operation,"正在准备直连邀请所需的主机入口",true);await Task.Delay(100,token);
-            }
+        bool autonomous=!profile.UsesExistingEntriesOnly;
+        long deadline=Environment.TickCount64+(autonomous?30000:15000);
+        var runner=meshRunner;
+        if(!networkContext&&runner==null)throw new IOException("请先连接本机网络，再生成直连邀请");
+        while(runner==null){
+            token.ThrowIfCancellationRequested();
+            if(Environment.TickCount64>=deadline)throw new IOException("本机网络工作线程尚未启动，请查看网络连接状态。当前网络仍保留");
+            SetOperation(operation,"等待本机网络工作线程启动，再准备直连码",true);
+            await Task.Delay(100,token);runner=meshRunner;
+        }
+        var initial=runner.EntryPreparation;int initialAttempt=initial.Attempt;bool refreshing=initial.State=="Unavailable";
+        if(autonomous&&runner.PreparedInvitationEntries.Length==0)runner.RequestInvitationEntry();
+        // One budget covers both prerequisites, rather than serial 15 + 30
+        // second waits that hide a failed native listener or gateway attempt.
+        while((networkContext&&!runner.ReceiverReady)||(autonomous&&runner.PreparedInvitationEntries.Length==0)){
+            token.ThrowIfCancellationRequested();
+            var entry=runner.EntryPreparation;
+            if(!runner.ReceiverReady&&runner.ReceiverError.Length>0)
+                throw new IOException("本机接收入口启动失败："+PublicText(runner.ReceiverError,profile,300)+"；请检查端口占用、原生组件或驱动。当前网络仍保留");
+            if(autonomous&&entry.State=="Unavailable"&&(!refreshing||entry.Attempt>initialAttempt))
+                throw new IOException("主机入口准备失败："+PublicText(entry.Detail,profile,300)+"；后台会自动重试，也可重新生成直连码。当前网络仍保留");
+            string detail=!runner.ReceiverReady?"正在等待本机接收入口准备":entry.Detail;
+            if(Environment.TickCount64>=deadline)
+                throw new IOException("本轮直连码入口准备超时："+PublicText(detail,profile,300)+"；尚未取得可分享入口，当前网络仍保留");
+            SetOperation(operation,!runner.ReceiverReady?detail:"正在准备直连码："+PublicText(detail,profile,300),true);
+            await Task.Delay(100,token);
         }
         var entries=profile.UsesExistingEntriesOnly?profile.ExistingEntries.Where(e=>e.PeerSlot==0).ToArray():[];
         if(entries.Length==0)entries=meshRunner?.PreparedInvitationEntries??[];
@@ -102,6 +118,8 @@ public sealed partial class ControlWorker
         if(profile.Mesh!=null||profile.Pair!=null)throw new IOException("需要退出当前网络后才能申请加入");
         var compact=CompactDirectCode.Import(action.Code);RequireSavedProtocol(compact.Mode);
         if(action.Mode!=compact.Mode)throw new IOException("直连码协议与本机设置不同，请使用相同协议");
+        if(compact.CoordinatorPunch){await JoinCoordinatorPunchInvitation(action,compact,operation);return;}
+        if(compact.PunchDiscovery){await JoinUiPunchInvitation(action,compact,operation);return;}
         await JoinUiDirectShort(action with{Code=compact.RoomCode,Mode=compact.Mode},operation,[new(ExistingEntry.NetworkOwner,compact.Endpoint)],invitation:true);
     }
 }

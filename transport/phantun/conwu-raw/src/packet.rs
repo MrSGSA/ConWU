@@ -29,6 +29,12 @@ fn word(data: &[u8], offset: usize) -> u16 {
 fn dword(data: &[u8], offset: usize) -> u32 {
     u32::from_be_bytes(data[offset..offset + 4].try_into().unwrap())
 }
+pub fn tcp_remote(bytes: &[u8]) -> Option<SocketAddrV4> {
+    if bytes.len() < 40 || bytes[0] >> 4 != 4 || bytes[9] != 6 { return None; }
+    let start = (bytes[0] & 15) as usize * 4;
+    if start < 20 || bytes.len() < start + 20 { return None; }
+    Some(SocketAddrV4::new(Ipv4Addr::new(bytes[12],bytes[13],bytes[14],bytes[15]),word(bytes,start)))
+}
 pub fn parse(bytes: &[u8]) -> Option<Segment<'_>> {
     if bytes.len() < 40 || bytes[0] >> 4 != 4 || bytes[9] != 6 || word(bytes, 6) & 0x3fff != 0 {
         return None;

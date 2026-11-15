@@ -52,6 +52,7 @@ impl Device {
         let closing = Arc::new(AtomicBool::new(false));
         let capture = handle.clone();
         let quit = closing.clone();
+        let protected=config.control_peer.clone();
         std::thread::Builder::new()
             .name("phantun-capture".into())
             .spawn(move || {
@@ -60,7 +61,17 @@ impl Device {
                 let mut buffer = vec![0u8; 65535];
                 while !quit.load(Ordering::Relaxed) {
                     match capture.recv_wait(&mut buffer, 100) {
-                        Ok(Some(packet)) if packet.data.len() <= MAX_PACKET_LEN => {
+                        Ok(Some(packet)) => {
+                            let peer=*protected.read().unwrap();
+                            let control=peer.is_some_and(|peer| {
+                                fake_tcp::packet::parse_ip_packet(&packet.data).is_some_and(|(ip,tcp)|
+                                    ip.get_source()==std::net::IpAddr::V4(*peer.ip())&&tcp.get_source()==peer.port())
+                            });
+                            if control {
+                                if let Err(error)=capture.send(&packet){eprintln!("STUN control reinjection failed: {}",error);break;}
+                                continue;
+                            }
+                            if packet.data.len()>MAX_PACKET_LEN{continue;}
                             match sender.try_send(packet.data.to_vec()) {
                                 Ok(()) | Err(flume::TrySendError::Full(_)) => {}
                                 Err(flume::TrySendError::Disconnected(_)) => break,

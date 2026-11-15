@@ -10,7 +10,11 @@ namespace StreamLink.Core;
 public sealed class StreamMapping : IMapping, IMappingRefresh
 {
     internal sealed record Options(bool DiscoverGateway=true,TimeSpan? MaintenancePeriod=null,int InitialParallelism=2,
-        Func<int,int,CancellationToken,Task<IMapping>>? GatewayFactory=null);
+        Func<int,int,CancellationToken,Task<IMapping>>? GatewayFactory=null)
+    {
+        public TimeSpan GatewayBudget {get;init;}=TimeSpan.FromSeconds(14);
+        public Action<EntryProbeProgress>? Progress {get;init;}
+    }
     Socket socket;
     readonly CancellationTokenSource stop=new();
     readonly SemaphoreSlim refresh=new(0,1);
@@ -20,6 +24,9 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
     readonly Options options;
     readonly string[] servers;
     readonly int port;
+    internal int LocalPort=>port;
+    internal IPEndPoint ControlPeer=>new(reflector.Address,reflector.Port);
+    internal Func<IPEndPoint,CancellationToken,Task>? BeforeControlConnect {get;set;}
     IPEndPoint reflector;
     Task maintaining=Task.CompletedTask;
     static int rotation;
@@ -38,20 +45,22 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
         LocalAddress=local.Address;port=local.Port;PublicEndpoint=endpoint;
         this.log=log;this.options=options;
     }
-    public static Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers=null,bool portControl=false,int sourcePort=44691,string? owner=null)=>Create(port,log,token,servers,portControl,new(),sourcePort,owner);
+    public static Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers=null,bool portControl=false,int sourcePort=44691,string? owner=null,Action<EntryProbeProgress>? progress=null)=>Create(port,log,token,servers,portControl,new(){Progress=progress},sourcePort,owner);
     internal static async Task<IMapping> Create(int port,Action<string> log,CancellationToken token,string[]? servers,bool portControl,Options options,int sourcePort=44691,string? owner=null)
     {
         token.ThrowIfCancellationRequested();
         if(options.DiscoverGateway) {
+            if(options.GatewayBudget<=TimeSpan.Zero)throw new ArgumentOutOfRangeException(nameof(options.GatewayBudget));
+            using var gatewayStop=CancellationTokenSource.CreateLinkedTokenSource(token);gatewayStop.CancelAfter(options.GatewayBudget);
             try {
                 IMapping? mapped=null;
                 try {
                     // Never substitute STUN's OUTER port for an inner IGD port.
                     // This factory retains source P and maps gateway P -> Q,
                     // while publishing the endpoint observed for that same P.
-                    mapped=await (options.GatewayFactory?.Invoke(sourcePort,port,token)
-                        ??GatewayMapping.CreateTcp(sourcePort,port,log,token,servers,owner,portControl));
-                    token.ThrowIfCancellationRequested();
+                    mapped=await (options.GatewayFactory?.Invoke(sourcePort,port,gatewayStop.Token)
+                        ??GatewayMapping.CreateTcp(sourcePort,port,log,gatewayStop.Token,servers,owner,portControl,options.Progress));
+                    gatewayStop.Token.ThrowIfCancellationRequested();
                     return mapped;
                 } catch {if(mapped!=null)await mapped.DisposeAsync();throw;}
             }
@@ -59,6 +68,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
                 log("TCP 网关映射未就绪，继续观察实际接收端口候选；尚未确认公网入站可达："+ex.GetType().Name);
             }
         }
+        options.Progress?.Invoke(new("ReceiverStun","正在从实际接收端口查询 TCP STUN 候选；仍需对端验证"));
         var choices=(servers??Stun.TcpServers).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if(options.InitialParallelism is <1 or >2)throw new ArgumentOutOfRangeException(nameof(options));
         if(choices.Length>1){var tail=choices[1..];int offset=(int)((uint)(Interlocked.Add(ref rotation,7)-7)%(uint)tail.Length);choices=[choices[0],..tail.Skip(offset),..tail.Take(offset)];}
@@ -119,7 +129,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             foreach(var task in attempts.Where(t=>!ReferenceEquals(t,winner)))try{(await task).Socket.Dispose();}catch{}
         }
     }
-    static async Task<(Socket Socket,IPEndPoint Public)> Open(int port,IPAddress? local,string server,CancellationToken token,string[] servers)
+    static async Task<(Socket Socket,IPEndPoint Public)> Open(int port,IPAddress? local,string server,CancellationToken token,string[] servers,Func<IPEndPoint,CancellationToken,Task>? guard=null)
     {
         var remote=await Stun.Resolve(server,token);
         // Reopen only the owned control flow on its original source tuple.
@@ -128,6 +138,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
         try {
             socket.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);
             socket.Bind(new IPEndPoint(local??Stun.LocalAddress(remote),port));
+            if(guard!=null)await guard(remote,token);
             await socket.ConnectAsync(remote,token);
             return(socket,await Pulse(socket,token,servers));
         } catch {socket.Dispose();throw;}
@@ -218,7 +229,7 @@ public sealed class StreamMapping : IMapping, IMappingRefresh
             try {
                 using var attempt=CancellationTokenSource.CreateLinkedTokenSource(round.Token);
                 attempt.CancelAfter(2500);
-                var opened=await Open(port,LocalAddress,server,attempt.Token,servers);opening=opened.Socket;
+                var opened=await Open(port,LocalAddress,server,attempt.Token,servers,BeforeControlConnect);opening=opened.Socket;
                 token.ThrowIfCancellationRequested();
                 socket=opening;opening=null;StunServer=server;
                 reflector=(IPEndPoint)socket.RemoteEndPoint!;

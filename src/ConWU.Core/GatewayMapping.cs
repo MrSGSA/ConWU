@@ -32,32 +32,40 @@ public sealed class GatewayMapping : IMapping
     public async ValueTask DisposeAsync() { if (Interlocked.Exchange(ref disposed, 1) != 0) return; await lease.DisposeAsync(); log("独立网关入口清理：" + lease.Snapshot.Cleanup); }
 
     public static async Task<IMapping> CreateTcp(int sourcePort, int targetPort, Action<string> log, CancellationToken token,
-        string[]? servers = null, string? owner = null, bool portControl = false)
+        string[]? servers = null, string? owner = null, bool portControl = false,Action<EntryProbeProgress>? progress=null)
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
-        try { return await PreferUpnp(targetPort, log, token); }
+        progress?.Invoke(new("GatewayDiscovery","正在发现可直接提供公网入口的 UPnP 网关"));
+        try { return await PreferUpnp(targetPort, log, token,progress); }
         catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or SocketException or OperationCanceledException or HttpRequestException) {
             log("直接 UPnP 入口本轮未就绪，继续 TCP STUN 与网关适配：" + ex.GetType().Name);
         }
-        return await SelectTcp(ct => TcpMapping.Create(sourcePort, targetPort, log, ct, servers, owner), PortControlRoute.LocalSources,
-            (ip, ct) => PortControlLease.Create(ip, targetPort, 0, PortMappingProtocol.Tcp, ct), portControl, log, token);
+        return await SelectTcp(ct => TcpMapping.Create(sourcePort, targetPort, log, ct, servers, owner,progress:progress), PortControlRoute.LocalSources,
+            (ip, ct) => PortControlLease.Create(ip, targetPort, 0, PortMappingProtocol.Tcp, ct), portControl, log, token,
+            ()=>progress?.Invoke(new("PortControl","正在检查本地网关并请求 PCP／NAT-PMP 后备映射")));
     }
-    internal static async Task<IMapping> PreferUpnp(int port, Action<string> log, CancellationToken token)
+    internal static async Task<IMapping> PreferUpnp(int port, Action<string> log, CancellationToken token,Action<EntryProbeProgress>? progress=null)
     {
         using var budget = CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(4500);
-        return await UpnpMapping.CreateTcp(port, log, budget.Token);
+        return await UpnpMapping.CreateTcp(port, log, budget.Token,progress);
     }
     internal static async Task<IMapping> SelectTcp(Func<CancellationToken, Task<TcpMapping>> legacy, Func<IPAddress[]> sources,
-        Func<IPAddress, CancellationToken, Task<PortControlLease>> open, bool enabled, Action<string> log, CancellationToken token)
+        Func<IPAddress, CancellationToken, Task<PortControlLease>> open, bool enabled, Action<string> log, CancellationToken token,Action? fallback=null)
     {
+        Exception? legacyFailure=null;
         try { return await legacy(token); }
         catch (Exception ex) when (enabled && !token.IsCancellationRequested && ex is IOException or SocketException or TimeoutException or OperationCanceledException) {
             // The legacy attempt has joined and disposed its helper/rules before
             // this fallback. Do not race two mapping protocols for the same Q.
             log("原入口本轮未就绪，尝试独立网关入口：" + ex.GetType().Name);
+            legacyFailure=ex;
         }
-        return await Create(sources, open, log, token);
+        fallback?.Invoke();
+        try{return await Create(sources, open, log, token);}
+        catch(IOException error)when(!token.IsCancellationRequested&&legacyFailure!=null){
+            throw new IOException("TCP STUN／网关映射链未完成："+legacyFailure.Message+"；PCP／NAT-PMP 后备未完成："+error.Message,new AggregateException(legacyFailure,error));
+        }
     }
     internal static async Task<GatewayMapping> Create(Func<IPAddress[]> sources,
         Func<IPAddress, CancellationToken, Task<PortControlLease>> open, Action<string> log, CancellationToken token)

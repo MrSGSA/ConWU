@@ -127,7 +127,7 @@ pub fn build_tcp_packet(
     ip_buf.freeze()
 }
 
-pub fn parse_ip_packet(buf: &Bytes) -> Option<(IPPacket<'_>, tcp::TcpPacket<'_>)> {
+pub fn parse_ip_packet(buf: &[u8]) -> Option<(IPPacket<'_>, tcp::TcpPacket<'_>)> {
     if buf.len() > MAX_PACKET_LEN {
         return None;
     }

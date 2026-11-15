@@ -26,11 +26,11 @@ public sealed class UpnpMapping : IMapping, IMappingRefresh
         this.router = router; this.rule = rule; this.log = log; this.renewal = renewal;
         PublicEndpoint = new(external, rule.ExternalPort); expires = Environment.TickCount64 + 180000;
     }
-    public static Task<IMapping> CreateTcp(int port, Action<string> log, CancellationToken token) =>
-        Create(port, PortControlRoute.LocalSources, Upnp.DiscoverServices, log, token);
+    public static Task<IMapping> CreateTcp(int port, Action<string> log, CancellationToken token,Action<EntryProbeProgress>? progress=null) =>
+        Create(port, PortControlRoute.LocalSources, Upnp.DiscoverServices, log, token,progress:progress);
     internal static async Task<IMapping> Create(int port, Func<IPAddress[]> sources,
         Func<IPAddress, CancellationToken, IAsyncEnumerable<RouterService>> discover, Action<string> log, CancellationToken token,
-        TimeSpan? renewal = null)
+        TimeSpan? renewal = null,Action<EntryProbeProgress>? progress=null)
     {
         if (port is < 1024 or > 65535) throw new ArgumentOutOfRangeException(nameof(port));
         Exception? last = null;
@@ -39,11 +39,13 @@ public sealed class UpnpMapping : IMapping, IMappingRefresh
                 await foreach (var service in discover(local, token)) {
                     var router = new Upnp(service); RouterMapping? rule = null;
                     try {
+                        progress?.Invoke(new("GatewayAddress","正在检查网关 WAN 地址与公网入口能力"));
                         if (!IPAddress.TryParse(await router.ExternalAddress(token), out var external) || !PortControlRoute.GlobalV4(external)) {
-                            router.Dispose(); continue;
+                            last=new IOException("网关 WAN 地址属于私网或非公网地址，需继续准备外层映射链");router.Dispose(); continue;
                         }
                         var requested = new RouterMapping(port, port, local.ToString(), "TCP", "ConWU-" + Guid.NewGuid().ToString("N"));
                         rule = requested;
+                        progress?.Invoke(new("GatewayMapping","正在申请独立 UPnP 公网端口租约"));
                         rule = await router.Reserve(requested, token);
                         token.ThrowIfCancellationRequested();
                         var mapping = new UpnpMapping(router, rule, external, log, renewal ?? TimeSpan.FromSeconds(60));
@@ -56,7 +58,7 @@ public sealed class UpnpMapping : IMapping, IMappingRefresh
                 }
             } catch (Exception ex) when (!token.IsCancellationRequested && ex is IOException or SocketException or HttpRequestException) { last = ex; }
         }
-        token.ThrowIfCancellationRequested(); throw new IOException("未取得有效的公网 UPnP 租约，继续尝试其他自主入口", last);
+        token.ThrowIfCancellationRequested(); throw new IOException(last==null?"未发现可用的 UPnP 公网网关":"未取得有效的公网 UPnP 租约："+last.Message, last);
     }
     public Task Maintain(CancellationToken token)
     {

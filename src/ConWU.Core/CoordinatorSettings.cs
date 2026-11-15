@@ -31,6 +31,7 @@ public sealed record CoordinatorDiagnostic(string Code, string Detail, DateTimeO
 public sealed record CoordinatorStatus(bool Enabled, bool Running, string State, string[] Addresses)
 {
     public CoordinatorClientDto[] Clients {get;init;}=[];
+    public PunchAssistStatus? PunchAssist {get;init;}
     public CoordinatorDiagnostic? External { get; init; }
     public DateTimeOffset? CertificateExpires { get; init; }
     public string CertificatePin {get;init;}="";

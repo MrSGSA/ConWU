@@ -10,8 +10,16 @@ namespace StreamLink.Core;
 // The carrier owns only IP/TCP framing. PairNetworkFrame and MeshLink retain
 // network identity, approved membership, AEAD and replay protection above it.
 public interface IMeshCarrierRoutes { event Action<IPEndPoint>? RouteClosed; event Action<IPEndPoint>? RouteOpened; }
+public interface IMeshPunchTransport
+{
+    void Punch(IPEndPoint peer);
+    Task PreparePunch(IPEndPoint peer,bool protocolClient,CancellationToken token)=>Task.CompletedTask;
+    Task StartPunch(IPEndPoint peer,ReadOnlyMemory<byte> greeting,CancellationToken token)
+    {token.ThrowIfCancellationRequested();if(greeting.IsEmpty)Punch(peer);else Punch(peer,greeting);return Task.CompletedTask;}
+    void Punch(IPEndPoint peer,ReadOnlyMemory<byte> greeting)=>throw new NotSupportedException("接收器尚不支持认证协同探测");
+}
 
-public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
+public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes,IMeshPunchTransport
 {
     readonly ChildJob children;
     readonly string mode;
@@ -19,6 +27,11 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
     LinuxKernelResource? kernel;
     IDisposable? firewall;
     Process? child;
+    IDisposable? mappingAttachment;
+    readonly object inputGate=new();
+    readonly System.Collections.Concurrent.ConcurrentDictionary<string,TaskCompletionSource> protectedPeers=new();
+    readonly HashSet<IPEndPoint> linuxProtected=[];
+    IPEndPoint? ownedSource;
     int disposed, failed;
     string failure = "";
     public IPEndPoint? ClientEndpoint { get; }
@@ -30,7 +43,7 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
     public event Action<IPEndPoint>? RouteOpened;
 
     public PacketCarrierTransport(string components, string sessionRoot, MeshProfile profile, IPEndPoint target,
-        bool server, int listenPort, string logLevel, Action<IPEndPoint>? reserve = null)
+        bool server, int listenPort, string logLevel, Action<IPEndPoint>? reserve = null,MimicMapping? mapping=null,bool peerReflexive=false)
     {
         mode=profile.Pair.Mode;
         if (!TransportModes.PacketCarrier(profile.Pair.Mode) || target.AddressFamily != AddressFamily.InterNetwork || target.Port == 0
@@ -41,20 +54,25 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
         children = new();
         string executable = Path.Combine(components, (mode=="phantun"?"conwu-phantun":"conwu-raw")+(OperatingSystem.IsWindows()?".exe":""));
         try {
-            PacketCarrierCapabilities.Require(executable,mode);
+            PacketCarrierCapabilities.Require(executable,mode,mapping!=null||peerReflexive);
             IPEndPoint source;
             sourceLease = new(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
-            if(mode=="tcpraw"&&OperatingSystem.IsLinux()){
+            if(mapping!=null){
+                if(mode!=mapping.Mode||server&&mapping.LocalEndpoint.Port!=listenPort)throw new ArgumentException("同端口映射与所选协议接收器不匹配");
+                sourceLease.ExclusiveAddressUse=false;sourceLease.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);
+                sourceLease.Bind(mapping.LocalEndpoint);
+            }
+            if(mode=="tcpraw"&&OperatingSystem.IsLinux()&&mapping==null){
                 sourceLease.ExclusiveAddressUse=false;
                 sourceLease.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);
             }
-            if (server) sourceLease.Bind(new IPEndPoint(IPAddress.Any, listenPort));
-            else {
+            if (mapping==null&&server) sourceLease.Bind(new IPEndPoint(IPAddress.Any, listenPort));
+            else if(mapping==null){
                 using var route = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
                 route.Connect(target);
                 sourceLease.Bind(new IPEndPoint(((IPEndPoint)route.LocalEndPoint!).Address, 0));
             }
-            source = (IPEndPoint)sourceLease.LocalEndPoint!;
+            source = (IPEndPoint)sourceLease.LocalEndPoint!;ownedSource=source;
             if (OperatingSystem.IsWindows()) {
                 if (server) firewall = WindowsHost.AllowStreamListener(listenPort, sessionRoot, executable);
             } else if (OperatingSystem.IsLinux()) {
@@ -62,6 +80,7 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
                 LinuxPlatform.Run("nft", "add", "table", "inet", kernel.Table);
                 string hook=mode=="tcpraw"?"output":"input";
                 LinuxPlatform.Run("nft", "add", "chain", "inet", kernel.Table, hook, "{", "type", "filter", "hook", hook, "priority", "-150", ";", "policy", "accept", ";", "}");
+                if(mapping!=null&&mode!="tcpraw")ProtectLinuxControl(mapping.ControlPeer);
                 List<string> rule = ["add", "rule", "inet", kernel.Table, hook];
                 if(mode=="tcpraw") {
                     rule.AddRange(["ip","ttl","1","tcp","sport",source.Port.ToString()]);
@@ -83,6 +102,7 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
                         failure = value.GetProperty("reason").GetString() ?? "Unknown";
                         ready.TrySetException(new IOException("数据报 TCP 启动失败：" + failure));
                     } else if (value.GetProperty("event").GetString() == "ready") ready.TrySetResult(value.Clone());
+                    else if(value.GetProperty("event").GetString()=="protected"&&value.TryGetProperty("id",out var protectedId)&&protectedPeers.TryRemove(protectedId.GetString()??"",out var completion))completion.TrySetResult();
                     else if (value.GetProperty("event").GetString() is ("peer-closed" or "peer-opened") && value.GetProperty("abi").GetInt32() == 1
                         && IPEndPoint.TryParse(value.GetProperty("udp").GetString()??"", out var closed)
                         && closed.AddressFamily == AddressFamily.InterNetwork && IPAddress.IsLoopback(closed.Address) && closed.Port > 0) {
@@ -99,6 +119,8 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
             if(mode=="tcpraw"){sourceLease.Dispose();sourceLease=null;}
             List<string> arguments=[server ? "--server" : "--client", "--source", source.ToString(), "--remote", target.ToString(), "--parent", Environment.ProcessId.ToString()];
             if(mode!="phantun")arguments.AddRange(["--carrier",mode]);
+            if(mapping!=null)arguments.AddRange(["--protected-tcp-peer",mapping.ControlPeer.ToString()]);
+            if(peerReflexive)arguments.Add("--peer-reflexive");
             var process = child = children.StartObserved(executable, arguments,
                 logLevel == "off" ? null : Path.Combine(sessionRoot, mode+"-" + Guid.NewGuid().ToString("N") + ".log"), null, null, Observe,redirectInput:true);
             ProcessId = process.Id;
@@ -117,10 +139,44 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
                 ClientEndpoint = endpoint;
                 reserve?.Invoke(endpoint);
             }
+            if(mapping!=null){mappingAttachment=mapping.Attach(ProtectTcpPeer);ProtectTcpPeer(mapping.ControlPeer,CancellationToken.None).GetAwaiter().GetResult();}
         } catch (Exception original) {
             try { Dispose(); } catch (Exception cleanup) { throw new AggregateException("数据报 TCP 启动失败且资源回收未完成", original, cleanup); }
             throw;
         }
+    }
+
+    void Command(string command,IPEndPoint peer,string? id=null)
+    {
+        string line=id==null?JsonSerializer.Serialize(new{command,peer=peer.ToString()}):JsonSerializer.Serialize(new{command,peer=peer.ToString(),id});
+        lock(inputGate){if(Exited||child==null)throw new IOException("数据报 TCP 接收器已停止");child.StandardInput.WriteLine(line);child.StandardInput.Flush();}
+    }
+    async Task ProtectTcpPeer(IPEndPoint peer,CancellationToken token)
+    {
+        var completion=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        string id=Guid.NewGuid().ToString("N");protectedPeers[id]=completion;
+        try{ProtectLinuxControl(peer);Command("protect",peer,id);await completion.Task.WaitAsync(TimeSpan.FromSeconds(2),token);}
+        catch(TimeoutException error){throw new IOException("原生组件尚未确认新的 STUN 控制流保护，暂缓重连",error);}
+        finally{protectedPeers.TryRemove(id,out _);}
+    }
+    void ProtectLinuxControl(IPEndPoint peer)
+    {
+        if(!OperatingSystem.IsLinux()||mode=="tcpraw"||kernel==null||ownedSource==null||linuxProtected.Contains(peer))return;
+        LinuxPlatform.Run("nft","insert","rule","inet",kernel.Table,"input","ip","saddr",peer.Address.ToString(),"tcp","sport",peer.Port.ToString(),"tcp","dport",ownedSource.Port.ToString(),"return");
+        linuxProtected.Add(peer);
+    }
+    public Task PreparePunch(IPEndPoint peer,bool protocolClient,CancellationToken token)
+    {token.ThrowIfCancellationRequested();if(Exited)throw new IOException("数据报 TCP 接收器已停止");return Task.CompletedTask;}
+    public void Punch(IPEndPoint peer)
+    {
+        if(!PortControlRoute.GlobalV4(peer.Address)||peer.Port==0)throw new ArgumentException("TCP 探测需要有效公网 IPv4 对端");
+        Command("punch",peer);
+    }
+    public void Punch(IPEndPoint peer,ReadOnlyMemory<byte> greeting)
+    {
+        if(!PortControlRoute.GlobalV4(peer.Address)||peer.Port==0||greeting.Length is <1 or >128)throw new ArgumentException("认证协同探测参数无效");
+        string line=JsonSerializer.Serialize(new{command="punch",peer=peer.ToString(),hello=Convert.ToHexString(greeting.Span)});
+        lock(inputGate){if(Exited||child==null)throw new IOException("数据报 TCP 接收器已停止");child.StandardInput.WriteLine(line);child.StandardInput.Flush();}
     }
 
     public void Dispose()
@@ -129,11 +185,12 @@ public class PacketCarrierTransport : IMeshTransport, IMeshCarrierRoutes
         List<Exception> failures = [];
         try {
             if (child is { HasExited: false }) {
-                child.StandardInput.WriteLine("stop");child.StandardInput.Flush();
+                lock(inputGate){child.StandardInput.WriteLine("stop");child.StandardInput.Flush();}
                 child.WaitForExit(1500);
             }
         } catch (Exception error) when (error is IOException or InvalidOperationException) { }
         try { children.Dispose(); } catch (Exception error) { failures.Add(error); }
+        mappingAttachment?.Dispose();
         try { kernel?.Dispose(); } catch (Exception error) { failures.Add(error); }
         try { firewall?.Dispose(); } catch (Exception error) { failures.Add(error); }
         sourceLease?.Dispose();
@@ -145,14 +202,15 @@ internal static class PacketCarrierCapabilities
 {
     static readonly object gate = new();
     static readonly Dictionary<string, (long Size, DateTime At)> validated = [];
-    internal static void Require(string executable,string mode)
+    internal static void Require(string executable,string mode,bool samePort=false)
     {
         var file = new FileInfo(executable);
         if (!file.Exists) throw new IOException("缺少数据报 TCP 组件，请更新完整安装包");
         if (OperatingSystem.IsWindows() && !File.Exists(Path.Combine(file.DirectoryName!, "WinDivert.dll")))
             throw new IOException("数据报 TCP 的 WinDivert 依赖不完整，请更新完整安装包");
         lock (gate) {
-            if (validated.TryGetValue(file.FullName, out var before) && before.Size == file.Length && before.At == file.LastWriteTimeUtc) return;
+            string cache=file.FullName+"/"+mode+(samePort?"/same-port":"");
+            if (validated.TryGetValue(cache, out var before) && before.Size == file.Length && before.At == file.LastWriteTimeUtc) return;
             var start = new ProcessStartInfo(file.FullName) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
             start.ArgumentList.Add("--conwu-info");
             using var child = Process.Start(start) ?? throw new IOException("无法查询数据报 TCP 组件");
@@ -169,8 +227,11 @@ internal static class PacketCarrierCapabilities
                 || !info.GetProperty("inputStop").GetBoolean() || !info.GetProperty("routeCloseEvents").GetBoolean() || !info.GetProperty("routeOpenEvents").GetBoolean())
                 throw new NotSupportedException("数据报 TCP 组件与本版不匹配，请更新完整安装包");
             if(mode!="phantun"&&(!info.GetProperty("carriers").EnumerateArray().Any(c=>c.GetString()=="mimic-v1-zero-padding")||!info.GetProperty("carriers").EnumerateArray().Any(c=>c.GetString()=="tcpraw-v1-kernel-handshake")))throw new NotSupportedException("原始 TCP 承载能力不完整");
+            if(samePort&&(!info.TryGetProperty(mode=="phantun"?"samePortPhantun":mode=="tcpraw"?"samePortTcpraw":"samePortMimic",out var shared)||!shared.GetBoolean()||!info.TryGetProperty("tcpControlGuard",out var guard)||guard.GetInt32()!=1))
+                throw new NotSupportedException("同端口探测需要所选协议的新版原生组件，请更新完整安装包");
+            if(samePort&&(!info.TryGetProperty("assistedPunch",out var assisted)||assisted.GetInt32()!=1))throw new NotSupportedException("协调辅助需要所选协议的新版原生组件，请更新完整安装包");
             if (validated.Count > 32) validated.Clear();
-            validated[file.FullName] = (file.Length, file.LastWriteTimeUtc);
+            validated[cache] = (file.Length, file.LastWriteTimeUtc);
         }
     }
 }

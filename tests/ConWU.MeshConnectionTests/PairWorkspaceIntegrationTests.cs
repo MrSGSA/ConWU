@@ -18,7 +18,8 @@ static partial class Program
         public int Servers,Probes;
         readonly string sid;
         public WorkspaceNode(string folder,string name,WorkspaceNode? target=null,string coordination="",string pin="",CoordinatorSettings? coordinator=null,
-            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false,Func<PkarrClient>? pkarrFactory=null,Func<IMapping>? mappingFactory=null)
+            Func<MeshTransportRequest,IMeshTransport>? transportOverride=null,int listenPort=45200,bool reuseProfile=false,Func<PkarrClient>? pkarrFactory=null,Func<IMapping>? mappingFactory=null,
+            Func<Action<EntryProbeProgress>,CancellationToken,Task<IMapping>>? entryProbe=null,bool forbidMimicPreparation=false,Func<MeshRuntimeServices,MeshRuntimeServices>? configureRuntime=null)
         {
             sid=WindowsIdentity.GetCurrent().User!.Value;
             Store=new ProfileStore(folder);if(!reuseProfile)Store.Save(new(){DeviceName=name,ConnectionSource="existing",DirectMode=coordination.Length==0,ListenPort=listenPort,SourcePort=listenPort+1,CoordinationService=coordination,CoordinationPin=pin,Coordinator=coordinator??new(),
@@ -41,6 +42,9 @@ static partial class Program
                     }return new EntryResolution(e.PeerSlot,i,"地址",[mappingFactory!=null&&IPEndPoint.TryParse(e.Source,out var literal)?literal.ToString():target?.EntryOverride??target?.NativeTarget?.ToString()??"203.0.113.1:"+listenPort],"");}));
                 }
             };
+            if(entryProbe!=null)services=services with{ProbeWithProgress=(_,_,progress,ct)=>entryProbe(progress,ct)};
+            if(forbidMimicPreparation)services=services with{MimicPairClient=(_,_,_,_,_,_)=>Task.FromException<IMappedMeshTransport>(new InvalidOperationException("test forbids guest STUN/UPnP for a reachable host"))};
+            if(configureRuntime!=null)services=configureRuntime(services);
             Worker=new ControlWorker(Store,services);Worker.EnablePairNetworks();Worker.StartLocal();
         }
         public Task<UiControlReply> Ui(UiControlRequest request)=>Worker.HandleUi(request,sid,default);

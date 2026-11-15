@@ -63,7 +63,7 @@ def corrupt_authenticated_payload(packet):
 
 
 class Tunnel:
-    def __init__(self, http=True, wrong_key=False, raw_mode="faketcp", udp_shape=False, wire_ids=None, closed_report_sink=False):
+    def __init__(self, http=True, wrong_key=False, raw_mode="faketcp", udp_shape=False, wire_ids=None, closed_report_sink=False, long_config=False):
         self.directory = tempfile.TemporaryDirectory(prefix="streamlink-protocol-")
         self.path = Path(self.directory.name)
         self.stop = threading.Event()
@@ -82,6 +82,11 @@ class Tunnel:
         self.altered = threading.Event()
         self.key = secrets.token_hex(32)
         try:
+            config_directory=self.path
+            if long_config:
+                for _ in range(3):config_directory=config_directory/("configuration "+"x"*64)
+                config_directory.mkdir(parents=True)
+                if len(str(config_directory))<=260:raise AssertionError("long configuration fixture did not exceed MAX_PATH")
             self.proxy_c, self.proxy_s, self.echo = [udp_socket() for _ in range(3)]
             self.sockets.extend((self.proxy_c, self.proxy_s, self.echo))
             self.client_wire, self.server_wire = free_port(), free_port()
@@ -98,7 +103,7 @@ class Tunnel:
                 ("server", server, self.server_wire, self.proxy_s.getsockname()[1]),
                 ("client", client, self.client_wire, self.proxy_c.getsockname()[1]),
             ):
-                config_file = self.path / f"{name}.conf"
+                config_file = config_directory / f"{name}.conf"
                 config_file.write_text("\n".join(config), encoding="ascii")
                 log = (self.path / f"{name}.log").open("wb")
                 self.files.append(log)
@@ -225,6 +230,12 @@ class Tunnel:
 
 
 class ProtocolTests(unittest.TestCase):
+    def test_long_configuration_paths_preserve_the_native_handshake_and_data(self):
+        with Tunnel(long_config=True) as tunnel:
+            tunnel.ready()
+            tunnel.app.send(b"long-path-native-pairing")
+            self.assertEqual(tunnel.receive(), b"long-path-native-pairing")
+
     def test_legacy_faketcp_ports_have_exclusive_owners(self):
         with Tunnel() as tunnel:
             tunnel.ready()

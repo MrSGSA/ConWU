@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
@@ -35,6 +35,13 @@ static partial class Program
         if(args is ["--pkarr-duplex"]){await PkarrDuplex();return;}
         if(args is ["--pkarr-public-duplex",var publicDuplexReport]){await PkarrPublicDuplex(publicDuplexReport);return;}
         if(args is ["--compact-code"]){CompactCodeTests();return;}
+        if(args is ["--compact-punch"]){await CompactPunchDiscoveryTests();return;}
+        if(args is ["--coordinator-punch-modes"]){foreach(var mode in new[]{"faketcp","phantun","mimic","tcpraw","tcp","https"})await CoordinatorPunchIntegration(mode:mode);return;}
+        if(args is ["--coordinator-punch"]){await CoordinatorPunchIntegration();return;}
+        if(args is ["--coordinator-punch-primary"]){await CoordinatorPunchIntegration(reachable:true);return;}
+        if(args is ["--compact-mimic-primary"]){await CompactMimicPrimary();return;}
+        if(args is ["--entry-preparation"]){await EntryPreparationChecks();return;}
+        if(args is ["--mimic-network-ports"]){await MimicNetworkPorts();return;}
         if(args is ["--compact-integration"]){await CompactInvitationIntegration();return;}
         if(args is ["--auto-settings"]){await AutomaticNetworkSettings();return;}
         if(args is ["--pairing-options"]){await PairingOptions();return;}

@@ -31,10 +31,10 @@ impl Device {
             )
         } else {
             format!(
-                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {} and tcp.DstPort == {}",
+                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {}{} and tcp.DstPort == {}",
                 config.remote.ip(),
                 config.source.ip(),
-                config.remote.port(),
+                if config.peer_reflexive { String::new() } else { format!(" and tcp.SrcPort == {}", config.remote.port()) },
                 config.source.port()
             )
         };
@@ -63,7 +63,8 @@ impl Device {
         } else {
             None
         };
-        let handle = Arc::new(WinDivert::network(&filter, 0, flags).map_err(io::Error::other)?);
+        let handle = Arc::new(WinDivert::network(&filter, 0, flags)
+            .map_err(|error| io::Error::other(format!("{}; filter={}", error, filter)))?);
         handle
             .set_param(WinDivertParam::QueueLength, 4096)
             .map_err(io::Error::other)?;
@@ -77,6 +78,8 @@ impl Device {
         let closing = Arc::new(AtomicBool::new(false));
         let capture = handle.clone();
         let quit = closing.clone();
+        let protected = config.control_peer.clone();
+        let sniff=config.carrier==Carrier::TcpRaw;
         std::thread::Builder::new()
             .name("raw-carrier-capture".into())
             .spawn(move || {
@@ -85,7 +88,19 @@ impl Device {
                 let mut buffer = vec![0u8; 65535];
                 while !quit.load(Ordering::Relaxed) {
                     match capture.recv_wait(&mut buffer, 100) {
-                        Ok(Some(packet)) if packet.data.len() <= MAX_PACKET_LEN => {
+                        Ok(Some(packet)) => {
+                            // Preserve the original WinDivert metadata. A
+                            // reinjected control packet resumes below us and
+                            // reaches the kernel TCP socket, without looping.
+                            let peer = *protected.read().unwrap();
+                            if peer.is_some_and(|peer| crate::packet::tcp_remote(&packet.data) == Some(peer)) {
+                                if !sniff { if let Err(error) = capture.send(&packet) {
+                                    eprintln!("STUN control reinjection failed: {}", error);
+                                    break;
+                                }}
+                                continue;
+                            }
+                            if packet.data.len() > MAX_PACKET_LEN { continue; }
                             match sender.try_send(packet.data.to_vec()) {
                                 Ok(()) | Err(flume::TrySendError::Full(_)) => {}
                                 Err(flume::TrySendError::Disconnected(_)) => break,

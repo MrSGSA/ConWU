@@ -16,7 +16,7 @@ use tokio::{
 };
 
 const LIMIT: usize = 128;
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     SynSent,
     SynReceived,
@@ -24,6 +24,7 @@ enum Phase {
     Established,
 }
 struct Flow {
+    generation:u64,
     local: SocketAddrV4,
     remote: SocketAddrV4,
     phase: Phase,
@@ -105,6 +106,80 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn failed_active_tcpraw_probe_does_not_retire_the_listener_or_healthy_flow() {
+        let (mut engine,_)=fixture(true,"127.0.0.1:12345".parse().unwrap());
+        engine.config.carrier=Carrier::TcpRaw;
+        let failed="198.18.0.2:42200".parse().unwrap();
+        let live="198.18.0.3:42201".parse().unwrap();
+        engine.flows.insert(failed,Flow::new(engine.config.source,failed,Phase::Kernel));
+        engine.flows.insert(live,Flow::new(engine.config.source,live,Phase::Established));
+        engine.message(Message::ConnectFailed(failed,engine.flows[&failed].generation,"probe timeout".into())).await.unwrap();
+        assert!(!engine.flows.contains_key(&failed));
+        assert!(engine.flows[&live].phase==Phase::Established);
+    }
+    async fn tcp_pair() -> (TcpStream,TcpStream) {
+        let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let (a,b)=tokio::join!(TcpStream::connect(listener.local_addr().unwrap()),listener.accept());
+        (a.unwrap(),b.unwrap().0)
+    }
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn assisted_listener_and_active_handshake_share_the_observed_source_port() {
+        let reflector = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let helper = tcp_socket(true).unwrap();
+        helper.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let local = helper.local_addr().unwrap();
+        let helper = helper.connect(reflector.local_addr().unwrap()).await.unwrap();
+        let _reflection = reflector.accept().await.unwrap();
+        let listener = tcp_socket(true).unwrap();
+        listener.bind(local).unwrap();
+        let _listener = listener.listen(8).unwrap();
+        let peer = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let active = tcp_socket(true).unwrap();
+        active.bind(local).unwrap();
+        let active = tokio::time::timeout(Duration::from_secs(1), active.connect(peer.local_addr().unwrap())).await.unwrap().unwrap();
+        let _accepted = peer.accept().await.unwrap();
+        assert_eq!(active.local_addr().unwrap(), helper.local_addr().unwrap());
+        let unrelated = tcp_socket(false).unwrap();
+        let result = unrelated.bind(local).and_then(|_| unrelated.listen(8));
+        assert_eq!(result.err().expect("ordinary listener stole the assisted port").kind(), io::ErrorKind::AddrInUse);
+    }
+    #[tokio::test]
+    async fn duplicate_kernel_completion_keeps_the_existing_writer_alive() {
+        use tokio::io::AsyncWriteExt;
+        let (mut engine,_)=fixture(true,"127.0.0.1:12345".parse().unwrap());
+        engine.config.carrier=Carrier::TcpRaw;
+        let peer="198.18.0.2:42200".parse().unwrap();
+        let (stream,mut application)=tcp_pair().await;
+        let (_read,write)=stream.into_split();
+        let mut flow=Flow::new(engine.config.source,peer,Phase::Established);
+        let generation=flow.generation;flow.writer=Some(write);engine.flows.insert(peer,flow);
+        let (duplicate,_unused)=tcp_pair().await;
+        engine.message(Message::Connected(peer,None,duplicate)).await.unwrap();
+        let flow=engine.flows.get_mut(&peer).expect("duplicate completion removed the live peer");
+        assert_eq!(flow.generation,generation);
+        flow.writer.as_mut().unwrap().write_all(b"retained").await.unwrap();
+        let mut bytes=[0;8];
+        tokio::time::timeout(Duration::from_secs(1),application.read_exact(&mut bytes)).await.unwrap().unwrap();
+        assert_eq!(&bytes,b"retained");
+    }
+    #[tokio::test]
+    async fn late_kernel_callbacks_cannot_retire_a_reused_tuple() {
+        let (mut engine,_)=fixture(true,"127.0.0.1:12345".parse().unwrap());
+        engine.config.carrier=Carrier::TcpRaw;
+        let peer="198.18.0.2:42200".parse().unwrap();
+        let old=Flow::new(engine.config.source,peer,Phase::Kernel).generation;
+        let mut replacement=Flow::new(engine.config.source,peer,Phase::Kernel);
+        replacement.generation=old.wrapping_add(1);let current=replacement.generation;
+        engine.flows.insert(peer,replacement);
+        engine.message(Message::Closed(peer,old)).await.unwrap();
+        engine.message(Message::ConnectFailed(peer,old,"old connect timed out".into())).await.unwrap();
+        let (late,_unused)=tcp_pair().await;
+        engine.message(Message::Connected(peer,Some(old),late)).await.unwrap();
+        let flow=&engine.flows[&peer];
+        assert_eq!(flow.generation,current);assert!(flow.writer.is_none());
+    }
+    #[tokio::test]
     async fn mtu_or_capacity_failure_does_not_retire_the_shared_carrier() {
         for code in [90, 105, 10040, 10055] {
             let (mut engine, _) = fixture(true, "127.0.0.1:12345".parse().unwrap());
@@ -141,6 +216,9 @@ mod tests {
             },
             parent: 1,
             carrier: Carrier::Mimic,
+            protected_tcp_peer: None,
+            control_peer: Arc::new(std::sync::RwLock::new(None)),
+            peer_reflexive: false,
         };
         let (tx, rx) = mpsc::channel(512);
         let wire = Arc::new(Wire(Mutex::new(vec![])));
@@ -227,6 +305,103 @@ mod tests {
         );
     }
     #[tokio::test]
+    async fn mimic_simultaneous_open_preserves_both_sequence_spaces() {
+        let target = udp_endpoint().unwrap();
+        let application = Arc::new(udp_endpoint().unwrap());
+        let (mut host, hostwire) = fixture(true, v4(target.local_addr().unwrap()).unwrap());
+        let (mut guest, guestwire) = fixture(false, v4(target.local_addr().unwrap()).unwrap());
+        guest.udp = Some(Arc::new(udp_endpoint().unwrap()));
+        host.message(Message::Punch(guest.config.source, vec![])).await.unwrap();
+        let host_syn = hostwire.packets().pop().unwrap();
+        guest.message(Message::Client(application.local_addr().unwrap(), vec![57; 91])).await.unwrap();
+        let guest_syn = guestwire.packets().pop().unwrap();
+        host.incoming(parse(&guest_syn).unwrap()).await.unwrap();
+        guest.incoming(parse(&host_syn).unwrap()).await.unwrap();
+        let host_synack = hostwire.packets().pop().unwrap();
+        let guest_synack = guestwire.packets().pop().unwrap();
+        assert_eq!(parse(&host_syn).unwrap().seq, parse(&host_synack).unwrap().seq);
+        assert_eq!(parse(&guest_syn).unwrap().seq, parse(&guest_synack).unwrap().seq);
+        host.incoming(parse(&guest_synack).unwrap()).await.unwrap();
+        guest.incoming(parse(&host_synack).unwrap()).await.unwrap();
+        for packet in guestwire.packets() { host.incoming(parse(&packet).unwrap()).await.unwrap(); }
+        for packet in hostwire.packets() { guest.incoming(parse(&packet).unwrap()).await.unwrap(); }
+        assert_eq!(receive(&target).await, vec![57; 91]);
+        host.message(Message::Output(guest.config.source, vec![71; 83])).await.unwrap();
+        guest.incoming(parse(&hostwire.packets().pop().unwrap()).unwrap()).await.unwrap();
+        assert_eq!(receive(&application).await, vec![71; 83]);
+    }
+    #[tokio::test]
+    async fn punch_does_not_replace_established_or_protected_flows() {
+        let target = udp_endpoint().unwrap();
+        let (mut host, wire) = fixture(true, v4(target.local_addr().unwrap()).unwrap());
+        let peer = "198.18.0.2:41421".parse().unwrap();
+        *host.config.control_peer.write().unwrap() = Some(peer);
+        host.message(Message::Punch(peer, vec![])).await.unwrap();
+        assert!(host.flows.is_empty() && wire.packets().is_empty());
+        *host.config.control_peer.write().unwrap() = None;
+        host.flows.insert(peer, Flow::new(host.config.source, peer, Phase::Established));
+        host.message(Message::Punch(peer, vec![])).await.unwrap();
+        assert!(host.flows[&peer].phase == Phase::Established);
+        assert!(wire.packets().is_empty());
+    }
+    #[tokio::test]
+    async fn assisted_two_listeners_send_greetings_only_after_handshake() {
+        let target_a=udp_endpoint().unwrap();
+        let target_b=udp_endpoint().unwrap();
+        let (mut a,wire_a)=fixture(true,v4(target_a.local_addr().unwrap()).unwrap());
+        let (mut b,wire_b)=fixture(true,v4(target_b.local_addr().unwrap()).unwrap());
+        b.config.source="198.18.0.2:41421".parse().unwrap();
+        a.message(Message::Punch(b.config.source,vec![31;84])).await.unwrap();
+        b.message(Message::Punch(a.config.source,vec![47;84])).await.unwrap();
+        let syn_a=wire_a.packets().pop().unwrap();
+        let syn_b=wire_b.packets().pop().unwrap();
+        assert!(parse(&syn_a).unwrap().payload.is_empty()&&parse(&syn_b).unwrap().payload.is_empty());
+        a.incoming(parse(&syn_b).unwrap()).await.unwrap();
+        b.incoming(parse(&syn_a).unwrap()).await.unwrap();
+        for _ in 0..4 {
+            for packet in wire_a.packets(){b.incoming(parse(&packet).unwrap()).await.unwrap();}
+            for packet in wire_b.packets(){a.incoming(parse(&packet).unwrap()).await.unwrap();}
+        }
+        assert_eq!(receive(&target_a).await,vec![47;84]);
+        assert_eq!(receive(&target_b).await,vec![31;84]);
+        let before=a.flows[&b.config.source].isn;
+        a.message(Message::Punch(b.config.source,vec![59;84])).await.unwrap();
+        assert_eq!(a.flows[&b.config.source].isn,before);
+        for packet in wire_a.packets(){b.incoming(parse(&packet).unwrap()).await.unwrap();}
+        assert_eq!(receive(&target_b).await,vec![59;84]);
+    }
+    #[tokio::test]
+    async fn reflexive_port_learning_requires_handshake_and_freezes_after_establishment() {
+        let application = Arc::new(udp_endpoint().unwrap());
+        let (mut guest, wire) = fixture(false, "127.0.0.1:12345".parse().unwrap());
+        guest.config.peer_reflexive = true;
+        guest.udp = Some(Arc::new(udp_endpoint().unwrap()));
+        guest.message(Message::Client(application.local_addr().unwrap(), vec![5; 80])).await.unwrap();
+        let syn = wire.packets().pop().unwrap();
+        let expected_ack = parse(&syn).unwrap().seq.wrapping_add(1);
+        let alternate = SocketAddrV4::new(*guest.config.remote.ip(), 49921);
+        let invalid = build(alternate,guest.config.source,77,expected_ack.wrapping_add(1),SYN|ACK,65535,&[],&[]);
+        guest.incoming(parse(&invalid).unwrap()).await.unwrap();
+        assert_eq!(guest.flows.len(),1);
+        let wrong_ip = build("198.18.0.9:49921".parse().unwrap(),guest.config.source,77,0,SYN,65535,&[],&[]);
+        guest.incoming(parse(&wrong_ip).unwrap()).await.unwrap();
+        assert_eq!(guest.flows.len(),1);
+        let inbound = build(alternate,guest.config.source,77,0,SYN,65535,&[],&[]);
+        guest.incoming(parse(&inbound).unwrap()).await.unwrap();
+        assert!(guest.flows[&alternate].phase == Phase::SynReceived);
+        assert_ne!(guest.config.remote,alternate,"a SYN alone cannot select the peer");
+        let ack = build(alternate,guest.config.source,78,expected_ack,ACK,65535,&[],&[]);
+        guest.incoming(parse(&ack).unwrap()).await.unwrap();
+        assert_eq!(guest.config.remote,alternate);
+        assert_eq!(guest.flows.len(),1,"obsolete candidates are removed");
+        assert!(guest.flows[&alternate].phase == Phase::Established);
+        let other = SocketAddrV4::new(*alternate.ip(),49922);
+        let late = build(other,guest.config.source,91,0,SYN,65535,&[],&[]);
+        guest.incoming(parse(&late).unwrap()).await.unwrap();
+        assert_eq!(guest.config.remote,alternate);
+        assert_eq!(guest.flows.len(),1,"an established peer cannot be moved by another SYN");
+    }
+    #[tokio::test]
     async fn pending_admission_and_unowned_packets() {
         let (mut host, wire) = fixture(true, "127.0.0.1:12345".parse().unwrap());
         for index in 0..200 {
@@ -270,6 +445,7 @@ impl Flow {
         let now = Instant::now();
         let isn = rand::random();
         Self {
+            generation:rand::random(),
             local,
             remote,
             phase,
@@ -322,11 +498,13 @@ struct Observation {
     at: Option<Instant>,
 }
 enum Message {
+    Punch(SocketAddrV4, Vec<u8>),
+    Protect(SocketAddrV4, String),
     Client(SocketAddr, Vec<u8>),
     Output(SocketAddrV4, Vec<u8>),
-    Connected(SocketAddrV4, TcpStream),
-    ConnectFailed(String),
-    Closed(SocketAddrV4),
+    Connected(SocketAddrV4, Option<u64>, TcpStream),
+    ConnectFailed(SocketAddrV4,u64,String),
+    Closed(SocketAddrV4,u64),
 }
 struct Engine {
     config: Config,
@@ -372,9 +550,21 @@ fn v4(endpoint: SocketAddr) -> io::Result<SocketAddrV4> {
     }
 }
 
+fn tcp_socket(assisted: bool) -> io::Result<TcpSocket> {
+    let socket = TcpSocket::new_v4()?;
+    socket.set_reuseaddr(cfg!(target_os = "linux") || assisted)?;
+    // The retained reflector, listener and active handshake belong to one
+    // source-port lease. Linux needs REUSEPORT on all three; REUSEADDR alone
+    // cannot bind an active socket beside the listener. Ordinary entry
+    // listeners must not join that group or admit independent port owners.
+    #[cfg(target_os = "linux")]
+    if assisted { socket.set_reuseport(true)?; }
+    Ok(socket)
+}
+
 pub async fn run(config: Config) -> io::Result<()> {
     let gone = crate::parent::watch(config.parent)?;
-    let input = crate::parent::input_stop()?;
+    let (mut commands, input) = input_commands()?;
     let device = crate::platform::open(&config)?;
     let (tx, rx) = mpsc::channel(512);
     let mut engine = Engine {
@@ -393,8 +583,7 @@ pub async fn run(config: Config) -> io::Result<()> {
         send_warning_at: None,
     };
     if config.server && config.carrier == Carrier::TcpRaw {
-        let socket = TcpSocket::new_v4()?;
-        socket.set_reuseaddr(cfg!(target_os = "linux"))?;
+        let socket = tcp_socket(config.protected_tcp_peer.is_some())?;
         socket.bind(config.source.into())?;
         let listener = socket.listen(128)?;
         engine
@@ -426,10 +615,47 @@ pub async fn run(config: Config) -> io::Result<()> {
                 packet=device.recv(&mut buffer)=>{let size=packet?;if let Some(segment)=parse(&buffer[..size]){engine.incoming(segment).await?;}},
                 message=engine.rx.recv()=>{if let Some(message)=message{engine.message(message).await?;}else{return Err(io::Error::other("carrier bridge closed"));}},
                 _=timer.tick()=>engine.tick()?,
+                command=commands.recv()=>{if let Some(command)=command{engine.message(command).await?;}},
             }
         }
     };
     tokio::select! {result=work=>result,_=gone=>Ok(()),_=input=>Ok(()),_=tokio::signal::ctrl_c()=>Ok(())}
+}
+
+fn input_commands() -> io::Result<(mpsc::Receiver<Message>, tokio::sync::oneshot::Receiver<()>)> {
+    let (tx, rx) = mpsc::channel(8);
+    let (stop, stopped) = tokio::sync::oneshot::channel();
+    std::thread::Builder::new().name("raw-control".into()).spawn(move || {
+        use std::io::{BufRead, Read};
+        let stdin = std::io::stdin();
+        let mut reader = stdin.lock();
+        loop {
+            let mut line = Vec::with_capacity(128);
+            let size = reader.by_ref().take(513).read_until(b'\n', &mut line);
+            if !matches!(size, Ok(1..=512)) || !line.ends_with(b"\n") { break; }
+            let Ok(command) = serde_json::from_slice::<serde_json::Value>(&line) else { break; };
+            let kind = command["command"].as_str();
+            if !matches!(kind, Some("punch" | "protect"))
+                || command.as_object().is_none_or(|object| if kind == Some("protect") {object.len()!=3} else {!(2..=3).contains(&object.len())}) { break; }
+            let Some(peer) = command["peer"].as_str().and_then(|value| value.parse::<SocketAddrV4>().ok()) else { break; };
+            if peer.port() == 0 || peer.ip().is_unspecified()
+                || peer.ip().is_loopback() || peer.ip().is_multicast() || peer.ip().is_broadcast()
+                { break; }
+            let message = if kind == Some("punch") {
+                let hello = if command.as_object().unwrap().len()==3 {
+                    let Some(text)=command["hello"].as_str().filter(|s| !s.is_empty()&&s.len()<=256&&s.len()%2==0&&s.bytes().all(|b| b.is_ascii_hexdigit())) else {break;};
+                    (0..text.len()).step_by(2).map(|i|u8::from_str_radix(&text[i..i+2],16).unwrap()).collect()
+                }else{vec![]};
+                Message::Punch(peer,hello)
+            } else {
+                let Some(id) = command["id"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())) else {break;};
+                Message::Protect(peer, id.to_owned())
+            };
+            if tx.blocking_send(message).is_err() { break; }
+        }
+        let _ = stop.send(());
+    })?;
+    Ok((rx, stopped))
 }
 async fn accept(listener: TcpListener, tx: mpsc::Sender<Message>) {
     loop {
@@ -443,7 +669,7 @@ async fn accept(listener: TcpListener, tx: mpsc::Sender<Message>) {
                 if prepare_system(&stream).is_err() {
                     continue;
                 }
-                if tx.try_send(Message::Connected(remote, stream)).is_err() {
+                if tx.try_send(Message::Connected(remote, None, stream)).is_err() {
                     continue;
                 }
             }
@@ -570,10 +796,19 @@ impl Engine {
         Ok(())
     }
     async fn establish(&mut self, flow: &mut Flow) -> io::Result<()> {
+        if self.config.carrier==Carrier::TcpRaw {
+            event(json!({"event":"kernel-established","peer":flow.remote.to_string(),"seq":flow.seq,"ack":flow.ack}));
+        }
         if flow.phase == Phase::Established {
             return Ok(());
         }
         flow.phase = Phase::Established;
+        if !self.config.server && self.config.peer_reflexive {
+            // Choose the observed tuple only after its handshake acknowledges
+            // our original random ISN. MeshLink / pairing still authenticate it.
+            self.config.remote = flow.remote;
+            self.flows.clear();
+        }
         if self.config.server {
             let udp = Arc::new(udp_endpoint()?);
             udp.connect(self.config.remote).await?;
@@ -598,14 +833,30 @@ impl Engine {
         Ok(())
     }
     async fn incoming(&mut self, segment: Segment<'_>) -> io::Result<()> {
+        if *self.config.control_peer.read().unwrap() == Some(segment.remote) { return Ok(()); }
         if segment.local.port() != self.config.source.port()
             || (!self.config.source.ip().is_unspecified()
                 && segment.local.ip() != self.config.source.ip())
-            || (!self.config.server && segment.remote != self.config.remote)
+            || (!self.config.server && segment.remote != self.config.remote
+                && !(self.config.peer_reflexive && segment.remote.ip() == self.config.remote.ip()
+                    && !self.flows.values().any(|flow| flow.phase == Phase::Established)))
         {
             return Ok(());
         }
         let key = segment.remote;
+        if !self.config.server && self.config.peer_reflexive && !self.flows.contains_key(&key) {
+            if self.flows.len() >= 8 || segment.flags & (SYN | RST | FIN) != SYN { return Ok(()); }
+            let Some(original) = self.flows.get(&self.config.remote) else { return Ok(()); };
+            if original.phase != Phase::SynSent { return Ok(()); }
+            if segment.flags & ACK != 0 && segment.ack != original.seq { return Ok(()); }
+            let mut candidate = Flow::new(self.config.source, key, Phase::SynSent);
+            candidate.isn = original.isn;
+            candidate.seq = original.seq;
+            candidate.udp = original.udp.clone();
+            candidate.application = original.application;
+            candidate.pending = original.pending.clone();
+            self.flows.insert(key, candidate);
+        }
         if self.config.carrier == Carrier::TcpRaw && !self.flows.contains_key(&key) {
             if !self.config.server && key != self.config.remote {
                 return Ok(());
@@ -676,6 +927,14 @@ impl Engine {
             flow.timestamp_at = Instant::now();
         }
         match flow.phase {
+            Phase::SynSent if segment.flags & (SYN | ACK) == SYN => {
+                // Simultaneous open: both NATs may require an outbound SYN.
+                // Keep our original ISN, so each NAT sees the expected ACK.
+                flow.ack = segment.seq.wrapping_add(1);
+                flow.phase = Phase::SynReceived;
+                let isn = flow.isn;
+                self.control(&mut flow, SYN | ACK, isn)?;
+            }
             Phase::SynSent
                 if segment.flags & (SYN | ACK) == SYN | ACK && segment.ack == flow.seq =>
             {
@@ -685,8 +944,21 @@ impl Engine {
                 self.establish(&mut flow).await?;
             }
             Phase::SynReceived
+                if segment.flags & (SYN | ACK) == SYN | ACK
+                    && segment.ack == flow.seq && segment.seq.wrapping_add(1) == flow.ack =>
+            {
+                let seq = flow.seq;
+                self.control(&mut flow, ACK, seq)?;
+                self.establish(&mut flow).await?;
+            }
+            Phase::SynReceived
                 if segment.flags & SYN != 0 && segment.seq.wrapping_add(1) == flow.ack =>
             {
+                let isn = flow.isn;
+                self.control(&mut flow, SYN | ACK, isn)?;
+            }
+            Phase::SynReceived if self.config.peer_reflexive && segment.flags & (SYN | ACK) == SYN => {
+                flow.ack = segment.seq.wrapping_add(1);
                 let isn = flow.isn;
                 self.control(&mut flow, SYN | ACK, isn)?;
             }
@@ -780,6 +1052,29 @@ impl Engine {
     }
     async fn message(&mut self, message: Message) -> io::Result<()> {
         match message {
+            Message::Protect(peer, id) => {
+                *self.config.control_peer.write().unwrap() = Some(peer);
+                event(json!({"event":"protected","abi":1,"peer":peer.to_string(),"id":id}));
+            }
+            Message::Punch(peer, hello) => {
+                if !self.config.server
+                    || self.config.source.ip().is_unspecified()
+                    || *self.config.control_peer.read().unwrap() == Some(peer)
+                    || hello.len()>128 { return Ok(()); }
+                if let Some(mut flow)=self.flows.remove(&peer) {
+                    if !hello.is_empty(){self.output(&mut flow,&hello)?;}
+                    self.flows.insert(peer,flow);return Ok(());
+                }
+                if !self.admit(){return Ok(());}
+                let phase=if self.config.carrier==Carrier::Mimic{Phase::SynSent}else{Phase::Kernel};
+                let mut flow = Flow::new(self.config.source, peer, phase);
+                if !hello.is_empty(){flow.pending=Some(hello);}
+                if self.config.carrier==Carrier::Mimic {
+                    flow.seq = flow.isn.wrapping_add(1);
+                    let isn = flow.isn; self.control(&mut flow, SYN, isn)?;
+                }else{self.kernel_connect(peer,flow.generation);}
+                self.flows.insert(peer, flow);
+            }
             Message::Client(source, data) => {
                 if self.application.is_some_and(|app| app != source) {
                     return Ok(());
@@ -804,33 +1099,7 @@ impl Engine {
                         let isn = flow.isn;
                         self.control(&mut flow, SYN, isn)?;
                     } else {
-                        let tx = self.tx.clone();
-                        let local = self.config.source;
-                        self.tasks.push(tokio::spawn(async move {
-                            let result = async {
-                                let socket = TcpSocket::new_v4()?;
-                                socket.bind(local.into())?;
-                                let stream = tokio::time::timeout(
-                                    Duration::from_secs(8),
-                                    socket.connect(key.into()),
-                                )
-                                .await
-                                .map_err(|_| {
-                                    io::Error::new(
-                                        io::ErrorKind::TimedOut,
-                                        "kernel TCP handshake deadline",
-                                    )
-                                })??;
-                                prepare_system(&stream)?;
-                                Ok::<_, io::Error>(stream)
-                            }
-                            .await;
-                            let message = match result {
-                                Ok(stream) => Message::Connected(key, stream),
-                                Err(error) => Message::ConnectFailed(error.to_string()),
-                            };
-                            let _ = tx.send(message).await;
-                        }));
+                        self.kernel_connect(key,flow.generation);
                     }
                     self.flows.insert(key, flow);
                 }
@@ -841,20 +1110,30 @@ impl Engine {
                     self.flows.insert(key, flow);
                 }
             }
-            Message::ConnectFailed(reason) => return Err(io::Error::other(reason)),
-            Message::Closed(key) => {
+            Message::ConnectFailed(key,generation,reason) => {
+                event(json!({"event":"kernel-connect-failed","peer":key.to_string(),"reason":reason}));
+                if self.flows.get(&key).is_some_and(|f|f.generation==generation&&f.writer.is_none()) {
+                    self.flows.remove(&key);self.observations.remove(&key);
+                    if !self.config.server{return Err(io::Error::other(reason));}
+                }
+            },
+            Message::Closed(key,generation) => {
+                if !self.flows.get(&key).is_some_and(|flow|flow.generation==generation){return Ok(());}
+                event(json!({"event":"kernel-stream-closed","peer":key.to_string()}));
                 self.flows.remove(&key);
                 if !self.config.server {
                     return Err(io::Error::other("kernel TCP association closed"));
                 }
             }
-            Message::Connected(key, stream) => {
+            Message::Connected(key, generation, stream) => {
+                if generation.is_some_and(|expected|!self.flows.get(&key).is_some_and(|flow|flow.generation==expected)) {return Ok(());}
+
                 // No kernel application data is sent. Abortive close avoids a
                 // suppressed FIN lingering on the shared listening port after
                 // a carrier restart; raw RST notification is handled separately.
                 socket2::SockRef::from(&stream).set_linger(Some(Duration::ZERO))?;
                 socket2::SockRef::from(&stream).set_recv_buffer_size(65536)?;
-                if self.config.server && !self.admit() {
+                if self.config.server && !self.flows.contains_key(&key) && !self.admit() {
                     return Ok(());
                 }
                 let local = v4(stream.local_addr()?)?;
@@ -863,9 +1142,12 @@ impl Engine {
                     .remove(&key)
                     .unwrap_or_else(|| Flow::new(local, key, Phase::Kernel));
                 if flow.writer.is_some() {
+                    self.flows.insert(key,flow);
                     return Ok(());
                 }
                 flow.local = local;
+                event(json!({"event":"kernel-connected","peer":key.to_string(),"phase":format!("{:?}",flow.phase),"seq":flow.seq,"ack":flow.ack,"active":generation.is_some()}));
+                let generation=flow.generation;
                 let (read, write) = stream.into_split();
                 flow.writer = Some(write);
                 let tx = self.tx.clone();
@@ -877,7 +1159,7 @@ impl Engine {
                             break;
                         }
                     }
-                    let _ = tx.send(Message::Closed(key)).await;
+                    let _ = tx.send(Message::Closed(key,generation)).await;
                 }));
                 if let Some(observation) = self.observations.remove(&key) {
                     if let Some(seq) = observation.seq {
@@ -897,7 +1179,22 @@ impl Engine {
         }
         Ok(())
     }
+    fn kernel_connect(&mut self,key:SocketAddrV4,generation:u64) {
+        let tx=self.tx.clone();let local=self.config.source;
+        let assisted=self.config.protected_tcp_peer.is_some();
+        self.tasks.push(tokio::spawn(async move{
+            let result=async {
+                let socket=tcp_socket(assisted)?;socket.bind(local.into())?;
+                let stream=tokio::time::timeout(Duration::from_secs(8),socket.connect(key.into())).await
+                    .map_err(|_|io::Error::new(io::ErrorKind::TimedOut,"kernel TCP handshake deadline"))??;
+                prepare_system(&stream)?;Ok::<_,io::Error>(stream)
+            }.await;
+            let message=match result{Ok(stream)=>Message::Connected(key,Some(generation),stream),Err(error)=>Message::ConnectFailed(key,generation,error.to_string())};
+            let _=tx.send(message).await;
+        }));
+    }
     fn tick(&mut self) -> io::Result<()> {
+        self.tasks.retain(|task|!task.is_finished());
         let now = Instant::now();
         self.observations.retain(|_, o| {
             o.at.is_some_and(|at| now.duration_since(at) < Duration::from_secs(10))
@@ -908,7 +1205,7 @@ impl Engine {
             let expired = if flow.phase == Phase::Established {
                 flow.last_received.elapsed() > Duration::from_secs(180)
             } else {
-                flow.created.elapsed() > Duration::from_secs(10)
+                flow.created.elapsed() > Duration::from_secs(if self.config.peer_reflexive {40} else {10})
             };
             if expired {
                 if !self.config.server {
@@ -922,7 +1219,7 @@ impl Engine {
             if matches!(flow.phase, Phase::SynSent | Phase::SynReceived)
                 && flow.retry_at.elapsed() > Duration::from_secs(2)
             {
-                if flow.retries >= 3 {
+                if flow.retries >= if self.config.peer_reflexive {18} else {3} {
                     if !self.config.server {
                         return Err(io::Error::new(
                             io::ErrorKind::TimedOut,

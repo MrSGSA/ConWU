@@ -63,7 +63,10 @@ public sealed class TcpEndpointLease : IDisposable
         var quota = sockets.Acquire(); Socket? socket = null;
         TcpHelperLedger.Handle? accounting = null; IDisposable? observer = null;
         try {
-            socket = new Socket(local.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true };
+            // This socket carries only STUN observations. Once its final owner
+            // retires it, abort the helper connection so TIME_WAIT cannot block
+            // reopening the same source tuple after a restart or failed probe.
+            socket = new Socket(local.AddressFamily, SocketType.Stream, ProtocolType.Tcp) { ExclusiveAddressUse = true, LingerState = new(true, 0) };
             if (local.AddressFamily == AddressFamily.InterNetworkV6) socket.DualMode = false;
             try { socket.Bind(local); }
             catch (SocketException ex) when (ex.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied) { throw new TcpEndpointBusyException(local, ex); }

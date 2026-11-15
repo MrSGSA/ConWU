@@ -16,7 +16,7 @@ public sealed record StreamConnectionStatus(string Phase,string FailedAt="",stri
 
 // A bounded datagram bridge for the existing authenticating MeshLink router.
 // The loopback socket is local plumbing; all remote traffic is real TCP/TLS.
-public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposable,IMeshCarrierRoutes
+public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposable,IMeshCarrierRoutes,IMeshPunchTransport
 {
     public const int MaximumDatagram=2048;
     const string Subprotocol="conwu.stream.v1";
@@ -42,6 +42,12 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     readonly Socket? local;
     readonly TcpListener? listener;
     readonly IDisposable? listenerAccess;
+    readonly ITcpSourceMapping? sourceMapping;
+    readonly IPEndPoint bridgeTarget;
+    readonly bool bridgeServer,protocolClient,bootstrap;
+    readonly Func<X509Certificate2>? serverCertificate;
+    readonly ConcurrentDictionary<IPEndPoint,Task> punchConnections=new();
+    readonly ConcurrentDictionary<IPEndPoint,byte[]> punchGreetings=new();
     int disposed;
     string failure="",peerPin="",lastConnectionFailure="";
     StreamConnectionStatus clientConnection=new("TcpConnecting");
@@ -59,26 +65,27 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     static IEnumerable<Exception> Errors(Exception error){for(int n=0;n<4&&error!=null;n++,error=error.InnerException!)yield return error;}
 
     public StreamMeshTransport(MeshProfile mesh,IPEndPoint target,bool server,int listenPort,
-        Func<X509Certificate2>? certificate=null,bool pairingBootstrap=false,Action<IPEndPoint>? reserveEndpoint=null,Func<IDisposable>? allowListener=null,bool batchDatagrams=true,bool flowLanes=false,Func<string,StreamFlowPolicy?>? flowPolicy=null)
+        Func<X509Certificate2>? certificate=null,bool pairingBootstrap=false,Action<IPEndPoint>? reserveEndpoint=null,Func<IDisposable>? allowListener=null,bool batchDatagrams=true,bool flowLanes=false,Func<string,StreamFlowPolicy?>? flowPolicy=null,ITcpSourceMapping? sourceMapping=null,bool deferConnect=false)
     {
         if(!TransportModes.Stream(mesh.Pair.Mode))throw new ArgumentException("真实流传输需要 TCP 或 HTTPS 模式");
         https=mesh.Pair.Mode=="https";
         this.batchDatagrams=batchDatagrams;
         this.mesh=mesh;this.flowLanes=flowLanes;
+        this.sourceMapping=sourceMapping;bridgeTarget=target;bridgeServer=server;
+        protocolClient=!server||sourceMapping!=null&&!mesh.IsOwner;bootstrap=pairingBootstrap;serverCertificate=certificate;
         this.flowPolicy=flowPolicy??(network=>network==mesh.Pair.Network?new(mesh,flowLanes):null);
-        if(https&&server&&certificate==null)throw new ArgumentException("HTTPS 监听缺少证书");
-        if(https&&!server&&!pairingBootstrap&&mesh.Pair.TransportKeyPin?.Length!=64)throw new IOException("HTTPS 对端尚未通过配对绑定证书身份");
+        if(https&&!protocolClient&&certificate==null)throw new ArgumentException("HTTPS 监听缺少证书");
+        if(https&&protocolClient&&!pairingBootstrap&&mesh.Pair.TransportKeyPin?.Length!=64)throw new IOException("HTTPS 对端尚未通过配对绑定证书身份");
         try{
-            if(server){
-                listener=new(IPAddress.Any,listenPort);
+            if(!server){local=LocalSocket();ClientEndpoint=(IPEndPoint)local.LocalEndPoint!;reserveEndpoint?.Invoke(ClientEndpoint);}
+            if(server||sourceMapping!=null){
+                listener=new(sourceMapping?.LocalEndpoint??new IPEndPoint(IPAddress.Any,listenPort));
                 // A retained TCP STUN flow uses this same local port. Ownership
                 // is coordinated by the device workspace, never by raw filters.
                 listener.Server.ExclusiveAddressUse=false;
                 listener.Server.SetSocketOption(SocketOptionLevel.Socket,SocketOptionName.ReuseAddress,true);
                 listener.Start(32);listenerAccess=allowListener?.Invoke();lifetime=Accept(target,certificate);
             }else{
-                local=LocalSocket();ClientEndpoint=(IPEndPoint)local.LocalEndPoint!;
-                reserveEndpoint?.Invoke(ClientEndpoint);
                 lifetime=Connect(mesh,target,pairingBootstrap);
             }
         }catch{local?.Dispose();listener?.Stop();listenerAccess?.Dispose();stop.Dispose();throw;}
@@ -101,7 +108,15 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     {
         int waiting=1;
         void Authenticated(){if(Interlocked.Exchange(ref waiting,0)==1)Interlocked.Decrement(ref pendingHandshakes);}
-        try{await Bridge(tcp,null,target,certificate,null,false,authenticated:Authenticated);}
+        try{
+            if(sourceMapping!=null){
+                using var accepted=bridgeServer?LocalSocket():null;
+                var peer=(IPEndPoint)tcp.Client.RemoteEndPoint!;
+                await Bridge(tcp,bridgeServer?accepted:local,bridgeServer?target:null,certificate,
+                    protocolClient?(peer,mesh.Pair.TransportKeyPin??""):null,bootstrap,authenticated:Authenticated,
+                    greeting:punchGreetings.GetValueOrDefault(peer));
+            }else await Bridge(tcp,null,target,certificate,null,false,authenticated:Authenticated);
+        }
         catch(Exception ex)when(ex is TimeoutException or IOException or SocketException or OperationCanceledException or AuthenticationException or WebSocketException or ObjectDisposedException){if(!stop.IsCancellationRequested)Volatile.Write(ref lastConnectionFailure,FailureDetails(ex));}
         finally{Authenticated();}
     }
@@ -121,7 +136,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
     }
     public static string CertificatePin(X509Certificate2 certificate)=>Convert.ToHexString(SHA256.HashData(certificate.PublicKey.ExportSubjectPublicKeyInfo()));
     static bool ValidCertificate(X509Certificate2 certificate)=>certificate.NotBefore.ToUniversalTime()<=DateTime.UtcNow&&certificate.NotAfter.ToUniversalTime()>DateTime.UtcNow;
-    async Task Bridge(TcpClient tcp,Socket? udp,IPEndPoint? fixedReceiver,Func<X509Certificate2>? certificate,(IPEndPoint Target,string Pin)? remote,bool bootstrap,StreamFlowSession? group=null,int lane=0,Action? authenticated=null)
+    async Task Bridge(TcpClient tcp,Socket? udp,IPEndPoint? fixedReceiver,Func<X509Certificate2>? certificate,(IPEndPoint Target,string Pin)? remote,bool bootstrap,StreamFlowSession? group=null,int lane=0,Action? authenticated=null,byte[]? greeting=null)
     {
         using var connection=group==null?CancellationTokenSource.CreateLinkedTokenSource(stop.Token):CancellationTokenSource.CreateLinkedTokenSource(stop.Token,group.Token);
         Stream stream=tcp.GetStream();SslStream? tls=null;WebSocket? web=null;
@@ -164,6 +179,7 @@ public sealed partial class StreamMeshTransport : IMeshTransport,IAsyncDisposabl
             }
             BatchingEnabled=framedBatch;
             using var wire=new StreamFlowWire(this,tcp,stream,web,framedBatch);
+            if(greeting is {Length:>0})await wire.Write([greeting],connection.Token);
             if(remote!=null&&group==null)ClientPhase("Ready");
             await RunStream(wire,udp,fixedReceiver,remote,bootstrap,group,lane,authenticated,connection.Token);
         }finally{web?.Dispose();tls?.Dispose();}

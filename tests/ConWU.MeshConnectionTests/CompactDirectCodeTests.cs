@@ -10,6 +10,28 @@ static partial class Program
         var imported=CompactDirectCode.Import(vector);
         Check(imported==new CompactDirectCode("203.0.113.10:42000","faketcp","123456"),"sixteen symbols contain endpoint, protocol and room locator without a directory lookup");
         Check(CompactDirectCode.Import(" 5jrO e45a-84Oy-4gi2 ")==imported,"manual input accepts grouping, case and Crockford O/I aliases");
+        var punchText=CompactDirectCode.Issue("203.0.113.10:42000","mimic","000123",true);
+        var punch=CompactDirectCode.Import(punchText.ToLowerInvariant());
+        Check(punchText.Length==19&&punch.Mode=="mimic"&&punch.PunchDiscovery&&punch.RoomCode=="000123"&&punch.Endpoint=="203.0.113.10:42000",
+            "a distinct protocol header opts into first-contact discovery without lengthening the sixteen-symbol code");
+        Check(!CompactDirectCode.Import(CompactDirectCode.Issue(punch.Endpoint,"mimic",punch.RoomCode)).PunchDiscovery,
+            "ordinary Mimic invitations do not silently activate public discovery");
+        var assisted=CompactDirectCode.Import(CompactDirectCode.Issue("8.8.8.8:1145","mimic","001234",coordinatorPunch:true));
+        Check(assisted.CoordinatorPunch&&!assisted.PunchDiscovery&&assisted.Mode=="mimic"&&assisted.RoomCode=="001234"&&assisted.Endpoint=="8.8.8.8:1145",
+            "a separate sixteen-symbol header locates a coordinator assistance room without mixing PKARR or changing ordinary invitations");
+        foreach(string mode in new[]{"faketcp","phantun","mimic","tcpraw","tcp","https"}){
+            var text=CompactDirectCode.Issue("8.8.4.4:1145",mode,"000019",coordinatorPunch:true);
+            var parsed=CompactDirectCode.Import(text);
+            Check(text.Length==19&&parsed.CoordinatorPunch&&!parsed.PunchDiscovery&&parsed.Mode==mode&&parsed.RoomCode=="000019"&&parsed.Endpoint=="8.8.4.4:1145","coordinator code preserves "+mode+" without a longer invitation");
+            var excluded=new DeviceProfile{ConnectionSource="existing",CoordinationService="https://8.8.8.8:1145/"};excluded.SelectTransport(mode+"-only");
+            Check(PunchAssistProtocol.StunServer(excluded)==null,mode+" existing entry does not start coordinated autonomous observation");
+        }
+        var existing=new DeviceProfile{ConnectionSource="existing",CoordinationService="https://8.8.8.8:1145/"};existing.SelectTransport("mimic-only");
+        Check(PunchAssistProtocol.StunServer(existing)==null,"existing-entry profiles never add a coordinator observation or autonomous probe");
+        Check(CompactPunchDiscovery.Seed(punch)==CompactPunchDiscovery.Seed(CompactDirectCode.Import(punchText.Replace("-",""))),
+            "manual grouping and case select the same temporary candidate mailbox");
+        Check(CompactPunchDiscovery.Seed(punch)!=CompactPunchDiscovery.Seed(punch with{RoomCode="000124"}),
+            "a fresh invitation room uses a separate candidate mailbox");
         foreach(string mode in new[]{"faketcp","udp"})foreach(string endpoint in new[]{"1.0.0.1:1","223.255.255.254:65535","10.171.139.1:44680"})foreach(string room in new[]{"000000","000001","999999"}){
             var code=CompactDirectCode.Issue(endpoint,mode,room);
             Check(code.Length==19&&code.Count(c=>c=='-')==3&&CompactDirectCode.Import(code)==new CompactDirectCode(endpoint,mode,room),"compact code round-trips address and port boundaries, protocol and leading-zero locators");

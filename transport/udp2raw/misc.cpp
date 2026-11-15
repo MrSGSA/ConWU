@@ -11,6 +11,10 @@
 #include "network.h"
 #include "connection.h"
 #include "fd_manager.h"
+#ifdef UDP2RAW_NATIVE
+#include <windows.h>
+#include <filesystem>
+#endif
 
 int hb_mode = 1;
 int hb_len = 1200;
@@ -199,14 +203,43 @@ void print_help() {
     // printf("common options,these options must be same on both side\n");
 }
 
+#ifdef UDP2RAW_NATIVE
+static void open_native_config(std::ifstream &stream, const char *file_name)
+{
+    // main() receives the Windows CRT code page. Resolve the wide absolute
+    // path, then use an extended path without requiring a machine-wide policy
+    // or a short TEMP directory. Session paths can exceed MAX_PATH.
+    int count = MultiByteToWideChar(CP_ACP, 0, file_name, -1, nullptr, 0);
+    if (count <= 0) { errno = EINVAL; return; }
+    std::wstring name(count, L'\0');
+    if (!MultiByteToWideChar(CP_ACP, 0, file_name, -1, name.data(), count)) { errno = EINVAL; return; }
+    DWORD length = GetFullPathNameW(name.c_str(), 0, nullptr, nullptr);
+    if (!length) { errno = EINVAL; return; }
+    std::wstring absolute(length, L'\0');
+    DWORD written = GetFullPathNameW(name.c_str(), length, absolute.data(), nullptr);
+    if (!written || written >= length) { errno = EINVAL; return; }
+    absolute.resize(written);
+    if (absolute.rfind(L"\\\\?\\", 0) != 0) {
+        absolute = absolute.rfind(L"\\\\", 0) == 0
+            ? L"\\\\?\\UNC\\" + absolute.substr(2) : L"\\\\?\\" + absolute;
+    }
+    stream.open(std::filesystem::path(absolute));
+}
+#endif
+
 int load_config(char *file_name, int &argc, vector<string> &argv)  // load conf file and append to argv
 {
     // Load configurations from config_file instead of the command line.
     // See config.example for example configurations
-    std::ifstream conf_file(file_name);
+    std::ifstream conf_file;
+#ifdef UDP2RAW_NATIVE
+    open_native_config(conf_file, file_name);
+#else
+    conf_file.open(file_name);
+#endif
     std::string line;
-    if (conf_file.fail()) {
-        mylog(log_fatal, "conf_file %s open failed,reason :%s\n", file_name, get_sock_error());
+    if (!conf_file.is_open() || conf_file.fail()) {
+        mylog(log_fatal, "conf_file %s open failed,reason :%s\n", file_name, strerror(errno));
         myexit(-1);
     }
     while (std::getline(conf_file, line)) {

@@ -1,4 +1,4 @@
-using System.Security.Cryptography;
+﻿using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
 using System.Text.Json;
@@ -35,13 +35,15 @@ public sealed class CoordinationHost : IAsyncDisposable
     readonly FileStream lease;
     readonly X509Certificate2? certificate;
     readonly CoordinatorClients clients;
+    readonly PunchAssistSessions punchAssist;
+    public PunchAssistStatus PunchAssist=>punchAssist.Status;
     public string InstanceId { get; }
     public DateTimeOffset? CertificateExpires => certificate == null ? null : new DateTimeOffset(certificate.NotAfter.ToUniversalTime());
     public string CertificatePin=>certificate==null?"":Convert.ToHexString(SHA256.HashData(certificate.RawData));
     public bool IsStopping => app.Lifetime.ApplicationStopping.IsCancellationRequested || app.Lifetime.ApplicationStopped.IsCancellationRequested;
     public CoordinatorClientDto[] Clients => clients.Snapshot();
-    CoordinationHost(WebApplication app, LinuxSynCapture? capture, FileStream lease, X509Certificate2? certificate, string instanceId,CoordinatorClients clients) {
-        this.app = app; this.capture = capture; this.lease = lease; this.certificate = certificate; InstanceId = instanceId;this.clients=clients;
+    CoordinationHost(WebApplication app, LinuxSynCapture? capture, FileStream lease, X509Certificate2? certificate, string instanceId,CoordinatorClients clients,PunchAssistSessions punchAssist) {
+        this.app = app; this.capture = capture; this.lease = lease; this.certificate = certificate; InstanceId = instanceId;this.clients=clients;this.punchAssist=punchAssist;
     }
     public Task Start(CancellationToken token = default) => app.StartAsync(token);
     public Task Run(CancellationToken token = default) => app.RunAsync(token);
@@ -63,6 +65,7 @@ builder.Services.AddRateLimiter(o => {
     o.AddPolicy("pair-create", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     o.AddPolicy("pair-join", c => RateLimitPartition.GetFixedWindowLimiter(ClientAddress(c), _ => new() { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     o.AddPolicy("pair-room", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["room"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    o.AddPolicy("punch-room", c => RateLimitPartition.GetFixedWindowLimiter(c.Request.RouteValues["room"]?.ToString() ?? "unknown", _ => new() { PermitLimit = 512, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
 });
 string ClientAddress(HttpContext c) => options.TrustCloudflare && c.Connection.RemoteIpAddress is { } address && System.Net.IPAddress.IsLoopback(address) && System.Net.IPAddress.TryParse(c.Request.Headers["CF-Connecting-IP"].ToString(), out var forwarded) ? forwarded.ToString() : c.Connection.RemoteIpAddress?.ToString() ?? "unknown";
 options.Validate();
@@ -84,6 +87,7 @@ if (options.ListenUrl != null) {
             throw new IOException("协调 HTTPS 证书尚未生效、已经过期或缺少私钥，请检查证书及系统时间");
     }
     builder.WebHost.ConfigureKestrel(k => k.Listen(System.Net.IPAddress.Parse(listen.Host.Trim('[', ']')), listen.Port, endpoint => {
+        endpoint.Use(next=>connection=>TcpStunAssistance.Handle(connection,next));
         if (certificate != null) endpoint.UseHttps(certificate);
     }));
 }
@@ -146,6 +150,18 @@ IResult Exchange(HttpContext ctx, string network, int slot, Envelope? envelope)
     }
 }
 var clients = new CoordinatorClients();
+var punchAssist=new PunchAssistSessions();
+IResult Assist(Func<System.Net.IPAddress,PunchAssistState> operation,HttpContext context){
+    if(context.Connection.RemoteIpAddress is not {} source)return Results.BadRequest();
+    try{return Results.Json(operation(source));}
+    catch(FormatException){return Results.BadRequest();}
+    catch(UnauthorizedAccessException){return Results.Unauthorized();}
+    catch(KeyNotFoundException){return Results.NotFound();}
+    catch(IOException){return Results.Conflict(new{error="punch-session-unavailable"});}
+}
+app.MapPost("/v1/punch-assist/create",(HttpContext c,PunchAssistCreate input)=>Assist(source=>punchAssist.Create(input,source),c)).RequireRateLimiting("pair-create");
+app.MapPost("/v1/punch-assist/join",(HttpContext c,PunchAssistJoin input)=>Assist(source=>punchAssist.Join(input,source),c)).RequireRateLimiting("pair-join");
+app.MapPost("/v1/punch-assist/{room}",(HttpContext c,string room,PunchAssistUpdate input)=>Assist(source=>punchAssist.Update(room,input,source),c)).RequireRateLimiting("punch-room");
 var pairRooms = new PairRooms(clients:clients);
 var meshRegistry = new MeshRegistry(root,clients);
 TcpSynObserver? synObserver = null;
@@ -166,6 +182,8 @@ if (!string.IsNullOrWhiteSpace(observerConfig)) {
     }
 }
 app.MapPost("/v3/mesh/{network}/tcp-observer", (HttpContext c, string network, TcpObserverRequest request) => meshRegistry.TcpObservation(c, network, request, synObserver)).RequireRateLimiting("mesh");
+app.MapPost("/v3/mesh/{network}/mimic-assist",(HttpContext c,string network,MimicAssistRequest request)=>meshRegistry.MimicAssist(c,network,request)).RequireRateLimiting("mesh");
+app.MapPost("/v3/mesh/{network}/tcp-assist",(HttpContext c,string network,MimicAssistRequest request)=>meshRegistry.MimicAssist(c,network,request)).RequireRateLimiting("mesh");
 app.MapGet("/v3/mesh/{network}", (HttpContext c, string network) => meshRegistry.Read(c, network)).RequireRateLimiting("mesh");
 app.MapPost("/v3/mesh/{network}/watch", (HttpContext c, string network, MeshWatchRequest request) => meshRegistry.Watch(c, network, request)).RequireRateLimiting("mesh");
 app.MapPost("/v3/mesh/{network}/traversal", (HttpContext c, string network, MeshTraversalBatch input) => meshRegistry.Traversal(c, network, input)).RequireRateLimiting("mesh");
@@ -178,7 +196,7 @@ string instanceId = Guid.NewGuid().ToString("N");
 app.MapGet("/health", (HttpContext context) => {
     string challenge = context.Request.Query["challenge"].ToString();
     if (challenge.Length != 0 && !Regex.IsMatch(challenge, "^[a-f0-9]{32}$")) return Results.BadRequest();
-    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, pairNetworks=1,nodeIdentity=1,integratedCoordinator = 1, entryLookup = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, maxMembers = MeshIdentity.MaxMembers, relay = false });
+    return Results.Json(new { service = "StreamLink coordination", protocol = 3, metadataProtocol = 2, shortPairing = true, pairingDecisions = 1, memberRejoin = 1, meshAddressing = 1, meshProtocol = 4, meshGovernance = 1, pairNetworks=1,nodeIdentity=1,integratedCoordinator = 1, entryLookup = 1, instanceId, challenge, meshWatch = 1, meshTraversal = 1, tcpSynObserver = synObserver?.Available == true ? 1 : 0, punchAssist=1,punchModes=new[]{"faketcp","phantun","mimic","tcpraw","tcp","https"},punchTcpStun=options.ListenUrl!=null?1:0,maxMembers = MeshIdentity.MaxMembers, relay = false });
 });
 app.MapPost("/v2/pair", (PairRoomCreate input) => pairRooms.Create(input)).RequireRateLimiting("pair-create");
 app.MapPost("/v2/pair/join", (PairRoomJoin input) => pairRooms.Join(input)).RequireRateLimiting("pair-join");
@@ -192,7 +210,7 @@ app.MapPost("/v2/pair/{room}/reject", (HttpContext c,string room) => pairRooms.E
 app.MapPost("/v2/pair/{room}/guest/cancel", (HttpContext c,string room) => pairRooms.Exchange(c,room,false,finish:true)).RequireRateLimiting("pair-room");
 app.MapGet("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot) => Exchange(c, network, slot, null)).RequireRateLimiting("metadata");
 app.MapPut("/v1/{network}/{slot:int}", (HttpContext c, string network, int slot, Envelope envelope) => Exchange(c, network, slot, envelope)).RequireRateLimiting("metadata");
-return new(app, synCapture, lease, certificate, instanceId,clients);
+return new(app, synCapture, lease, certificate, instanceId,clients,punchAssist);
         } catch {
             try { if (ownedCapture != null) ownedCapture.DisposeAsync().AsTask().GetAwaiter().GetResult(); }
             finally { try { if (built != null) built.DisposeAsync().AsTask().GetAwaiter().GetResult(); } finally { certificate?.Dispose(); lease.Dispose(); } }

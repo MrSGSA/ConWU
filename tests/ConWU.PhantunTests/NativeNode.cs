@@ -55,6 +55,7 @@ static class NativeNode
         var adapters=new Adapter[2];var routers=new MeshRouter[2];var transports=new IMeshTransport?[2];
         var native=new List<PacketCarrierTransport>();using var shared=new SharedMeshReceiver(root);
         int serverStarts=0;
+        var oneSequences=new long[2];
         int Peer(int index)=>input.Meshes[index].Directory!.Members.Single(m=>m.Slot!=input.Meshes[index].Self.Slot).Slot;
         void OpenClient(int index){
             var mesh=input.Meshes[index];var transport=new PacketCarrierTransport(input.Components,root,mesh,new(IPAddress.Parse(input.HostIp),input.Port),false,input.Port,"info");
@@ -97,6 +98,12 @@ static class NativeNode
                     }
                     case "release":{
                         transports[index]?.Dispose();transports[index]=null;routers[index].FailLegacyListener();Print(new{eventName="released",index,status=Status()});break;
+                    }
+                    case "send-one":{
+                        var mesh=input.Meshes[index];string peer=MeshAddressing.Address(mesh.Pair.Network,mesh.Directory!.Members.Single(m=>m.Slot!=mesh.Self.Slot));
+                        byte[] packet=Packet(mesh.LocalIp,peer);BinaryPrimitives.WriteInt64LittleEndian(packet.AsSpan(28),++oneSequences[index]);
+                        BinaryPrimitives.WriteInt64LittleEndian(packet.AsSpan(36),Stopwatch.GetTimestamp());
+                        Print(new{eventName="sent-one",index,admitted=adapters[index].Offer(packet)});break;
                     }
                     case "send":{
                         int seconds=command.GetProperty("seconds").GetInt32(),mbps=command.GetProperty("mbps").GetInt32();

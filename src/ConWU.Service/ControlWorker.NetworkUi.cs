@@ -89,6 +89,8 @@ public sealed partial class ControlWorker
     }catch(Exception ex)when(ex is FormatException or IOException or CryptographicException){return ex.Message;} }
     void ResetUiPair(string state)
     {
+        StopCompactPunch();
+        uiCompactPunch=false;
         StopEntryBackupPublication();
         uiBackupExpected=null;
         uiRoom = null; uiRoomState = null; uiRevealed = false; uiPendingInvite = ""; uiPendingCipher=""; uiApprovalCode=""; uiRejoinLocator=""; uiApprovalExpected=null;uiExpectedRejoin=null;
@@ -326,6 +328,7 @@ public sealed partial class ControlWorker
                         var guestMesh=DirectInvitation.Import(issued).Mesh;
                         var member=guestMesh.Self;
                         admitted.PkarrPeers=[new(admitted.Mesh.Pair.Network,member.Slot,member.Device,member.SigningKey,PkarrPacket.Source(PkarrRendezvous.MemberSeed(guestMesh)))];
+                        if(uiCompactPunch)admitted.PkarrStateVersion=1;
                     }
                     if(prior!=null){
                         int nextSlot=admitted.Mesh.Directory!.NextSlot-1;
@@ -610,6 +613,7 @@ public sealed partial class ControlWorker
             var owner=mesh.Directory!.Members.Single(m=>m.Slot==mesh.IntroducerSlot);
             var source=(receivedSettings?.Entries??next.JoinedEntrySources).FirstOrDefault(e=>ExistingEntryResolver.Kind(e.Source)=="PKARR")?.Source;
             if(source!=null)next.PkarrPeers=[new(mesh.Pair.Network,owner.Slot,owner.Device,owner.SigningKey,source)];
+            if(uiCompactPunch&&source!=null)next.PkarrStateVersion=1;
         }
         next.ExistingEntries=RuntimeEntries(next);
         next.Validate(); await PersonalPacketAdapters.Preflight(next, token);

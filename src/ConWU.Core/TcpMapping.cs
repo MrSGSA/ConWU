@@ -60,14 +60,15 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         log($"TCP helper 独占资源 lease={owner.LeaseId:N} generation={owner.Generation:N} local={owner.Local} reflector={owner.Reflector}");
     }
 
-    public static Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false)
-        =>Create(sourcePort,targetPort,log,token,servers,owner,portControl,Upnp.DiscoverServices);
+    public static Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers = null, string? owner = null, bool portControl = false,Action<EntryProbeProgress>? progress=null)
+        =>Create(sourcePort,targetPort,log,token,servers,owner,portControl,Upnp.DiscoverServices,progress);
     internal static async Task<TcpMapping> Create(int sourcePort, int targetPort, Action<string> log, CancellationToken token, string[]? servers, string? owner, bool portControl,
-        Func<IPAddress,CancellationToken,IAsyncEnumerable<RouterService>> discover)
+        Func<IPAddress,CancellationToken,IAsyncEnumerable<RouterService>> discover,Action<EntryProbeProgress>? progress=null)
     {
         if (sourcePort == targetPort || sourcePort is < 1024 or > 65535 || targetPort is < 1024 or > 65535) throw new ArgumentException("探测源端口和传输端口必须是不同的非特权端口");
         if (owner != null && !Guid.TryParseExact(owner, "N", out _)) throw new ArgumentException("映射所有者无效");
         var timeline = new ConnectionTimeline(log);
+        progress?.Invoke(new("StunQuery","正在查询 TCP STUN，保留实际探测源端口"));
         var (binding, result) = await TcpBinding.ConnectAvailable(sourcePort,targetPort,null,log,token,servers);
         sourcePort=result.Local.Port;
         timeline.Mark("TCP STUN 建连与查询完成");
@@ -75,6 +76,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
         {
             log($"TCP STUN 返回 {result.Public}，正在发现路由器；尚未确认入站可达");
             Exception? last = null;
+            progress?.Invoke(new("GatewayDiscovery","已取得 STUN 候选，正在发现本层网关"));
             await foreach (var service in discover(result.Local.Address, token))
             {
                 timeline.Mark("发现路由器候选，立即尝试租约");
@@ -83,6 +85,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
                 bool added = false;
                 try
                 {
+                    progress?.Invoke(new("GatewayMapping","正在申请探测端口到接收端口的 UPnP 转发"));
                     await router.Add(rule, token); added = true;
                     result = await binding.Pulse(token);
                     timeline.Mark("路由器租约与映射复核完成");
@@ -97,6 +100,7 @@ public sealed class TcpMapping : IMapping, IMappingRefresh
                 }
             }
             if (portControl) {
+                progress?.Invoke(new("PortControl","正在请求保留探测端口的 PCP／NAT-PMP 映射"));
                 log("原有 UPnP 入口不可用，后台尝试本地网关 PCP；仅在明确版本响应后尝试 NAT-PMP");
                 using var mappedStop = CancellationTokenSource.CreateLinkedTokenSource(token);
                 var creating = PortControlLease.Create(result.Local.Address, targetPort, sourcePort, PortMappingProtocol.Tcp, mappedStop.Token);

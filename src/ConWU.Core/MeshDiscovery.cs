@@ -91,6 +91,7 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
     {
         profile.Validate(); this.profile = profile;
         string service=serviceOverride??profile.Pair.Service,pin=pinOverride??profile.Pair.CertificatePin;
+        mimicAssistService=service;mimicAssistPin=pin;
         Pairing.Create(service,pin).Validate();
         var handler = new HttpClientHandler { UseProxy = false, AllowAutoRedirect = false };
         if (pin.Length > 0) handler.ServerCertificateCustomValidationCallback = (_, cert, _, _) => cert != null && DateTime.UtcNow >= cert.NotBefore.ToUniversalTime() && DateTime.UtcNow <= cert.NotAfter.ToUniversalTime() && CryptographicOperations.FixedTimeEquals(SHA256.HashData(cert.RawData), Convert.FromHexString(pin));
@@ -176,5 +177,5 @@ public sealed partial class MeshDiscoveryClient : IMeshDiscovery, IMeshChangeDis
         using var response = await http.PostAsJsonAsync($"v3/mesh/{profile.Pair.Network}/traversal", new MeshTraversalBatch(messages), token);
         response.EnsureSuccessStatusCode();
     }
-    public void Dispose() { http.Dispose(); watchHttp.Dispose(); }
+    public void Dispose() { http.Dispose(); watchHttp.Dispose();mimicAssistHttp?.Dispose(); }
 }

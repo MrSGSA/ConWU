@@ -17,6 +17,9 @@ def main():
     parser.add_argument("--host", choices=["windows", "linux"], required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--distro", default="ArchLinux")
+    parser.add_argument("--mbps", type=int, choices=range(1,51), default=35)
+    parser.add_argument("--seconds", type=int, choices=range(1,21), default=3)
+    parser.add_argument("--functional-only", action="store_true", help="verify one packet at a time instead of running the synthetic throughput workload")
     parser.add_argument("--standard-wsl-mtu", action="store_true", help="temporarily use MTU 1500 on the development WSL eth0; always restore")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent.parent
@@ -32,14 +35,14 @@ def main():
     windows_ip = json.loads(run([*wsl, "ip", "-j", "-4", "route", "show", "default"]))[0]["gateway"]
     linux_root = run([*wsl, "wslpath", "-a", root.as_posix()]).strip()
     win_app = ["dotnet", str(root / "tests/ConWU.PhantunTests/bin/Release/net10.0/ConWU.PhantunTests.dll")]
-    linux_app = [*wsl, linux_root + "/out/raw-carrier-lab/linux/StreamLink.PhantunTests"]
+    linux_app = [*wsl, linux_root + "/out/tcp-assist-lab/linux/ConWU.PhantunTests"]
     identities = json.loads(run([*win_app, "--identities", args.carrier]))
     host_ip = linux_ip if args.host == "linux" else windows_ip
     nodes = []
     original_mtu = json.loads(run([*wsl, "ip", "-j", "link", "show", "dev", "eth0"]))[0]["mtu"]
     mtu_changed = False
     report = {"status": "Running", "carrier": args.carrier, "host": args.host,
-              "scope": "Windows/WSL virtual LAN; synthetic memory-adapter traffic; no WAN QoS claim", "measurements": []}
+              "scope": "Windows/WSL virtual LAN; memory adapters; no WAN QoS claim", "functionalOnly": args.functional_only, "measurements": []}
     def save():
         (output / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
     def healthy():
@@ -51,6 +54,22 @@ def main():
             time.sleep(.1)
         report["lastStates"] = states
         raise RuntimeError("native carrier did not establish authenticated routes")
+    def deliver(sender_index,network,count):
+        receiver=nodes[1-sender_index]
+        receiver.request("reset")
+        for expected in range(1,count+1):
+            if not nodes[sender_index].request("send-one",index=network)["admitted"]:
+                raise AssertionError("functional fixture adapter rejected its single packet")
+            deadline=time.monotonic()+3
+            while True:
+                states=receiver.request("status")["status"]["networks"]
+                stats=states[network]["adapter"]
+                if stats["unique"]==expected:break
+                if time.monotonic()>=deadline:raise AssertionError("functional packet was not delivered")
+                time.sleep(.02)
+            if stats["invalid"] or stats["duplicates"] or states[1-network]["adapter"]["received"]:
+                raise AssertionError("functional packet crossed a network or failed content validation")
+        return {"sender":"host" if sender_index==0 else "guest","network":network,"sent":count,"received":stats["unique"],"invalid":stats["invalid"],"otherNetworkReceived":states[1-network]["adapter"]["received"]}
     try:
         if args.standard_wsl_mtu and original_mtu != 1500:
             run([*wsl, "ip", "link", "set", "dev", "eth0", "mtu", "1500"])
@@ -59,16 +78,20 @@ def main():
         for index, role in enumerate(["owners", "guests"]):
             linux = (args.host == "linux") == (index == 0)
             config = {"Host": index == 0, "Meshes": identities[role], "Mode": args.carrier,
-                      "Components": linux_root + "/out/raw-carrier-lab/linux/components" if linux else str(root / "out/raw-carrier-lab/components"),
+                      "Components": linux_root + "/out/tcp-assist-lab/components-linux" if linux else str(root / "out/raw-carrier-lab/components"),
                       "HostIp": host_ip, "Port": 49275}
             nodes.append(lab.Node([*(linux_app if linux else win_app), "--node"], config, output / (role + ".log")))
         report["connected"] = healthy()
         original_server = report["connected"][0]["nativePids"]
         for sender_index in [0, 1]:
             for network in [0, 1]:
+                if args.functional_only:
+                    row=deliver(sender_index,network,8)
+                    report["measurements"].append(row);save();print(json.dumps(row),flush=True)
+                    continue
                 receiver = nodes[1-sender_index]
                 receiver.request("reset")
-                measured = nodes[sender_index].request("send", index=network, mbps=35, seconds=3)
+                measured = nodes[sender_index].request("send", index=network, mbps=args.mbps, seconds=args.seconds)
                 deadline = time.monotonic() + 3
                 while True:
                     states = receiver.request("status")["status"]["networks"]
@@ -89,6 +112,8 @@ def main():
             nodes[1].request("resume", index=0)
             if healthy()[0]["nativePids"] != original_server:
                 raise AssertionError("guest reconnect replaced shared host")
+            if args.functional_only:
+                for sender_index in (0,1):deliver(sender_index,0,2)
         report["reconnects"] = 3
         report["status"] = "Pass"
     except Exception as error:

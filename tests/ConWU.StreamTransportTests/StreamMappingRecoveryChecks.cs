@@ -103,6 +103,13 @@ static class StreamMappingRecoveryChecks
 
         await using (var mapping = await StreamMapping.Create(port, _ => { }, token,
             [first.Address, backup.Address], false, options:new(false, TimeSpan.FromMilliseconds(75)))) {
+            var guardEntered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var guardRelease=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            int backupBeforeGuard=Volatile.Read(ref backup.Requests);
+            ((StreamMapping)mapping).BeforeControlConnect=async(peer,ct)=>{
+                check(peer.ToString()==backup.Address,"recovery protects the exact newly selected STUN tuple");
+                guardEntered.TrySetResult();await guardRelease.Task.WaitAsync(ct);
+            };
             var maintaining = mapping.Maintain(token);
             var replaced = new TaskCompletionSource<IPEndPoint>(TaskCreationOptions.RunContinuationsAsynchronously);
             bool validAtChange = false;
@@ -112,6 +119,9 @@ static class StreamMappingRecoveryChecks
             await Until(() => !mapping.IsValid, token);
             check(!maintaining.IsCompleted && !listener.Exited && await RoundTrip(),
                 "a closed TCP STUN flow invalidates its candidate while the mapping owner, listener and existing connection continue");
+            await guardEntered.Task.WaitAsync(TimeSpan.FromSeconds(9),token);
+            check(Volatile.Read(ref backup.Requests)==backupBeforeGuard&&!listener.Exited&&await RoundTrip(),"replacement STUN cannot connect before its raw-capture protection is acknowledged; business remains available");
+            guardRelease.TrySetResult();
             var endpoint = await replaced.Task.WaitAsync(TimeSpan.FromSeconds(9), token);
             check(endpoint.Port == 48001 && mapping.IsValid && validAtChange && ((StreamMapping)mapping).StunServer == backup.Address,
                 "TCP reflection recovers automatically through a configured backup and publishes a validated replacement candidate");

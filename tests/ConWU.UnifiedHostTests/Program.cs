@@ -10,6 +10,7 @@ if(args is ["--wal-foreground"]){ForegroundWalRecoveryTests.Run();return;}
 int count=0;
 void Check(bool condition,string name){if(!condition)throw new Exception(name);count++;Console.WriteLine("PASS "+name);}
 void Invalid(Action action,string name){try{action();}catch(Exception ex)when(ex is FormatException or ArgumentException or IOException){Check(true,name);return;}throw new Exception("accepted: "+name);}
+if(args is ["--punch-assist"]){await PunchAssistanceTests.Run(Check);Console.WriteLine($"PASS {count} coordinator assistance checks; isolated fixtures, not strict-NAT WAN acceptance");return;}
 var owner=MeshIdentity.Create("https://coord.example.test/","","faketcp");
 MeshGovernance.Enable(owner);
 var guest=MeshIdentity.Import(MeshIdentity.Export(MeshIdentity.Issue(owner)));

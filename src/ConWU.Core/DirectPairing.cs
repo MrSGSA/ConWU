@@ -160,8 +160,8 @@ public sealed class DirectPairHost : IShortPairClient
 
 public sealed class DirectPairClient : IShortPairClient
 {
-    public string PeerCertificatePin=>transport is StreamMeshTransport stream?stream.PeerCertificatePin:"";
-    public StreamConnectionStatus? StreamConnection=>transport is StreamMeshTransport stream?stream.ClientConnection:null;
+    public string PeerCertificatePin=>transport is IPairTransportIdentity identity?identity.PeerCertificatePin:transport is StreamMeshTransport stream?stream.PeerCertificatePin:"";
+    public StreamConnectionStatus? StreamConnection=>transport is IPairTransportIdentity identity?identity.StreamConnection:transport is StreamMeshTransport stream?stream.ClientConnection:null;
     IOException Unanswered()
     {
         var connection=StreamConnection;string stage=connection?.Phase=="Failed"?connection.FailedAt:connection?.Phase??"";

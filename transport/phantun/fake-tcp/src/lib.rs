@@ -119,6 +119,7 @@ pub struct Socket {
     ack: AtomicU32,
     last_ack: AtomicU32,
     state: State,
+    handshake_ack: u32,
 }
 
 /// A socket that represents a unique TCP connection between a server and client.
@@ -129,6 +130,8 @@ pub struct Socket {
 /// To close a TCP connection that is no longer needed, simply drop this object
 /// out of scope.
 impl Socket {
+    pub fn remote_addr(&self)->SocketAddr {self.remote_addr}
+
     fn new(
         shared: Arc<Shared>,
         tun: Arc<dyn TunDevice>,
@@ -150,6 +153,7 @@ impl Socket {
                 ack: AtomicU32::new(ack.unwrap_or(0)),
                 last_ack: AtomicU32::new(ack.unwrap_or(0)),
                 state,
+                handshake_ack: ack.unwrap_or(0),
             },
             incoming_tx,
         )
@@ -214,6 +218,14 @@ impl Socket {
                         return None;
                     }
 
+                    if tcp_packet.get_flags() & tcp::TcpFlags::SYN != 0 {
+                        if tcp_packet.get_flags() & tcp::TcpFlags::ACK != 0
+                            && tcp_packet.get_sequence().wrapping_add(1) == self.handshake_ack {
+                            let ack = build_tcp_packet(self.local_addr,self.remote_addr,1,self.handshake_ack,tcp::TcpFlags::ACK,None);
+                            let _ = self.tun.try_send(&ack);
+                        }
+                        return Some(0);
+                    }
                     let payload = tcp_packet.payload();
                     if payload.len() > buf.len() {
                         return Some(0);
@@ -294,97 +306,37 @@ impl Socket {
     }
 
     async fn connect(&mut self) -> Option<()> {
-        for retry in 0..RETRIES {
-            match self.state {
-                State::Idle => {
-                    let buf = self.build_tcp_packet(tcp::TcpFlags::SYN, None);
-                    info!(
-                        "[connect] Retry {}/{}: Sending SYN from {} to {} (seq={})",
-                        retry + 1,
-                        RETRIES,
-                        self.local_addr,
-                        self.remote_addr,
-                        self.seq.load(Ordering::Relaxed)
-                    );
-                    if let Err(e) = self.tun.send(&buf).await {
-                        error!("[connect] Failed to send SYN through TUN: {}", e);
-                        return None;
-                    }
-                    self.state = State::SynSent;
-                    info!("[connect] SYN sent, waiting for SYN+ACK...");
-                }
-                State::SynSent => {
-                    info!("[connect] Waiting for SYN+ACK (timeout={:?})...", TIMEOUT);
-                    match time::timeout(TIMEOUT, self.incoming.recv_async()).await {
-                        Ok(buf) => {
-                            let Ok(buf) = buf else {
-                                return None;
-                            };
-                            let Some((ip_packet, tcp_packet)) = parse_ip_packet(&buf) else {
-                                continue;
-                            };
-                            let flags = tcp_packet.get_flags();
-                            info!(
-                                "[connect] Received packet from {} to {} flags=0x{:02x} seq={} ack={}",
-                                ip_packet.get_source(),
-                                ip_packet.get_destination(),
-                                flags,
-                                tcp_packet.get_sequence(),
-                                tcp_packet.get_acknowledgement()
-                            );
-
-                            if (flags & tcp::TcpFlags::RST) != 0 {
-                                info!("[connect] Received RST from server, connection rejected");
-                                return None;
-                            }
-
-                            let expected_ack = self.seq.load(Ordering::Relaxed).wrapping_add(1);
-                            if flags == (tcp::TcpFlags::SYN | tcp::TcpFlags::ACK)
-                                && tcp_packet.get_acknowledgement() == expected_ack
-                            {
-                                info!(
-                                    "[connect] Got valid SYN+ACK (ack={} matches expected {}), sending ACK",
-                                    tcp_packet.get_acknowledgement(),
-                                    expected_ack
-                                );
-                                self.seq.fetch_add(1, Ordering::Relaxed);
-                                self.ack.store(
-                                    tcp_packet.get_sequence().wrapping_add(1),
-                                    Ordering::Relaxed,
-                                );
-
-                                let buf = self.build_tcp_packet(tcp::TcpFlags::ACK, None);
-                                if let Err(e) = self.tun.send(&buf).await {
-                                    error!("[connect] Failed to send final ACK: {}", e);
-                                    return None;
-                                }
-                                self.state = State::Established;
-                                info!("Connection to {:?} established", self.remote_addr);
-                                return Some(());
-                            } else {
-                                info!(
-                                    "[connect] Unexpected packet: flags=0x{:02x} (expected SYN+ACK=0x{:02x}), ack={} (expected {})",
-                                    flags,
-                                    tcp::TcpFlags::SYN | tcp::TcpFlags::ACK,
-                                    tcp_packet.get_acknowledgement(),
-                                    expected_ack
-                                );
-                            }
-                        }
-                        Err(_) => {
-                            info!("[connect] Timeout waiting for SYN+ACK, will retry");
-                            self.state = State::Idle;
-                        }
-                    }
-                }
-                _ => unreachable!(),
+        // Keep the original ISN across crossed SYNs and retransmissions. Both
+        // ends may actively open the tuple while retaining their own wire.
+        for _ in 0..RETRIES {
+            let flags = if matches!(self.state, State::SynReceived) {
+                tcp::TcpFlags::SYN | tcp::TcpFlags::ACK
+            } else { self.state = State::SynSent; tcp::TcpFlags::SYN };
+            self.tun.send(&self.build_tcp_packet(flags, None)).await.ok()?;
+            let Ok(Ok(buf)) = time::timeout(TIMEOUT, self.incoming.recv_async()).await else { continue; };
+            let Some((_, packet)) = parse_ip_packet(&buf) else { continue; };
+            let flags = packet.get_flags();
+            if flags & (tcp::TcpFlags::RST | tcp::TcpFlags::FIN) != 0 { return None; }
+            let expected = self.seq.load(Ordering::Relaxed).wrapping_add(1);
+            if flags == tcp::TcpFlags::SYN {
+                self.ack.store(packet.get_sequence().wrapping_add(1), Ordering::Relaxed);
+                self.state = State::SynReceived;
+                continue;
             }
+            let synack = flags == (tcp::TcpFlags::SYN | tcp::TcpFlags::ACK);
+            let crossed_ack = matches!(self.state, State::SynReceived) && flags == tcp::TcpFlags::ACK
+                && packet.get_sequence() == self.ack.load(Ordering::Relaxed);
+            if packet.get_acknowledgement() != expected || !(synack || crossed_ack) { continue; }
+            if synack {
+                if matches!(self.state, State::SynReceived) && packet.get_sequence().wrapping_add(1) != self.ack.load(Ordering::Relaxed) { continue; }
+                self.ack.store(packet.get_sequence().wrapping_add(1), Ordering::Relaxed);
+            }
+            self.seq.store(expected, Ordering::Relaxed);
+            self.handshake_ack = self.ack.load(Ordering::Relaxed);
+            self.tun.send(&self.build_tcp_packet(tcp::TcpFlags::ACK, None)).await.ok()?;
+            self.state = State::Established;
+            return Some(());
         }
-
-        error!(
-            "[connect] All {} retries exhausted, fake TCP connection failed",
-            RETRIES
-        );
         None
     }
 }
@@ -527,29 +479,9 @@ impl Stack {
 
     /// Connect using the source port held exclusively by the ConWU parent.
     /// This never allocates a second kernel TCP socket or changes a NAT helper.
-    pub async fn connect_from(&mut self, addr: SocketAddr, port: u16) -> Option<Socket> {
-        if port == 0 || !addr.is_ipv4() {
-            return None;
-        }
-        let local = SocketAddr::new(IpAddr::V4(self.local_ip), port);
-        let tuple = AddrTuple::new(local, addr);
-        let mut socket = {
-            let mut tuples = self.shared.tuples.write().unwrap();
-            if tuples.len() >= MAX_CONNECTIONS || tuples.contains_key(&tuple) {
-                return None;
-            }
-            let (socket, incoming) = Socket::new(
-                self.shared.clone(),
-                self.shared.tun[0].clone(),
-                local,
-                addr,
-                None,
-                State::Idle,
-            );
-            tuples.insert(tuple, incoming);
-            socket
-        };
-        socket.connect().await.map(|_| socket)
+    pub fn connector(&self) -> Connector { Connector { shared:self.shared.clone(),local_ip:self.local_ip } }
+    pub async fn connect_from(&self, addr: SocketAddr, port: u16) -> Option<Socket> {
+        self.connector().connect_from(addr,port).await
     }
 
     async fn reader_task(
@@ -669,5 +601,35 @@ impl Stack {
                 }
             }
         }
+    }
+}
+
+/// Active opens can run alongside the listener without borrowing its accept queue.
+#[derive(Clone)]
+pub struct Connector { shared:Arc<Shared>, local_ip:Ipv4Addr }
+impl Connector {
+    pub async fn connect_from(&self, addr: SocketAddr, port: u16) -> Option<Socket> {
+        if port == 0 || !addr.is_ipv4() {
+            return None;
+        }
+        let local = SocketAddr::new(IpAddr::V4(self.local_ip), port);
+        let tuple = AddrTuple::new(local, addr);
+        let mut socket = {
+            let mut tuples = self.shared.tuples.write().unwrap();
+            if tuples.len() >= MAX_CONNECTIONS || tuples.contains_key(&tuple) {
+                return None;
+            }
+            let (socket, incoming) = Socket::new(
+                self.shared.clone(),
+                self.shared.tun[0].clone(),
+                local,
+                addr,
+                None,
+                State::Idle,
+            );
+            tuples.insert(tuple, incoming);
+            socket
+        };
+        socket.connect().await.map(|_| socket)
     }
 }

@@ -250,3 +250,24 @@ fn parser_rejects_truncated_fragmented_and_oversized_packets_without_panics() {
         }
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn simultaneous_open_keeps_original_sequences_and_delivers_datagrams() {
+    let (left,right,_)=pair();
+    let a:SocketAddr="192.0.2.1:44001".parse().unwrap();
+    let b:SocketAddr="192.0.2.2:44002".parse().unwrap();
+    let (mut sa,txa)=Socket::new(left.shared.clone(),left.shared.tun[0].clone(),a,b,None,State::Idle);
+    let (mut sb,txb)=Socket::new(right.shared.clone(),right.shared.tun[0].clone(),b,a,None,State::Idle);
+    left.shared.tuples.write().unwrap().insert(AddrTuple::new(a,b),txa);
+    right.shared.tuples.write().unwrap().insert(AddrTuple::new(b,a),txb);
+    let (a,b)=time::timeout(time::Duration::from_secs(5),async{tokio::join!(sa.connect(),sb.connect())}).await.unwrap();
+    assert!(a.is_some()&&b.is_some());
+    assert_eq!(sa.seq.load(Ordering::Relaxed),1);assert_eq!(sb.seq.load(Ordering::Relaxed),1);
+    sa.send(b"left").await.unwrap();sb.send(b"right").await.unwrap();
+    let mut buffer=[0;1500];
+    async fn data(socket:&Socket,buffer:&mut[u8])->usize{
+        loop {if let Some(n)=socket.recv(buffer).await {if n>0{return n;}}else{panic!("socket closed");}}
+    }
+    let n=time::timeout(time::Duration::from_secs(1),data(&sa,&mut buffer)).await.unwrap();assert_eq!(&buffer[..n],b"right");
+    let n=time::timeout(time::Duration::from_secs(1),data(&sb,&mut buffer)).await.unwrap();assert_eq!(&buffer[..n],b"left");
+}

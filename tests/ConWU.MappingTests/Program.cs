@@ -7,6 +7,7 @@ using StreamLink.Core;
 
 int checks = 0;
 void Check(bool ok, string message) { if (!ok) throw new Exception(message); checks++; }
+if(args is ["--entry-probe-only"]){await EntryProbeTests.Run(Check);Console.WriteLine($"PASS {checks} bounded entry preparation checks; no physical gateway or installed service touched");return;}
 if (args is ["--stun-observation-only"]) { await StunObservationTests.Run(Check); Console.WriteLine($"PASS {checks} STUN observation validation checks"); return; }
 if (args is ["--tcp-maintenance-only"]) { await TcpMappingMaintenanceTests.Run(Check); return; }
 if (args is ["--upnp-entry-only"]) { await UpnpEntryTests.Run(Check); Console.WriteLine($"PASS {checks} direct UPnP entry checks"); return; }

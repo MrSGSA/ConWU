@@ -99,7 +99,9 @@ public sealed class PkarrClient:IDisposable
     // gateway in protocol tests. Redirects never turn signed lookup into an
     // arbitrary URL fetch or forward a publication body elsewhere.
     public static readonly string[] DefaultGateways=["https://pkarr.pubky.app","https://pkarr.pubky.org"];
-    static readonly HttpClient SharedHttp=new(new SocketsHttpHandler{AllowAutoRedirect=false,UseCookies=false,ConnectTimeout=TimeSpan.FromSeconds(5),PooledConnectionLifetime=TimeSpan.FromMinutes(5),PooledConnectionIdleTimeout=TimeSpan.FromMinutes(2),MaxConnectionsPerServer=4}){Timeout=Timeout.InfiniteTimeSpan};
+    // Discovery belongs to the direct network under test. A stopped desktop
+    // proxy must not make an otherwise reachable signed directory unavailable.
+    static readonly HttpClient SharedHttp=new(new SocketsHttpHandler{UseProxy=false,AllowAutoRedirect=false,UseCookies=false,ConnectTimeout=TimeSpan.FromSeconds(5),PooledConnectionLifetime=TimeSpan.FromMinutes(5),PooledConnectionIdleTimeout=TimeSpan.FromMinutes(2),MaxConnectionsPerServer=4}){Timeout=Timeout.InfiniteTimeSpan};
     // The shared resolver is a bounded connection/cache helper. Each active
     // network additionally enforces its non-evicting protected checkpoint.
     static readonly PkarrCheckpoints MemoryCheckpoints=new(allowVolatileEviction:true);
@@ -145,7 +147,18 @@ public sealed class PkarrClient:IDisposable
     public async Task<int> Publish(string seed,byte[] packet,CancellationToken token)
     {
         string key=PkarrPacket.PublicKey(seed);PkarrPacket.Read(key,packet,DateTimeOffset.UtcNow);
-        var results=await Task.WhenAll(CurrentGateways().Select(async gateway=>{using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(requestTimeout);try{using var request=new HttpRequestMessage(HttpMethod.Put,gateway.TrimEnd('/')+"/"+key){Content=new ByteArrayContent(packet)};request.Content.Headers.ContentType=new("application/octet-stream");using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);return response.IsSuccessStatusCode;}catch(Exception ex)when(ex is HttpRequestException or IOException or OperationCanceledException){return false;}}));token.ThrowIfCancellationRequested();int accepted=results.Count(v=>v);if(accepted==0)throw new IOException("PKARR 公告暂未发布成功，现有入口与连接保留");return accepted;
+        var results=await Task.WhenAll(CurrentGateways().Select(async gateway=>{
+            using var budget=CancellationTokenSource.CreateLinkedTokenSource(token);budget.CancelAfter(requestTimeout);
+            string host=new Uri(gateway).Host;
+            try{
+                using var request=new HttpRequestMessage(HttpMethod.Put,gateway.TrimEnd('/')+"/"+key){Content=new ByteArrayContent(packet)};
+                request.Content.Headers.ContentType=new("application/octet-stream");
+                using var response=await http.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,budget.Token);
+                return response.IsSuccessStatusCode?"":$"{host}:HTTP {(int)response.StatusCode}";
+            }catch(Exception ex)when(ex is HttpRequestException or IOException or OperationCanceledException){return host+":"+(ex is OperationCanceledException?"Timeout":ex.GetType().Name+(ex.InnerException is {} inner?"/"+inner.GetType().Name:""));}
+        }));
+        token.ThrowIfCancellationRequested();int accepted=results.Count(v=>v.Length==0);
+        if(accepted==0)throw new IOException("PKARR 公告暂未发布成功，现有入口与连接保留；"+string.Join("；",results));return accepted;
     }
     public void Dispose(){}
 }

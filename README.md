@@ -4,7 +4,7 @@
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。
 
-[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.4.4.md) · [使用文档](docs/README.md)
+[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.4.5.md) · [使用文档](docs/README.md)
 
 | 系统 | 下载与安装 |
 | --- | --- |
@@ -23,7 +23,7 @@ Android 从机已进入本地测试，支持纯 TCP 与 HTTPS，见[Android 测�
 
 ## 选哪种入口
 
-- **自主打洞**：默认配合 PKARR 自动发布和查询最新地址，无需额外的协调服务器或DDNS域名。若希望自行掌控发现服务时，可在高级选项中使用自己的 HTTPS 协调服务器。
+- **自主打洞**：默认配合 PKARR 自动发布和查询最新地址，无需额外的协调服务器或DDNS域名。若希望自行掌控发现服务时，可在高级选项中使用自己的 HTTPS 协调服务器。1.4.5 为六种 TCP 外层协议加入协调辅助：交换候选地址、同步两端探测，业务仍在两台设备间直接传输。使用这项辅助需要协调端和参与设备都支持新版本，并直接访问协调程序的监听端口。
 - **已有入口**：填写公网地址、路由器转发、第三方工具打通的地址或 HTTPS/TXT 订阅。后续自动查询保存的订阅；静态地址（非订阅可自主更新的地址）变化时需要重新生成直连码并填写。多主机订阅可用 `#streamlink1` 等标签区分不同主机的地址（如streamlink1=xxx.xxx.xxx.xx1 streamlink2=xxx.xxx.xxx.xx2）。
 
 每个网络一主一从、通道双向。同一设备可以同时创建和加入多个网络.
@@ -38,7 +38,7 @@ Android 从机已进入本地测试，支持纯 TCP 与 HTTPS，见[Android 测�
 
 自主打洞优先尝试短期 UPnP 映射，处理外部端口占用与续租；端口设置中可选 PCP／NAT-PMP 后备。已有入口模式不申请映射或启动另一套打洞。路由器的 NAT1 等功能仍由用户设置，网关授权或 STUN 候选均需对端认证验证。
 
-TCP／HTTPS 自主入口复用独立探测端口的网关映射。多网络可分别选择、生成和复制直连码，设置错误显示在当前浮窗。Windows／Linux 设置页支持更新检测，Linux 也可运行 `conwu update check`。
+自主入口可复用网关映射；使用协调辅助时，从所选协议实际持有的源端口观察候选并安排探测。生成直连码时会显示入口准备阶段、耗时和失败原因，失败不会删除当前网络。多网络可分别选择、生成和复制直连码，设置错误显示在当前浮窗。Windows／Linux 设置页支持更新检测，Linux 也可运行 `conwu update check`。
 
 Windows 左侧“UU远程”提供默认关闭的接管开关。已有 ConWU 网络直连后，开启接管并重新连接 UU 会话（成功后UU远程统计信息会显示UDP LAN），软件自动匹配已直连网络；主从机只需一端开启或两端均开启本功能；
 

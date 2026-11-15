@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using StreamLink.Core;
  [assembly: System.Runtime.CompilerServices.InternalsVisibleTo("ConWU.UuTakeoverTests")]
 
@@ -34,11 +34,25 @@ internal sealed record MeshRuntimeServices(
     Action<string, string> Record,
     string SessionRoot)
 {
+    static readonly Func<DeviceProfile,Action<string>,CancellationToken,Task<IMapping>> DefaultEntryProbe=
+        (profile,log,token)=>HostEntryProbe.Create(profile,log,_=>{},token);
+    public Task<IMapping> PrepareEntry(DeviceProfile profile,Action<string> log,Action<EntryProbeProgress> progress,CancellationToken token)
+        =>ProbeWithProgress?.Invoke(profile,log,progress,token)
+          ??(Probe==DefaultEntryProbe?HostEntryProbe.Create(profile,log,progress,token):Probe(profile,log,token));
     // A null override lets the runner own one resolver for its whole lifetime.
     // Recreating it each refresh discards healthy HTTPS connections.
     public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>>? ResolveEntries {get;init;}
     public Func<ExistingEntry[],string,CancellationToken,Task<EntryResolution[]>>? ResolveEntriesForRecovery {get;init;}
     public Func<PkarrClient>? PkarrClientFactory {get;init;}
+    public Func<DeviceProfile,Action<string>,Action<EntryProbeProgress>,CancellationToken,Task<IMapping>>? ProbeWithProgress {get;init;}
+    public bool MimicPortSharing {get;init;}
+    public bool TcpPortSharing {get;init;}
+    public bool SupportsTcpAssist(string mode)=>TransportModes.TcpAssistance(mode)&&(TcpPortSharing||mode=="mimic"&&MimicPortSharing);
+    public Func<string,MeshProfile,IPEndPoint,Action<string>,CancellationToken,string[],Task<IMappedMeshTransport>> TcpPairClient {get;init;}=
+        async(folder,mesh,endpoint,log,token,servers)=>await CoordinatedPairTransport.Create(Path.Combine(AppContext.BaseDirectory,"components"),folder,mesh,endpoint,log,token,servers);
+    public Func<string,MeshProfile,IPEndPoint,Action<string>,CancellationToken,string[],Task<IMappedMeshTransport>> MimicPairClient {get;init;}=
+        async(folder,mesh,endpoint,log,token,servers)=>await MimicMappedTransport.Create(Path.Combine(AppContext.BaseDirectory,"components"),folder,mesh,endpoint,log,token,servers);
+    public Func<string,string,bool,PunchAssistClient> PunchAssistClient {get;init;}=(service,pin,bootstrap)=>new(service,pin,bootstrap);
     public Func<MeshProfile,string,string,IMeshDiscovery> CoordinatorBackup {get;init;}=(mesh,service,pin)=>new MeshDiscoveryClient(mesh,service,pin);
 
     public Func<DeviceProfile,string,Func<IPAddress,string?>,CancellationToken,Task>? QualityWithPolicy {get;init;}
@@ -52,34 +66,33 @@ internal sealed record MeshRuntimeServices(
     public static MeshRuntimeServices Default => OperatingSystem.IsLinux()?Linux:new(
         mesh => mesh.Pair.Direct ? new DirectMeshDiscovery(mesh) : new MeshDiscoveryClient(mesh),
         mesh => Task.Run<IPacketAdapter>(() => new NativeAdapter(Path.Combine(AppContext.BaseDirectory, "components"), mesh.Pair.Network, mesh.Self.Slot)),
-        async (profile, log, token) => profile.TransportMode == "udp"
-            ? await UdpMapping.Create(profile.ListenPort, profile.ListenPort, log, token, profile.UdpStun, profile.ResourceScope)
-            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping,profile.SourcePort,profile.ResourceScope):await GatewayMapping.CreateTcp(profile.SourcePort, profile.ListenPort, log, token, profile.OrderedTcp(), profile.ResourceScope, profile.PortControlMapping),
-        r => TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint,r.Egress),
+        DefaultEntryProbe,
+        r => r.Mapping is FakeTcpSourceMapping fake?CreateFakeTcp(r,fake):TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new MeshTransport(Path.Combine(AppContext.BaseDirectory, "components"), r.Folder, r.Mesh, r.Target, r.Server, r.Port, r.Mapping, r.LogLevel, r.ReserveEndpoint,r.Egress),
         (ip, key, token) => Quality.Serve(ip, key, token),
         (rule, local, remote) => { WindowsHost.RemoveFirewall(rule); if (remote.Length > 0) WindowsHost.AddFirewall(rule, local, remote); },
         Recovery.Record,
         Path.Combine(ProfileStore.Root, "sessions")) {
+            MimicPortSharing=true,TcpPortSharing=true,
             ProfileAdapter=PersonalPacketAdapters.Open,
             QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests)),
             CandidatesWithEgress=(profile,folder,log,token,pacer)=>!TransportModes.ManagedCandidates(profile.TransportMode)?Task.FromResult<IMeshCandidateFactory?>(null):MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native.exe"),folder,log,token,pacer)
         };
-    static IMeshTransport CreatePacketCarrier(MeshTransportRequest request)=>new PacketCarrierTransport(Path.Combine(AppContext.BaseDirectory,"components"),request.Folder,request.Mesh,request.Target,request.Server,request.Port,request.LogLevel,request.ReserveEndpoint);
+    static IMeshTransport CreateFakeTcp(MeshTransportRequest r,FakeTcpSourceMapping mapping)=>new FakeTcpAssistTransport(Path.Combine(AppContext.BaseDirectory,"components"),r.Folder,r.Mesh,r.Target,r.Server,mapping);
+    static IMeshTransport CreatePacketCarrier(MeshTransportRequest request)=>new PacketCarrierTransport(Path.Combine(AppContext.BaseDirectory,"components"),request.Folder,request.Mesh,request.Target,request.Server,request.Port,request.LogLevel,request.ReserveEndpoint,request.Mapping as MimicMapping);
     static IMeshTransport CreateStream(MeshTransportRequest request)=>new StreamMeshTransport(request.Mesh,request.Target,request.Server,request.Port,
         StreamTransportIdentity.Get,request.PairingBootstrap,request.ReserveEndpoint,request.Server
             ?()=>OperatingSystem.IsWindows()?WindowsHost.AllowStreamListener(request.Port,Path.Combine(ProfileStore.Root,"sessions")):LinuxFirewall.AllowStreamListener(request.Port):null,
-        flowLanes:request.StreamFlowLanes,flowPolicy:request.StreamFlowPolicy);
+        flowLanes:request.StreamFlowLanes,flowPolicy:request.StreamFlowPolicy,sourceMapping:request.Mapping as ITcpSourceMapping);
     static MeshRuntimeServices Linux => new(
         mesh=>mesh.Pair.Direct?new DirectMeshDiscovery(mesh):new MeshDiscoveryClient(mesh),
         mesh=>Task.Run<IPacketAdapter>(()=>new LinuxTunAdapter(mesh.LocalIp)),
-        async (profile,log,token)=>profile.TransportMode=="udp"
-            ?await UdpMapping.Create(profile.ListenPort,profile.ListenPort,log,token,profile.UdpStun,profile.ResourceScope)
-            :TransportModes.Stream(profile.TransportMode)?await StreamMapping.Create(profile.ListenPort,log,token,profile.OrderedTcp(),profile.PortControlMapping,profile.SourcePort,profile.ResourceScope):await GatewayMapping.CreateTcp(profile.SourcePort,profile.ListenPort,log,token,profile.OrderedTcp(),profile.ResourceScope,profile.PortControlMapping),
-        r=>TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new LinuxMeshTransport(Path.Combine(AppContext.BaseDirectory,"components"),r.Folder,r.Mesh,r.Target,r.Server,r.Port,r.Mapping,r.LogLevel,r.ReserveEndpoint),
+        DefaultEntryProbe,
+        r=>r.Mapping is FakeTcpSourceMapping fake?CreateFakeTcp(r,fake):TransportModes.Stream(r.Mesh.Pair.Mode)?CreateStream(r):TransportModes.PacketCarrier(r.Mesh.Pair.Mode)?CreatePacketCarrier(r):new LinuxMeshTransport(Path.Combine(AppContext.BaseDirectory,"components"),r.Folder,r.Mesh,r.Target,r.Server,r.Port,r.Mapping,r.LogLevel,r.ReserveEndpoint),
         (ip,key,token)=>Quality.Serve(ip,key,token),
         LinuxFirewall.Update,
         Recovery.Record,
         Path.Combine(ProfileStore.Root,"sessions")) {
+            MimicPortSharing=true,TcpPortSharing=true,
             ProfileAdapter=PersonalPacketAdapters.Open,
             Candidates=(profile,folder,log,token)=>!TransportModes.ManagedCandidates(profile.TransportMode)?Task.FromResult<IMeshCandidateFactory?>(null):MeshCandidateFactory.Create(profile,Path.Combine(AppContext.BaseDirectory,"components","udp2raw-native"),folder,log,token),
             QualityWithPolicy=(profile,ip,key,token)=>Quality.Serve(ip,key,token,new(()=>profile.AllowManualQualityRequests))

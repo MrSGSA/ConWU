@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.Text.Json;
 using StreamLink.Core;
 
@@ -84,6 +84,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
             ResolveEntriesForRecovery=basis.ResolveEntriesForRecovery??basis.ResolveEntries??entryQueries.ResolveRecovering,
             Transport=r=>receivers.Acquire(r,basis.Transport,p=>worker?.AcceptsDirectPairing(p)==true,p=>worker?.AuthenticatedNetworkFrame(p)==true,p=>worker?.DirectPairPriority(p)??0)};
         PrepareConfigurationAtStartup(info,networkStore);
+        PrepareMimicReceiverAtStartup(networkStore);
         if(info.ConfigurationId.Length>0&&configurations.TryGetValue(info.ConfigurationId,out var loaded))info=info with{AppliedConfigurationRevision=loaded.Revision};
         networkStore.ValidateNetworkProfile=p=>ValidateNetwork(info.Id,p);
         worker=new ControlWorker(networkStore,runtime,isolatedNetwork:true){NetworkDisplayName=info.Name};var opened=new Context(info,worker,networkStore);try{WriteInfo(opened);return opened;}catch{worker.Dispose();throw;}
@@ -111,7 +112,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         bool direct=action.Action!="join";string mode=action.Mode;
         ExistingEntry[] entries=[];
         if(action.Action=="join-invitation")mode=DirectPairInvitation.Import(action.Code).Mode;
-        else if(action.Action=="join-compact"){var compact=CompactDirectCode.Import(action.Code);mode=compact.Mode;entries=[new(ExistingEntry.NetworkOwner,compact.Endpoint)];}
+        else if(action.Action=="join-compact"){var compact=CompactDirectCode.Import(action.Code);mode=compact.Mode;if(!compact.CoordinatorPunch)entries=[new(ExistingEntry.NetworkOwner,compact.Endpoint)];}
         else if(direct){
             if(string.IsNullOrWhiteSpace(action.Entry))throw new FormatException("请提供目标主机入口，或使用包含入口的直连邀请");
             entries=[new(ExistingEntry.NetworkOwner,action.Entry)];
@@ -121,7 +122,25 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
         });
     }
     static bool CanShareListener(DeviceProfile left,DeviceProfile right)=>left.TransportMode==right.TransportMode&&(left.SavedNetworkSettings?.ConnectionSource??left.ConnectionSource)==(right.SavedNetworkSettings?.ConnectionSource??right.ConnectionSource)&&
+        !(TransportModes.TcpAssistance(left.TransportMode)&&!left.UsesExistingEntriesOnly)&&
         (left.TransportMode!="udp"||left.UsesExistingEntriesOnly&&right.UsesExistingEntriesOnly)&&left.ManagedEgressMbps==0&&right.ManagedEgressMbps==0;
+    void PrepareMimicReceiverAtStartup(ProfileStore networkStore)
+    {
+        var before=networkStore.Load();
+        if(!before.Enabled||!TransportModes.TcpAssistance(before.TransportMode)||before.UsesExistingEntriesOnly)return;
+        var used=networks.Values.Select(n=>n.Worker.ProfileSnapshot()).Where(p=>p.Enabled).ToArray();
+        int port=before.ListenPort;
+        while(port==before.SourcePort||used.Any(p=>p.SourcePort==port||p.ListenPort==port)){
+            if(port>65533)throw new IOException("没有可用的自主打洞接收端口");port+=2;
+        }
+        if(port==before.ListenPort)return;
+        // Autonomous entries are republished; an old shared listening port
+        // must not make two independent reflection/capture owners compete.
+        // Existing-entry networks keep their user's exact forwarded port.
+        var updated=ProfileChanges.Copy(before);updated.ListenPort=port;
+        if(updated.SavedNetworkSettings is {} settings)updated.SavedNetworkSettings=settings with{ListenPort=port};
+        networkStore.Save(updated);
+    }
     static void ValidateName(string name){if(name is null||name.Length is <1 or >64||name.Any(char.IsControl))throw new FormatException("网络名称需为 1–64 个可见字符");}
     static void WriteInfo(Context context)
     {
@@ -263,7 +282,7 @@ internal sealed partial class PairNetworkWorkspace : IDisposable
                         // opaque subscription. Never silently move its receiver.
                         // Only the private outgoing source port may be allocated.
                         var used=networks.Values.Select(n=>n.Worker.ProfileSnapshot()).ToArray();
-                        if(automatic)while(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&!CanShareListener(p,template))){
+                        if(automatic||TransportModes.TcpAssistance(template.TransportMode)&&!template.UsesExistingEntriesOnly)while(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&!CanShareListener(p,template))){
                             if(template.ListenPort>=65533)throw new IOException("没有可用的本机接收端口");template.ListenPort+=2;
                         }
                         if(used.Any(p=>p.SourcePort==template.ListenPort||p.ListenPort==template.ListenPort&&!CanShareListener(p,template)))

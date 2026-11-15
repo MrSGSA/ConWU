@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Security.Cryptography;
 using System.Text.Json;
 using StreamLink.Core;
@@ -9,7 +9,14 @@ public sealed class MeshShutdownException(string[] failures):IOException("网络
 public sealed class MeshRunner
 {
     int receiverReady;
+    IMeshPunchTransport? punchTransport;
+    public void Punch(IPEndPoint peer)
+    {var active=Volatile.Read(ref punchTransport)??throw new IOException("本机同端口接收器尚未就绪");active.Punch(peer);}
+    public Task PreparePunch(IPEndPoint peer,bool client,CancellationToken token)=>(Volatile.Read(ref punchTransport)??throw new IOException("本机同端口接收器尚未就绪")).PreparePunch(peer,client,token);
+    public Task StartPunch(IPEndPoint peer,CancellationToken token)=>(Volatile.Read(ref punchTransport)??throw new IOException("本机同端口接收器尚未就绪")).StartPunch(peer,ReadOnlyMemory<byte>.Empty,token);
     public bool ReceiverReady=>Volatile.Read(ref receiverReady)!=0;
+    string receiverError="";
+    public string ReceiverError=>Volatile.Read(ref receiverError);
     UiEntryPreparation entryPreparation=new("Waiting","等待本机入口准备");
     public UiEntryPreparation EntryPreparation=>Volatile.Read(ref entryPreparation);
     readonly DeviceProfile profile;
@@ -142,7 +149,10 @@ public sealed class MeshRunner
         wireMesh.Pair=wireMesh.Pair with {Mode=profile.TransportMode};
         bool legacyAllowed=profile.Selection().Allows(TransportModes.Carrier(profile.TransportMode));
         bool existingOnly=profile.UsesExistingEntriesOnly;
-        bool streamGuest=TransportModes.OutboundGuest(profile.TransportMode)&&!mesh.IsOwner;
+        bool coordinatedSource=services.SupportsTcpAssist(profile.TransportMode)&&!mesh.Pair.Direct&&!existingOnly&&PunchAssistProtocol.StunServer(profile)!=null;
+        bool mimicShared=!existingOnly&&(coordinatedSource||OperatingSystem.IsWindows()&&services.MimicPortSharing&&profile.TransportMode=="mimic"&&PkarrRendezvous.Uses(profile));
+        bool mimicReverse=mimicShared&&(PkarrRendezvous.Uses(profile)||!mesh.Pair.Direct);
+        bool streamGuest=TransportModes.OutboundGuest(profile.TransportMode)&&!mesh.IsOwner&&!mimicReverse;
         Volatile.Write(ref entryPreparation,existingOnly?new("Existing","只使用已保存入口；仍需设备认证与双向验证"):new("Preparing","正在准备自主入口，取得候选不代表对端可达"));
         string folder = Path.Combine(services.SessionRoot, Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(folder);
@@ -172,8 +182,10 @@ public sealed class MeshRunner
         MeshTraversalManager? traversal = null;
         MeshTraversalMessage[] pendingControl = [];
         IMapping? mapping = null, retiringMapping = null; Task<IMapping>? probe = null; Task? maintain = null, quality = null, releasing = null;
+        await using var mimicAssist=mimicShared&&!mesh.Pair.Direct&&discovery is ITcpAssistDiscovery assistDiscovery?new TcpAssistLoop(mesh,assistDiscovery,log,stop):null;
         bool mappingReleaseFailed = false;
         bool entryProbeRequested = false, entryProbeDeferred = false, restoreEstablishedEntry = false,entriesWereHealthy=false;
+        int entryProbeAttempt=0;long entryProbeBegan=0;
         Task<IPacketAdapter>? opening = null;
         Task<MeshSnapshot?>? reading = null;
         Task? publishing = null, saving = null;
@@ -401,7 +413,7 @@ public sealed class MeshRunner
                 if (opening?.IsCompleted == true) {
                     IPacketAdapter adapter;
                     try { pendingAdapter=adapter=await opening; }
-                    catch(Exception ex) { adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
+                    catch(Exception ex) { Volatile.Write(ref receiverError,"虚拟网卡未能启动："+ex.Message);adapterStatus=adapterStatus with {State="Blocked",Reason=ex.Message};report(new("虚拟网卡准入失败",mesh.LocalIp,"",mesh.Pair.Mode,false,null,ex.Message){Adapter=adapterStatus});throw; }
                     opening = null;actualAdapter=adapter;
                     adapterStatus=adapterStatus with {ActualProvider=adapter.Descriptor.Provider,State="Opened",Reason=OperatingSystem.IsLinux()?"已打开 Linux 内核 TUN":"已由实际工厂打开官方 Wintun",Abi=adapter.Descriptor.Abi,Loaded=true};
                     if(OperatingSystem.IsWindows()&&adapter is NativeAdapter official)foreach(var warning in official.RouteWarnings)
@@ -437,16 +449,24 @@ public sealed class MeshRunner
                         log("本机入口资源退出未获证实，暂停新建入口并保留已有直连：" + ex.Message);
                     }
                 }
-                if(Interlocked.Exchange(ref invitationEntryRequested,0)!=0&&!existingOnly){entryProbeRequested=mapping==null&&probe==null;nextProbe=0;}
+                if(Interlocked.Exchange(ref invitationEntryRequested,0)!=0&&!existingOnly){(mapping as IMappingRefresh)?.RequestRefresh();entryProbeRequested=mapping==null&&probe==null;nextProbe=0;}
                 if (!existingOnly && !streamGuest && legacyAllowed && localExisting.Length==0 && probe == null && mapping == null && releasing == null && now >= nextProbe &&
-                    (externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
+                    // Both PKARR members must refresh their own publication
+                    // after restart, even while old peer candidates are being
+                    // tried. Otherwise two changed endpoints wait forever.
+                    (PkarrRendezvous.Uses(profile)||externalSources.Length==0 || now-began>=5000 && resolving==null && !existingPlans.Values.Any(p=>p.Priority))) {
                     var entryPeers = mesh.Directory?.Members.Where(m => m.Slot != mesh.Self.Slot).ToArray() ?? [];
                     bool needed = mesh.Pair.Direct&&(mesh.IsOwner||PkarrRendezvous.Uses(profile)) || restoreEstablishedEntry || entryProbeRequested || router == null || NeedsEntryProbe(entryPeers, announcements,
                         router.HasHealthyPath, DateTimeOffset.UtcNow.ToUnixTimeSeconds());
                     if (needed) {
                         entryProbeRequested = entryProbeDeferred = false;
-                        probe = services.Probe(profile, log, stop);
-                        Volatile.Write(ref entryPreparation,new("Preparing","正在探测或映射本机入口"));
+                        int attempt=++entryProbeAttempt;entryProbeBegan=Environment.TickCount64;
+                        Volatile.Write(ref entryPreparation,new("Preparing","正在探测或映射本机入口"){Stage="Starting",Attempt=attempt});
+                        void Progress(EntryProbeProgress update)=>Volatile.Write(ref entryPreparation,new("Preparing",update.Detail){Stage=update.Stage,Attempt=attempt,ElapsedMilliseconds=Environment.TickCount64-entryProbeBegan});
+                        // Capture synchronous provider errors in the same task
+                        // as async failures; neither can stop the mesh runner.
+                        async Task<IMapping> Prepare()=>await services.PrepareEntry(profile,log,Progress,stop);
+                        probe=Prepare();
                     } else if (!entryProbeDeferred) {
                         entryProbeDeferred = true;
                         log(entryPeers.Any(m=>router?.HasHealthyPath(m.Slot)==true)?"现有在线成员已直连，暂停本机备用入口探测；继续维护已有路径，新成员上线或路径失效时恢复探测":"已配对设备暂未在线，暂停额外入口探测；收到上线信息或手动重试后恢复");
@@ -455,22 +475,24 @@ public sealed class MeshRunner
                 if (probe?.IsCompleted == true) {
                     try {
                         mapping = await probe;
-                        Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()));
+                        Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()){Stage="Candidate",Attempt=entryProbeAttempt,ElapsedMilliseconds=Environment.TickCount64-entryProbeBegan});
                         Volatile.Write(ref preparedInvitationEntries,mapping.IsValid?[new ExistingEntry(0,mapping.PublicEndpoint.ToString())]:[]);
                         restoreEstablishedEntry = false;
-                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress) && !TransportModes.OutboundGuest(profile.TransportMode)) { server.Dispose(); server = null; }
+                        if (server != null && serverAddress != null && !serverAddress.Equals(mapping.LocalAddress) && (!TransportModes.OutboundGuest(profile.TransportMode)||mimicShared)) { server.Dispose(); server = null; }
                         maintain = mapping.Maintain(stop); probeFailures = 0; timeline.Mark("本机候选入口就绪");
                     }
                     catch (Exception ex) {
                         // A completed probe can fault in the same tick as user stop.
                         // Report cancellation; the finally block still proves owner cleanup.
                         stop.ThrowIfCancellationRequested();
-                        Volatile.Write(ref entryPreparation,new("Unavailable",ex.Message));
-                        log("入口暂不可用，可使用其他成员入口：" + ex.Message); nextProbe = now + Math.Min(45000, 5000L << Math.Min(probeFailures++, 4));
+                        long delay=Math.Min(45000,5000L<<Math.Min(probeFailures++,4));nextProbe=now+delay;
+                        var prior=Volatile.Read(ref entryPreparation);
+                        Volatile.Write(ref entryPreparation,new("Unavailable",ex.Message){Stage=ex is EntryProbeException failed?failed.Stage:prior.Stage,FailureCode=ex is EntryProbeException failure?failure.Reason:ex.GetType().Name,Attempt=entryProbeAttempt,ElapsedMilliseconds=Environment.TickCount64-entryProbeBegan,RetryAt=DateTimeOffset.UtcNow.AddMilliseconds(delay).ToUnixTimeSeconds()});
+                        log($"主机入口本轮未就绪 attempt={entryProbeAttempt} stage={EntryPreparation.Stage} reason={EntryPreparation.FailureCode} elapsedMs={EntryPreparation.ElapsedMilliseconds} retryMs={delay}：{ex.Message}");
                     }
                     finally { probe = null; }
                 }
-                string selectedStun=mapping switch {TcpMapping tcp=>tcp.StunServer,StreamMapping stream=>stream.StunServer,_=>""};
+                string selectedStun=mapping switch {TcpMapping tcp=>tcp.StunServer,StreamMapping stream=>stream.StunServer,MimicMapping mimic=>mimic.StunServer,FakeTcpSourceMapping fake=>fake.StunServer,_=>""};
                 if (selectedStun.Length>0 && profile.LastStun != selectedStun) {
                     profile.LastStun = selectedStun; rememberStun(selectedStun);
                 }
@@ -478,11 +500,11 @@ public sealed class MeshRunner
                     var preparedCandidate=new ExistingEntry(0,mapping.PublicEndpoint.ToString());
                     if(!Volatile.Read(ref preparedInvitationEntries).SequenceEqual([preparedCandidate])){
                         Volatile.Write(ref preparedInvitationEntries,[preparedCandidate]);
-                        Volatile.Write(ref entryPreparation,new("Candidate","已取得入口候选；尚未确认对端可以连接",mapping.PublicEndpoint.ToString()));
+                        Volatile.Write(ref entryPreparation,Volatile.Read(ref entryPreparation) with{State="Candidate",Stage="Candidate",Detail="已取得入口候选；尚未确认对端可以连接",Endpoint=mapping.PublicEndpoint.ToString(),FailureCode="",RetryAt=0});
                     }
                 }else if(mapping is {IsValid:false}&&Volatile.Read(ref preparedInvitationEntries).Length>0){
                     Volatile.Write(ref preparedInvitationEntries,[]);
-                    Volatile.Write(ref entryPreparation,new("Preparing","正在复核本机入口，已有直连继续由双向保活检查"));
+                    Volatile.Write(ref entryPreparation,Volatile.Read(ref entryPreparation) with{State="Preparing",Stage="StunVerification",Detail="正在复核本机入口，已有直连继续由双向保活检查",Endpoint="",FailureCode="",RetryAt=0});
                 }
                 if (maintain?.IsCompleted == true) {
                     // Previously valid ingress is a resource to restore, even
@@ -494,23 +516,29 @@ public sealed class MeshRunner
                     // independently of candidate publication/lease renewal. Keep
                     // it until process failure, a source-address change or stop.
                     // Legacy raw UDP still has a helper-specific shared bind.
-                    if (profile.TransportMode == "udp") { server?.Dispose(); server = null; }
+                    if (profile.TransportMode == "udp"||mapping is ITcpSourceMapping) {
+                        server?.Dispose();server=null;
+                        router?.FailLegacyListener();
+                    }
                     retiringMapping = mapping!;
                     releasing = ReleaseMapping(retiringMapping); mapping = null; maintain = null; nextProbe = now + 1000;
                 }
                 if (server?.Exited == true) {
+                    Volatile.Write(ref receiverError,server.FailureReason);
                     log($"本机传输入口失效：{server.FailureReason}；重新建立入口");
                     router?.FailLegacyListener();
                     if (now - serverStarted >= 30000) serverFailures = 0;
                     server.Dispose(); server = null; nextServer = now + Math.Min(15000, 250L << Math.Min(serverFailures++, 6));
                 }
-                if (legacyAllowed && !streamGuest && router != null && server == null && now >= nextServer) {
-                    try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress,RetireEndpoint=router.FailLegacyIngress,StreamFlowLanes=profile.StreamFlowLanes}); serverAddress = mapping?.LocalAddress; serverStarted = now; }
-                    catch (Exception ex) { nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
+                if (legacyAllowed && !streamGuest && router != null && server == null && now >= nextServer&&(!mimicShared||mapping is ITcpSourceMapping)) {
+                    try { server = services.Transport(new(folder, wireMesh, router.LocalEndpoint, true, profile.ListenPort, mapping, profile.LogLevel){Egress=sharedEgress,RetireEndpoint=router.FailLegacyIngress,StreamFlowLanes=profile.StreamFlowLanes}); serverAddress = mapping?.LocalAddress; serverStarted = now;Volatile.Write(ref receiverError,""); }
+                    catch (Exception ex) { Volatile.Write(ref receiverError,ex.Message);nextServer = now + Math.Min(15000, 1000L << Math.Min(serverFailures++, 4)); log("本机传输入口启动重试：" + ex.Message); }
                 }
                 // Independent HTTP operations: neither a slow GET/PUT nor adapter
                 router?.SetLegacyListenerControl(server?.ControlsWirePackets == true && !server.Exited);
                 Volatile.Write(ref receiverReady,server!=null&&!server.Exited?1:0);
+                Volatile.Write(ref punchTransport,server!=null&&!server.Exited?server as IMeshPunchTransport:null);
+                if(mimicAssist!=null)await mimicAssist.Tick(mapping,server,router);
                 // startup can hold up local child recovery or the other direction.
                 if (saving?.IsCompleted == true) {
                     try { await saving; savedDirectory = savingRevision; }
@@ -644,7 +672,7 @@ public sealed class MeshRunner
                     Volatile.Write(ref latestHostEndpoints,(currentHost.ExistingEndpoints??[]).Concat(currentHost.Endpoint.Length>0?[currentHost.Endpoint]:[]).Distinct().Take(16).ToArray());
                 traversal?.Tick(scheduling, candidate,priorityPeers,onlyEntryPeers);
                 foreach (var member in members) {
-                    if(TransportModes.OutboundGuest(profile.TransportMode)&&mesh.IsOwner){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}
+                    if(TransportModes.OutboundGuest(profile.TransportMode)&&mesh.IsOwner&&!mimicReverse){router.DescribeTraversal(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"","等待从机连接本机入口；通道建立后支持双向传输");continue;}
                     if(quietPeers.Contains(member.Slot)){
                         if(clients.TryGetValue(member.Slot,out var quiet))quiet.Suspend(member.Slot,announcements.GetValueOrDefault(member.Slot)?.Name??"");
                         continue;

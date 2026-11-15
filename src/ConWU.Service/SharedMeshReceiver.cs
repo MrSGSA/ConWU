@@ -1,4 +1,4 @@
-using System.Net;
+﻿using System.Net;
 using System.Net.Sockets;
 using StreamLink.Core;
 
@@ -33,7 +33,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
     }
     public void Dispose(){lock(gate){disposed=true;foreach(var receiver in receivers.Values)receiver.Dispose();receivers.Clear();}}
 
-    sealed class Subscription(Receiver owner,MeshProfile mesh,bool flowLanes,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released,Action<IPEndPoint>? retireEndpoint):IMeshTransport
+    sealed class Subscription(Receiver owner,MeshProfile mesh,bool flowLanes,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released,Action<IPEndPoint>? retireEndpoint):IMeshTransport,IMeshPunchTransport
     {
         public MeshProfile Mesh {get;}=mesh;
         public bool StreamFlowLanes {get;}=flowLanes;
@@ -49,6 +49,10 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         public bool ControlsWirePackets=>owner.ControlsWirePackets;
         public bool Exited=>Volatile.Read(ref disposed)!=0||owner.Exited;
         public string FailureReason=>owner.FailureReason;
+        public Task PreparePunch(IPEndPoint peer,bool client,CancellationToken token)=>owner.PreparePunch(peer,client,token);
+        public Task StartPunch(IPEndPoint peer,ReadOnlyMemory<byte> greeting,CancellationToken token)=>owner.StartPunch(peer,greeting,token);
+        public void Punch(IPEndPoint peer)=>owner.Punch(peer);
+        public void Punch(IPEndPoint peer,ReadOnlyMemory<byte> greeting)=>owner.Punch(peer,greeting);
         int disposed;
         public void Dispose(){if(Interlocked.Exchange(ref disposed,1)!=0)return;owner.Unsubscribe(this);released();}
     }
@@ -87,7 +91,7 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
         public int Count{get{lock(gate)return subscriptions.Count;}}
         public Receiver(MeshTransportRequest request,Func<MeshTransportRequest,IMeshTransport> factory,string folder)
         {
-            this.folder=folder;Exclusive=request.Egress!=null;
+            this.folder=folder;Exclusive=request.Egress!=null||request.Mapping is ITcpSourceMapping;
             // The device receiver binds all local IPv4 addresses. NAT mappings
             // belong to individual network attempts, not to this shared owner.
             bool created=false;
@@ -96,13 +100,17 @@ internal sealed class SharedMeshReceiver(string sessionRoot) : IDisposable
                 if(OperatingSystem.IsLinux())LinuxPlatform.PrivateDirectory(folder);else Directory.CreateDirectory(folder);
                 created=true;
                 ingress.Bind(new IPEndPoint(IPAddress.Loopback,0));ingress.SendBufferSize=ingress.ReceiveBufferSize=1<<20;ingress.Blocking=false;
-                transport=factory(request with{Target=(IPEndPoint)ingress.LocalEndPoint!,Folder=folder,Mapping=null,StreamFlowPolicy=FlowPolicy});
+                transport=factory(request with{Target=(IPEndPoint)ingress.LocalEndPoint!,Folder=folder,Mapping=request.Mapping is ITcpSourceMapping?request.Mapping:null,StreamFlowPolicy=FlowPolicy});
                 if(transport is IMeshCarrierRoutes events){events.RouteClosed+=CarrierClosed;events.RouteOpened+=CarrierOpened;}
                 receive=Task.Run(Receive);
             }
             catch{ingress.Dispose();stop.Dispose();if(created&&Directory.Exists(folder))Directory.Delete(folder,true);throw;}
         }
         StreamFlowPolicy? FlowPolicy(string network) { lock(gate) { var value=subscriptions.FirstOrDefault(s=>s.Network==network);return value==null?null:new(value.Mesh,value.StreamFlowLanes); } }
+        public Task PreparePunch(IPEndPoint peer,bool client,CancellationToken token)=>transport is IMeshPunchTransport active?active.PreparePunch(peer,client,token):throw new IOException("当前接收器不支持主动探测");
+        public Task StartPunch(IPEndPoint peer,ReadOnlyMemory<byte> greeting,CancellationToken token)=>transport is IMeshPunchTransport active?active.StartPunch(peer,greeting,token):throw new IOException("当前接收器不支持主动探测");
+        public void Punch(IPEndPoint peer){if(transport is not IMeshPunchTransport active)throw new IOException("当前接收器不支持主动探测");active.Punch(peer);}
+        public void Punch(IPEndPoint peer,ReadOnlyMemory<byte> greeting){if(transport is not IMeshPunchTransport active)throw new IOException("当前接收器不支持主动探测");active.Punch(peer,greeting);}
         public Subscription Subscribe(MeshProfile mesh,bool flowLanes,IPEndPoint target,Func<ReadOnlyMemory<byte>,bool> accepts,Func<ReadOnlyMemory<byte>,bool> authenticated,Func<ReadOnlyMemory<byte>,int> priority,Action released,Action<IPEndPoint>? retireEndpoint)
         {
             lock(gate){if(subscriptions.Count>=16)throw new IOException("共享接收器网络数已满");

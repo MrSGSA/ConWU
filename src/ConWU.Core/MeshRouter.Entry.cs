@@ -4,6 +4,13 @@ namespace StreamLink.Core;
 
 public sealed partial class MeshRouter
 {
+    public byte[] AssistanceGreeting(int slot)
+    {
+        lock(gate){
+            if(!LegacyAllowed||!peers.TryGetValue(slot,out var peer)||peer.Managed!=null)throw new IOException("当前成员或承载不允许协同探测");
+            var hello=peer.Link.Hello();return profile.Directory?.Pairwise==true?PairNetworkFrame.Wrap(profile.Pair.Network,hello):hello;
+        }
+    }
     sealed record EntryProbe(string Nonce,byte[] Frame,long Expires,int Slot=0);
     readonly Dictionary<IPEndPoint,EntryProbe> entryProbes=[];
     long nextEntryReply;
