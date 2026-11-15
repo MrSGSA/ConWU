@@ -16,10 +16,10 @@ static partial class Program
         using var monitor=new ReleaseUpdateMonitor(client,"1.4.1","windows","x64");await monitor.Check();
         var host=new LocalUpdateHostFixture();using var worker=new ControlWorker(store,updateMonitor:monitor){LocalUpdateHostFactory=()=>host};worker.EnablePairNetworks();
         string before=JsonSerializer.Serialize(worker.ProfileSnapshot());
-        UiControlRequest Download()=>new("update-download",OperationId:Guid.NewGuid()){LocalUpdate=new("2.0.0")};
+        UiControlRequest Download()=>new("update-download",OperationId:Guid.NewGuid()){LocalUpdate=new("2.0.0",Source:"gitee")};
         var denied=await worker.HandleUi(Download(),"S-1-5-21-1-2-3-9999",default);
         Check(!denied.Ok&&denied.Status==null&&host.Downloads==0,"only the authorized local user can prepare an installation");
-        foreach(var malformed in new[]{Download() with{Patch=new(DeviceName:"forbidden")},Download() with{NetworkId=Guid.NewGuid().ToString("N")},Download() with{UuTakeover=new(new(true),"")},new UiControlRequest("patch",new(DeviceName:"forbidden")){LocalUpdate=new("2.0.0")}}){
+        foreach(var malformed in new[]{Download() with{Patch=new(DeviceName:"forbidden")},Download() with{NetworkId=Guid.NewGuid().ToString("N")},Download() with{UuTakeover=new(new(true),"")},Download() with{LocalUpdate=new("2.0.0",Source:"https://evil.example")},new UiControlRequest("patch",new(DeviceName:"forbidden")){LocalUpdate=new("2.0.0")}}){
             Check(!(await worker.HandleUi(malformed,sid,default)).Ok&&host.Downloads==0,"installer admission rejects mixed commands and network targeting");
         }
         using var cancelled=new CancellationTokenSource();var clock=Stopwatch.StartNew();
@@ -30,6 +30,7 @@ static partial class Program
         host.Ready.SetResult();using var timeout=new CancellationTokenSource(5000);
         while((live=await worker.HandleUi(new("status"),sid,default)).Status!.LocalUpdate?.CanInstall!=true)await Task.Delay(20,timeout.Token);
         Check(host.Downloads==1&&JsonSerializer.Serialize(worker.ProfileSnapshot())==before,"closing a download request neither cancels the package nor changes profiles");
+        Check(host.Source=="gitee","the selected Gitee source reaches the background downloader without accepting a caller URL");
         var status=live.Status!.LocalUpdate!;
         var stale=await worker.HandleUi(new("update-install"){LocalUpdate=new(status.Version,Guid.NewGuid().ToString("N"))},sid,default);
         Check(!stale.Ok&&host.Launches==0,"a stale install ticket cannot execute any package");
@@ -43,9 +44,9 @@ static partial class Program
     }
     sealed class LocalUpdateHostFixture:ILocalUpdateHost
     {
-        public bool Supported=>true;public int Downloads,Launches;public string Caller="";public UpdateRecoveryState? Before;
+        public bool Supported=>true;public int Downloads,Launches;public string Caller="",Source="";public UpdateRecoveryState? Before;
         public TaskCompletionSource Ready=new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public async Task<PreparedLocalUpdate> Download(ReleaseUpdateStatus release,Action<long,long> progress,CancellationToken token){Interlocked.Increment(ref Downloads);await Ready.Task.WaitAsync(token);return new(Guid.NewGuid().ToString("N"),release.LatestVersion,"isolated","isolated.msi",new string('A',64),4096);}
+        public async Task<PreparedLocalUpdate> Download(ReleaseUpdateStatus release,Action<long,long> progress,CancellationToken token){Source=release.DownloadSource;Interlocked.Increment(ref Downloads);await Ready.Task.WaitAsync(token);return new(Guid.NewGuid().ToString("N"),release.LatestVersion,"isolated","isolated.msi",new string('A',64),4096);}
         public Task Launch(PreparedLocalUpdate prepared,string callerSid,UpdateRecoveryState before,CancellationToken token){Caller=callerSid;Before=before;Interlocked.Increment(ref Launches);return Task.CompletedTask;}
         public LocalUpdateStatus? ReadExternalStatus()=>null;
         public void ReportRecovery(UpdateRecoveryState state){}

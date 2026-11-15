@@ -126,18 +126,34 @@ function updateDetails(){
  if(['Completed','WaitingPeers','Failed'].includes(l?.state)){try{localStorage.removeItem('conwu-local-update');}catch{}}
  return `<div id="software-update-details" data-update-signature="${esc(updateSignature())}"><p>当前版本：<span class="mono">${esc((workspaceState?.version||'读取中').split('+')[0])}</span></p><p role="status" id="update-state">${esc(u?.message||'尚未检查更新')}</p>${u?.checkedAt?`<p class="hint">上次检查：${esc(new Date(u.checkedAt*1000).toLocaleString())}</p>`:''}
  ${l?.state&&l.state!=='Idle'?`<p id="local-update-state" role="status">${esc(l.message)}</p>${l.state==='Downloading'||resumable?`<progress aria-label="安装包下载进度" max="${Number(l.totalBytes)||1}" value="${Number(l.downloadedBytes)||0}"></progress><span class="hint"> ${Math.floor((l.downloadedBytes||0)*100/Math.max(1,l.totalBytes||1))}%</span>`:''}${l.rebootRequired?'<p class="hint">系统提示需要稍后重启；ConWU 不会自动重启设备。</p>':''}`:''}
- <div class="row section-spacer"><button class="btn compact" data-ui-action="check-update" ${u?.state==='Checking'?'disabled':''}>${icon('refresh')}${u?.state==='Checking'?'正在检查…':'检查更新'}</button>${l?.supported?`${u?.updateAvailable&&download&&!l.busy&&!l.canInstall?`<button class="btn primary compact" data-ui-action="download-update">${resumable?'继续下载':'下载'} ${esc(u.latestVersion)}</button>`:''}${l.canInstall?`<button class="btn primary compact" data-ui-action="install-update">安装 ${esc(l.version)}</button>`:''}`:u?.updateAvailable&&download?`<a class="btn primary compact" href="${esc(download)}" target="_blank" rel="noopener noreferrer">下载 ${esc(u.latestVersion)}</a>`:''}${pageUrl?`<a class="text-btn" href="${esc(pageUrl)}" target="_blank" rel="noopener noreferrer">版本说明</a>`:''}</div><p class="hint">${l?.supported?'完整下载并校验后，由你确认安装。本机独立运行 MSI，安装后自动恢复后台和原先启用的网络。':'更新检查不会自动安装或更改设置。'}</p></div>`;
+ <div class="row section-spacer"><button class="btn compact" data-ui-action="check-update" ${u?.state==='Checking'?'disabled':''}>${icon('refresh')}${u?.state==='Checking'?'正在检查…':'检查更新'}</button>${l?.supported?`${u?.updateAvailable&&download&&!l.busy&&!l.canInstall?`<button class="btn primary compact" data-ui-action="download-update">${resumable?'继续下载':'下载'} ${esc(u.latestVersion)}</button>`:''}${l.canInstall?`<button class="btn primary compact" data-ui-action="install-update">安装 ${esc(l.version)}</button>`:''}`:u?.updateAvailable&&download?`<button class="btn primary compact" data-ui-action="download-update">下载 ${esc(u.latestVersion)}</button>`:''}${pageUrl?`<a class="text-btn" href="${esc(pageUrl)}" target="_blank" rel="noopener noreferrer">版本说明</a>`:''}</div><p class="hint">${l?.supported?'完整下载并校验后，由你确认安装。本机独立运行 MSI，安装后自动恢复后台和原先启用的网络。':'更新检查不会自动安装或更改设置。'}</p></div>`;
 }
 function updateSignature(){const u=workspaceState?.update;return JSON.stringify([workspaceState?.version,u?.state,u?.message,u?.latestVersion,u?.checkedAt,u?.updateAvailable,u?.releaseUrl,u?.package?.url,workspaceState?.localUpdate]);}
 function installingLocally(){try{return Date.now()-Number(localStorage.getItem('conwu-local-update'))<300000;}catch{return false;}}
 const normalUnavailable=unavailable;
 unavailable=function(message){if(installingLocally()){online=false;notice('正在本机安装 ConWU，暂时断开属于更新过程。安装后会自动恢复后台和组网，并重新打开面板。',false,'update');controls();return;}normalUnavailable(message);};
-async function localUpdate(install){
+function openUpdateSources(){
+ const u=workspaceState?.update,l=workspaceState?.localUpdate;
+ if(!u?.updateAvailable||!u.package||!/^\d+\.\d+\.\d+$/.test(u.latestVersion))throw Error('请先检查适合本机的正式版更新。');
+ const github=new URL(u.releaseUrl);
+ if(github.origin!=='https://github.com'||!github.pathname.startsWith('/MrSGSA/ConWU/releases/tag/'))throw Error('正式版来源无效。');
+ const tag=github.pathname.split('/').pop(),gitee='https://gitee.com/space4sgsa/ConWU/releases/tag/'+encodeURIComponent(tag);
+ const msi=String(u.package.url).endsWith('.msi');ui.updateVersion=u.latestVersion;
+ $('update-source-title').textContent='下载 ConWU '+u.latestVersion;
+ $('update-source-error').textContent='';
+ $('update-source-content').innerHTML=[['github','GitHub',github.href],['gitee','Gitee',gitee]].map(([source,name,url])=>`<article class="update-source-card"><h3>${name}</h3>${l?.supported&&msi?`<button class="btn primary" data-ui-action="download-from-source" data-source="${source}">下载 MSI</button>`:`<a class="btn primary" href="${esc(source==='github'?u.package.url:url)}" target="_blank" rel="noopener noreferrer">${msi?'下载 MSI':'下载安装包'}</a>`}<a class="source-website" href="${esc(url)}" target="_blank" rel="noopener noreferrer">访问 ${name}</a></article>`).join('');
+ $('update-source-dialog').showModal();controls();
+}
+async function downloadFromSource(source){
+ try{if(ui.updateVersion!==workspaceState?.update?.latestVersion)throw Error('可更新版本已改变，请关闭后重新选择。');await localUpdate(false,source);$('update-source-dialog').close();}
+ catch(error){$('update-source-error').textContent=error.message;}
+}
+async function localUpdate(install,source='github'){
  const l=workspaceState?.localUpdate,u=workspaceState?.update;
  if(install&&!await confirmAction('安装 ConWU '+l.version+'？','安装包已下载并校验。确认后在本机继续安装，期间远程连接会暂时中断；完成后自动恢复后台和原先启用的网络。','确认更新'))return;
  if(install)try{localStorage.setItem('conwu-local-update',String(Date.now()));}catch{}
  let reply;
- try{reply=await api('/api/command',{method:install?'update-install':'update-download',operationId:crypto.randomUUID(),localUpdate:{version:install?l.version:u.latestVersion,ticket:install?l.ticket:''}});}
+ try{reply=await api('/api/command',{method:install?'update-install':'update-download',operationId:crypto.randomUUID(),localUpdate:{version:install?l.version:u.latestVersion,ticket:install?l.ticket:'',source}});}
  catch(error){if(install&&error.retryable){notify('已发送本机更新确认，正在等待安装状态。请稍候自动恢复后台。');void refresh();return;}if(install)try{localStorage.removeItem('conwu-local-update');}catch{}throw error;}
  if(!reply.ok){if(install)try{localStorage.removeItem('conwu-local-update');}catch{}throw Error(reply.error||'更新任务未被受理');}
  if(reply.status)render(reply.status);
@@ -234,7 +250,7 @@ controls=function(){
  uuTakeoverUi.refresh(workspaceState,ready);
  for(const b of document.querySelectorAll('[data-ui-action]')){
   const action=b.dataset.uiAction;
-  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','close-invitation','open-local-service','open-coordination-settings','close-coordination-settings'].includes(action))b.disabled=!!ui.editor?.saving;
+  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','close-invitation','open-local-service','open-coordination-settings','close-coordination-settings','close-update-source'].includes(action))b.disabled=!!ui.editor?.saving;
   else if(['range-60','range-3600'].includes(action))b.disabled=false;
   else b.disabled=!ready;
  }
@@ -535,7 +551,7 @@ document.addEventListener('click',e=>{
   case 'restore-device':ui.device=clone(ui.deviceBase);render();break;case 'default-device':ui.device=defaultDevice();render();break;
   case 'register-service':await command('register-service',{networkId:''});break;
   case 'check-update':{const reply=await api('/api/command',{method:'update-check',operationId:crypto.randomUUID()});if(!reply.ok)throw Error(reply.error||'暂时无法开始更新检查');if(reply.status)render(reply.status);break;}
-   case 'download-update':await localUpdate(false);break;case 'install-update':await localUpdate(true);break;
+   case 'download-update':openUpdateSources();break;case 'download-from-source':await downloadFromSource(b.dataset.source);break;case 'close-update-source':$('update-source-dialog').close();break;case 'install-update':await localUpdate(true);break;
   case 'refresh-pkarr':await command('network',{networkId:id,network:{action:'refresh-pkarr',expectedNetwork:row(id).status.networkId}});notify('已请求刷新发现信息');break;
   case 'range-60':ui.range=60;render();break;case 'range-3600':ui.range=3600;render();break;case 'test-entry':await editorAction(testEntry,true);break;
  }}).catch(()=>{});

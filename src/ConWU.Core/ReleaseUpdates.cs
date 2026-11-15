@@ -14,6 +14,7 @@ public sealed record ReleaseUpdateStatus(string CurrentVersion,string Platform,s
     public bool UpdateAvailable {get;init;}
     public long CheckedAt {get;init;}
     public ReleaseUpdatePackage? Package {get;init;}
+    public string DownloadSource {get;init;}="github";
 }
 
 // Public release metadata only: no credentials, network IDs or device names.
@@ -82,8 +83,8 @@ public sealed class ReleaseUpdateClient : IDisposable
         }
         string version=latest.ToString(),prefix="ConWU-"+version;
         string[] names=(platform,architecture) switch{
-            ("windows","x64")=>[prefix+"-x64.msi",prefix+"-windows-x64.zip"],
-            ("windows","arm64")=>[prefix+"-windows-arm64.msi",prefix+"-windows-arm64.zip"],
+            ("windows","x64")=>[prefix+"-x64.msi"],
+            ("windows","arm64")=>[prefix+"-windows-arm64.msi"],
             ("linux","x64")=>[prefix+"-linux-x64.tar.gz"],
             ("linux","arm64")=>[prefix+"-linux-arm64.tar.gz"],
             ("android",_)=>[prefix+"-android-"+(architecture switch{"arm64"=>"arm64-v8a","arm"=>"armeabi-v7a","x64"=>"x86_64",_=>"unsupported"})+".apk",prefix+"-android-universal.apk",prefix+"-android.apk"],

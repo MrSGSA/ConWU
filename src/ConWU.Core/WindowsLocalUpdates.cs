@@ -70,7 +70,8 @@ public sealed class WindowsLocalUpdateHost:ILocalUpdateHost
             package.Bytes is <1024 or >1_073_741_824||package.Sha256.Length!=64||!package.Sha256.All(char.IsAsciiHexDigit))throw new IOException("更新包的来源、架构或校验信息不完整");
         string cache=Path.Combine(root,"downloads");PrivateDirectory(root);PrivateDirectory(cache);
         string cached=Path.Combine(cache,package.Sha256.ToLowerInvariant()+".msi");CheckAncestors(cached);
-        await OfficialUpdatePackage.Download(package,cached,progress,token,http);
+        var mirror=await OfficialUpdateSources.Resolve(release,http,token);
+        await UpdatePackageTransfer.Download(package,cached,progress,token,http,downloadUri:mirror,source:release.DownloadSource);
         ValidateMsi(cached);token.ThrowIfCancellationRequested();
         string ticket=Guid.NewGuid().ToString("N"),directory=Job(ticket);PrivateDirectory(directory);
         string target=Path.Combine(directory,"package.msi");File.Move(cached,target,false);

@@ -32,7 +32,7 @@ public sealed partial class ControlWorker
             if(request.Method=="update-download"){
                 var release=updates.Value.Status;
                 if(request.LocalUpdate.Version!=release.LatestVersion||request.LocalUpdate.Ticket.Length>0)throw new IOException("版本信息已变化，请重新检查更新");
-                manager.BeginDownload(release);
+                manager.BeginDownload(release,request.LocalUpdate.Source);
             }else{
                 if(request.LocalUpdate.Version!=manager.Status.Version)throw new IOException("确认的更新版本已变化");
                 _=manager.Confirm(request.LocalUpdate.Ticket,callerSid,UpdateRecovery());

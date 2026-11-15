@@ -62,6 +62,7 @@ clock.Advance(TimeSpan.FromMinutes(2));await monitor.Check();Check(calls==2,"fai
 clock.Advance(TimeSpan.FromMinutes(16));fail=false;await monitor.Check();Check(calls==3&&monitor.Status.State=="Available","automatic retry clears the previous error after recovery");
 checks+=await LocalUpdateChecks.Run();
 checks+=await ResumableDownloadChecks.Run();
+checks+=await OfficialSourceChecks.Run();
 Console.WriteLine($"PASS {checks} update checks; isolated HTTP and installer fixtures");
 
 sealed class Handler(Func<HttpRequestMessage,CancellationToken,Task<HttpResponseMessage>> send):HttpMessageHandler

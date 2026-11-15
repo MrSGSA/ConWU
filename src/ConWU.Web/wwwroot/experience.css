@@ -200,3 +200,10 @@ button:disabled{cursor:not-allowed}
 .invitation-dialog .modal-header h2{margin:0;overflow-wrap:anywhere;min-width:0}
 .invitation-dialog .code-label-row{margin-top:0}
 .invitation-dialog .code-actions{margin-top:22px}
+.update-source-dialog{width:640px;max-width:calc(100vw - 32px)}
+.update-source-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;padding:24px}
+.update-source-card{display:flex;flex-direction:column;align-items:stretch;gap:18px;padding:24px 18px;border:1px solid var(--line);border-radius:14px;text-align:center;background:var(--card)}
+.update-source-card h3{font-size:22px}.update-source-card .btn{justify-content:center;width:100%}
+.update-source-card .source-website{color:var(--accent);text-decoration:underline;text-underline-offset:4px}
+#update-source-error:empty{display:none}
+@media(max-width:520px){.update-source-grid{grid-template-columns:1fr;gap:12px;padding:18px}.update-source-card{gap:14px;padding:18px}}

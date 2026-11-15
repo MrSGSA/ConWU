@@ -4,7 +4,7 @@
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。
 
-[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [版本说明](docs/releases/1.4.3.md) · [使用文档](docs/README.md)
+[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.4.4.md) · [使用文档](docs/README.md)
 
 | 系统 | 下载与安装 |
 | --- | --- |

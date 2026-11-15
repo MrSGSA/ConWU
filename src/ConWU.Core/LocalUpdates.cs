@@ -2,7 +2,7 @@ using System.Text.Json;
 
 namespace StreamLink.Core;
 
-public sealed record LocalUpdateAction(string Version="",string Ticket="");
+public sealed record LocalUpdateAction(string Version="",string Ticket="",string Source="github");
 public sealed record UpdateNetworkState(string Id,string NetworkId,bool Enabled,bool Connected);
 public sealed record UpdateRecoveryState(bool Ready,string Version,UpdateNetworkState[] Networks);
 public sealed record LocalUpdateStatus(bool Supported,string State="Idle",string Message="")
@@ -63,17 +63,18 @@ public sealed class LocalUpdateManager:IDisposable
             }}catch(OperationCanceledException)when(stop.IsCancellationRequested){}
         });}
     }
-    public void BeginDownload(ReleaseUpdateStatus release)
+    public void BeginDownload(ReleaseUpdateStatus release,string source="github")
     {
         lock(gate){
             if(disposed)throw new ObjectDisposedException(nameof(LocalUpdateManager));
             if(!host.Supported)throw new IOException("当前安装不支持本地 MSI 更新，请使用完整 MSI 安装包");
             if(Status.Busy)throw new IOException("已有更新任务正在进行");
+            if(!OfficialUpdateSources.Valid(source))throw new IOException("请选择 GitHub 或 Gitee 官方下载源");
             if(!release.UpdateAvailable||release.Package==null||release.LatestVersion.Length==0)throw new IOException("请先检查并选择适合本机的正式版更新");
             followExternal=false;prepared=null;Volatile.Write(ref status,new(true,"Downloading","正在下载完整安装包，当前连接不受影响"){Version=release.LatestVersion,TotalBytes=release.Package.Bytes});
             pending=Task.Run(async()=>{
                 try{
-                    var value=await host.Download(release,(done,total)=>{
+                    var value=await host.Download(release with{DownloadSource=source},(done,total)=>{
                         lock(gate)if(!disposed)Volatile.Write(ref status,Status with{DownloadedBytes=done,TotalBytes=total});
                     },stop.Token);
                     lock(gate){if(disposed)return;prepared=value;Volatile.Write(ref status,Ready(value));}

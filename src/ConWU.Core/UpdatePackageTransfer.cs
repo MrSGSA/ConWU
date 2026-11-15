@@ -20,14 +20,15 @@ internal static class UpdatePackageTransfer
     sealed class StorageFailure(string message,Exception inner):IOException(message,inner);
 
     internal static async Task Download(ReleaseUpdatePackage package,string target,Action<long,long> progress,
-        CancellationToken token,HttpClient client,UpdateDownloadPolicy? policy=null)
+        CancellationToken token,HttpClient client,UpdateDownloadPolicy? policy=null,Uri? downloadUri=null,string source="github")
     {
         policy??=UpdateDownloadPolicy.Default;
         if(package.Bytes is <1024 or >1_073_741_824||package.Sha256.Length!=64||!package.Sha256.All(char.IsAsciiHexDigit)||
             !Uri.TryCreate(package.Url,UriKind.Absolute,out var canonical)||
             !package.Url.StartsWith(ReleaseUpdateClient.Repository+"/releases/download/",StringComparison.Ordinal))
             throw new IOException("更新包的来源、长度或校验信息无效");
-        ValidateUrl(canonical);
+        if(!OfficialUpdateSources.Valid(source))throw new IOException("更新下载源无效");
+        ValidateUrl(canonical,"github");
         string partial=target+".partial",metadata=partial+".json";
         var identity=new Resume(package.Url,package.Bytes,package.Sha256.ToUpperInvariant());
         CheckFile(target);CheckFile(partial);CheckFile(metadata);CheckFile(metadata+".tmp");
@@ -52,7 +53,7 @@ internal static class UpdatePackageTransfer
                 while(output.Length<package.Bytes){
                     token.ThrowIfCancellationRequested();long start=output.Length,previousProgress=start;
                     try{
-                        using var response=await Open(client,canonical,start,policy,token);
+                        using var response=await Open(client,downloadUri??canonical,start,policy,token,source);
                         if(response.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.RequestTimeout or HttpStatusCode.Forbidden or HttpStatusCode.Gone||
                             (int)response.StatusCode>=500)throw new HttpRequestException("下载服务暂时繁忙");
                         if(response.StatusCode is not(HttpStatusCode.OK or HttpStatusCode.PartialContent))
@@ -111,11 +112,11 @@ internal static class UpdatePackageTransfer
             if(File.Exists(metadata+".tmp"))File.Delete(metadata+".tmp");
         }
     }
-    static async Task<HttpResponseMessage> Open(HttpClient client,Uri canonical,long offset,UpdateDownloadPolicy policy,CancellationToken token)
+    static async Task<HttpResponseMessage> Open(HttpClient client,Uri canonical,long offset,UpdateDownloadPolicy policy,CancellationToken token,string source)
     {
         Uri url=canonical;
         for(int hop=0;hop<6;hop++){
-            ValidateUrl(url);
+            ValidateUrl(url,source);
             using var request=new HttpRequestMessage(HttpMethod.Get,url);
             request.Headers.UserAgent.ParseAdd("ConWU-LocalUpdate/2");request.Headers.AcceptEncoding.ParseAdd("identity");
             if(offset>0)request.Headers.Range=new RangeHeaderValue(offset,null);
@@ -132,10 +133,10 @@ internal static class UpdatePackageTransfer
         }
         throw new InvalidPackage("更新下载重定向次数过多");
     }
-    static void ValidateUrl(Uri url)
+    static void ValidateUrl(Uri url,string source)
     {
-        if(url.Scheme!="https"||url.UserInfo.Length>0||!url.IsDefaultPort||
-            url.Host is not("github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com"))
+        bool allowed=source=="github"?url.Host is "github.com" or "release-assets.githubusercontent.com" or "objects.githubusercontent.com":url.Host is "gitee.com" or "attachments.gitee.com" or "foruda.gitee.com";
+        if(url.Scheme!="https"||url.UserInfo.Length>0||!url.IsDefaultPort||!allowed)
             throw new InvalidPackage("安装包下载跳转到未认可的来源");
     }
     static void CheckFile(string path)
