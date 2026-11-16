@@ -11,6 +11,48 @@ pub struct Store {
     pub root: PathBuf,
     _lease: File,
 }
+/// The MSI may already have restarted the service, which owns the database
+/// lease. Its detached updater can only finish this one non-secret journal;
+/// it cannot use this path to write network settings or identities.
+pub fn write_update_record(root: &Path, value: &serde_json::Value) -> Result<()> {
+    let root = Store::resolve_root(root)?;
+    for path in root.ancestors() {
+        reject_link(path)?;
+    }
+    ensure!(
+        root.join(".conwu-rust-owned").is_file(),
+        "更新记录目录不属于ConWU"
+    );
+    let path = root.join("last-update.json");
+    if path.exists() {
+        reject_link(&path)?;
+    }
+    let temp = root.join(format!("last-update-{}.tmp", conwu_core::id()));
+    let mut options = OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let result = (|| -> Result<()> {
+        let mut file = options.open(&temp)?;
+        file.write_all(&serde_json::to_vec(value)?)?;
+        file.sync_all()?;
+        drop(file);
+        #[cfg(windows)]
+        if path.exists() {
+            replace_windows(&temp, &path)?;
+            return Ok(());
+        }
+        fs::rename(&temp, &path)?;
+        Ok(())
+    })();
+    if temp.exists() {
+        let _ = fs::remove_file(temp);
+    }
+    result
+}
 impl Store {
     pub fn resolve_root(path: &Path) -> Result<PathBuf> {
         let absolute = std::path::absolute(path)?;
@@ -370,7 +412,7 @@ pub(crate) fn current_sid() -> Result<String> {
     Ok(sid)
 }
 #[cfg(windows)]
-fn replace_windows(from: &Path, to: &Path) -> Result<()> {
+pub(crate) fn replace_windows(from: &Path, to: &Path) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "kernel32")]
     unsafe extern "system" {

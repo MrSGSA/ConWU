@@ -208,7 +208,7 @@ async fn run(config: Config) -> io::Result<()> {
                                     let active=connector.clone();let target=config.remote;let port=config.source.port();
                                     tasks.spawn(async move{
                                         if let Ok(Some(socket))=tokio::time::timeout(Duration::from_secs(8),active.connect_from(peer.into(),port)).await {
-                                            let _=forward_server(socket,target,rx).await;
+                                            if let Err(error)=forward_server(socket,target,rx).await{event(json!({"event":"peer-failed","abi":ABI,"reason":error.to_string()}));}
                                         }
                                         peer
                                     });
@@ -219,7 +219,7 @@ async fn run(config: Config) -> io::Result<()> {
                             let SocketAddr::V4(peer)=socket.remote_addr() else {continue;};
                             if peers.contains_key(&peer)||peers.len()>=64{continue;}
                             let (tx,rx)=tokio::sync::mpsc::channel(8);peers.insert(peer,tx);let target=config.remote;
-                            tasks.spawn(async move{let _=forward_server(socket,target,rx).await;peer});
+                            tasks.spawn(async move{if let Err(error)=forward_server(socket,target,rx).await{event(json!({"event":"peer-failed","abi":ABI,"reason":error.to_string()}));}peer});
                         }
                     }
                 }

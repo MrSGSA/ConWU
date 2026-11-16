@@ -1,86 +1,85 @@
-# ConWU Rust 重写实验
+# ConWU Rust 迁移与替换验收
 
-实验分支：`experiment/rust-rewrite`。版本：`1.4.5-rust.1`。
+源码版本：`1.5.0`。完整验证范围见 [VALIDATION.md](VALIDATION.md)；对应安装包的三机升级与发布结果以 Release 随附的 `verification.json` 为准。
 
-本分支把 ConWU 的自有核心和后台迁至 Rust，包含配置存储、配对与身份、加密数据通道、多网络管理、发现与协调、WebUI 后台、平台服务、日志、更新检测和 UU 接管。产品运行不启动 .NET；`compat/ConWU.DotnetOracle` 只参与开发时的双向协议对照测试。
+ConWU 自有核心、后台、配置存储、配对、发现、系统管理和更新逻辑已迁至 Rust，继续使用现有 HTML / CSS / JavaScript 界面。日常运行不启动 .NET；`compat/ConWU.DotnetOracle` 只用于开发时的协议对照。
 
-现有 HTML/CSS/JavaScript 界面继续使用。第三方 FakeTCP C++ 承载、XDP C++ API 适配层，以及 Wintun、WinDivert、Microsoft XDP 系统组件保留各自实现与许可。本实验没有把系统驱动改写为 Rust，也没有把 Windows Mimic 变成内核中的 eBPF 协议栈。
+第三方 FakeTCP C++ 承载、XDP C++ API 适配层、Wintun、WinDivert 和 Microsoft XDP 保留各自实现与许可。Windows Mimic 使用签名的 XDP 运行时和用户态 Rust 协议处理，没有 WinDivert 回退，也没有把协议栈放进 Windows 内核 eBPF。
 
-本轮没有部署到笔记本、台式机或服务器，没有发布或推送到 GitHub/Gitee。原工作区及其未提交修改保持独立。
+## 构建身份
 
-## 本地产物
+| 构建 | Windows 服务 | 数据目录与用途 |
+| --- | --- | --- |
+| 默认 | `ConWURustExperiment` | 独立实验，默认不能安装更新 |
+| `--validation-instance <32位GUID>` | `StreamLink-Validation-<GUID>` | `%ProgramData%/ConWU-Validation/<GUID>`，用于 MSI 隔离验收 |
+| `production,local-install` | 保留 `StreamLink-PersonalFeature` | `%ProgramData%/ConWU`，与旧资料目录分离 |
 
-`out/rust-experiment/` 保存 Windows x64 ZIP、Linux x86_64 tar.gz、源码快照、文件校验和及测试证据。二进制均为默认 feature 构建：没有实验注入 API，也不能执行本地更新安装。Linux 包在本地 Arch Linux / WSL 构建，其 glibc 要求见包内构建信息，未视为正式服务器通用包。
+Linux 默认服务为 `conwu-rust-experiment.service`，正式构建保留 `streamlink.service`。`lab-api` 只开放测试用内存网卡注入，打包器拒绝交付带此 feature 的程序。`build-info` 可核对版本、产品身份、平台及 feature。
 
-## 运行与停止
+## 运行与迁移
 
-先使用内存网卡查看界面，不创建真实网卡：
+在新的独立目录查看界面：
 
-```powershell
-.\conwu.exe run --data D:\ConWU-Rust-Test\data --memory
-.\conwu.exe panel --data D:\ConWU-Rust-Test\data
-.\conwu.exe stop --data D:\ConWU-Rust-Test\data
+```text
+conwu run --data <新的数据目录> --memory --no-tray
+conwu status --data <数据目录>
+conwu panel --data <数据目录>
+conwu stop --data <数据目录>
 ```
 
-Linux：
+真实组网去掉 `--memory`，需要管理员 / root 权限和对应组件。程序自动寻找旁边的 `components` 或 `app/components`，也支持 `--components`。WebUI 默认使用 loopback 随机端口、一次性入口票据和 CSRF。Windows 正常用户通过受限命名管道访问 SYSTEM 后台，不能读取后台私密资料。
 
-```bash
-./conwu run --data "$PWD/experiment-data" --memory --no-tray
-./conwu panel --data "$PWD/experiment-data"
-./conwu stop --data "$PWD/experiment-data"
+```text
+conwu migrate --from <旧资料目录> --data <新的独立目录>
 ```
 
-`--data` 必须指向新的空目录或已有 `.conwu-rust-owned` 标识的实验目录。不要指向正式版目录。后台只监听 loopback 的随机端口，启动输出一次性 WebUI 链接；后续用 `panel` 获取新链接。日志、身份、证书和更新资料均写入这个数据目录。
+导入仅读取旧资料，不启动网络、不注册服务、不更改开机启动。Windows 需要在原设备上解开 DPAPI；Linux 使用原资料的访问权限。不要同时启动原版和导入后的同一网络。导入保留设备及成员密钥、审批 / 撤销目录、订阅地址、PKARR 身份和序号、证书、协调记录与本机偏好。Windows 可用 `Audit-Migration.ps1`，Linux 可用 `audit-linux-migration.py` 核对。
 
-真实组网使用相同命令去掉 `--memory`，需要对应管理员权限及组件。组件默认位于程序旁的 `components/`，也可用 `--components` 指定。
+当前公开的双机网络是迁移基线。已退役的直接 UDP、自动协议回退、旧短配对码和多成员治理不重新启用。历史源码中的端口预测、备用路径、UDP 探索等研究开关仍需独立迁移验证；遇到这些启用项会明确拒绝导入。
+
+## 六协议
 
 | 协议 | Windows | Linux |
 | --- | --- | --- |
-| TCP | 原生 socket | 原生 socket |
-| HTTPS | rustls TLS + WebSocket | rustls TLS + WebSocket |
-| Phantun | Rust helper + WinDivert | Rust helper + AF_PACKET/raw socket |
-| Mimic | Rust helper + Generic AF_XDP，纯 XDP，无 WinDivert 回退 | Rust helper + AF_PACKET/raw socket |
+| TCP | 系统 socket、三连接分流 | 系统 socket、三连接分流 |
+| HTTPS | rustls TLS + WebSocket、三连接分流 | 相同 |
+| Phantun | Rust helper + WinDivert | Rust helper + raw socket |
+| Mimic | Rust helper + Generic AF_XDP | Rust helper + AF_PACKET / raw socket |
 | TCPRAW | 系统 TCP 握手 + Rust helper + WinDivert | 系统 TCP 握手 + Rust helper + raw socket |
 | FakeTCP + HTTP | 独立 udp2raw 原生组件 | 独立 udp2raw 原生组件 |
 
-Windows 的虚拟网络使用官方 Wintun；Mimic 需要机器预先安装兼容的 Microsoft XDP 1.4.0 运行时。实验启动不自动安装或替换 XDP。Linux 使用临时 TUN，原始承载依赖 `ip`、`nft` 和 raw socket 权限。
+Windows 使用官方 Wintun，Mimic 另需 Microsoft XDP 1.4.0。MSI 可安装随包签名运行时，普通实验启动不会安装驱动。Linux 使用 TUN，原始承载需要 `ip`、`nft` 和 raw socket 权限。TCP / HTTPS 支持 IPv6 外层和 36 位 IPv6 直连码，其余四种承载当前限 IPv4。
 
-## 已有设置的只读导入
+从 .NET 导入的 Windows 网络继续使用原有网卡所有权作用域、代次记录及类型，以便首次升级失败时原版仍可接回同一虚拟 IP；双方共享排他锁，不能同时运行同一网络。此兼容路径只读取和维护原有的网卡记录，不启动 .NET。
 
-```powershell
-.\conwu.exe migrate --from D:\Old-ConWU-Data --data D:\ConWU-Rust-Test\imported
-```
+Wintun 每次使用新 GUID，按网络保存独占代次记录；只有确认属于本网络且 PnP 已移除的残留接口才可从路由检查中排除。Windows 类配置缓存尚未释放时，会执行可取消的等待及一次新 GUID 重试。网卡初始化不占住异步工作线程，面板可继续读取状态。
 
-源与输出目录必须完全独立。导入仅读取旧资料，不启动网络、不注册服务、不改变开机启动。支持当前主从双机身份与独立网络设置；旧多成员、equal governance 及 SL5 网络会明确拒绝。当前平台需要能解开旧资料原有的保护。Windows 可导入本机旧 DPAPI 资料，不能绕过另一台设备或账号的保护。
+## 安装、更新与回退
 
-本轮已验证 TCP 身份与设置导入，以及由 .NET 生成的临时 HTTPS PFX 导入，导入后保留已批准的 SPKI。没有对生产资料执行迁移；正式切换前仍需真实旧资料与恢复演练。
+更新先下载并核对 SHA-256，用户确认后由独立进程执行本地安装，安装阶段不依赖下载连接。GitHub 提供版本 / 摘要元数据；Gitee 使用相同 tag 的附件下载。因此 Gitee 目前不是独立元数据源。
 
-## 构建
+Windows MSI 在覆盖程序前保存一份完整上一版程序、设置和原 MSI；成功后将当前完整 MSI 登记为维护源。`CONWU_MAINTENANCE_PATH` 可指定稳定的维护目录，本机发布优先使用 D 盘。相同 MSI 的维护不会覆盖已有上一版；失败安装由 MSI 与 SCM 事务恢复原文件和服务。
 
-Rust stable（edition 2024）、C/C++ 工具链、Python 3。Windows 主程序使用 MSVC 和 Windows SDK；资源编译器位置可通过 `CONWU_RC` 指定。FakeTCP 组件使用 CMake + MinGW-w64；其他两个 helper 使用 MSVC。
+Linux 更新进程通过独立 systemd 单元运行，避免被原服务的进程组清理终止。安装后检查后台、启用网卡和协调监听；失败候选可退回上一版程序。回退不倒退已发布的 PKARR 序号和已签名撤销状态，完整旧设置另行保留。只保留当前版本与一份完整上一版，失败证据在恢复确认前保留。
+
+Linux 正式包包含 `install.sh` / `uninstall.sh`，安装需要 Python 3 与 systemd。`sudo ./install.sh` 安装到 `/opt/conwu/current`，资料放在 `/var/lib/conwu`，沿用 `streamlink.service` 及 `conwu` / `streamlink` 命令。首次替换会只读导入 `/var/lib/streamlink`；保留完整旧程序、设置和服务定义。卸载保留资料。服务启动不强制等待 `network-online.target`，断网时由后台继续发现和重试。
+
+Windows 自带更新成功路径及故障包回退、Linux systemd 更新成功与故障恢复均已通过隔离验证；最终候选仍以 [PARITY.md](PARITY.md) 为切换门槛。
+
+## 开发构建
+
+当前验收使用 Rust 1.95、MSVC / Windows SDK，以及 Linux musl 工具链。原生 FakeTCP 使用 CMake / C++。通用 Cargo 命令：
 
 ```text
-cargo build --locked --release --manifest-path rust/Cargo.toml --workspace
+cargo test --locked --manifest-path rust/Cargo.toml --workspace --all-features
+cargo build --locked --release --manifest-path rust/Cargo.toml --package conwu --features local-install
 cargo build --locked --release --manifest-path transport/phantun/Cargo.toml --workspace
-cmake -S . -B out/native -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build out/native --target udp2raw-native
 ```
 
-两个 Cargo workspace 的 target-dir 需要统一到 `out/rust-target`，或给打包脚本指定实际目录。根 `.cargo/config.toml` 已为本实验设置默认路径和 Windows 静态 CRT。
+正式候选增加 `production`，并先确定高于原正式版的稳定版本号。使用 `package.py --stage` 生成运行目录，再由 `Build-Msi.ps1` 构建 Windows MSI；WiX 固定为 6.0.2。Linux 正式交付使用静态 musl，并执行 `verify-linux-static.py`，避免开发机 glibc 版本高于服务器。
 
-`dev.ps1`、`test-linux.sh` 和 `build-native-lab.sh` 是本工作机的辅助脚本，工具链和缓存路径在 D 盘，不应当作其他电脑的安装器。通用环境直接运行上述 Cargo 命令；临时目录和依赖缓存通过进程环境配置即可，无需修改系统全局环境变量。
+`dev.ps1`、`dev-linux.sh`、`build-linux-musl.sh` 是本工作机的工具链包装，路径和缓存位于 D 盘；其他机器应使用自己的工具链。不要把这些本机缓存路径当作运行依赖，不修改系统全局临时目录。
 
-```powershell
-& ./rust/dev.ps1 -CargoArguments @('test','--offline','--manifest-path','rust/Cargo.toml','--workspace','--all-features')
-python rust/ui-smoke.py
-python rust/package.py --platform windows --dependency-root ../ConWU-Converged/out/dependency-cache
-python rust/package.py --platform linux
-```
+WSL 构建可通过 `CONWU_LINUX_TOOLCHAIN_ROOT`、`CONWU_LINUX_CARGO_HOME`、`CONWU_LINUX_TARGET_DIR`、`CONWU_LINUX_TMPDIR` 仅为当前进程指定原生文件系统上的工具链、缓存、产物及临时目录，避免 DrvFs 的大量小文件读写。正式打包拒绝未提交的源文件和构建输入，暂存目录必须是新的空目录，防止混入旧版本文件。
 
-`lab-api` 只用于临时测试后台；`local-install` 只保留后续安装开发入口。它们均默认关闭，交付包保持关闭。本轮没有制作或执行 Rust MSI，没有验收安装后自动恢复的完整生命周期。
-
-## 当前完成度
-
-本轮已具备可运行的 Rust 桌面后台和六协议数据链路，不等于正式版已经可以无条件替换。主路径、验证范围及遗留差异见 [验证与差异](VALIDATION.md)，内部模块见 [架构](ARCHITECTURE.md)。
-
-尤其需要继续验证 Windows 实际驱动链路、真实 UU 串流、长期重启与网卡切换、严苛 NAT、真实 PKARR 网关，以及旧安装升级恢复。旧版 native simultaneous-open capture broker、RejoinProof / EntryAdmission 和全部历史研究 API 尚未实现逐项等价；当前主流程采用直连码与 SAS 审批。
+验证结果见 [VALIDATION.md](VALIDATION.md)，模块与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。

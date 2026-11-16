@@ -14,6 +14,8 @@ from playwright.sync_api import sync_playwright
 
 data = root / 'out/lab' / ('ui-' + uuid.uuid4().hex)
 executable = Path(os.environ.get('CONWU_UI_EXECUTABLE', str(root / 'out/rust-target/debug/conwu.exe'))).resolve()
+build_info = json.loads(subprocess.check_output([str(executable), 'build-info'], text=True, encoding='utf-8'))
+assert not build_info['labApi'], 'UI acceptance must use a deliverable build without lab commands'
 process = subprocess.Popen([str(executable), 'run', '--data', str(data), '--memory', '--no-open', '--no-tray'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=subprocess.CREATE_NO_WINDOW)
 control = None
 errors = []
@@ -48,6 +50,8 @@ try:
                 if result.get('operation', {}).get('completed'):
                     if expected_error is None:
                         assert not result['operation']['error'], result['operation']['error']
+                    elif expected_error is True:
+                        assert result['operation']['error'], 'Memory UI must not initiate an actual installation'
                     else:
                         assert result['operation']['error'] == expected_error, result['operation']['error']
                     return result
@@ -64,7 +68,7 @@ try:
             ids.append(created['status']['selectedNetworkId'])
         assert ids[0] != ids[1]
         command('lab-read', {'networkId': ids[0]}, expected_error='未知后台操作')
-        command('update-install', {}, expected_error='当前实验构建仅校验下载，不执行安装')
+        command('update-install', {}, expected_error=True if build_info['localInstall'] else '当前实验构建仅校验下载，不执行安装')
         page.wait_for_function('() => workspaceState.networks.length === 2')
         for navigation in ['overview', 'create', 'join', 'settings', 'coordination', 'uu', 'logs']:
             selector = page.locator('button[data-page="' + navigation + '"]').first
@@ -77,7 +81,7 @@ try:
         assert not errors, errors
         browser.close()
     print(json.dumps({'embeddedUi': 'passed', 'independentNetworks': len(ids), 'javascriptErrors': len(errors),
-                      'labApiEnabled': False, 'localInstallEnabled': False, 'executable': str(executable)}, ensure_ascii=False))
+                      'labApiEnabled': False, 'localInstallEnabled': build_info['localInstall'], 'production': build_info['production'], 'executable': str(executable)}, ensure_ascii=False))
 finally:
     if control is not None:
         try:

@@ -155,7 +155,8 @@ mod windows {
             service_manager::{ServiceManager, ServiceManagerAccess},
         };
         let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-        let service = manager.open_service("ConWURustExperiment", ServiceAccess::QUERY_STATUS)?;
+        let service =
+            manager.open_service(crate::instance::service_name(), ServiceAccess::QUERY_STATUS)?;
         ensure!(
             service.query_status()?.process_id == Some(actual),
             "控制管道不属于已安装的 ConWU 服务"

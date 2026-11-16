@@ -136,8 +136,7 @@ fn validate(name: &str, data: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-fn created_at() -> String {
-    let seconds = conwu_core::unix_seconds();
+pub(crate) fn timestamp(seconds: i64) -> String {
     let mut days = seconds / 86400;
     let mut year = 1970;
     let leap = |y: i64| y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
@@ -190,7 +189,7 @@ pub fn backup(store: &Store, path: &Path, verify: bool) -> Result<Value> {
     }
     let manifest = Manifest {
         format: 1,
-        created_at: created_at(),
+        created_at: timestamp(conwu_core::unix_seconds()),
         files: files
             .iter()
             .map(|(name, bytes)| Entry {
@@ -283,8 +282,16 @@ pub fn restore(store: &Store, path: &Path, confirm: bool) -> Result<Value> {
             .context("协调恢复记录不完整")?
             .to_owned()
     } else {
-        let previous = format!("before-restore-{}.slcoord", conwu_core::id());
-        backup(store, &store.root.join(&previous), false)?;
+        // Keep exactly one completed predecessor. A failed restore keeps its
+        // marker and the same predecessor until recovery is explicitly retried.
+        let previous = "before-restore.slcoord".to_owned();
+        let next = store.checked_file("before-restore.next.slcoord")?;
+        if next.exists() {
+            std::fs::remove_file(&next)?;
+        }
+        backup(store, &next, false)?;
+        store.write(&previous, &read(&next)?, false)?;
+        std::fs::remove_file(next)?;
         store.write(
             "coordinator-restore.json",
             &serde_json::to_vec(&json!({"previous":previous}))?,

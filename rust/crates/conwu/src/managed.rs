@@ -145,6 +145,10 @@ impl Prepared {
         let name = format!("managed-raw-{}.conf", conwu_core::id());
         engine.store.write(&name, text.as_bytes(), false)?;
         let config = engine.store.checked_file(&name)?;
+        #[cfg(windows)]
+        let config_argument = crate::platform::filesystem_argument(&config)?;
+        #[cfg(not(windows))]
+        let config_argument = config.as_os_str().to_owned();
         let mut command = Command::new(engine.components.join(if cfg!(windows) {
             "udp2raw-native.exe"
         } else {
@@ -153,11 +157,27 @@ impl Prepared {
         command
             .current_dir(&engine.components)
             .arg("--conf-file")
-            .arg(&config)
+            .arg(config_argument)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .env("STREAMLINK_ALLOW_DRIVER_INSTALL", "0");
+        // Keep one private diagnostic per network instead of losing a worker's
+        // early parse/IPC error behind a generic attachment timeout.
+        let path = engine
+            .store
+            .checked_file(&format!("native-faketcp-{}.log", profile.pair.network))?;
+        let mut options = std::fs::OpenOptions::new();
+        options.create(true).truncate(true).write(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let log = options.open(path)?;
+        command
+            .stdout(Stdio::from(log.try_clone()?))
+            .stderr(Stdio::from(log));
         let descriptor = Descriptor {
             attach: Uuid::new_v4(),
             lease: lease.id,

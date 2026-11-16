@@ -1,3 +1,4 @@
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 mod adapter;
 mod assistance;
 mod backend;
@@ -11,7 +12,14 @@ mod discovery;
 mod dns;
 mod flow;
 mod gateway;
+#[cfg(windows)]
+mod installer;
+mod instance;
+#[cfg(windows)]
+mod legacy_wintun;
 mod logging;
+#[cfg(windows)]
+mod maintenance;
 mod managed;
 mod migration;
 mod model;
@@ -20,7 +28,9 @@ mod native_map;
 mod pkarr;
 mod platform;
 mod raw;
+mod recovery;
 mod remote_admin;
+mod routes;
 mod runtime;
 mod store;
 #[cfg(test)]
@@ -35,13 +45,32 @@ use anyhow::Result;
 use clap::{Parser, Subcommand};
 use std::{path::PathBuf, sync::Arc};
 #[derive(Parser)]
-#[command(name = "conwu", about = "ConWU Rust 隔离实验，数据目录必须单独指定")]
+#[command(name = "conwu", about = "ConWU Windows / Linux 后台与组网管理")]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
 }
 #[derive(Subcommand)]
 enum Command {
+    #[cfg(all(windows, feature = "lab-api"))]
+    #[command(hide = true)]
+    LabWintun {
+        #[arg(long)]
+        network: String,
+        #[arg(long)]
+        owner: String,
+        #[arg(long)]
+        address: std::net::Ipv4Addr,
+        #[arg(long)]
+        components: PathBuf,
+    },
+    #[cfg(windows)]
+    #[command(hide = true)]
+    Msi {
+        action: String,
+        #[arg(trailing_var_arg = true)]
+        arguments: Vec<String>,
+    },
     #[cfg(windows)]
     Tray {
         #[arg(long,default_value_os_t=cli::default_data())]
@@ -89,6 +118,7 @@ enum Command {
         service: bool,
     },
     Version,
+    BuildInfo,
     Stop {
         network: Option<String>,
         #[arg(long,default_value_os_t=cli::default_data())]
@@ -110,29 +140,96 @@ fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let command = Cli::parse_from(cli::normalize_args(std::env::args_os()))
-        .command
-        .unwrap_or_else(|| {
-            #[cfg(windows)]
-            {
-                Command::Tray {
-                    data: cli::default_data(),
-                    no_open: false,
-                }
-            }
-            #[cfg(not(windows))]
-            {
-                Command::Manage(vec!["help".into()])
-            }
-        });
+    let command = environment_command()?;
     #[cfg(windows)]
     if matches!(command, Command::Run { service: true, .. }) {
         return platform::dispatch_service();
     }
     tokio::runtime::Runtime::new()?.block_on(run(command))
 }
+fn environment_command() -> Result<Command> {
+    Ok(Cli::parse_from(cli::normalize_args(instance::arguments(
+        std::env::args_os(),
+    )?))
+    .command
+    .unwrap_or_else(|| {
+        #[cfg(windows)]
+        {
+            if std::env::current_exe()
+                .ok()
+                .and_then(|p| p.file_name().map(|s| s.to_string_lossy().into_owned()))
+                .is_some_and(|s| s.eq_ignore_ascii_case("ConWU.Service.exe"))
+            {
+                return Command::Run {
+                    data: cli::default_data(),
+                    components: None,
+                    port: 0,
+                    memory: false,
+                    no_open: true,
+                    no_tray: true,
+                    service: true,
+                };
+            }
+            Command::Tray {
+                data: cli::default_data(),
+                no_open: false,
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            Command::Manage(vec!["help".into()])
+        }
+    }))
+}
 async fn run(command: Command) -> Result<()> {
+    #[cfg(all(windows, feature = "lab-api"))]
+    if let Command::LabWintun {
+        network,
+        owner,
+        address,
+        components,
+    } = &command
+    {
+        let network = network.clone();
+        let owner = owner.clone();
+        let address = *address;
+        let components = components.clone();
+        let adapter = tokio::task::spawn_blocking(move || {
+            let legacy = model::LegacyAdapter {
+                owner,
+                network: network.clone(),
+                slot: 1,
+            };
+            adapter::open(
+                &network,
+                address,
+                &components,
+                &tokio_util::sync::CancellationToken::new(),
+                Some(&legacy),
+            )
+        })
+        .await??;
+        println!(
+            "{}",
+            serde_json::json!({"ready":true,"provider":adapter.provider()})
+        );
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let stop = tokio::task::spawn_blocking(|| {
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)?;
+            Ok::<_, std::io::Error>(input)
+        })
+        .await??;
+        anyhow::ensure!(stop.trim() == "stop", "实验网卡只接受停止指令");
+        drop(adapter);
+        return Ok(());
+    }
     match command {
+        #[cfg(all(windows, feature = "lab-api"))]
+        Command::LabWintun { .. } => unreachable!("handled before normal commands"),
+        #[cfg(windows)]
+        Command::Msi { action, arguments } => installer::execute(&action, &arguments).await?,
         #[cfg(windows)]
         Command::Tray { data, no_open } => crate::tray::client(data, !no_open).await?,
         Command::AuthorizeUi { data, sid } => {
@@ -163,7 +260,19 @@ async fn run(command: Command) -> Result<()> {
             let store = store::Store::open(&target)?;
             println!("{}", migration::import(&source, &store)?);
         }
-        Command::Version => println!("ConWU {} · Rust experiment", model::VERSION),
+        Command::Version => println!(
+            "ConWU {} · Rust{}",
+            model::VERSION,
+            if cfg!(feature = "production") {
+                ""
+            } else {
+                " experiment"
+            }
+        ),
+        Command::BuildInfo => println!(
+            "{}",
+            serde_json::json!({"version":model::VERSION,"product":instance::product(),"production":cfg!(feature="production"),"localInstall":cfg!(feature="local-install"),"labApi":cfg!(feature="lab-api"),"platform":std::env::consts::OS,"architecture":std::env::consts::ARCH})
+        ),
         Command::Panel { data } => {
             #[cfg(windows)]
             if let Ok(reply) = control::call(&data, &serde_json::json!({"method":"open"})).await {
@@ -247,12 +356,14 @@ async fn run(command: Command) -> Result<()> {
         } => {
             let _ = no_tray;
             let store = Arc::new(store::Store::open(&data)?);
-            let components = components.unwrap_or(
-                std::env::current_exe()?
-                    .parent()
-                    .unwrap()
-                    .join("components"),
-            );
+            let base = std::env::current_exe()?.parent().unwrap().to_owned();
+            let components = components.unwrap_or_else(|| {
+                if base.join("components").is_dir() {
+                    base.join("components")
+                } else {
+                    base.join("app/components")
+                }
+            });
             let (app, events) = backend::App::open(store.clone(), components, memory)?;
             platform::start(app.clone());
             let event_app = app.clone();
@@ -271,7 +382,14 @@ async fn run(command: Command) -> Result<()> {
                 false,
             )?;
             println!("{url}");
-            app.log("INFO", "ConWU Rust 实验后台已启动；使用独立数据目录");
+            app.log(
+                "INFO",
+                if cfg!(feature = "production") {
+                    "ConWU 后台已启动"
+                } else {
+                    "ConWU Rust 实验后台已启动；使用独立数据目录"
+                },
+            );
             app.boot().await;
             app.supervise();
             app.start_departures();
@@ -286,7 +404,7 @@ async fn run(command: Command) -> Result<()> {
                 platform::open_browser(&url)?;
             }
             tokio::select! {r=platform::shutdown_signal()=>r?,_=app.engine.cancel.cancelled()=>{},_=platform::service_cancel().cancelled_owned()=>{}}
-            app.engine.shutdown().await;
+            app.engine.shutdown().await?;
             #[cfg(windows)]
             if let Some(tray) = tray {
                 tray.await??;

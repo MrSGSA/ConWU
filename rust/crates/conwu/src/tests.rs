@@ -99,8 +99,8 @@ async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
         host.db.read().unwrap().device_name == "CLI 测试",
         "CLI 操作应落盘"
     );
-    host.engine.shutdown().await;
-    guest.engine.shutdown().await;
+    host.engine.shutdown().await?;
+    guest.engine.shutdown().await?;
     web.await??;
     Ok(())
 }
@@ -292,7 +292,7 @@ async fn remote_admin_login_origin_csrf_and_local_command_boundary() -> Result<(
             == 401,
         "退出后不可继续查询"
     );
-    app.engine.shutdown().await;
+    app.engine.shutdown().await?;
     server.await??;
     Ok(())
 }
@@ -420,6 +420,16 @@ async fn desktop_pairing_and_packets_over_tcp_and_https() -> Result<()> {
         );
         cmd(&guest,json!({"method":"network","network":{"action":"join-compact","code":code,"name":"申请"}})).await?;
         let gid = guest.db.read().unwrap().selected_network_id.clone();
+        {
+            let db = guest.db.read().unwrap();
+            let settings = &db.networks.iter().find(|n| n.id == gid).unwrap().settings;
+            ensure!(
+                (20000..30000).contains(&settings.listen_port)
+                    && (20000..30000).contains(&settings.source_port)
+                    && settings.listen_port != settings.source_port,
+                "自动分配的持久端口应避开系统默认临时端口池且互不冲突"
+            );
+        }
         wait("申请与揭示", || {
             host.engine.pairing(&hid)["verification"]
                 .as_str()
@@ -542,8 +552,8 @@ async fn desktop_pairing_and_packets_over_tcp_and_https() -> Result<()> {
         let hroot = host.store.root.clone();
         let groot = guest.store.root.clone();
         let identity = guest.db.read().unwrap().node_private.clone();
-        host.engine.shutdown().await;
-        guest.engine.shutdown().await;
+        host.engine.shutdown().await?;
+        guest.engine.shutdown().await?;
         drop(host);
         drop(guest);
         host = open_app(hroot).await?;
@@ -644,8 +654,8 @@ async fn desktop_pairing_and_packets_over_tcp_and_https() -> Result<()> {
                 == 1,
             "主机必须收到签名退出并删除从机"
         );
-        host.engine.shutdown().await;
-        guest.engine.shutdown().await;
+        host.engine.shutdown().await?;
+        guest.engine.shutdown().await?;
     }
     Ok(())
 }
@@ -744,7 +754,7 @@ async fn web_session_and_csrf_boundary() -> Result<()> {
         spoof.status() == 400 && then.elapsed() < Duration::from_secs(1),
         "重绑定 Host 必须拒绝"
     );
-    app.engine.shutdown().await;
+    app.engine.shutdown().await?;
     task.await??;
     Ok(())
 }
@@ -806,7 +816,7 @@ async fn same_port_reverse_tcp_and_tls_roles() -> Result<()> {
             "反向传输应双向可用"
         );
         stop.cancel();
-        host.engine.shutdown().await;
+        host.engine.shutdown().await?;
     }
     Ok(())
 }
@@ -815,12 +825,25 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
     let base = project().join("out/lab").join(conwu_core::id());
     let legacy = store::Store::open(&base.join("legacy"))?;
     let output = store::Store::open(&base.join("rust"))?;
+    // Deleted network tombstones are not active networks and must not consume
+    // the migration limit. They do not need a readable old private profile.
+    std::fs::create_dir(legacy.root.join("networks"))?;
+    for _ in 0..40 {
+        let folder = legacy.root.join("networks").join(conwu_core::id());
+        std::fs::create_dir(&folder)?;
+        std::fs::write(folder.join("network-info.json"), br#"{"Removed":true}"#)?;
+    }
     let node = conwu_core::crypto::new_private()?;
     let p = conwu_core::identity::Profile::create_for_device("tcp", &node, None)?;
     let mut settings = model::Settings::default();
     settings.path_selection = "tcp-only".into();
     ensure!(settings.tcp_stun.len() > 80, "应包含原版完整默认STUN列表");
-    let value = json!({"DeviceName":"迁移实验","NodeSigningPrivate":node,"Mesh":p,"SavedNetworkSettings":settings,"Enabled":true,"AutoStart":false,"ExistingEntries":[],"SecretNeverExpose":"do not copy"});
+    settings.existing_entries = vec![model::Entry {
+        peer_slot: 0,
+        source: "txt://migration.example".into(),
+    }];
+    let adapter_scope = conwu_core::id();
+    let value = json!({"DeviceName":"迁移实验","AdapterScope":adapter_scope,"NodeSigningPrivate":node,"Mesh":p,"SavedNetworkSettings":settings,"Enabled":true,"AutoStart":false,"ExistingEntries":[],"SecretNeverExpose":"do not copy"});
     let bytes = serde_json::to_vec(&value)?;
     #[cfg(windows)]
     let bytes = store::dpapi(&bytes, true, b"StreamLink-profile-v2")?;
@@ -840,6 +863,16 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
         "导入不能修改源配置"
     );
     let db = output.load()?;
+    #[cfg(windows)]
+    ensure!(
+        db.networks[0]
+            .legacy_adapter
+            .as_ref()
+            .is_some_and(|a| a.owner == adapter_scope
+                && a.network == p.pair.network
+                && a.slot == p.member.slot),
+        "迁移应保留原网卡作用域，支持原版回退"
+    );
     ensure!(
         db.node_private == node && db.networks[0].profile.as_ref().unwrap().member == p.member,
         "迁移应保留网络身份"
@@ -847,6 +880,10 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
     ensure!(
         db.networks[0].settings.tcp_stun == settings.tcp_stun,
         "导入不可截断原版STUN列表"
+    );
+    ensure!(
+        db.networks[0].settings.existing_entries == settings.existing_entries,
+        "迁移应保留订阅配置，不可被旧运行时入口覆盖"
     );
     ensure!(
         !serde_json::to_string(&db)?.contains("do not copy"),
@@ -880,7 +917,7 @@ async fn changing_and_removing_listener_releases_owned_ports() -> Result<()> {
     app.engine.remove(&id).await?;
     let removed = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, new))?;
     drop((released, removed));
-    app.engine.shutdown().await;
+    app.engine.shutdown().await?;
     Ok(())
 }
 
@@ -906,6 +943,7 @@ async fn removal_cancels_pending_discovery_commit_before_reusing_port() -> Resul
         source: SocketAddr::new(local_ip()?, listen).to_string(),
     });
     let network = model::Network {
+        legacy_adapter: None,
         id: conwu_core::id(),
         name: "取消发现提交".into(),
         configuration_id: conwu_core::id(),
@@ -943,7 +981,7 @@ async fn removal_cancels_pending_discovery_commit_before_reusing_port() -> Resul
     drop(pending);
     app.engine.install(network.clone()).await?;
     tokio::time::timeout(Duration::from_secs(3), app.engine.remove(&network.id)).await??;
-    app.engine.shutdown().await;
+    app.engine.shutdown().await?;
     Ok(())
 }
 
@@ -979,7 +1017,7 @@ async fn stun_failures_rotate_into_the_rest_of_the_saved_catalogue() -> Result<(
         "下一轮应使用列表后部服务器且校验STUN回复"
     );
     reply.await??;
-    app.engine.shutdown().await;
+    app.engine.shutdown().await?;
     Ok(())
 }
 
@@ -990,6 +1028,15 @@ fn certificates_and_verified_download_survive_reopening() -> Result<()> {
         .ok();
     let root = project().join("out/lab").join(conwu_core::id());
     let store = store::Store::open(&root)?;
+    store::write_update_record(
+        &store.root,
+        &json!({"state":"Installed","version":"previous-fixture"}),
+    )?;
+    ensure!(
+        serde_json::from_slice::<Value>(&std::fs::read(store.root.join("last-update.json"))?)?["state"]
+            == "Installed",
+        "更新结束记录应能在新后台持有数据锁时写入"
+    );
     let first = transport::TlsIdentity::load(&store)?;
     let updates = store.root.join("updates");
     std::fs::create_dir(&updates)?;

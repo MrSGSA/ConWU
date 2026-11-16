@@ -35,6 +35,8 @@ foreach($folder in Get-ChildItem -LiteralPath (Join-Path $LegacyRoot 'networks')
     $matching=@($database.networks | Where-Object id -CEQ $info.Id)
     Require ($matching.Count -eq 1) '网络编号及独立性'
     $network=$matching[0]
+    $adapterOwner=if($old.AdapterScope){$old.AdapterScope}elseif($old.Device){$old.Device}else{$old.Mesh.Self.Device}
+    Require ($network.legacyAdapter.owner -ceq $adapterOwner -and $network.legacyAdapter.network -ceq $old.Mesh.Pair.Network -and $network.legacyAdapter.slot -eq $old.Mesh.Self.Slot) '虚拟网卡所有权及回退作用域'
     foreach($field in @('OwnerKey','OwnerPrivate','SigningPrivate','ExchangePrivate','IntroducerSlot')) {
         Require (Equal-Value $old.Mesh.$field $network.profile.$field) ('网络身份 '+$field)
     }
@@ -48,7 +50,8 @@ foreach($folder in Get-ChildItem -LiteralPath (Join-Path $LegacyRoot 'networks')
         Require (Equal-Value $old.Mesh.Directory.$field $network.profile.Directory.$field) ('成员目录 '+$field)
     }
     Require ($old.Mesh.Directory.Members.Count -eq $network.profile.Directory.Members.Count) '目录成员数量'
-    Require ($old.Enabled -eq $network.enabled -and $old.ConnectionPaused -eq $network.paused) '启动及断开状态'
+    $wasEnabled=if($null -eq $old.Enabled){$true}else{[bool]$old.Enabled}
+    Require ($wasEnabled -eq $network.enabled -and [bool]$old.ConnectionPaused -eq $network.paused) '启动及断开状态'
     Require ($old.PkarrSeed -ceq $network.pkarrSeed -and $old.PkarrSequence -eq $network.pkarrSequence) 'PKARR发布身份及高水位'
     $settings=if($old.SavedNetworkSettings){$old.SavedNetworkSettings}else{$old}
     foreach($field in @('PathSelection','ConnectionSource','ListenPort','SourcePort','StreamFlowLanes','TcpStun','UdpStun','EntryRefreshSeconds','PortControlMapping','RequestedVirtualIp')) {

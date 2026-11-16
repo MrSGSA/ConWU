@@ -8,7 +8,6 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
 };
-pub const PRODUCT: &str = "{2B716DCB-5CD7-4EEC-91E4-749BC09027A1}";
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Plan {
     pub product: String,
@@ -21,6 +20,8 @@ pub struct Plan {
     pub program: PathBuf,
     pub worker: PathBuf,
     pub service: bool,
+    #[serde(default)]
+    pub service_name: String,
 }
 pub fn hash_file(path: &Path) -> Result<String> {
     crate::store::reject_link(path)?;
@@ -42,7 +43,14 @@ pub fn package_marker(program: &Path) -> Result<serde_json::Value> {
     crate::store::reject_link(&path)?;
     ensure!(std::fs::metadata(&path)?.len() <= 262144, "安装标识过大");
     let marker: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    ensure!(marker["product"] == PRODUCT, "不能覆盖非 Rust 实验安装");
+    ensure!(
+        marker["product"] == crate::instance::product(),
+        "不能覆盖其他产品的安装"
+    );
+    ensure!(
+        marker["os"] == std::env::consts::OS && marker["arch"] == std::env::consts::ARCH,
+        "安装包平台或架构不符"
+    );
     Ok(marker)
 }
 pub fn prepare(
@@ -56,7 +64,12 @@ pub fn prepare(
         "此实验构建未开放实际安装"
     );
     let executable = std::env::current_exe()?.canonicalize()?;
-    let program = executable.parent().context("安装目录缺失")?.to_owned();
+    let base = executable.parent().context("安装目录缺失")?;
+    let program = if base.join(".conwu-rust-package").is_file() {
+        base.to_owned()
+    } else {
+        base.parent().context("缺少程序根目录")?.to_owned()
+    };
     package_marker(&program)?;
     ensure!(
         !app.store.root.starts_with(&program) && !program.starts_with(&app.store.root),
@@ -67,7 +80,7 @@ pub fn prepare(
         "安装包校验失败"
     );
     #[cfg(windows)]
-    validate_msi(package)?;
+    validate_msi(package, Some(version))?;
     let worker = app.store.root.join("updates").join(if cfg!(windows) {
         "conwu-update-worker.exe"
     } else {
@@ -78,7 +91,7 @@ pub fn prepare(
     }
     std::fs::copy(&executable, &worker)?;
     let plan = Plan {
-        product: PRODUCT.into(),
+        product: crate::instance::product(),
         nonce: hex::encode(conwu_core::crypto::random::<32>()),
         parent: std::process::id(),
         version: version.into(),
@@ -87,14 +100,18 @@ pub fn prepare(
         sha256: sha256.into(),
         program,
         worker: worker.clone(),
-        service: crate::platform::service_registered(),
+        service: crate::platform::is_service_process(),
+        service_name: crate::instance::service_name(),
     };
     app.store.write_secret(
         "update-plan.private.json",
         &serde_json::to_vec(&plan)?,
         false,
     )?;
-    let mut command = std::process::Command::new(worker);
+    let mut command = std::process::Command::new(&worker);
+    if let Some(id) = crate::instance::validation() {
+        command.arg("--validation-instance").arg(id);
+    }
     command
         .arg("apply-update")
         .arg("--data")
@@ -108,6 +125,29 @@ pub fn prepare(
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000);
     }
+    #[cfg(target_os = "linux")]
+    if plan.service {
+        // A normal child belongs to the old service's control group and would
+        // be killed by KillMode=control-group before it can finish the update.
+        let status = std::process::Command::new("systemd-run")
+            .args(["--no-block", "--collect", "--service-type=exec", "--unit"])
+            .arg(format!("conwu-local-update-{}", &plan.nonce[..12]))
+            .arg(format!(
+                "--property=ExecStartPre=/usr/bin/systemctl stop {}",
+                crate::instance::linux_unit()
+            ))
+            .arg("--")
+            .arg(&worker)
+            .args(command.get_args())
+            .status()?;
+        ensure!(
+            status.success(),
+            "无法启动独立的本地更新服务；当前后台继续运行"
+        );
+    } else {
+        command.spawn()?;
+    }
+    #[cfg(not(target_os = "linux"))]
     command.spawn()?;
     app.engine.cancel.cancel();
     Ok(())
@@ -134,7 +174,7 @@ pub async fn apply(data: PathBuf, nonce: String, parent: u32) -> Result<()> {
     };
     let plan: Plan = serde_json::from_slice(&store.read_secret("update-plan.private.json")?)?;
     ensure!(
-        plan.product == PRODUCT
+        plan.product == crate::instance::product()
             && plan.parent == parent
             && conwu_core::crypto::eq(nonce.as_bytes(), plan.nonce.as_bytes())
             && std::env::current_exe()?.canonicalize()? == plan.worker.canonicalize()?,
@@ -146,57 +186,155 @@ pub async fn apply(data: PathBuf, nonce: String, parent: u32) -> Result<()> {
         "本地安装包被改变"
     );
     package_marker(&plan.program)?;
-    let backup = store.root.join("update-rollback");
-    if backup.exists() {
-        safe_remove(&backup, &store.root)?;
-    }
-    std::fs::create_dir(&backup)?;
-    for file in std::fs::read_dir(&store.root)? {
-        let path = file?.path();
-        crate::store::reject_link(&path)?;
-        let name = path.file_name().unwrap().to_string_lossy();
-        if path.is_file()
-            && (name.starts_with("database.")
-                || name == "stream-private.pem"
-                || name == "pkarr-checkpoints.json"
-                || name == "coordinator.json")
-            || path.is_file()
-                && matches!(
-                    name.as_ref(),
-                    "stream-certificate.der"
-                        | "coordinator-legacy.json"
-                        | "remote-admin.json"
-                        | "ui-user.sid"
-                        | "coordinator-certificate.pem"
-                        | "coordinator-private.pem"
-                )
-        {
-            std::fs::copy(&path, backup.join(path.file_name().unwrap()))?;
+    #[cfg(target_os = "linux")]
+    let _backup = {
+        let backup = store.root.join("update-rollback");
+        if backup.exists() {
+            safe_remove(&backup, &store.root)?;
+        }
+        crate::recovery::copy(&store.root, &backup.join("settings"), true)?;
+        std::fs::write(backup.join("version.txt"), &plan.previous_version)?;
+        backup
+    };
+    // Windows MSI custom actions and its readiness probe must be able to open
+    // the same data store. Holding the old parent's lease during msiexec would
+    // force every update to fail; MSI owns its own rollback transaction.
+    let root = store.root.clone();
+    store.write("last-update.json",&serde_json::to_vec(&serde_json::json!({"supported":true,"state":"Installing","message":"正在执行本地安装","canInstall":false,"version":plan.version}))?,false)?;
+    drop(store);
+    let installation = install(&plan).await;
+    let installed = installation.is_ok();
+    let mut result = installation;
+    if result.is_ok() {
+        result = restart(&plan);
+        if result.is_ok() {
+            result = healthy(&root, Some(&plan.version), plan.service).await;
         }
     }
-    std::fs::write(backup.join("version.txt"), &plan.previous_version)?;
-    let result = install(&plan).await;
-    if result.is_err() {
-        restore(&store, &backup)?;
+    #[cfg(target_os = "linux")]
+    if result.is_err() && installed {
+        // Stop the failed candidate before opening settings or moving files.
+        let recovery = async {
+            stop_candidate(&plan, &root).await?;
+            rollback_linux(&plan)?;
+            // Keep the latest signed revocation/PKARR state from the failed boot.
+            // Current Rust formats are backwards compatible; restoring an older
+            // database here could reuse a published sequence or revive a member.
+            restart(&plan)?;
+            healthy(&root, Some(&plan.previous_version), plan.service).await
+        }
+        .await;
+        if let Err(error) = recovery {
+            result = Err(error.context("新版本失败，自动恢复上一版尚未完成"));
+        }
+    }
+    if result.is_err() && !installed {
+        let recovery = async {
+            restart(&plan)?;
+            healthy(&root, Some(&plan.previous_version), plan.service).await
+        }
+        .await;
+        if let Err(error) = recovery {
+            result = Err(error.context("安装失败，原后台尚未恢复"));
+        }
     }
     let message = result
         .as_ref()
         .map(|_| "安装已完成，正在恢复后台")
         .unwrap_or("本地安装未完成，已保留上一版本与设置");
-    store.write("last-update.json",&serde_json::to_vec(&serde_json::json!({"supported":true,"state":if result.is_ok(){"Installed"}else{"Error"},"message":message,"canInstall":false,"version":plan.version}))?,false)?;
-    drop(store);
-    restart(&plan)?;
+    crate::store::write_update_record(
+        &root,
+        &serde_json::json!({"supported":true,"state":if result.is_ok(){"Installed"}else{"Error"},"message":message,"detail":result.as_ref().err().map(|e|crate::logging::redact(&e.to_string())),"canInstall":false,"version":plan.version}),
+    )?;
     result
 }
-fn restore(store: &Store, backup: &Path) -> Result<()> {
-    for entry in std::fs::read_dir(backup)? {
-        let path = entry?.path();
-        crate::store::reject_link(&path)?;
-        let name = path.file_name().unwrap().to_string_lossy();
-        if name != "version.txt" {
-            store.write(&name, &std::fs::read(&path)?, false)?;
+async fn healthy(root: &Path, version: Option<&str>, service: bool) -> Result<()> {
+    #[cfg(windows)]
+    let _ = service;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(240);
+    loop {
+        #[cfg(target_os = "linux")]
+        if service {
+            let state = std::process::Command::new("systemctl")
+                .args([
+                    "show",
+                    "--property=ActiveState",
+                    "--value",
+                    crate::instance::linux_unit(),
+                ])
+                .output()?;
+            ensure!(
+                String::from_utf8_lossy(&state.stdout).trim() != "failed",
+                "更新后的后台服务启动失败"
+            );
         }
+        if let Ok(client) = crate::cli::Client::open(root) {
+            if let Ok(reply) = client.call(serde_json::json!({"method":"status"})).await {
+                let status = &reply["status"];
+                if status["serviceReady"] == true
+                    && version.is_none_or(|v| status["version"] == v)
+                    && (status["deviceSettings"]["coordinator"]["enabled"] != true
+                        || status["coordinator"]["running"] == true)
+                    && status["networks"].as_array().is_some_and(|networks| {
+                        networks.iter().all(|n| {
+                            n["enabled"] != true
+                                || n["status"]["networkId"].as_str().is_none_or(str::is_empty)
+                                || n["status"]["adapter"]["ready"] == true
+                        })
+                    })
+                {
+                    return Ok(());
+                }
+            }
+        }
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "更新后的后台或虚拟网卡未就绪"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
     }
+}
+#[cfg(target_os = "linux")]
+async fn stop_candidate(plan: &Plan, root: &Path) -> Result<()> {
+    if plan.service {
+        ensure!(
+            std::process::Command::new("systemctl")
+                .args(["stop", crate::instance::linux_unit()])
+                .status()?
+                .success(),
+            "停止新后台失败"
+        );
+    } else if let Ok(client) = crate::cli::Client::open(root) {
+        let _ = client.shutdown().await;
+    }
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(75);
+    loop {
+        if Store::open(root).is_ok() {
+            return Ok(());
+        }
+        ensure!(
+            tokio::time::Instant::now() < deadline,
+            "新后台仍在使用配置，未回退文件"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+}
+#[cfg(target_os = "linux")]
+fn rollback_linux(plan: &Plan) -> Result<()> {
+    let parent = plan.program.parent().context("缺少程序父目录")?;
+    let previous = parent.join("conwu-rust-previous");
+    ensure!(
+        package_marker(&previous)?["version"] == plan.previous_version,
+        "上一版程序身份不符"
+    );
+    let failed = parent.join("conwu-rust-failed");
+    if failed.exists() {
+        package_marker(&failed)?;
+        safe_remove(&failed, parent)?;
+    }
+    package_marker(&plan.program)?;
+    std::fs::rename(&plan.program, &failed)?;
+    std::fs::rename(&previous, &plan.program)?;
     Ok(())
 }
 pub fn safe_remove(path: &Path, root: &Path) -> Result<()> {
@@ -218,16 +356,44 @@ pub fn safe_remove(path: &Path, root: &Path) -> Result<()> {
     Ok(())
 }
 #[cfg(windows)]
+fn msi_path(path: &Path) -> Result<std::ffi::OsString> {
+    crate::platform::filesystem_argument(path)
+}
+#[cfg(all(windows, test))]
+#[test]
+fn msi_arguments_keep_unicode_and_normalize_only_filesystem_prefixes() -> Result<()> {
+    for (before, after) in [
+        (
+            r"\\?\C:\ProgramData\ConWU\更新 包.msi",
+            r"C:\ProgramData\ConWU\更新 包.msi",
+        ),
+        (r"\\?\UNC\host\share\更新.msi", r"\\host\share\更新.msi"),
+        (r"D:\ConWU\包.msi", r"D:\ConWU\包.msi"),
+    ] {
+        ensure!(msi_path(Path::new(before))? == std::ffi::OsStr::new(after));
+    }
+    ensure!(msi_path(Path::new(r"\\?\GLOBALROOT\Device\volume\x.msi")).is_err());
+    ensure!(msi_path(Path::new(r"relative\x.msi")).is_err());
+    Ok(())
+}
+#[cfg(windows)]
 async fn install(plan: &Plan) -> Result<()> {
     use std::os::windows::process::CommandExt;
-    validate_msi(&plan.package)?;
+    validate_msi(&plan.package, Some(&plan.version))?;
+    let log = plan.worker.with_file_name("install-msi.log");
+    if log.exists() {
+        crate::store::reject_link(&log)?;
+    }
     let status = tokio::task::spawn_blocking({
-        let package = plan.package.clone();
+        let package = msi_path(&plan.package)?;
+        let log = msi_path(&log)?;
         move || {
             std::process::Command::new("msiexec.exe")
                 .arg("/i")
                 .arg(package)
                 .args(["/qn", "/norestart"])
+                .arg("/l*v")
+                .arg(log)
                 .creation_flags(0x08000000)
                 .status()
         }
@@ -235,7 +401,8 @@ async fn install(plan: &Plan) -> Result<()> {
     .await??;
     ensure!(
         matches!(status.code(), Some(0 | 3010)),
-        "MSI 安装失败，已保留回退资料"
+        "MSI 安装失败（退出码 {:?}），已保留回退资料与 install-msi.log",
+        status.code()
     );
     Ok(())
 }
@@ -300,12 +467,56 @@ async fn install(plan: &Plan) -> Result<()> {
 }
 fn restart(plan: &Plan) -> Result<()> {
     if plan.service {
+        let service = if plan.service_name.is_empty() {
+            crate::instance::service_name()
+        } else {
+            plan.service_name.clone()
+        };
+        #[cfg(windows)]
+        {
+            use windows_service::{
+                service::{ServiceAccess, ServiceState},
+                service_manager::{ServiceManager, ServiceManagerAccess},
+            };
+            if ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+                .and_then(|manager| manager.open_service(&service, ServiceAccess::QUERY_STATUS))
+                .and_then(|service| service.query_status())
+                .is_ok_and(|s| s.current_state == ServiceState::Running)
+            {
+                return Ok(());
+            }
+        }
         let mut command =
             std::process::Command::new(if cfg!(windows) { "sc.exe" } else { "systemctl" });
+        #[cfg(target_os = "linux")]
+        {
+            let state = std::process::Command::new("systemctl")
+                .args([
+                    "show",
+                    "--property=ActiveState",
+                    "--value",
+                    crate::instance::linux_unit(),
+                ])
+                .output()?;
+            ensure!(state.status.success(), "无法查询本机后台的启动状态");
+            // A healthy stopped unit may already have been garbage-collected
+            // by systemd. reset-failed then reports "not loaded", although
+            // starting the installed unit is valid. Reset only an actual
+            // failure, including StartLimit after a failed candidate.
+            if state.stdout.trim_ascii() == b"failed" {
+                ensure!(
+                    std::process::Command::new("systemctl")
+                        .args(["reset-failed", crate::instance::linux_unit()])
+                        .status()?
+                        .success(),
+                    "无法清除本机后台的启动失败计数"
+                );
+            }
+        }
         command.args(if cfg!(windows) {
-            vec!["start", "ConWURustExperiment"]
+            vec!["start", &service]
         } else {
-            vec!["restart", "conwu-rust-experiment.service"]
+            vec!["restart", crate::instance::linux_unit()]
         });
         #[cfg(windows)]
         {
@@ -337,7 +548,7 @@ fn restart(plan: &Plan) -> Result<()> {
     Ok(())
 }
 #[cfg(windows)]
-fn validate_msi(path: &Path) -> Result<()> {
+pub(crate) fn validate_msi(path: &Path, version: Option<&str>) -> Result<()> {
     use std::os::windows::ffi::OsStrExt;
     #[link(name = "msi")]
     unsafe extern "system" {
@@ -364,10 +575,14 @@ fn validate_msi(path: &Path) -> Result<()> {
             "安装包不是有效 MSI"
         );
         let db = Handle(db);
-        for (property, expected) in [
-            ("UpgradeCode", PRODUCT),
-            ("ProductName", "ConWU Rust Experiment"),
-        ] {
+        let mut properties = vec![
+            ("UpgradeCode", crate::instance::product()),
+            ("ProductName", crate::instance::product_name()),
+        ];
+        if let Some(v) = version {
+            properties.push(("STREAMLINK_DISPLAY_VERSION", v.to_owned()));
+        }
+        for (property, expected) in properties {
             let query = format!("SELECT `Value` FROM `Property` WHERE `Property` = '{property}'");
             let mut view = 0;
             ensure!(
@@ -388,7 +603,7 @@ fn validate_msi(path: &Path) -> Result<()> {
             ensure!(
                 MsiRecordGetStringW(record.0, 1, value.as_mut_ptr(), &mut length) == 0
                     && String::from_utf16_lossy(&value[..length as usize])
-                        .eq_ignore_ascii_case(expected),
+                        .eq_ignore_ascii_case(&expected),
                 "拒绝覆盖其他产品的 MSI"
             );
         }

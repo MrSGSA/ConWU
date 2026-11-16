@@ -1,3 +1,5 @@
+#[cfg(windows)]
+use anyhow::Context;
 use anyhow::{Result, ensure};
 use std::{
     collections::VecDeque,
@@ -9,6 +11,9 @@ pub trait Adapter: Send + Sync {
     fn read(&self) -> Result<Option<Vec<u8>>>;
     fn write(&self, packet: &[u8]) -> Result<bool>;
     fn provider(&self) -> &'static str;
+    fn warnings(&self) -> Vec<serde_json::Value> {
+        Vec::new()
+    }
 }
 pub struct Memory {
     outgoing: Mutex<VecDeque<Vec<u8>>>,
@@ -50,15 +55,23 @@ impl Adapter for Memory {
         "Isolated.Memory"
     }
 }
-pub fn open(network: &str, ip: Ipv4Addr, components: &Path) -> Result<Arc<dyn Adapter>> {
+pub fn open(
+    network: &str,
+    ip: Ipv4Addr,
+    components: &Path,
+    cancel: &tokio_util::sync::CancellationToken,
+    legacy: Option<&crate::model::LegacyAdapter>,
+) -> Result<Arc<dyn Adapter>> {
     #[cfg(target_os = "linux")]
     {
-        let _ = components;
+        let _ = (components, cancel, legacy);
         return Ok(Arc::new(linux::Tun::open(network, ip)?));
     }
     #[cfg(windows)]
     {
-        return Ok(Arc::new(windows::Wintun::open(network, ip, components)?));
+        return Ok(Arc::new(windows::Wintun::open(
+            network, ip, components, cancel, legacy,
+        )?));
     }
     #[cfg(not(any(windows, target_os = "linux")))]
     anyhow::bail!("this experimental desktop backend supports Windows and Linux")
@@ -73,10 +86,12 @@ mod linux {
     };
     pub struct Tun {
         file: File,
+        warnings: Vec<serde_json::Value>,
     }
     impl Tun {
         pub fn open(network: &str, ip: Ipv4Addr) -> Result<Self> {
             ensure!(conwu_core::valid_id(network), "invalid owned network");
+            let warnings = crate::routes::inspect(ip, &[])?;
             let name = format!("cwru{}", &network[..8]);
             let file = OpenOptions::new()
                 .read(true)
@@ -105,7 +120,7 @@ mod linux {
                 .args(["link", "set", "dev", &name, "mtu", "1280", "up"])
                 .status()?;
             ensure!(up.success(), "could not activate owned TUN");
-            Ok(Self { file })
+            Ok(Self { file, warnings })
         }
     }
     impl Adapter for Tun {
@@ -131,19 +146,89 @@ mod linux {
         fn provider(&self) -> &'static str {
             "Linux.TUN"
         }
+        fn warnings(&self) -> Vec<serde_json::Value> {
+            self.warnings.clone()
+        }
     }
 }
 #[cfg(windows)]
 mod windows {
     use super::*;
-    use std::{
-        ffi::c_void,
-        os::windows::{ffi::OsStrExt, process::CommandExt},
-    };
+    use std::{ffi::c_void, os::windows::ffi::OsStrExt};
     type Handle = *mut c_void;
     type Create = unsafe extern "system" fn(*const u16, *const u16, *const c_void) -> Handle;
     type Close = unsafe extern "system" fn(Handle);
     type Start = unsafe extern "system" fn(Handle, u32) -> Handle;
+    type AdapterLuid = unsafe extern "system" fn(Handle, *mut u64);
+    #[repr(C)]
+    #[derive(PartialEq, Eq)]
+    struct AdapterGuid {
+        data1: u32,
+        data2: u16,
+        data3: u16,
+        data4: [u8; 8],
+    }
+    #[link(name = "iphlpapi")]
+    unsafe extern "system" {
+        fn ConvertInterfaceLuidToGuid(luid: *const u64, guid: *mut AdapterGuid) -> u32;
+        fn ConvertInterfaceGuidToLuid(guid: *const AdapterGuid, luid: *mut u64) -> u32;
+    }
+    #[repr(C)]
+    struct DeviceInfo {
+        size: u32,
+        class: AdapterGuid,
+        dev_inst: u32,
+        reserved: usize,
+    }
+    #[link(name = "setupapi")]
+    unsafe extern "system" {
+        fn SetupDiCreateDeviceInfoList(class: *const AdapterGuid, parent: Handle) -> Handle;
+        fn SetupDiOpenDeviceInfoW(
+            set: Handle,
+            id: *const u16,
+            parent: Handle,
+            flags: u32,
+            info: *mut DeviceInfo,
+        ) -> i32;
+        fn SetupDiDestroyDeviceInfoList(set: Handle) -> i32;
+    }
+    fn device_present(id: uuid::Uuid) -> Result<bool> {
+        let set = unsafe { SetupDiCreateDeviceInfoList(std::ptr::null(), std::ptr::null_mut()) };
+        ensure!(set != (-1isize as Handle), "无法核对旧虚拟网卡设备");
+        let mut info = DeviceInfo {
+            size: std::mem::size_of::<DeviceInfo>() as u32,
+            class: AdapterGuid {
+                data1: 0,
+                data2: 0,
+                data3: 0,
+                data4: [0; 8],
+            },
+            dev_inst: 0,
+            reserved: 0,
+        };
+        let name = format!(r"SWD\WINTUN\{{{}}}", id.hyphenated()).to_ascii_uppercase();
+        let found = unsafe {
+            SetupDiOpenDeviceInfoW(
+                set,
+                wide(&name).as_ptr(),
+                std::ptr::null_mut(),
+                0,
+                &mut info,
+            )
+        } != 0;
+        let error = std::io::Error::last_os_error();
+        unsafe { SetupDiDestroyDeviceInfoList(set) };
+        if !found {
+            ensure!(
+                matches!(
+                    error.raw_os_error().map(|e| e as u32),
+                    Some(0xe000020b | 433 | 1168)
+                ),
+                "旧虚拟网卡设备查询失败：{error}"
+            );
+        }
+        Ok(found)
+    }
     type Receive = unsafe extern "system" fn(Handle, *mut u32) -> *mut u8;
     type Release = unsafe extern "system" fn(Handle, *const u8);
     type Allocate = unsafe extern "system" fn(Handle, u32) -> *mut u8;
@@ -160,6 +245,10 @@ mod windows {
         send: Send,
         rx: Mutex<()>,
         tx: Mutex<()>,
+        owner: crate::store::Store,
+        generation: serde_json::Value,
+        legacy: Option<crate::legacy_wintun::Guard>,
+        warnings: Vec<serde_json::Value>,
     }
     // Wintun handles are process-owned. RX and TX each have their own guard;
     // Arc ownership prevents library/session teardown while a caller is active.
@@ -171,8 +260,190 @@ mod windows {
             .chain(Some(0))
             .collect()
     }
+    fn settle(closed_at: i64, cancel: &tokio_util::sync::CancellationToken) -> Result<()> {
+        let now = conwu_core::unix_seconds() * 1000;
+        let elapsed = if closed_at > 0 && closed_at <= now {
+            (now - closed_at).min(30000)
+        } else {
+            0
+        };
+        let until =
+            std::time::Instant::now() + std::time::Duration::from_millis((30000 - elapsed) as u64);
+        while std::time::Instant::now() < until {
+            ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        Ok(())
+    }
+    unsafe extern "system" fn logger(level: i32, _: u64, message: *const u16) {
+        if message.is_null() {
+            return;
+        }
+        let mut length = 0;
+        while length < 4096 && unsafe { *message.add(length) } != 0 {
+            length += 1;
+        }
+        let text = String::from_utf16_lossy(unsafe { std::slice::from_raw_parts(message, length) });
+        if level >= 2 {
+            tracing::warn!("Wintun：{text}");
+        } else {
+            tracing::debug!("Wintun：{text}");
+        }
+    }
+    fn configure_ip(
+        luid: u64,
+        ip: Ipv4Addr,
+        cancel: &tokio_util::sync::CancellationToken,
+    ) -> Result<()> {
+        use windows_sys::Win32::{
+            NetworkManagement::{IpHelper::*, Ndis::NET_LUID_LH},
+            Networking::WinSock::*,
+        };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+        let mut row = MIB_IPINTERFACE_ROW::default();
+        loop {
+            ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+            unsafe {
+                InitializeIpInterfaceEntry(&mut row);
+            }
+            row.Family = AF_INET;
+            row.InterfaceLuid = NET_LUID_LH { Value: luid };
+            let error = unsafe { GetIpInterfaceEntry(&mut row) };
+            if error == 0 {
+                break;
+            }
+            ensure!(
+                matches!(error, 2 | 21 | 1168) && std::time::Instant::now() < deadline,
+                "无法读取本网络的IP接口：{}",
+                std::io::Error::from_raw_os_error(error as i32)
+            );
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        row.NlMtu = 1280;
+        row.SitePrefixLength = 0;
+        row.ForwardingEnabled = false;
+        row.WeakHostSend = false;
+        row.WeakHostReceive = false;
+        row.RouterDiscoveryBehavior = RouterDiscoveryDisabled;
+        row.DadTransmits = 0;
+        let error = unsafe { SetIpInterfaceEntry(&mut row) };
+        ensure!(
+            error == 0,
+            "无法配置本网络的IP接口：{}",
+            std::io::Error::from_raw_os_error(error as i32)
+        );
+        let mut address = MIB_UNICASTIPADDRESS_ROW::default();
+        unsafe {
+            InitializeUnicastIpAddressEntry(&mut address);
+            address.InterfaceLuid = NET_LUID_LH { Value: luid };
+            address.Address.Ipv4.sin_family = AF_INET;
+            address.Address.Ipv4.sin_addr.S_un.S_addr = u32::from_ne_bytes(ip.octets());
+        }
+        address.OnLinkPrefixLength = 24;
+        address.DadState = IpDadStatePreferred;
+        ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+        let error = unsafe { CreateUnicastIpAddressEntry(&address) };
+        ensure!(
+            error == 0,
+            "无法配置本机虚拟IP：{}",
+            std::io::Error::from_raw_os_error(error as i32)
+        );
+        Ok(())
+    }
+    fn verified_orphans(
+        network: &str,
+        history: &[uuid::Uuid],
+        legacy: Option<&crate::legacy_wintun::Guard>,
+    ) -> Result<(
+        Vec<u64>,
+        Vec<uuid::Uuid>,
+        std::collections::HashSet<uuid::Uuid>,
+    )> {
+        use windows_sys::Win32::NetworkManagement::{
+            IpHelper::{GetIfEntry2, MIB_IF_ROW2},
+            Ndis::NET_LUID_LH,
+        };
+        let mut luids = Vec::new();
+        let mut retained = Vec::new();
+        let mut all = std::collections::HashSet::new();
+        let mut identities = history
+            .iter()
+            .map(|id| {
+                (
+                    *id,
+                    legacy
+                        .map(|l| l.expected_name(*id))
+                        .unwrap_or_else(|| format!("ConWU-{}-{}", &network[..8], id.simple())),
+                )
+            })
+            .collect::<std::collections::BTreeMap<_, _>>();
+        if let Some(legacy) = legacy {
+            for (id, name) in legacy.identities() {
+                if let Some(prior) = identities.insert(*id, name.clone()) {
+                    ensure!(
+                        prior.eq_ignore_ascii_case(name),
+                        "网卡代次的两份记录名称不一致"
+                    );
+                }
+            }
+        }
+        for (id, expected_name) in identities {
+            ensure!(
+                !device_present(id)?,
+                "本网络已记录的旧网卡仍在使用，未创建第二个实例"
+            );
+            let (data1, data2, data3, data4) = id.as_fields();
+            let guid = AdapterGuid {
+                data1,
+                data2,
+                data3,
+                data4: *data4,
+            };
+            let mut luid = 0;
+            if unsafe { ConvertInterfaceGuidToLuid(&guid, &mut luid) } != 0 {
+                continue;
+            }
+            let mut row = MIB_IF_ROW2::default();
+            row.InterfaceLuid = NET_LUID_LH { Value: luid };
+            ensure!(
+                unsafe { GetIfEntry2(&mut row) } == 0,
+                "无法复核本网络已关闭的接口"
+            );
+            let text = |v: &[u16]| {
+                String::from_utf16_lossy(&v[..v.iter().position(|c| *c == 0).unwrap_or(v.len())])
+            };
+            let alias = text(&row.Alias);
+            let description = text(&row.Description);
+            let kind = if legacy.is_some() {
+                "StreamLink Tunnel"
+            } else {
+                "ConWU Tunnel"
+            };
+            let numbered = format!("{kind} #");
+            let own_type = description == kind
+                || description
+                    .strip_prefix(&numbered)
+                    .is_some_and(|s| s.parse::<u32>().is_ok_and(|n| n >= 2));
+            ensure!(
+                alias.eq_ignore_ascii_case(&expected_name) && own_type,
+                "旧接口的名称或类型不属于本网络，未忽略冲突"
+            );
+            luids.push(luid);
+            all.insert(id);
+            if history.contains(&id) {
+                retained.push(id);
+            }
+        }
+        Ok((luids, retained, all))
+    }
     impl Wintun {
-        pub fn open(network: &str, ip: Ipv4Addr, components: &Path) -> Result<Self> {
+        pub fn open(
+            network: &str,
+            ip: Ipv4Addr,
+            components: &Path,
+            cancel: &tokio_util::sync::CancellationToken,
+            legacy_scope: Option<&crate::model::LegacyAdapter>,
+        ) -> Result<Self> {
             ensure!(conwu_core::valid_id(network), "invalid network identity");
             let path = std::path::absolute(components.join("wintun.dll"))?;
             ensure!(
@@ -186,7 +457,12 @@ mod windows {
             }
             .into();
             unsafe {
+                type SetLogger =
+                    unsafe extern "system" fn(unsafe extern "system" fn(i32, u64, *const u16));
+                let set_logger: SetLogger = *library.get(b"WintunSetLogger\0")?;
+                set_logger(logger);
                 let create: Create = *library.get(b"WintunCreateAdapter\0")?;
+                let get_luid: AdapterLuid = *library.get(b"WintunGetAdapterLUID\0")?;
                 let close: Close = *library.get(b"WintunCloseAdapter\0")?;
                 let start: Start = *library.get(b"WintunStartSession\0")?;
                 let end: Close = *library.get(b"WintunEndSession\0")?;
@@ -194,17 +470,192 @@ mod windows {
                 let release: Release = *library.get(b"WintunReleaseReceivePacket\0")?;
                 let allocate: Allocate = *library.get(b"WintunAllocateSendPacket\0")?;
                 let send: Send = *library.get(b"WintunSendPacket\0")?;
-                let name = format!("ConWU Rust {}", &network[..8]);
-                let adapter = create(
-                    wide(&name).as_ptr(),
-                    wide("ConWU Rust experiment").as_ptr(),
-                    std::ptr::null(),
-                );
+                let root = std::path::PathBuf::from(
+                    std::env::var_os("ProgramData").context("缺少ProgramData目录")?,
+                )
+                .join("ConWU-Wintun")
+                .join(network);
+                let owner = crate::store::Store::open(&root).context("本网卡仍由其他实例持有")?;
+                if let Some(scope) = legacy_scope {
+                    ensure!(scope.network == network, "旧网卡作用域与本网络不符");
+                }
+                let mut legacy = legacy_scope
+                    .map(crate::legacy_wintun::Guard::open)
+                    .transpose()?;
+                if let Some(legacy) = legacy.as_ref() {
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    loop {
+                        let mut present = false;
+                        for id in legacy.identities().keys() {
+                            present |= device_present(*id)?;
+                        }
+                        if !present {
+                            break;
+                        }
+                        ensure!(!cancel.is_cancelled(), "旧网卡准备已取消");
+                        ensure!(
+                            std::time::Instant::now() < deadline,
+                            "原版虚拟网卡尚未退出，未创建第二个实例"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                }
+                let journal = owner.checked_file("generation.json")?;
+                let mut history = Vec::new();
+                if journal.is_file() {
+                    ensure!(
+                        std::fs::metadata(&journal)?.len() <= 65536,
+                        "虚拟网卡代次记录过大"
+                    );
+                    let previous: serde_json::Value =
+                        serde_json::from_slice(&std::fs::read(&journal)?)?;
+                    let id = uuid::Uuid::parse_str(
+                        previous["id"].as_str().context("虚拟网卡代次记录无效")?,
+                    )?;
+                    if let Some(prior) = previous.get("history") {
+                        history = serde_json::from_value::<Vec<uuid::Uuid>>(prior.clone())?;
+                        ensure!(
+                            history.len() <= 511 && history.iter().all(|g| !g.is_nil()),
+                            "虚拟网卡代次历史无效"
+                        );
+                    }
+                    if !history.contains(&id) {
+                        history.push(id);
+                    }
+                    ensure!(
+                        previous["network"] == network
+                            && previous["name"]
+                                == legacy
+                                    .as_ref()
+                                    .map(|l| l.name(id))
+                                    .unwrap_or_else(|| format!(
+                                        "ConWU-{}-{}",
+                                        &network[..8],
+                                        id.simple()
+                                    )),
+                        "虚拟网卡所有权记录不符"
+                    );
+                    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(3);
+                    while device_present(id)? {
+                        ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+                        ensure!(
+                            std::time::Instant::now() < deadline,
+                            "旧虚拟网卡设备尚未释放，未重叠创建新代次"
+                        );
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    let (data1, data2, data3, data4) = id.as_fields();
+                    let previous_guid = AdapterGuid {
+                        data1,
+                        data2,
+                        data3,
+                        data4: *data4,
+                    };
+                    let mut old_luid = 0;
+                    // Windows can retain an Up IP Helper row after official
+                    // close and PnP removal. A fresh GUID alone is insufficient;
+                    // retain the original implementation's conditional settle.
+                    if previous["failedCreate"] == true
+                        || ConvertInterfaceGuidToLuid(&previous_guid, &mut old_luid) == 0
+                    {
+                        tracing::info!("等待 Windows 完成本网络上一代虚拟网卡的类配置清理");
+                        settle(previous["closedAt"].as_i64().unwrap_or(0), cancel)?;
+                        ensure!(
+                            !device_present(id)?,
+                            "旧网卡在等待后重新出现，未创建第二个实例"
+                        );
+                    }
+                }
+                let (ignored, retained, legacy_retained) =
+                    verified_orphans(network, &history, legacy.as_ref())?;
+                if let Some(legacy) = legacy.as_ref() {
+                    if !ignored.is_empty() || legacy.failed_create() {
+                        settle(legacy.closed_at(), cancel)?;
+                    }
+                }
+                let warnings = crate::routes::inspect(ip, &ignored)?;
+                history = retained;
+                // A removed GUID can remain cached as Up in IP Helper. Follow
+                // the original generation journal and never recreate that GUID.
+                let mut generation = serde_json::Value::Null;
+                let mut expected = AdapterGuid {
+                    data1: 0,
+                    data2: 0,
+                    data3: 0,
+                    data4: [0; 8],
+                };
+                let mut adapter = std::ptr::null_mut();
+                for attempt in 0..2 {
+                    ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+                    let id = uuid::Uuid::new_v4();
+                    let (data1, data2, data3, data4) = id.as_fields();
+                    expected = AdapterGuid {
+                        data1,
+                        data2,
+                        data3,
+                        data4: *data4,
+                    };
+                    let name = legacy
+                        .as_ref()
+                        .map(|l| l.name(id))
+                        .unwrap_or_else(|| format!("ConWU-{}-{}", &network[..8], id.simple()));
+                    generation = serde_json::json!({"network":network,"id":id,"name":name,"closed":false,"closedAt":0,"failedCreate":false,"history":history});
+                    owner.write("generation.json", &serde_json::to_vec(&generation)?, true)?;
+                    if let Some(legacy) = legacy.as_mut() {
+                        legacy.record(id, &legacy_retained)?;
+                    }
+                    adapter = create(
+                        wide(&name).as_ptr(),
+                        wide(if legacy.is_some() {
+                            "StreamLink"
+                        } else {
+                            "ConWU"
+                        })
+                        .as_ptr(),
+                        (&expected as *const AdapterGuid).cast(),
+                    );
+                    if !adapter.is_null() {
+                        break;
+                    }
+                    let error = std::io::Error::last_os_error();
+                    generation["closed"] = serde_json::json!(true);
+                    generation["closedAt"] = serde_json::json!(conwu_core::unix_seconds() * 1000);
+                    generation["failedCreate"] = serde_json::json!(true);
+                    owner.write("generation.json", &serde_json::to_vec(&generation)?, false)?;
+                    if let Some(legacy) = legacy.as_mut() {
+                        legacy.closed(true)?;
+                    }
+                    ensure!(
+                        error.raw_os_error() == Some(4319) && attempt == 0,
+                        "WintunCreateAdapter failed: {error}"
+                    );
+                    tracing::warn!("Windows 网卡类配置尚未完成，等待清理后以新GUID重试一次");
+                    settle(generation["closedAt"].as_i64().unwrap(), cancel)?;
+                    if !history.contains(&id) {
+                        history.push(id);
+                    }
+                }
                 ensure!(
                     !adapter.is_null(),
                     "WintunCreateAdapter failed: {}",
                     std::io::Error::last_os_error()
                 );
+                let mut luid = 0u64;
+                get_luid(adapter, &mut luid);
+                let mut actual = AdapterGuid {
+                    data1: 0,
+                    data2: 0,
+                    data3: 0,
+                    data4: [0; 8],
+                };
+                if ConvertInterfaceLuidToGuid(&luid, &mut actual) != 0 || actual != expected {
+                    close(adapter);
+                    anyhow::bail!("同名虚拟网卡不属于本网络，未接管该设备");
+                }
+                if let Err(error) = configure_ip(luid, ip, cancel) {
+                    close(adapter);
+                    return Err(error);
+                }
                 let session = start(adapter, 4 * 1024 * 1024);
                 if session.is_null() {
                     close(adapter);
@@ -222,37 +673,12 @@ mod windows {
                     send,
                     rx: Mutex::new(()),
                     tx: Mutex::new(()),
+                    owner,
+                    generation,
+                    legacy,
+                    warnings,
                 };
-                let status = std::process::Command::new("netsh.exe")
-                    .args([
-                        "interface",
-                        "ipv4",
-                        "set",
-                        "address",
-                        &format!("name={name}"),
-                        "source=static",
-                        &format!("address={ip}"),
-                        "mask=255.255.255.0",
-                        "store=active",
-                    ])
-                    .creation_flags(0x08000000)
-                    .stdout(std::process::Stdio::null())
-                    .status()?;
-                ensure!(status.success(), "无法配置本机实验网卡地址");
-                let status = std::process::Command::new("netsh.exe")
-                    .args([
-                        "interface",
-                        "ipv4",
-                        "set",
-                        "subinterface",
-                        &name,
-                        "mtu=1280",
-                        "store=active",
-                    ])
-                    .creation_flags(0x08000000)
-                    .stdout(std::process::Stdio::null())
-                    .status()?;
-                ensure!(status.success(), "无法配置实验网卡 MTU");
+                ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
                 Ok(driver)
             }
         }
@@ -293,12 +719,25 @@ mod windows {
         fn provider(&self) -> &'static str {
             "Official.Wintun"
         }
+        fn warnings(&self) -> Vec<serde_json::Value> {
+            self.warnings.clone()
+        }
     }
     impl Drop for Wintun {
         fn drop(&mut self) {
             unsafe {
                 (self.end)(self.session);
                 (self.close)(self.adapter);
+            }
+            self.generation["closed"] = serde_json::json!(true);
+            self.generation["closedAt"] = serde_json::json!(conwu_core::unix_seconds() * 1000);
+            if let Ok(bytes) = serde_json::to_vec(&self.generation) {
+                let _ = self.owner.write("generation.json", &bytes, false);
+            }
+            if let Some(legacy) = self.legacy.as_mut() {
+                if let Err(error) = legacy.closed(false) {
+                    tracing::warn!("保存兼容网卡关闭记录失败：{error}");
+                }
             }
         }
     }

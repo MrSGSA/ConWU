@@ -26,7 +26,7 @@ pub fn service_registered() -> bool {
         };
         ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
             .and_then(|manager| {
-                manager.open_service("ConWURustExperiment", ServiceAccess::QUERY_STATUS)
+                manager.open_service(crate::instance::service_name(), ServiceAccess::QUERY_STATUS)
             })
             .is_ok()
     }
@@ -37,13 +37,64 @@ pub fn service_registered() -> bool {
                 "show",
                 "--property=LoadState",
                 "--value",
-                "conwu-rust-experiment.service",
+                crate::instance::linux_unit(),
             ])
             .output()
             .is_ok_and(|o| {
                 o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "loaded"
             })
     }
+}
+pub fn is_service_process() -> bool {
+    #[cfg(windows)]
+    {
+        use windows_service::{
+            service::ServiceAccess,
+            service_manager::{ServiceManager, ServiceManagerAccess},
+        };
+        ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+            .and_then(|manager| {
+                manager.open_service(crate::instance::service_name(), ServiceAccess::QUERY_STATUS)
+            })
+            .and_then(|service| service.query_status())
+            .is_ok_and(|status| status.process_id == Some(std::process::id()))
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("systemctl")
+            .args([
+                "show",
+                "--property=MainPID",
+                "--value",
+                crate::instance::linux_unit(),
+            ])
+            .output()
+            .is_ok_and(|out| {
+                out.status.success()
+                    && String::from_utf8_lossy(&out.stdout)
+                        .trim()
+                        .parse::<u32>()
+                        .ok()
+                        == Some(std::process::id())
+            })
+    }
+}
+#[cfg(windows)]
+pub async fn start_client_service() -> Result<()> {
+    use windows_service::{
+        service::{ServiceAccess, ServiceState},
+        service_manager::{ServiceManager, ServiceManagerAccess},
+    };
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+    let service = manager.open_service(
+        crate::instance::service_name(),
+        ServiceAccess::QUERY_STATUS | ServiceAccess::START,
+    )?;
+    let status = service.query_status()?.current_state;
+    if status != ServiceState::Running && status != ServiceState::StartPending {
+        service.start::<&str>(&[])?;
+    }
+    Ok(())
 }
 pub async fn configure_startup(app: &App, enabled: bool) -> Result<()> {
     if app.engine.memory {
@@ -56,17 +107,18 @@ pub async fn configure_startup(app: &App, enabled: bool) -> Result<()> {
     let result = tokio::task::spawn_blocking(move || -> Result<()> {
         let mut command =
             std::process::Command::new(if cfg!(windows) { "sc.exe" } else { "systemctl" });
+        let service_name = crate::instance::service_name();
         command.args(if cfg!(windows) {
             vec![
                 "config",
-                "ConWURustExperiment",
+                &service_name,
                 "start=",
                 if enabled { "auto" } else { "demand" },
             ]
         } else {
             vec![
                 if enabled { "enable" } else { "disable" },
-                "conwu-rust-experiment.service",
+                crate::instance::linux_unit(),
             ]
         });
         #[cfg(windows)]
@@ -92,7 +144,7 @@ pub fn start(app: std::sync::Arc<App>) {
         loop {
             let registered=tokio::task::spawn_blocking(service_registered).await.unwrap_or(false);
             let auto=app.db.read().unwrap().device_settings["autoStart"].as_bool().unwrap_or(false);
-            *app.desktop.write().unwrap()=serde_json::json!({"serviceRegistered":registered,"serviceState":if registered{"实验后台服务已注册"}else{"前台实验后台"},"autoStart":auto});
+            *app.desktop.write().unwrap()=serde_json::json!({"serviceRegistered":registered,"serviceState":if registered{"后台服务已注册"}else{"前台后台进程"},"autoStart":auto});
             tokio::select!{_=app.engine.cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(10))=>{}}
         }
     });
@@ -104,7 +156,6 @@ pub fn dispatch_service() -> Result<()> {
 #[cfg(windows)]
 mod scm {
     use super::*;
-    use clap::Parser;
     use windows_service::{
         define_windows_service,
         service::{
@@ -114,10 +165,9 @@ mod scm {
         service_control_handler::{self, ServiceControlHandlerResult},
         service_dispatcher,
     };
-    const NAME: &str = "ConWURustExperiment";
     define_windows_service!(ffi_main, entry);
     pub fn dispatch() -> Result<()> {
-        service_dispatcher::start(NAME, ffi_main)?;
+        service_dispatcher::start(crate::instance::service_name(), ffi_main)?;
         Ok(())
     }
     fn entry(_: Vec<std::ffi::OsString>) {
@@ -127,14 +177,17 @@ mod scm {
     }
     fn run() -> Result<()> {
         let stop = service_cancel();
-        let handler = service_control_handler::register(NAME, move |control| match control {
-            ServiceControl::Stop | ServiceControl::Shutdown => {
-                stop.cancel();
-                ServiceControlHandlerResult::NoError
-            }
-            ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
-            _ => ServiceControlHandlerResult::NotImplemented,
-        })?;
+        let handler =
+            service_control_handler::register(crate::instance::service_name(), move |control| {
+                match control {
+                    ServiceControl::Stop | ServiceControl::Shutdown => {
+                        stop.cancel();
+                        ServiceControlHandlerResult::NoError
+                    }
+                    ServiceControl::Interrogate => ServiceControlHandlerResult::NoError,
+                    _ => ServiceControlHandlerResult::NotImplemented,
+                }
+            })?;
         let status = |state| ServiceStatus {
             service_type: ServiceType::OWN_PROCESS,
             current_state: state,
@@ -145,12 +198,13 @@ mod scm {
             process_id: None,
         };
         handler.set_service_status(status(ServiceState::Running))?;
-        let result = tokio::runtime::Runtime::new()?.block_on(crate::run(
-            crate::Cli::parse()
-                .command
-                .ok_or_else(|| anyhow::anyhow!("服务运行参数缺失"))?,
-        ));
-        handler.set_service_status(status(ServiceState::Stopped))?;
+        let result =
+            tokio::runtime::Runtime::new()?.block_on(crate::run(crate::environment_command()?));
+        let mut stopped = status(ServiceState::Stopped);
+        if result.is_err() {
+            stopped.exit_code = ServiceExitCode::ServiceSpecific(1);
+        }
+        handler.set_service_status(stopped)?;
         result
     }
 }
@@ -170,7 +224,7 @@ pub async fn install(app: &App) -> Result<()> {
             std::process::Command::new("sc.exe")
                 .args([
                     "create",
-                    "ConWURustExperiment",
+                    &crate::instance::service_name(),
                     "binPath=",
                     &command,
                     "start=",
@@ -192,11 +246,11 @@ pub async fn install(app: &App) -> Result<()> {
             systemd_quote(&data.to_string_lossy())
         );
         app.store
-            .write("conwu-rust-experiment.service", unit.as_bytes(), true)?;
+            .write(crate::instance::linux_unit(), unit.as_bytes(), true)?;
         ensure!(
             std::process::Command::new("systemctl")
                 .arg("link")
-                .arg(app.store.root.join("conwu-rust-experiment.service"))
+                .arg(app.store.root.join(crate::instance::linux_unit()))
                 .status()?
                 .success(),
             "实验服务链接失败"
@@ -220,6 +274,31 @@ fn systemd_quote(s: &str) -> String {
             .replace('"', "\\\"")
             .replace('%', "%%")
     )
+}
+#[cfg(windows)]
+pub(crate) fn filesystem_argument(path: &std::path::Path) -> Result<std::ffi::OsString> {
+    use std::{
+        os::windows::ffi::{OsStrExt, OsStringExt},
+        path::{Component, Prefix},
+    };
+    ensure!(path.is_absolute(), "Windows 文件参数必须为绝对路径");
+    let wide = path.as_os_str().encode_wide().collect::<Vec<_>>();
+    ensure!(!wide.contains(&0), "Windows 文件参数含无效字符");
+    // MSI and the existing MinGW worker's stdio parser reject verbatim paths.
+    // Preserve UTF-16 and normalize only real filesystem prefixes.
+    match path.components().next() {
+        Some(Component::Prefix(prefix)) => match prefix.kind() {
+            Prefix::VerbatimDisk(_) => Ok(std::ffi::OsString::from_wide(&wide[4..])),
+            Prefix::VerbatimUNC(_, _) => {
+                let mut plain = vec![b'\\' as u16, b'\\' as u16];
+                plain.extend_from_slice(&wide[8..]);
+                Ok(std::ffi::OsString::from_wide(&plain))
+            }
+            Prefix::Disk(_) | Prefix::UNC(_, _) => Ok(path.as_os_str().to_owned()),
+            _ => anyhow::bail!("Windows 文件参数不允许设备命名空间"),
+        },
+        _ => anyhow::bail!("Windows 文件参数缺少卷或共享名称"),
+    }
 }
 pub fn open_browser(url: &str) -> Result<()> {
     ensure!(

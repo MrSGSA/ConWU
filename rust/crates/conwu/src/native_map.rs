@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub struct Mapping {
+    tracker: tokio_util::task::TaskTracker,
     pub local: SocketAddr,
     pub observer: SocketAddr,
     target: SocketAddr,
@@ -62,6 +63,7 @@ impl Mapping {
         #[cfg(windows)]
         let capture = crate::capture::Owner::open(&engine.components, local, observer, &cancel)?;
         let mapping = Arc::new(Self {
+            tracker: engine.tracker.clone(),
             local,
             observer,
             target,
@@ -370,7 +372,13 @@ impl Mapping {
             .bridge;
         let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
         socket.connect(bridge).await?;
-        Ok(crate::raw::udp_pipe(socket, parent, None, None))
+        Ok(crate::raw::udp_pipe(
+            socket,
+            parent,
+            None,
+            None,
+            &self.tracker,
+        ))
     }
     pub async fn freeze(&self, peer: SocketAddr) {
         #[cfg(windows)]

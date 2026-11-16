@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-pub const VERSION: &str = "1.4.5-rust.1";
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const TCP_STUN: &[&str] = &[
     "fwa.lifesizecloud.com:3478",
     "stun.nextcloud.com:3478",
@@ -233,7 +233,16 @@ impl Settings {
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct LegacyAdapter {
+    pub owner: String,
+    pub network: String,
+    pub slot: u8,
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Network {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub legacy_adapter: Option<LegacyAdapter>,
     #[serde(default)]
     pub creation_operation: String,
     #[serde(default)]

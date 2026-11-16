@@ -5,6 +5,7 @@ export PATH="/mnt/d/Codex/cache/rust-linux-1.95/toolchain/bin:$PATH"
 export CARGO_HOME=/mnt/d/Codex/cache/cargo-rust-rewrite
 export CARGO_TARGET_DIR="$conwu_root/out/rust-target-linux"
 export TMPDIR="$conwu_root/out/tmp-linux"
+export CONWU_LINK_NO_MMAP=1
 mkdir -p "$TMPDIR" "$conwu_root/out/rust-components-linux"
 cd "$conwu_root"
 cargo build --offline --message-format=short --manifest-path rust/Cargo.toml --package conwu --features lab-api

@@ -8,7 +8,7 @@ pub fn start(
 pub async fn client(data: std::path::PathBuf, open: bool) -> anyhow::Result<()> {
     let runtime = tokio::runtime::Handle::current();
     if open {
-        let response = crate::control::call(&data, &serde_json::json!({"method":"open"})).await?;
+        let response = service_link(&data).await?;
         crate::platform::open_browser(
             response["url"]
                 .as_str()
@@ -17,6 +17,18 @@ pub async fn client(data: std::path::PathBuf, open: bool) -> anyhow::Result<()> 
     }
     tokio::task::spawn_blocking(move || windows::run(windows::Context::Service { data, runtime }))
         .await?
+}
+#[cfg(windows)]
+async fn service_link(data: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    crate::platform::start_client_service().await?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+    loop {
+        match crate::control::call(data, &serde_json::json!({"method":"open"})).await {
+            Ok(response) => return Ok(response),
+            Err(error) if std::time::Instant::now() >= deadline => return Err(error),
+            Err(_) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+        }
+    }
 }
 #[cfg(windows)]
 mod windows {
@@ -43,10 +55,7 @@ mod windows {
                     let _ = crate::platform::open_browser(&panel.link());
                 }
                 Self::Service { data, runtime } => {
-                    if let Ok(response) = runtime.block_on(crate::control::call(
-                        data,
-                        &serde_json::json!({"method":"open"}),
-                    )) {
+                    if let Ok(response) = runtime.block_on(super::service_link(data)) {
                         if let Some(url) = response["url"].as_str() {
                             let _ = crate::platform::open_browser(url);
                         }

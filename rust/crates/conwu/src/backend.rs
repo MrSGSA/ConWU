@@ -42,7 +42,7 @@ impl App {
         let db = store.load()?;
         ensure!(
             db.schema == 1 && db.networks.len() <= 32 && db.configurations.len() <= 64,
-            "实验配置版本或容量无效"
+            "配置版本或容量无效"
         );
         c::valid_public(&c::public(&db.node_private)?)?;
         for n in &db.networks {
@@ -70,7 +70,7 @@ impl App {
             logs,
             entry_resolutions: RwLock::new(json!([])),
             update: RwLock::new(
-                json!({"currentVersion":VERSION,"platform":std::env::consts::OS,"state":"NotChecked","message":"Rust 实验分支","updateAvailable":false}),
+                json!({"currentVersion":VERSION,"platform":std::env::consts::OS,"state":"NotChecked","message":if cfg!(feature="production"){"尚未检查更新"}else{"Rust 实验分支"},"updateAvailable":false}),
             ),
             local_update: RwLock::new(local_update),
             desktop: RwLock::new(
@@ -203,7 +203,7 @@ impl App {
             for p in s["peers"].as_array().unwrap() {
                 aggregate.push(json!({"networkId":n.id,"deviceId":p["deviceId"],"role":if n.created_here{"从机"}else{"主机"},"peer":p,"connectedSince":p["connectedSince"]}));
             }
-            rows.push(json!({"id":n.id,"name":n.name,"configurationId":n.configuration_id,"appliedConfigurationRevision":db.configurations.iter().find(|c|c.id==n.configuration_id).map_or(0,|c|c.revision),"status":s}));
+            rows.push(json!({"id":n.id,"name":n.name,"enabled":n.enabled,"configurationId":n.configuration_id,"appliedConfigurationRevision":db.configurations.iter().find(|c|c.id==n.configuration_id).map_or(0,|c|c.revision),"status":s}));
         }
         let selected = if selected.is_empty() {
             &db.selected_network_id
@@ -294,6 +294,7 @@ impl App {
             out["entryPreparation"] = json!({"state":if metrics.local_endpoints.is_empty(){"Preparing"}else{"Ready"},"detail":if metrics.local_endpoints.is_empty(){"等待入口候选"}else{"本机入口已准备"},"endpoint":metrics.local_endpoints.first().cloned().unwrap_or_default(),"receiverReady":running.is_some()});
             out["managedTraversal"] = metrics.managed.clone();
             out["adapter"] = json!({"ready":running.is_some(),"provider":metrics.adapter,"state":if running.is_some(){"Ready"}else{"Stopped"}});
+            out["routeWarnings"] = json!(metrics.route_warnings);
             if let Some(peer) = peer {
                 out["peers"] = json!([{"slot":peer.slot,"name":if n.peer_name.is_empty(){"对端"}else{&n.peer_name},"deviceId":peer.device,"virtualIp":runtime::member_ip(p,&peer).unwrap().to_string(),"connected":live,"degraded":false,"rttMs":metrics.rtt,"phase":phase,"connection":connection,"actualTransport":p.pair.mode,"traversalMethod":if n.settings.existing_only(){"ExistingEntry"}else{"Autonomous"},"sentBytes":metrics.sent,"receivedBytes":metrics.received,"droppedPackets":metrics.dropped,"connectedSince":metrics.since,"outerTarget":metrics.endpoint,"outerSource":"Rust","entryDirection":"Direct","quality":"Unknown","streamFlows":metrics.stream_flows}]);
             }
@@ -881,7 +882,18 @@ impl App {
                     .checked_add(2)
                     .context("没有空闲的本机源端口")?;
             }
+            if let Some(configuration) = next
+                .configurations
+                .iter_mut()
+                .find(|configuration| configuration.id == cid)
+            {
+                if configuration.settings != settings {
+                    configuration.settings = settings.clone();
+                    configuration.revision += 1;
+                }
+            }
             let n = Network {
+                legacy_adapter: None,
                 creation_operation: action["_operationId"].as_str().unwrap_or("").into(),
                 creation_digest: action["_digest"].as_str().unwrap_or("").into(),
                 id: profile.pair.network.clone(),
@@ -953,13 +965,20 @@ impl App {
             let cid = conwu_core::id();
             let mut settings = Settings::default();
             settings.path_selection = format!("{}-only", code.mode);
-            settings.listen_port = free_port()?;
-            settings.source_port = free_port()?;
+            let mut reserved = next
+                .networks
+                .iter()
+                .flat_map(|n| [n.settings.listen_port, n.settings.source_port])
+                .collect::<Vec<_>>();
+            settings.listen_port = free_port(&reserved)?;
+            reserved.push(settings.listen_port);
+            settings.source_port = free_port(&reserved)?;
             let requested = action["requestedVirtualIp"]
                 .as_str()
                 .unwrap_or("")
                 .to_string();
             let n = Network {
+                legacy_adapter: None,
                 creation_operation: action["_operationId"].as_str().unwrap_or("").into(),
                 creation_digest: action["_digest"].as_str().unwrap_or("").into(),
                 id: id.clone(),
@@ -1526,8 +1545,21 @@ fn validate_bindings(db: &Database) -> Result<()> {
     }
     Ok(())
 }
-fn free_port() -> Result<u16> {
-    Ok(std::net::TcpListener::bind("0.0.0.0:0")?
-        .local_addr()?
-        .port())
+fn free_port(reserved: &[u16]) -> Result<u16> {
+    use rand::Rng;
+    // A persisted listener must not come from Windows' ephemeral client pool:
+    // UI/HTTPS connections can otherwise take that port before boot binds it.
+    for _ in 0..256 {
+        let port = rand::thread_rng().gen_range(20000..30000);
+        if reserved.contains(&port) {
+            continue;
+        }
+        if let Ok(tcp) = std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)) {
+            if let Ok(udp) = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, port)) {
+                drop((tcp, udp));
+                return Ok(port);
+            }
+        }
+    }
+    anyhow::bail!("未找到可用于网络的独立监听端口")
 }

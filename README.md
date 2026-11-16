@@ -1,17 +1,17 @@
 # ConWU
 
-> 当前分支为 `experiment/rust-rewrite`，版本 `1.4.5-rust.1`。Rust 自有后台与核心的独立重写实验已放在 [rust/README.md](rust/README.md)。实验使用独立数据目录和服务名，本轮只在本地构建与测试，不部署、不发布。下方保留正式版的使用说明。
+1.5.0 将主程序和组网核心迁至 Rust，继续使用现有界面及六种协议。运行无需 .NET，原有身份与设置可自动导入；第三方承载和系统驱动继续独立提供。
 
 当你异地串流美美游戏却碰上 UDP 限速时，可以试试ConWU。它在两台设备间建立直连通道，通过TCP打洞以及FakeTCP+HTTP(UDP2RAW）、Phantun、mimic、tcpraw、HTTPS与TCP等协议来规避运营商对UDP的限制！目前支持 Windows 和 Linux 双端。
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。
 
-[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.4.5.md) · [使用文档](docs/README.md)
+[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.5.0.md) · [使用文档](docs/README.md)
 
 | 系统 | 下载与安装 |
 | --- | --- |
 | Windows x64 | 下载 Release 中的 `.msi`，安装后从托盘打开 WebUI |
-| Linux x86_64 / glibc | 下载 `.tar.gz`，解压后执行 `sudo ./install.sh`；提供 WebUI 和 CLI |
+| Linux x86_64 | 下载静态 musl `.tar.gz`，解压后执行 `sudo ./install.sh`；安装需要 Python 3 与 systemd，提供 WebUI 和 CLI |
 
 Android 从机已进入本地测试，支持纯 TCP 与 HTTPS，见[Android 测试版说明](docs/Android使用.md)。尚未发布 Android 正式附件或完成真机串流验收；iOS 暂待构建条件。
 
@@ -50,6 +50,6 @@ Windows 左侧“UU远程”提供默认关闭的接管开关。已有 ConWU 网
 
 ## 开发与许可
 
-使用 .NET 10、Rust、CMake 和 MinGW-w64，见[开发说明](docs/开发说明.md)。网络模型与后续方向见[产品与架构](docs/产品与架构.md)和[后续计划](docs/后续计划.md)。
+主程序使用 Rust，构建与迁移见 [Rust 说明](rust/README.md)和[开发说明](docs/开发说明.md)。保留 .NET 原版源码作为协议与迁移对照。网络模型与后续方向见[产品与架构](docs/产品与架构.md)和[后续计划](docs/后续计划.md)。
 
 主程序使用 [MIT 许可证](LICENSE)。可选的 Mimic/TCPRAW 原生进程使用 GPL-2.0-only，其源码和构建依赖随包提供；其他第三方组件遵循各自许可证。

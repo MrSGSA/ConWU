@@ -152,6 +152,7 @@ impl Attachment {
             Ok::<_, anyhow::Error>(io)
         };
         let io = tokio::select! { _=cancel.cancelled()=>Err(anyhow::anyhow!("原生准备已取消")),
+        status=child.wait()=>match status { Ok(status)=>Err(anyhow::anyhow!("原生组件在接入前退出（退出码 {:?}）",status.code())), Err(error)=>Err(error.into()) },
         result=tokio::time::timeout(Duration::from_secs(20),setup)=>match result{Ok(result)=>result,Err(error)=>Err(anyhow::anyhow!("原生接入准备超时：{error}"))} };
         let mut io = match io {
             Ok(io) => io,

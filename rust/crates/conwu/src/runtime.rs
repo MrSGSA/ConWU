@@ -75,6 +75,7 @@ pub struct Metrics {
     pub phase: String,
     pub error: String,
     pub adapter: String,
+    pub route_warnings: Vec<Value>,
     pub peer_paused: bool,
     pub pkarr: Value,
     pub local_endpoints: Vec<String>,
@@ -98,6 +99,7 @@ struct Peer {
     assembly: Option<conwu_core::metadata::Assembly>,
 }
 pub struct Running {
+    dialing: tokio::sync::Mutex<()>,
     network_finished: CancellationToken,
     discovery_finished: CancellationToken,
     managed_finished: CancellationToken,
@@ -348,7 +350,12 @@ impl Engine {
             let id = profile.pair.network.clone();
             let ip = profile.local_ip()?;
             let path = self.components.clone();
-            tokio::task::spawn_blocking(move || adapter::open(&id, ip, &path)).await??
+            let cancel = self.cancel.clone();
+            let legacy = network.legacy_adapter.clone();
+            tokio::task::spawn_blocking(move || {
+                adapter::open(&id, ip, &path, &cancel, legacy.as_ref())
+            })
+            .await??
         };
         let peer = profile
             .directory
@@ -365,6 +372,7 @@ impl Engine {
             .transpose()?;
         let metrics = Metrics {
             adapter: adapter.provider().into(),
+            route_warnings: adapter.warnings(),
             phase: if peer.is_none() {
                 "等待另一台设备加入"
             } else {
@@ -389,6 +397,7 @@ impl Engine {
         )
         .await?;
         let running = Arc::new(Running {
+            dialing: tokio::sync::Mutex::new(()),
             network_finished: CancellationToken::new(),
             discovery_finished: CancellationToken::new(),
             managed_finished: CancellationToken::new(),
@@ -620,6 +629,22 @@ impl Engine {
             "实验强制验证受管路径"
         );
         let running = self.current(id).context("网络已移除")?;
+        let Ok(_dialing) = running.dialing.try_lock() else {
+            return Ok(());
+        };
+        ensure!(!running.cancel.is_cancelled(), "网络已取消");
+        if running.metrics.read().unwrap().connected {
+            return Ok(());
+        }
+        if running.peer.lock().unwrap().as_ref().is_some_and(|peer| {
+            peer.routes.values().any(|route| {
+                route.endpoint == endpoint
+                    && !route.cancel.is_cancelled()
+                    && route.seen.elapsed() < Duration::from_secs(15)
+            })
+        }) {
+            return Ok(());
+        }
         let config = running.config.read().unwrap().clone();
         let profile = config.profile.as_ref().unwrap();
         let mode = config.settings.mode()?;
@@ -2205,10 +2230,24 @@ impl Engine {
             tokio::select! {_=stop.cancelled()=>anyhow::bail!("申请已取消"),_=tokio::time::sleep(Duration::from_millis(600))=>{}}
         }
     }
-    pub async fn shutdown(&self) {
+    pub async fn shutdown(&self) -> Result<()> {
         self.cancel.cancel();
         self.tracker.close();
-        let _ = tokio::time::timeout(Duration::from_secs(65), self.tracker.wait()).await;
+        if tokio::time::timeout(Duration::from_secs(65), self.tracker.wait())
+            .await
+            .is_err()
+        {
+            tracing::error!("后台关闭等待超时，仍持有的网络资源不会被新代次复用");
+            anyhow::bail!("后台关闭等待超时；进程退出前不能复用旧网络资源");
+        }
+        // Closing tasks alone leaves adapters alive in these registries. Close
+        // their OS handles before the service reports STOPPED or an MSI starts.
+        self.networks.write().unwrap().clear();
+        self.flow_groups.lock().unwrap().clear();
+        self.rooms.lock().unwrap().clear();
+        self.raw_controls.lock().unwrap().clear();
+        self.fake_mappings.write().unwrap().clear();
+        Ok(())
     }
 }
 impl Running {

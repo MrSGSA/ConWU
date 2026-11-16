@@ -2,6 +2,17 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 pub fn default_data() -> PathBuf {
+    if cfg!(windows) {
+        let root = PathBuf::from(
+            std::env::var_os("ProgramData").unwrap_or_else(|| "C:\\ProgramData".into()),
+        );
+        if let Some(id) = crate::instance::validation() {
+            return root.join("ConWU-Validation").join(id);
+        }
+        if cfg!(feature = "production") {
+            return root.join("ConWU");
+        }
+    }
     std::env::var_os("CONWU_DATA_ROOT")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -33,6 +44,17 @@ pub struct Client {
     ipc: bool,
 }
 impl Client {
+    #[cfg(target_os = "linux")]
+    pub async fn shutdown(&self) -> Result<()> {
+        self.http
+            .post(format!("{}/api/stop", self.origin))
+            .header("Origin", &self.origin)
+            .json(&json!({"secret":self.secret}))
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
     pub fn open(root: &Path) -> Result<Self> {
         #[cfg(windows)]
         if std::fs::read(root.join("panel.private.json")).is_err() {

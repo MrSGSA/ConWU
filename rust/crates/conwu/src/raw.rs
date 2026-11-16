@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     net::SocketAddr,
     process::Stdio,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::Duration,
 };
 use tokio::{
@@ -17,6 +17,34 @@ use tokio::{
     sync::{mpsc, oneshot},
 };
 use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
+fn stoppers() -> &'static Mutex<HashMap<u32, mpsc::WeakSender<Value>>> {
+    static STOPPERS: OnceLock<Mutex<HashMap<u32, mpsc::WeakSender<Value>>>> = OnceLock::new();
+    STOPPERS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+async fn finish_child(child: &mut Child) {
+    let stop = child
+        .id()
+        .and_then(|pid| stoppers().lock().unwrap().remove(&pid))
+        .and_then(|s| s.upgrade());
+    let graceful = stop.is_some();
+    if let Some(stop) = stop {
+        let _ = tokio::time::timeout(
+            Duration::from_millis(500),
+            stop.send(json!({"command":"stop"})),
+        )
+        .await;
+    }
+    child.stdin.take();
+    if !graceful
+        || tokio::time::timeout(Duration::from_secs(3), child.wait())
+            .await
+            .is_err()
+    {
+        let _ = child.kill().await;
+    }
+    let _ = child.wait().await;
+}
 
 #[derive(Clone)]
 pub struct Control {
@@ -228,12 +256,20 @@ async fn spawn(
     let mut child = cmd.spawn()?;
     let stdout = child.stdout.take().context("组件输出不可用")?;
     let mut lines = BufReader::new(stdout).lines();
-    let ready = tokio::time::timeout(Duration::from_secs(8), async {
+    // NDIS can rebind the XDP runtime while Windows is recreating several
+    // Wintun adapters after a restart. Do not kill a healthy XDP initializer
+    // using the short ordinary helper deadline; shutdown still cancels it.
+    let startup_timeout = if cfg!(windows) && mode == "mimic" {
+        Duration::from_secs(45)
+    } else {
+        Duration::from_secs(8)
+    };
+    let ready = tokio::time::timeout(startup_timeout, async {
         while let Some(line) = lines.next_line().await? {
             ensure!(line.len() <= 4096, "组件消息过长");
             if let Some((_, json)) = line.split_once(' ') {
                 if let Ok(v) = serde_json::from_str::<Value>(json) {
-                    if v["event"] == "failed" {
+                    if v["event"] == "failed" || v["event"] == "peer-failed" {
                         anyhow::bail!("承载组件启动失败：{}", v["reason"])
                     }
                     if v["event"] == "ready" {
@@ -249,28 +285,36 @@ async fn spawn(
             }
         }
         anyhow::bail!("组件未报告就绪")
-    })
-    .await;
+    });
+    let ready = tokio::select! {
+        _ = engine.cancel.cancelled() => Err(anyhow::anyhow!("承载组件启动已取消")),
+        result = ready => result.unwrap_or_else(|_| Err(anyhow::anyhow!("等待承载组件报告就绪超时"))),
+    };
     let ready = match ready {
-        Ok(Ok(ready)) => ready,
-        error => {
+        Ok(ready) => ready,
+        Err(error) => {
             let _ = child.kill().await;
             let _ = child.wait().await;
-            return match error {
-                Ok(Err(e)) => Err(e),
-                Err(e) => Err(e.into()),
-                _ => unreachable!(),
-            };
+            return Err(error);
         }
     };
     let mut input = child.stdin.take().context("组件控制输入不可用")?;
     let (commands, mut queue) = mpsc::channel::<Value>(32);
+    if let Some(pid) = child.id() {
+        stoppers().lock().unwrap().insert(pid, commands.downgrade());
+    }
     let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<()>>::new()));
     let replies = pending.clone();
+    let diagnostic = engine.events.clone();
     let peers = Arc::new(Mutex::new(HashMap::<SocketAddr, SocketAddr>::new()));
     let peer_events = peers.clone();
     tokio::spawn(async move {
         while let Some(command) = queue.recv().await {
+            // EOF is the existing Rust helpers' graceful stop signal. It drops
+            // their fake TCP sockets and sends RST before capture is detached.
+            if command["command"] == "stop" {
+                break;
+            }
             let mut line = serde_json::to_vec(&command).unwrap();
             line.push(b'\n');
             if input.write_all(&line).await.is_err() {
@@ -287,6 +331,14 @@ async fn spawn(
             }
             if let Some((_, body)) = line.split_once(' ') {
                 if let Ok(v) = serde_json::from_str::<Value>(body) {
+                    if v["event"] == "failed" || v["event"] == "peer-failed" {
+                        let reason =
+                            crate::logging::redact(v["reason"].as_str().unwrap_or("承载组件退出"));
+                        let _ = diagnostic.try_send(crate::runtime::Event::Log {
+                            level: "WARN".into(),
+                            text: format!("承载组件运行失败：{reason}"),
+                        });
+                    }
                     if v["event"] == "protected" {
                         if let Some(id) = v["id"].as_str() {
                             if let Some(reply) = replies.lock().unwrap().remove(id) {
@@ -361,7 +413,13 @@ pub async fn connect_ref(
     let (child, bridge) = spawn(engine, mode, false, source, remote, &[]).await?;
     let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
     socket.connect(bridge).await?;
-    Ok(udp_pipe(socket, parent, Some(child), Some(guard)))
+    Ok(udp_pipe(
+        socket,
+        parent,
+        Some(child),
+        Some(guard),
+        &engine.tracker,
+    ))
 }
 pub struct ClientObservation {
     pub local: SocketAddr,
@@ -448,7 +506,7 @@ pub async fn observed_client(
     let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
     socket.connect(bridge).await?;
     Ok((
-        udp_pipe(socket, parent, Some(child), Some(guard)),
+        udp_pipe(socket, parent, Some(child), Some(guard), &engine.tracker),
         ClientObservation::tcp(observed),
     ))
 }
@@ -457,12 +515,13 @@ pub(crate) fn udp_pipe(
     parent: &CancellationToken,
     child: Option<Child>,
     guard: Option<Firewall>,
+    tracker: &TaskTracker,
 ) -> Pipe {
     let (tx, mut outgoing) = mpsc::channel::<Vec<u8>>(128);
     let (incoming, rx) = mpsc::channel(128);
     let cancel = parent.child_token();
     let stop = cancel.clone();
-    tokio::spawn(async move {
+    tracker.spawn(async move {
         let _guard = guard;
         let mut child = child;
         let _cancel = stop.clone().drop_guard();
@@ -471,8 +530,7 @@ pub(crate) fn udp_pipe(
             tokio::select! {_=stop.cancelled()=>break,n=socket.recv(&mut buffer)=>match n{Ok(n)if n<=2048=>{if incoming.try_send(buffer[..n].to_vec()).is_err(){break}},_=>break},frame=outgoing.recv()=>match frame{Some(frame)=>{if socket.send(&frame).await.is_err(){break}},None=>break},_=tokio::time::sleep(Duration::from_secs(1))=>{if child.as_mut().is_some_and(|c|c.try_wait().ok().flatten().is_some()){break}}}
         }
         if let Some(child) = &mut child {
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            finish_child(child).await;
         }
     });
     Pipe {
@@ -578,7 +636,7 @@ pub async fn listen(
                 server.serve(pipe,mode,endpoint,None).await;
             });},
             frame=sends.recv()=>if let Some((to,bytes))=frame{let _=socket.send_to(&bytes,to).await;},_=tokio::time::sleep(Duration::from_secs(1))=>{if child.as_mut().is_some_and(|c|c.try_wait().ok().flatten().is_some()){break}}
-        }}if let Some(mut child)=child{let _=child.kill().await;let _=child.wait().await;}
+        }}if let Some(mut child)=child{finish_child(&mut child).await;}
         if let Some(mapping)=mapping {
             while mapping.close().await.is_err(){tokio::time::sleep(Duration::from_secs(1)).await;}
             engine.fake_mappings.write().unwrap().remove(&port);

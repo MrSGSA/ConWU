@@ -3,6 +3,7 @@
 All interfaces and firewall changes are confined to these owned namespaces.
 The optional lab API must be enabled for this executable only.
 """
+import argparse
 import base64
 import json
 import os
@@ -30,7 +31,9 @@ def rpc(index, body):
         raise RuntimeError(f"RPC {body.get('method')}: {result.stderr[-2000:]}")
     return json.loads(result.stdout)
 def wait(label, condition):
-    until = time.monotonic() + 25
+    # Allow the bounded first-enrolment delivery and the carrier's retry round
+    # while compiler/installer verification is running on the same lab host.
+    until = time.monotonic() + 60
     while time.monotonic() < until:
         if condition():
             return
@@ -46,10 +49,18 @@ def packet(source, target, marker):
     ip[10:12] = struct.pack('!H', ~checksum & 65535)
     return bytes(ip) + udp
 results = []
-real_tun = '--tun' in sys.argv
-assisted = '--assisted' in sys.argv
-managed = '--managed' in sys.argv
-modes = [mode for mode in sys.argv[1:] if not mode.startswith('--')] or ['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp']
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--tun', action='store_true')
+parser.add_argument('--assisted', action='store_true')
+parser.add_argument('--managed', action='store_true')
+parser.add_argument('--ipv6', action='store_true')
+parser.add_argument('--app', type=Path, default=root / 'out/rust-target-linux/debug/conwu')
+parser.add_argument('modes', nargs='*', choices=['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp'])
+args = parser.parse_args()
+real_tun, assisted, managed = args.tun, args.assisted, args.managed
+modes = args.modes or (['tcp', 'https'] if args.ipv6 else ['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp'])
+if args.ipv6 and (assisted or managed or any(mode not in ('tcp', 'https') for mode in modes)):
+    raise ValueError('IPv6 currently covers direct TCP/HTTPS, without IPv4 assistance flags')
 try:
     for name in names:
         run('ip', 'netns', 'add', name)
@@ -59,9 +70,11 @@ try:
     for index in range(2):
         run('ip', 'link', 'set', peers[index], 'netns', names[index])
         run('ip', '-n', names[index], 'addr', 'add', '192.0.2.' + str(index + 1) + '/24', 'dev', peers[index])
+        if args.ipv6:
+            run('ip', '-n', names[index], '-6', 'addr', 'add', 'fd42:7465:7374::' + str(index + 1) + '/64', 'dev', peers[index], 'nodad')
         run('ip', '-n', names[index], 'link', 'set', peers[index], 'up')
         log = (directory / ('process-' + str(index) + '.log')).open('wb')
-        command = ['ip', 'netns', 'exec', names[index], str(root / 'out/rust-target-linux/debug/conwu'), 'run', '--data', str(directory / str(index)), '--components', str(root / 'out/rust-components-linux'), '--no-open', '--no-tray']
+        command = ['ip', 'netns', 'exec', names[index], str(args.app), 'run', '--data', str(directory / str(index)), '--components', str(root / 'out/rust-components-linux'), '--no-open', '--no-tray']
         if not real_tun: command.append('--memory')
         environment = os.environ.copy()
         if assisted and index == 1:
@@ -79,6 +92,8 @@ try:
         listen = 48000 + offset * 10
         settings = rpc(0, {'method': '_status'})['status']['networkDefaults']
         settings.update(pathSelection=mode + '-only', connectionSource='existing', discoveryMode='existing', listenPort=listen, sourcePort=listen + 1, existingEntries=[{'peerSlot': 0, 'source': '192.0.2.1:' + str(listen)}])
+        if args.ipv6:
+            settings['existingEntries'] = [{'peerSlot': 0, 'source': '[fd42:7465:7374::1]:' + str(listen)}]
         if assisted:
             settings.update(connectionSource='custom', discoveryMode='coordinator', service='https://192.0.2.1:1145', certificatePin=pin, existingEntries=[], tcpStun=['192.0.2.1:1145'], disableGatewayMapping=True)
         config = rpc(0, {'method': 'configuration', 'configuration': {'action': 'save', 'id': '', 'name': mode, 'expectedRevision': 0, 'settings': settings}})
@@ -88,6 +103,8 @@ try:
             wait('retained source candidate ' + mode, lambda: next(n['status'] for n in rpc(0, {'method': '_status'})['status']['networks'] if n['id'] == host)['entryPreparation']['state'] == 'Ready')
         invitation = rpc(0, {'method': 'network', 'networkId': host, 'network': {'action': 'invite-compact', 'expectedNetwork': host}})
         host_pair = next(n for n in invitation['status']['networks'] if n['id'] == host)['status']['pairing']
+        if args.ipv6:
+            assert len(host_pair['code'].replace('-', '')) == 36
         joined = rpc(1, {'method': 'network', 'network': {'action': 'join-compact', 'code': host_pair['code'], 'name': mode}})
         guest = joined['status']['selectedNetworkId']
         def pairing():
@@ -112,9 +129,9 @@ try:
             for index, identity in [(0, host), (1, guest)]:
                 received = rpc(index, {'method': 'lab-read', 'networkId': identity})['operation']['result']['packets']
                 assert len(received) == 1 and len(base64.b64decode(received[0])) == 1028
-        results.append({'mode': mode, 'assisted': assisted, 'managed': managed, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
+        results.append({'mode': mode, 'assisted': assisted, 'managed': managed, 'outerIpv6': args.ipv6, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
         print(json.dumps(results[-1]), flush=True)
-    result_name = ('managed-' if managed else 'assisted-' if assisted else '') + ('tun-lab-result.json' if real_tun else 'native-lab-result.json')
+    result_name = ('ipv6-' if args.ipv6 else 'managed-' if managed else 'assisted-' if assisted else '') + ('tun-lab-result.json' if real_tun else 'native-lab-result.json')
     (root / 'out' / result_name).write_text(json.dumps(results, indent=2))
 finally:
     for index, process in enumerate(processes):

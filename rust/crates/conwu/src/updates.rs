@@ -48,11 +48,9 @@ pub async fn check(source: &str) -> Result<Value> {
         matches!(source, "github" | "gitee"),
         "请选择 GitHub 或 Gitee"
     );
-    let feed = if source == "github" {
-        "https://api.github.com/repos/MrSGSA/ConWU/releases/latest"
-    } else {
-        "https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/latest"
-    };
+    // Keep one canonical version/hash manifest. Gitee provides the same MSI
+    // through its attachment API, which does not expose GitHub's digest field.
+    let feed = "https://api.github.com/repos/MrSGSA/ConWU/releases/latest";
     let response = crate::discovery::http_client()?
         .get(feed)
         .send()
@@ -73,23 +71,40 @@ pub async fn check(source: &str) -> Result<Value> {
         release["draft"] != true && release["prerelease"] != true,
         "不接受预览发布"
     );
+    let tag = release["tag_name"].as_str().context("缺少发布标签")?;
     let version = release["tag_name"]
         .as_str()
         .context("缺少版本号")?
         .trim_start_matches('v');
+    let (latest, stable) = version_key(version)?;
+    ensure!(stable, "更新源没有返回正式版本");
+    let (current, current_stable) = version_key(VERSION)?;
+    let newer = latest > current || latest == current && !current_stable;
+    ensure!(
+        release["html_url"] == format!("https://github.com/MrSGSA/ConWU/releases/tag/{tag}"),
+        "非官方发布页面"
+    );
+    let expected = if cfg!(feature = "production") {
+        if cfg!(windows) {
+            format!("ConWU-{version}-x64.msi")
+        } else {
+            format!("ConWU-{version}-linux-x64.tar.gz")
+        }
+    } else {
+        format!(
+            "conwu-rust-{version}-{}-x86_64{}",
+            std::env::consts::OS,
+            if cfg!(windows) { ".msi" } else { ".tar.gz" }
+        )
+    };
     let assets = release["assets"]
         .as_array()
         .or_else(|| release["assets"]["links"].as_array());
     let asset = assets.and_then(|v| {
-        v.iter().find(|a| {
-            a["name"].as_str().is_some_and(|s| {
-                s.contains("rust")
-                    && s.contains(std::env::consts::ARCH)
-                    && s.ends_with(if cfg!(windows) { ".msi" } else { ".tar.gz" })
-            })
-        })
+        v.iter()
+            .find(|a| a["name"].as_str().is_some_and(|s| s == expected))
     });
-    let package = asset
+    let mut package = asset
         .cloned()
         .map(|mut a| {
             if a["browser_download_url"].is_null() {
@@ -104,9 +119,168 @@ pub async fn check(source: &str) -> Result<Value> {
         })
         .unwrap_or(Value::Null);
     let compatible = !package.is_null();
+    if compatible {
+        ensure!(
+            package["browser_download_url"]
+                == format!("https://github.com/MrSGSA/ConWU/releases/download/{tag}/{expected}"),
+            "安装附件不属于官方发布"
+        );
+        if source == "gitee" && newer {
+            let mirror = public_json(&format!(
+                "https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/tags/{tag}"
+            ))
+            .await?;
+            ensure!(
+                mirror["tag_name"] == tag && mirror["prerelease"] != true,
+                "Gitee尚未同步本版本"
+            );
+            let id = mirror["id"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .context("Gitee发布身份无效")?;
+            let files=public_json(&format!("https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/{id}/attach_files?per_page=100")).await?;
+            let files = files.as_array().context("Gitee附件列表无效")?;
+            ensure!(files.len() <= 128, "Gitee附件过多");
+            let matches = files
+                .iter()
+                .filter(|file| file["name"] == expected)
+                .collect::<Vec<_>>();
+            ensure!(
+                matches.len() == 1,
+                "Gitee尚未同步对应安装包，请选择GitHub或访问Gitee下载"
+            );
+            let file = matches[0];
+            let attachment = file["id"]
+                .as_u64()
+                .filter(|id| *id > 0)
+                .context("Gitee附件身份无效")?;
+            ensure!(
+                file["size"]
+                    .as_u64()
+                    .is_none_or(|size| Some(size) == package["size"].as_u64()),
+                "Gitee安装包长度与正式版不符"
+            );
+            let direct =
+                format!("https://gitee.com/space4sgsa/ConWU/releases/download/{tag}/{expected}");
+            let url = if file["browser_download_url"] == direct {
+                direct
+            } else {
+                format!(
+                    "https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/{id}/attach_files/{attachment}/download"
+                )
+            };
+            package["browser_download_url"] = json!(url);
+            package["url"] = package["browser_download_url"].clone();
+        }
+    }
     Ok(
-        json!({"currentVersion":VERSION,"platform":std::env::consts::OS,"state":if compatible{"Available"}else{"UpToDate"},"message":if compatible{"发现 Rust 兼容更新"}else{"Rust 实验分支尚无兼容发布"},"latestVersion":version,"releaseUrl":release["html_url"],"notes":release["body"],"updateAvailable":compatible&&version!=VERSION,"checkedAt":conwu_core::unix_seconds(),"package":package,"downloadSource":source}),
+        json!({"currentVersion":VERSION,"platform":std::env::consts::OS,"state":if compatible&&newer{"Available"}else{"UpToDate"},"message":if compatible&&newer{"发现新版本"}else{"暂无适用的更高正式版本"},"latestVersion":version,"releaseUrl":release["html_url"],"notes":release["body"],"updateAvailable":compatible&&newer,"checkedAt":conwu_core::unix_seconds(),"package":package,"downloadSource":source}),
     )
+}
+fn version_key(version: &str) -> Result<([u32; 3], bool)> {
+    ensure!(version.len() <= 64, "版本号过长");
+    let value = version
+        .strip_prefix('v')
+        .unwrap_or(version)
+        .split('+')
+        .next()
+        .unwrap();
+    let (core, stable) = value
+        .split_once('-')
+        .map_or((value, true), |(core, _)| (core, false));
+    let parts = core.split('.').collect::<Vec<_>>();
+    ensure!(parts.len() == 3, "版本号格式无效");
+    let mut result = [0; 3];
+    for (i, part) in parts.iter().enumerate() {
+        ensure!(
+            !part.is_empty()
+                && part.bytes().all(|b| b.is_ascii_digit())
+                && !(part.len() > 1 && part.starts_with('0')),
+            "版本号格式无效"
+        );
+        result[i] = part.parse()?;
+    }
+    Ok((result, stable))
+}
+async fn public_json(url: &str) -> Result<Value> {
+    let response = crate::discovery::http_client()?
+        .get(url)
+        .send()
+        .await?
+        .error_for_status()?;
+    ensure!(
+        response.content_length().is_none_or(|size| size <= 262144),
+        "官方更新元数据过大"
+    );
+    let mut bytes = Vec::new();
+    let mut chunks = response.bytes_stream();
+    while let Some(chunk) = chunks.next().await {
+        bytes.extend_from_slice(&chunk?);
+        ensure!(bytes.len() <= 262144, "官方更新元数据过大");
+    }
+    Ok(serde_json::from_slice(&bytes)?)
+}
+fn official_download(url: &url::Url) -> bool {
+    if url.scheme() != "https"
+        || url.port_or_known_default() != Some(443)
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return false;
+    }
+    match url.host_str() {
+        Some("github.com") => url.path().starts_with("/MrSGSA/ConWU/releases/download/"),
+        Some("gitee.com") => {
+            if url
+                .path()
+                .starts_with("/space4sgsa/ConWU/releases/download/")
+            {
+                return true;
+            }
+            let parts = url
+                .path()
+                .trim_end_matches('/')
+                .split('/')
+                .collect::<Vec<_>>();
+            parts.len() == 11
+                && parts[..7] == ["", "api", "v5", "repos", "space4sgsa", "ConWU", "releases"]
+                && parts[7].parse::<u64>().is_ok_and(|id| id > 0)
+                && parts[8] == "attach_files"
+                && parts[9].parse::<u64>().is_ok_and(|id| id > 0)
+                && parts[10] == "download"
+        }
+        _ => false,
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn official_update_sources_and_versions_reject_downgrades_and_foreign_assets() -> Result<()> {
+        assert!(version_key("1.10.0")?.0 > version_key("1.9.9")?.0);
+        assert!(version_key("1.4.5")?.0 < version_key("1.5.0")?.0);
+        assert!(!version_key("1.5.0-rc.1")?.1);
+        assert!(version_key("1.05.0").is_err());
+        for url in [
+            "https://github.com/MrSGSA/ConWU/releases/download/v1.5.0/ConWU-1.5.0-x64.msi",
+            "https://gitee.com/space4sgsa/ConWU/releases/download/v1.5.0/ConWU-1.5.0-x64.msi",
+            "https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/17/attach_files/42/download",
+        ] {
+            assert!(official_download(&url::Url::parse(url)?));
+        }
+        for url in [
+            "https://gitee.com/api/v5/repos/other/ConWU/releases/17/attach_files/42/download",
+            "https://gitee.com/api/v5/repos/space4sgsa/ConWU/releases/0/attach_files/42/download",
+            "https://gitee.com/space4sgsa/ConWU/releases/download/file?token=untrusted",
+            "https://github.com:8443/MrSGSA/ConWU/releases/download/file",
+            "https://gitee.com.evil.example/space4sgsa/ConWU/releases/download/file",
+        ] {
+            assert!(!official_download(&url::Url::parse(url)?));
+        }
+        Ok(())
+    }
 }
 pub async fn command(app: &App, action: Value) -> Result<Value> {
     use std::sync::atomic::Ordering;
@@ -157,7 +331,8 @@ pub async fn command(app: &App, action: Value) -> Result<Value> {
     let package = &release["package"];
     let name = package["name"].as_str().context("缺少安装包名")?;
     ensure!(
-        name.contains("rust")
+        (name.starts_with("conwu-rust-")
+            || cfg!(feature = "production") && name.starts_with("ConWU-"))
             && name.len() <= 128
             && name
                 .bytes()
@@ -168,18 +343,7 @@ pub async fn command(app: &App, action: Value) -> Result<Value> {
         .as_str()
         .context("缺少官方地址")?;
     let parsed = url::Url::parse(url)?;
-    ensure!(
-        parsed.scheme() == "https"
-            && matches!(parsed.host_str(), Some("github.com" | "gitee.com"))
-            && parsed
-                .path()
-                .starts_with(if parsed.host_str() == Some("github.com") {
-                    "/MrSGSA/ConWU/releases/download/"
-                } else {
-                    "/space4sgsa/ConWU/releases/download/"
-                }),
-        "非官方安装包地址"
-    );
+    ensure!(official_download(&parsed), "非官方安装包地址");
     let digest = package["digest"]
         .as_str()
         .and_then(|s| s.strip_prefix("sha256:"))

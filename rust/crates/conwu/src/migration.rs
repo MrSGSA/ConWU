@@ -209,10 +209,10 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
             }
         }
     }
+    ensure!(inputs.len() <= 1024, "旧网络记录数量过多，请先核对归档");
     if device["Mesh"].is_object() {
         inputs.push(from.clone());
     }
-    ensure!(inputs.len() <= 32, "旧网络数量超过实验版上限");
     for folder in inputs {
         checkpoints(&folder, &mut pkarr_checkpoints)?;
         let info = if folder == from {
@@ -231,6 +231,7 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
         if !v["Mesh"].is_object() {
             continue;
         }
+        ensure!(db.networks.len() < 32, "有效旧网络数量超过32条");
         let p: Profile = serde_json::from_value(v["Mesh"].clone())?;
         p.validate()?;
         ensure!(
@@ -255,8 +256,17 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
                 db.rejoin_credentials.push(credential);
             }
         }
-        s.existing_entries =
-            serde_json::from_value(v["ExistingEntries"].clone()).unwrap_or(s.existing_entries);
+        // Saved policy contains the user's subscription, whereas runtime
+        // entries may contain first-contact addresses or discovered bindings.
+        let saved = &v["SavedNetworkSettings"];
+        if !saved
+            .get("ExistingEntries")
+            .or_else(|| saved.get("existingEntries"))
+            .is_some_and(Value::is_array)
+        {
+            s.existing_entries =
+                serde_json::from_value(v["ExistingEntries"].clone()).unwrap_or(s.existing_entries);
+        }
         for entry in &mut s.existing_entries {
             entry.peer_slot = if entry.peer_slot == 0 || entry.peer_slot == p.member.slot as i16 {
                 0
@@ -310,7 +320,25 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
             .and_then(|b| b["Source"].as_str())
             .unwrap_or("")
             .to_owned();
+        #[cfg(windows)]
+        let legacy_adapter = {
+            let owner = v["AdapterScope"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or_else(|| v["Device"].as_str().filter(|s| !s.is_empty()))
+                .unwrap_or(&p.member.device)
+                .to_owned();
+            ensure!(conwu_core::valid_id(&owner), "旧虚拟网卡所有权作用域无效");
+            Some(crate::model::LegacyAdapter {
+                owner,
+                network: p.pair.network.clone(),
+                slot: p.member.slot,
+            })
+        };
+        #[cfg(not(windows))]
+        let legacy_adapter = None;
         db.networks.push(Network {
+            legacy_adapter,
             creation_operation: String::new(),
             creation_digest: String::new(),
             id,
@@ -380,7 +408,8 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
             .as_str()
             .filter(|s| !s.is_empty())
             .map(PathBuf::from);
-        if let Some(source) = source.filter(|s| s.starts_with(&from)) {
+        let source = source.map(|s| Store::resolve_root(&s)).transpose()?;
+        if let Some(source) = source.filter(|s| s.starts_with(&from) && s.is_file()) {
             for parent in source.ancestors() {
                 crate::store::reject_link(parent)?;
             }
@@ -409,6 +438,19 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
         crate::store::reject_link(&ui_sid)?;
         ensure!(std::fs::metadata(&ui_sid)?.len() <= 256, "旧UI授权文件过大");
         to.write("ui-user.sid", &std::fs::read(&ui_sid)?, false)?;
+    }
+    for name in ["conwu.log", "streamlink.log"] {
+        let source = from.join("logs").join(name);
+        if source.is_file() {
+            for parent in source.ancestors() {
+                crate::store::reject_link(parent)?;
+            }
+            ensure!(
+                std::fs::metadata(&source)?.len() <= 16 * 1024 * 1024,
+                "旧日志文件过大，请保留原日志目录并单独迁移"
+            );
+            to.write(&format!("legacy-{name}"), &std::fs::read(source)?, false)?;
+        }
     }
     to.save(&db)?;
     let report = json!({"networks":db.networks.len(),"configurations":db.configurations.len(),"sourceModified":false,"started":false,"format":"ConWU Rust v1"});

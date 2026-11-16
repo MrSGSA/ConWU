@@ -6,7 +6,7 @@ Console.OutputEncoding=new System.Text.UTF8Encoding(false,true);
 
 // Development-only compatibility oracle. The Rust product never launches it.
 var options=new JsonSerializerOptions{PropertyNamingPolicy=JsonNamingPolicy.CamelCase};
-MeshLink? link=null;PairKeyExchange? pair=null;
+MeshLink? link=null;PairKeyExchange? pair=null;NativeAdapter? adapter=null;
 while(await Console.In.ReadLineAsync() is {} line){
  try{
   using var document=JsonDocument.Parse(line);var r=document.RootElement;
@@ -20,6 +20,8 @@ while(await Console.In.ReadLineAsync() is {} line){
    "ping"=>new{frame=Convert.ToBase64String(link!.Ping()!)},
    "identity-fixture"=>Fixture(),
    "tls-fixture"=>TlsFixture(),
+   "wintun-open"=>OpenWintun(),
+   "wintun-close"=>CloseWintun(),
    "identity-validate"=>Validate(),
    "pair-new"=>NewPair(),
    "pair-derive"=>Derive(),
@@ -43,6 +45,8 @@ while(await Console.In.ReadLineAsync() is {} line){
   Console.WriteLine(JsonSerializer.Serialize(new{ok=true,result},options));
   object NewLink(){link?.Dispose();link=new(r.GetProperty("local").GetInt32(),r.GetProperty("remote").GetInt32(),Convert.FromHexString(Text("shared")));return new{ready=true};}
   object TlsFixture(){using var key=ECDsa.Create(ECCurve.NamedCurves.nistP256);var request=new System.Security.Cryptography.X509Certificates.CertificateRequest("CN=ConWU isolated fixture",key,HashAlgorithmName.SHA256);using var certificate=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1),DateTimeOffset.UtcNow.AddDays(2));return new{pfx=Convert.ToBase64String(certificate.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx)),pin=Convert.ToHexString(SHA256.HashData(key.ExportSubjectPublicKeyInfo()))};}
+  object OpenWintun(){if(!OperatingSystem.IsWindows())throw new PlatformNotSupportedException();if(adapter!=null)throw new InvalidOperationException("Fixture adapter is already open");adapter=new NativeAdapter(Text("components"),Text("network"),1,cancellationToken:CancellationToken.None,virtualIp:Text("address"),ownerNetwork:Text("owner"));return new{ready=true,luid=adapter.InterfaceLuid,scope=WintunIdentity.For(Text("owner"),1).Guid};}
+  object CloseWintun(){adapter?.Dispose();adapter=null;return new{closed=true};}
   object Receive(){var result=link!.Receive(Convert.FromBase64String(Text("frame")),true);return new{result.Authenticated,reply=result.Reply==null?null:Convert.ToBase64String(result.Reply),packet=result.Packet==null?null:Convert.ToBase64String(result.Packet),link.Connected};}
   object Fixture(){var owner=MeshIdentity.Create("","","tcp",direct:true,pairwise:true);var enrollment=MeshIdentity.Issue(owner);var guest=MeshIdentity.Import(MeshIdentity.Export(enrollment));return new{owner=JsonSerializer.SerializeToElement(owner),guest=JsonSerializer.SerializeToElement(guest),shared=Convert.ToHexString(MeshIdentity.SharedKey(owner,guest.Self)),enrollment=MeshIdentity.Export(enrollment)};}
   object Validate(){var profile=JsonSerializer.Deserialize<MeshProfile>(r.GetProperty("profile").GetRawText())!;profile.Validate();var peer=profile.Directory!.Members.FirstOrDefault(m=>m.Slot!=profile.Self.Slot);return new{profile.Pair.Network,profile.LocalIp,shared=peer==null?"":Convert.ToHexString(MeshIdentity.SharedKey(profile,peer))};}
@@ -63,4 +67,4 @@ while(await Console.In.ReadLineAsync() is {} line){
  }catch(Exception error){Console.WriteLine(JsonSerializer.Serialize(new{ok=false,error=error.Message},options));}
  await Console.Out.FlushAsync();
 }
-link?.Dispose();pair?.Dispose();
+adapter?.Dispose();link?.Dispose();pair?.Dispose();

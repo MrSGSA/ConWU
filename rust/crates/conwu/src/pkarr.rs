@@ -353,6 +353,61 @@ async fn bounded(response: reqwest::Response, max: usize) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "explicit public PKARR interoperability gate; publishes a short-lived independent test identity"]
+    async fn public_gateway_fallback_and_checkpoint_reopen() -> Result<()> {
+        rustls::crypto::ring::default_provider()
+            .install_default()
+            .ok();
+        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../..")
+            .canonicalize()?
+            .join("out/lab")
+            .join(conwu_core::id());
+        let store = Arc::new(Store::open(&root)?);
+        let client = Client::open(store.clone())?;
+        let seed = c::random();
+        let source = source(&seed);
+        let sequence = unix_seconds() * 1_000_000;
+        let announcement = Announcement {
+            version: 1,
+            mode: "tcp".into(),
+            expires: unix_seconds() + 300,
+            endpoints: vec!["203.0.113.10:44680".into()],
+            state: None,
+        };
+        let mut gateways = vec!["https://127.0.0.1:9".to_owned()];
+        gateways.extend(crate::model::PKARR.iter().map(|s| s.to_string()));
+        ensure!(
+            client
+                .publish(&seed, sequence, &announcement, &gateways)
+                .await?
+                > 0,
+            "至少一个公共网关须接受独立测试记录"
+        );
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(40);
+        loop {
+            if let Ok(record) = client.resolve(&source, "tcp", &gateways).await {
+                ensure!(
+                    record.sequence == sequence
+                        && record.announcement.endpoints == announcement.endpoints,
+                    "公共网关返回的数据必须完整匹配签名公告"
+                );
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "公共网关未能返回刚发布的有效记录"
+            );
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+        drop(client);
+        drop(store);
+        let client = Client::open(Arc::new(Store::open(&root)?))?;
+        let record = client.resolve(&source, "tcp", &gateways).await?;
+        ensure!(record.sequence == sequence, "重开检查点后须保留发布序号");
+        Ok(())
+    }
     #[test]
     fn signed_dns_roundtrip_and_tamper() {
         let seed = c::random();

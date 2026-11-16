@@ -1,6 +1,6 @@
-"""Create local experimental archives. Does not install, publish, or download.
+"""Create versioned runtime/source archives. Does not install, publish, or download.
 
-Build conwu with DEFAULT features first. Cargo is used only for offline
+Build conwu with the matching production/local-install features first. Cargo is used only for offline
 dependency metadata; all native binaries and official DLLs must already exist.
 """
 import argparse
@@ -14,11 +14,16 @@ import subprocess
 import tarfile
 import tomllib
 import zipfile
+import uuid
 
 ROOT = Path(__file__).resolve().parent.parent
 PRODUCT = "{2B716DCB-5CD7-4EEC-91E4-749BC09027A1}"
 VERSION = tomllib.loads((ROOT / "rust/Cargo.toml").read_text(encoding="utf-8"))["workspace"]["package"]["version"]
 OUTPUT = ROOT / "out/rust-experiment"
+SOURCE_INPUTS = ["rust", "transport", "third-party", "tests", "scripts", "src", "installer", "packaging",
+                 ".cargo/config.toml", "CMakeLists.txt", "LICENSE", "README.md", "docs",
+                 "Directory.Build.props", "Directory.Build.targets", "global.json", "NuGet.Config",
+                 "ConWU.sln", "ConWU.slnx", "StreamLink.sln"]
 
 
 def read(path):
@@ -59,25 +64,21 @@ def save(name, data):
 
 def sources():
     files = {}
-    selected = ["rust", "transport", "third-party", "tests", "scripts",
-                "src/ConWU.Web/wwwroot", "src/ConWU.Core", "src/ConWU.App/Assets/conwu.ico",
-                ".cargo/config.toml", "CMakeLists.txt", "LICENSE", "README.md", "docs"]
-    excluded = {"target", "bin", "obj", "out", ".git", "__pycache__"}
-    for relative in selected:
-        path = ROOT / relative
-        candidates = [path] if path.is_file() else sorted(path.rglob("*"))
-        for item in candidates:
-            rel = item.relative_to(ROOT)
-            if not item.is_file() or excluded.intersection(rel.parts):
-                continue
-            if item.suffix in {".pem", ".key", ".pfx", ".dpapi", ".log"} or item.name.endswith(".private.json"):
-                continue
-            files[rel.as_posix()] = (read(item), 0o755 if item.suffix == ".sh" else 0o644)
+    # Honour the repository's input list; never traverse ignored build caches.
+    result = subprocess.run(['git', 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', *SOURCE_INPUTS],
+                            cwd=ROOT, capture_output=True, check=True)
+    for name in sorted(set(result.stdout.decode('utf-8').split('\0')) - {''}):
+        item = ROOT / name
+        if not item.is_file():
+            continue
+        if item.suffix in {".pem", ".key", ".pfx", ".dpapi", ".log"} or item.name.endswith(".private.json"):
+            continue
+        files[name] = (read(item), 0o755 if item.suffix == ".sh" else 0o644)
     return files
 
 
-def dependencies(platform):
-    target = "x86_64-pc-windows-msvc" if platform == "windows" else "x86_64-unknown-linux-gnu"
+def dependencies(platform, linux_target):
+    target = "x86_64-pc-windows-msvc" if platform == "windows" else linux_target
     packages = {}
     for manifest in ("rust/Cargo.toml", "transport/phantun/Cargo.toml"):
         result = subprocess.run(["cargo", "metadata", "--locked", "--offline", "--format-version", "1",
@@ -105,31 +106,77 @@ def dependencies(platform):
 
 
 def main():
+    global OUTPUT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=["windows", "linux"], required=True)
     parser.add_argument("--dependency-root", type=Path, default=ROOT / "out/dependency-cache")
     parser.add_argument("--app", type=Path)
+    parser.add_argument("--component-root", type=Path)
+    parser.add_argument("--target-directory", type=Path)
+    parser.add_argument("--linux-target", default="x86_64-unknown-linux-musl")
+    parser.add_argument("--output", type=Path, default=OUTPUT)
+    parser.add_argument("--stage", action="store_true", help="Also write the exact MSI/runtime input directory")
+    parser.add_argument("--production", action="store_true")
+    parser.add_argument("--validation-instance")
     args = parser.parse_args()
+    OUTPUT = args.output.resolve()
+    if not OUTPUT.is_relative_to((ROOT / 'out').resolve()) or OUTPUT == (ROOT / 'out').resolve():
+        raise ValueError('Package output must be a dedicated directory beneath this worktree/out')
+    product = "{AD076018-A9B8-47F5-B098-97479A363416}" if args.production else PRODUCT
+    if args.validation_instance:
+        identity = uuid.UUID(hex=args.validation_instance)
+        if identity.int == 0 or identity.hex != args.validation_instance:
+            raise ValueError('Canonical validation GUID required')
+        product = '{' + str(identity).upper() + '}'
+    if args.production:
+        changes = subprocess.run(['git', 'status', '--porcelain', '--untracked-files=normal', '--', *SOURCE_INPUTS],
+                                 cwd=ROOT, capture_output=True, check=True)
+        if changes.stdout.strip():
+            raise ValueError('Production packaging requires committed, unchanged source and build inputs')
     OUTPUT.mkdir(parents=True, exist_ok=True)
-    if OUTPUT.is_symlink() or OUTPUT.resolve().parent != (ROOT / "out").resolve():
+    if OUTPUT.is_symlink():
         raise ValueError("Output directory must remain within this worktree's out directory")
 
     source_files = sources()
     source_digest = hashlib.sha256(encode({name: hashlib.sha256(data).hexdigest()
                                          for name, (data, _) in sorted(source_files.items())})).hexdigest()
-    source_name = f"conwu-rust-{VERSION}-source.zip"
+    prefix = f"ConWU-{VERSION}" if args.production else f"conwu-rust-{VERSION}"
+    source_name = prefix + "-source.zip"
     source_zip = zipped(source_files)
     save(source_name, source_zip)
     files = {"source/" + source_name: (source_zip, 0o644)}
-    files.update(dependencies(args.platform))
+    files.update(dependencies(args.platform, args.linux_target))
     executable = "conwu.exe" if args.platform == "windows" else "conwu"
-    target_dir = ROOT / ("out/rust-target" if args.platform == "windows" else "out/rust-target-linux")
-    files[executable] = (read(args.app or target_dir / "release" / executable), 0o755)
-    native_dir = ROOT / ("out/native" if args.platform == "windows" else "out/rust-components-linux")
+    target_dir = args.target_directory or ROOT / ("out/rust-target" if args.platform == "windows" else "out/rust-target-linux")
+    app = (args.app or target_dir / "release" / executable).resolve()
+    command = [str(app)]
+    if args.platform == 'linux' and os.name == 'nt':
+        command = ['wsl', '-d', 'ArchLinux', '-u', 'root', '--', '/mnt/' + app.drive[0].lower() + app.as_posix()[2:]]
+    if args.validation_instance:
+        command += ['--validation-instance', args.validation_instance]
+    info = json.loads(subprocess.check_output(command + ['build-info'], text=True, encoding='utf-8'))
+    if info['version'] != VERSION or info['product'] != product or info['labApi'] or info['production'] != args.production:
+        raise ValueError('Executable build identity/features do not match this package')
+    if args.production and not info['localInstall']:
+        raise ValueError('Production candidate must support local installation')
+    app_bytes = read(app)
+    component_prefix = 'app/components/' if args.platform == 'windows' else 'components/'
+    if args.platform == 'windows':
+        for name in ('ConWU.exe', 'app/ConWU.exe', 'app/ConWU.Service.exe'):
+            files[name] = (app_bytes, 0o755)
+    else:
+        files[executable] = (app_bytes, 0o755)
+        files['install.sh'] = (read(ROOT / 'rust/install-linux.sh'), 0o755)
+        files['install.py'] = (read(ROOT / 'rust/install-linux.py'), 0o644)
+        files['uninstall.sh'] = (read(ROOT / 'rust/uninstall-linux.sh'), 0o755)
+    native_dir = args.component_root or ROOT / ("out/native" if args.platform == "windows" else "out/rust-components-linux-musl")
     for name in ("conwu-raw", "conwu-phantun", "udp2raw-native"):
         basename = name + (".exe" if args.platform == "windows" else "")
         directory = target_dir / "release" if args.platform == "windows" and name != "udp2raw-native" else native_dir
-        files["components/" + basename] = (read(directory / basename), 0o755)
+        files[component_prefix + basename] = (read(directory / basename), 0o755)
+    if args.platform == 'linux':
+        subprocess.run(['python', str(ROOT / 'rust/verify-linux-static.py'), str(app)] +
+            [str(native_dir / name) for name in ('conwu-raw', 'conwu-phantun', 'udp2raw-native')], check=True)
     if args.platform == "windows":
         dlls = {
             "wintun.dll": "wintun/bin/amd64/wintun.dll",
@@ -138,7 +185,15 @@ def main():
             "xdpapi.dll": "xdp-1.4.0/unpacked/runtime/native/xdpapi.dll",
         }
         for name, source in dlls.items():
-            files["components/" + name] = (read(args.dependency_root / source), 0o644)
+            files[component_prefix + name] = (read(args.dependency_root / source), 0o644)
+        runtime = args.dependency_root / 'xdp-1.4.0/unpacked/runtime/native'
+        files['licenses/Microsoft-XDP-Runtime-LICENSE.txt'] = (read(runtime / 'LICENSE.txt'), 0o644)
+        metadata = json.loads(read(runtime / 'xdp-runtime.json'))
+        for name, digest in metadata['files'].items():
+            if hashlib.sha256(read(runtime / name)).hexdigest().upper() != digest:
+                raise ValueError('Microsoft XDP runtime hash mismatch: ' + name)
+        for name in ('xdp.inf', 'xdp.sys', 'xdp.cat', 'xdpapi.dll', 'xdp-setup.ps1', 'xdppcw.man', 'xdp-runtime.json'):
+            files[component_prefix + 'xdp-runtime/' + name] = (read(runtime / name), 0o644)
     licenses = {
         "LICENSE": "LICENSE",
         "udp2raw-LICENSE.md": "transport/udp2raw/LICENSE.md",
@@ -158,19 +213,31 @@ def main():
     files["README.md"] = (read(ROOT / "rust/README.md"), 0o644)
     for name in ("ARCHITECTURE.md", "VALIDATION.md"):
         files["docs/" + name] = (read(ROOT / "rust" / name), 0o644)
-    for name in ("app-test.log", "linux-test.log", "interop.log", "migration-test.log", "ui-smoke.log", "rust-ui-smoke.png",
+    for name in (() if args.production else ("app-test.log", "linux-test.log", "interop.log", "migration-test.log", "ui-smoke.log", "rust-ui-smoke.png",
                  "native-lab-result.json", "native-lab.log", "tun-lab-result.json", "tun-lab.log",
                  "benchmark-baseline.json", "benchmark-result.json", "carriers-build.log",
-                 "linux-build-info.txt", "windows-build-info.txt"):
+                 "linux-build-info.txt", "windows-build-info.txt")):
         item = ROOT / "out" / name
         if item.is_file(): files["evidence/" + name] = (read(item), 0o644)
-    files[".conwu-rust-package"] = (encode({"product": PRODUCT, "version": VERSION,
-        "os": args.platform, "arch": "x86_64", "experimental": True, "features": [],
+    files[".conwu-rust-package"] = (encode({"product": product, "version": VERSION,
+        "os": args.platform, "arch": "x86_64", "experimental": not args.production,
+        "features": [name for name, enabled in [('production', info['production']), ('local-install', info['localInstall'])] if enabled],
         "sourceTreeSha256": source_digest, "sourceArchive": source_name,
-        "deploymentValidated": False, "published": False}), 0o644)
+        "validationInstance": args.validation_instance}), 0o644)
     files["SHA256SUMS"] = ("".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n"
                                   for name, (data, _) in sorted(files.items())).encode(), 0o644)
-    name = f"conwu-rust-{VERSION}-{args.platform}-x86_64"
+    if args.stage:
+        stage = OUTPUT / (args.platform + '-bundle')
+        if stage.is_symlink(): raise ValueError('Stage directory cannot be linked')
+        if stage.is_dir() and any(stage.iterdir()):
+            raise ValueError('Stage must be a fresh empty directory; keep a new candidate separate from an accepted bundle')
+        stage.mkdir(exist_ok=True)
+        for relative, (data, _) in sorted(files.items()):
+            target = stage / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            if target.is_symlink(): raise ValueError('Stage file cannot be linked')
+            target.write_bytes(data)
+    name = prefix + (f"-{args.platform}-x64" if args.production else f"-{args.platform}-x86_64")
     if args.platform == "windows":
         artifact = save(name + ".zip", zipped(files))
     else:

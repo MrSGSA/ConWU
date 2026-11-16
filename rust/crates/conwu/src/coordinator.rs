@@ -2,7 +2,7 @@ use crate::backend::App;
 use anyhow::{Context, Result, ensure};
 use axum::{
     Extension, Router,
-    extract::{DefaultBodyLimit, Path, Request, State},
+    extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::StatusCode,
     response::{IntoResponse, Response},
     routing::{get, post, put},
@@ -236,6 +236,7 @@ async fn signed_watch(
 
 use crate::coordination_store::Registration;
 struct Registry {
+    trust_cloudflare: bool,
     epoch: uuid::Uuid,
     feeds: Mutex<HashMap<String, Feed>>,
     waiters: Arc<tokio::sync::Semaphore>,
@@ -253,6 +254,10 @@ struct Running {
     cancel: CancellationToken,
     settings: Value,
     registry: std::sync::Weak<Registry>,
+    finished: CancellationToken,
+    external: Arc<std::sync::RwLock<Value>>,
+    probe_changed: Arc<tokio::sync::Notify>,
+    certificate_expires: Option<i64>,
 }
 static RUNNING: OnceLock<Mutex<Option<Running>>> = OnceLock::new();
 fn running() -> &'static Mutex<Option<Running>> {
@@ -269,7 +274,23 @@ pub fn status() -> Value {
                 row["lastSeen"]=json!(row["lastSeen"].as_i64().unwrap_or(0).max((conwu_core::unix_seconds()-t.elapsed().as_secs() as i64)*1000));
             }devices.into_values().take(128).collect::<Vec<_>>()
         }).unwrap_or_default();
-        json!({"enabled":true,"running":!r.cancel.is_cancelled(),"state":"运行中","addresses":[r.settings["listenUrl"]],"certificatePin":r.certificate_pin,"clients":clients,"punchAssist":r.registry.upgrade().map(|r|r.assist.status())})
+        let active = !r.cancel.is_cancelled() && !r.finished.is_cancelled();
+        let state = if !active {
+            "已停止，等待恢复"
+        } else if r
+            .certificate_expires
+            .is_some_and(|t| t <= conwu_core::unix_seconds())
+        {
+            "运行中；监听证书已过期，请更换证书"
+        } else if r
+            .certificate_expires
+            .is_some_and(|t| t <= conwu_core::unix_seconds() + 7 * 86400)
+        {
+            "运行中；监听证书将在7天内过期"
+        } else {
+            "运行中"
+        };
+        json!({"enabled":true,"running":active,"state":state,"addresses":[r.settings["listenUrl"]],"certificatePin":r.certificate_pin,"certificateExpires":r.certificate_expires.map(crate::coordination_store::timestamp),"external":r.external.read().unwrap().clone(),"clients":clients,"punchAssist":r.registry.upgrade().map(|r|r.assist.status())})
     } else {
         json!({"enabled":false,"running":false,"state":"未开启","addresses":[],"clients":[]})
     }
@@ -277,6 +298,20 @@ pub fn status() -> Value {
 pub fn validate(settings: &Value) -> Result<()> {
     if settings.is_null() {
         return Ok(());
+    }
+    if let Some(text) = settings["publicUrl"].as_str().filter(|s| !s.is_empty()) {
+        crate::discovery::validate_service(text)?;
+        let endpoint = url::Url::parse(text)?;
+        ensure!(endpoint.scheme() == "https", "外部协调地址必须使用HTTPS");
+    }
+    if let Some(pin) = settings["publicCertificatePin"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+    {
+        ensure!(
+            pin.len() == 64 && pin.bytes().all(|b| b.is_ascii_hexdigit()),
+            "外部证书SHA-256指纹无效"
+        );
     }
     let url = url::Url::parse(
         settings["listenUrl"]
@@ -325,15 +360,106 @@ pub fn validate(settings: &Value) -> Result<()> {
     }
     Ok(())
 }
+fn listener_settings(settings: &Value) -> Value {
+    let mut value = settings.clone();
+    if let Some(object) = value.as_object_mut() {
+        object.remove("publicUrl");
+        object.remove("publicCertificatePin");
+    }
+    value
+}
+fn diagnostic(code: &str, detail: &str, reachable: bool) -> Value {
+    json!({"code":code,"detail":detail,"reachable":reachable,"checkedAt":crate::coordination_store::timestamp(conwu_core::unix_seconds())})
+}
+fn expiry(bytes: &[u8]) -> Option<i64> {
+    x509_parser::parse_x509_certificate(bytes)
+        .ok()
+        .map(|(_, c)| c.validity().not_after.timestamp())
+}
+async fn probe(url: &str, pin: &str, instance: &str) -> Value {
+    if url.is_empty() {
+        return diagnostic(
+            "unconfigured",
+            "尚未设置外部HTTPS地址，未检查外部访问路径",
+            false,
+        );
+    }
+    let check = async {
+        let mut endpoint = url::Url::parse(url)?.join("health")?;
+        let challenge = conwu_core::id();
+        endpoint
+            .query_pairs_mut()
+            .append_pair("challenge", &challenge);
+        let response = crate::transport::pinned_http_bootstrap(pin, false, None)?
+            .get(endpoint)
+            .send()
+            .await?;
+        ensure!(
+            response.status().is_success(),
+            "外部HTTPS返回HTTP {}，请检查代理转发和访问限制",
+            response.status().as_u16()
+        );
+        use futures_util::StreamExt;
+        let mut stream = response.bytes_stream();
+        let mut bytes = Vec::new();
+        while let Some(chunk) = stream.next().await {
+            bytes.extend_from_slice(&chunk?);
+            ensure!(bytes.len() <= 16384, "协调响应超过16KiB");
+        }
+        let value: Value = serde_json::from_slice(&bytes)?;
+        ensure!(
+            value["meshProtocol"] == 4 && value["meshTraversal"] == 1 && value["relay"] == false,
+            "地址已响应，但未提供兼容的ConWU协调能力"
+        );
+        ensure!(
+            value["instanceId"] == instance && value["challenge"] == challenge,
+            "HTTPS响应属于其他协调实例或缓存，请检查代理源站和缓存规则"
+        );
+        Ok::<_, anyhow::Error>(())
+    };
+    match tokio::time::timeout(Duration::from_secs(8), check).await {
+        Ok(Ok(())) => diagnostic(
+            "reachable",
+            "已通过外部HTTPS地址确认当前协调实例；对端网络的可达性仍需在对端检查",
+            true,
+        ),
+        Ok(Err(error)) => diagnostic(
+            "probe-error",
+            &format!("协调地址检查未完成：{error}"),
+            false,
+        ),
+        Err(_) => diagnostic(
+            "timeout",
+            "外部协调HTTPS在8秒内未响应，请检查监听、端口和代理状态",
+            false,
+        ),
+    }
+}
 pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
     validate(&settings)?;
-    if let Some(prior) = running().lock().unwrap().as_ref() {
-        if prior.settings == settings && !prior.cancel.is_cancelled() {
-            return Ok(());
+    {
+        let mut running = running().lock().unwrap();
+        if let Some(prior) = running.as_mut() {
+            if !prior.cancel.is_cancelled()
+                && !prior.finished.is_cancelled()
+                && listener_settings(&prior.settings) == listener_settings(&settings)
+            {
+                if prior.settings != settings {
+                    prior.settings = settings.clone();
+                    *prior.external.write().unwrap() =
+                        diagnostic("checking", "正在检查外部HTTPS地址", false);
+                    prior.probe_changed.notify_one();
+                }
+                return Ok(());
+            }
         }
     }
-    if let Some(prior) = running().lock().unwrap().take() {
+    let prior = running().lock().unwrap().take();
+    if let Some(prior) = prior {
         prior.cancel.cancel();
+        tokio::time::timeout(Duration::from_secs(10), prior.finished.cancelled())
+            .await
+            .context("旧协调监听尚未退出")?;
     }
     if settings["enabled"] != true {
         return Ok(());
@@ -363,6 +489,7 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
         BTreeMap::new()
     };
     let registry = Arc::new(Registry {
+        trust_cloudflare: settings["trustCloudflare"] == true,
         epoch: uuid::Uuid::new_v4(),
         feeds: Mutex::new(HashMap::new()),
         waiters: Arc::new(tokio::sync::Semaphore::new(64)),
@@ -375,14 +502,19 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
         nodes: Mutex::new(HashMap::new()),
         rate: Mutex::new(HashMap::new()),
     });
+    let instance = registry.epoch.simple().to_string();
+    let health_instance = instance.clone();
     let router = Router::new()
         .route(
             "/health",
-            get(|| async {
-                axum::Json(
-                    json!({"ok":true,"mesh":true,"pairwise":true,"version":"rust-experiment","meshProtocol":4,"pairNetworks":1,"nodeIdentity":1,"integratedCoordinator":1,"meshWatch":1,"meshTraversal":1,"punchAssist":1,"punchTcpStun":1,"punchModes":["faketcp","phantun","mimic","tcpraw","tcp","https"],"tcpAssist":1,"traversal":1,"nativeAbi":1}),
-                )
-            }),
+            get(move |Query(query): Query<HashMap<String,String>>| { let instance=health_instance.clone(); async move {
+                let challenge = query.get("challenge").filter(|s| s.len()==32 && s.bytes().all(|b|b.is_ascii_hexdigit())).cloned().unwrap_or_default();
+                let mut reply = axum::Json(
+                    json!({"ok":true,"mesh":true,"pairwise":true,"version":crate::model::VERSION,"meshProtocol":4,"pairNetworks":1,"nodeIdentity":1,"integratedCoordinator":1,"meshWatch":1,"meshTraversal":1,"punchAssist":1,"punchTcpStun":1,"punchModes":["faketcp","phantun","mimic","tcpraw","tcp","https"],"tcpAssist":1,"traversal":1,"nativeAbi":1,"relay":false,"instanceId":instance,"challenge":challenge}),
+                ).into_response();
+                reply.headers_mut().insert("Cache-Control", "no-store".parse().unwrap());
+                reply
+            }}),
         )
         .route("/v3/mesh/{network}/directory", put(directory))
         .route("/v3/mesh/{network}/nodes/{slot}", put(publish))
@@ -396,12 +528,16 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
         .merge(crate::web::remote_router(app.clone())?);
     let stop = app.engine.cancel.child_token();
     let mut certificate_pin = String::new();
+    let mut certificate_expires = None;
     let tls = if url.scheme() == "https" {
         if settings["certificateFile"]
             .as_str()
             .is_none_or(|s| s.is_empty())
         {
             certificate_pin = app.engine.identity.certificate_pin.clone();
+            if let Ok(bytes) = std::fs::read(app.store.checked_file("stream-certificate.der")?) {
+                certificate_expires = expiry(&bytes);
+            }
             Some(app.engine.identity.server.clone())
         } else {
             let certificate = std::fs::read(settings["certificateFile"].as_str().unwrap())?;
@@ -410,6 +546,7 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
                 .collect::<std::io::Result<Vec<_>>>()?;
             certificate_pin =
                 hex::encode_upper(c::hash(certificates.first().context("证书为空")?.as_ref()));
+            certificate_expires = expiry(certificates[0].as_ref());
             let key = rustls_pemfile::private_key(&mut key.as_slice())?.context("证书私钥为空")?;
             Some(Arc::new(
                 rustls::ServerConfig::builder()
@@ -420,20 +557,41 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
     } else {
         None
     };
+    let finished = CancellationToken::new();
+    let external = Arc::new(std::sync::RwLock::new(diagnostic(
+        "checking",
+        "正在检查外部HTTPS地址",
+        false,
+    )));
+    let changed = Arc::new(tokio::sync::Notify::new());
     *running().lock().unwrap() = Some(Running {
         cancel: stop.clone(),
         settings: settings.clone(),
         registry: Arc::downgrade(&registry),
         certificate_pin,
+        certificate_expires,
+        finished: finished.clone(),
+        external: external.clone(),
+        probe_changed: changed.clone(),
     });
-    let tracker = app.engine.tracker.clone();
+    let probe_stop = stop.clone();
     app.engine.tracker.spawn(async move {
+        loop {
+            let settings = running().lock().unwrap().as_ref().map(|r| r.settings.clone()).unwrap_or_default();
+            let result = tokio::select! { _=probe_stop.cancelled()=>break,
+                r=probe(settings["publicUrl"].as_str().unwrap_or(""), settings["publicCertificatePin"].as_str().unwrap_or(""), &instance)=>r };
+            *external.write().unwrap() = result;
+            tokio::select! { _=probe_stop.cancelled()=>break, _=changed.notified()=>{}, _=tokio::time::sleep(Duration::from_secs(60))=>{} }
+        }
+    });
+    app.engine.tracker.spawn(async move {
+        let connections = tokio_util::task::TaskTracker::new();
         let gate=Arc::new(tokio::sync::Semaphore::new(128));
         loop {
             let (mut socket,remote)=tokio::select!{_=stop.cancelled()=>break,r=listener.accept()=>match r{Ok(r)=>r,Err(_)=>break}};
             let Ok(permit)=gate.clone().try_acquire_owned() else {continue};
             let tls=tls.clone();let stop=stop.clone();let router=router.clone().layer(Extension(remote));
-            tracker.spawn(async move {
+            connections.spawn(async move {
                 let _permit=permit;
                 if is_stun(&socket).await {let _=stun_server(&mut socket,remote,&stop).await;return;}
                 if let Some(tls)=tls {
@@ -443,6 +601,10 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
                 }else{serve_http(socket,router,stop).await;}
             });
         }
+        drop(listener);
+        connections.close();
+        connections.wait().await;
+        finished.cancel();
     });
     app.log("INFO", "Rust 本机协调服务已启动");
     Ok(())
@@ -657,8 +819,9 @@ async fn first_assist(
 ) -> Response {
     reply(
         async {
+            let source = client_source(r.trust_cloudflare, &request, remote);
             let input: Value = body(request).await?;
-            r.assist.request(&action, &input, remote.ip())
+            r.assist.request(&action, &input, source)
         }
         .await,
     )
@@ -709,6 +872,7 @@ async fn member_assist(
 ) -> Response {
     reply(
         async {
+            let source = client_source(r.trust_cloudflare, &request, remote);
             let auth = authenticate(&r, &request, &network)?;
             let input: crate::assistance::MemberRequest = body(request).await?;
             let registrations = r.registrations.lock().unwrap();
@@ -723,7 +887,7 @@ async fn member_assist(
                 .iter()
                 .find(|m| m.slot == input.slot)
                 .context("协同成员未授权")?;
-            input.verify(&network, member, remote.ip())?;
+            input.verify(&network, member, source)?;
             let peer = registration
                 .directory
                 .members
@@ -734,6 +898,35 @@ async fn member_assist(
         }
         .await,
     )
+}
+fn client_source(trust: bool, request: &Request, remote: SocketAddr) -> std::net::IpAddr {
+    if trust && remote.ip().is_loopback() {
+        if let Some(ip) = request
+            .headers()
+            .get("CF-Connecting-IP")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<std::net::IpAddr>().ok())
+            .filter(|ip| !ip.is_unspecified() && !ip.is_multicast())
+        {
+            return ip;
+        }
+    }
+    remote.ip()
+}
+#[test]
+fn forwarded_address_requires_explicit_trust_and_a_loopback_proxy() {
+    let request = Request::builder()
+        .header("CF-Connecting-IP", "198.51.100.4")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let local = "127.0.0.1:12345".parse().unwrap();
+    let external = "203.0.113.9:12345".parse().unwrap();
+    assert_eq!(
+        client_source(true, &request, local),
+        "198.51.100.4".parse::<std::net::IpAddr>().unwrap()
+    );
+    assert_eq!(client_source(false, &request, local), local.ip());
+    assert_eq!(client_source(true, &request, external), external.ip());
 }
 async fn serve_http<S>(stream: S, router: Router, stop: CancellationToken)
 where
@@ -865,6 +1058,58 @@ pub async fn exchange(
 mod tests {
     use super::*;
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn coordinator_health_binds_origin_and_listener_restart_releases_port() -> Result<()> {
+        let app = crate::tests::app().await?;
+        let reservation = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let port = reservation.local_addr()?.port();
+        drop(reservation);
+        let address = format!("https://127.0.0.1:{port}/");
+        let mut settings = json!({"enabled":true,"listenUrl":address,"trustCloudflare":false});
+        configure(app.clone(), settings.clone()).await?;
+        let pin = status()["certificatePin"].as_str().unwrap().to_owned();
+        let http = crate::transport::pinned_http(&pin)?;
+        let before: Value = http
+            .get(format!("{address}health?challenge={}", "a".repeat(32)))
+            .send()
+            .await?
+            .json()
+            .await?;
+        ensure!(
+            before["relay"] == false && before["challenge"] == "a".repeat(32),
+            "须与原版健康检查兼容且应答本次挑战"
+        );
+        let instance = before["instanceId"].as_str().unwrap();
+        ensure!(
+            probe(&address, &pin, instance).await["reachable"] == true,
+            "HTTPS须确认当前源站"
+        );
+        ensure!(
+            probe(&address, &pin, &conwu_core::id()).await["reachable"] == false,
+            "错误实例必须拒绝"
+        );
+        settings["publicUrl"] = json!(address);
+        settings["publicCertificatePin"] = json!(pin);
+        configure(app.clone(), settings.clone()).await?;
+        let after: Value = http
+            .get(format!("{address}health"))
+            .send()
+            .await?
+            .json()
+            .await?;
+        ensure!(
+            after["instanceId"] == before["instanceId"],
+            "只改外部地址不得重启监听或丢失会话"
+        );
+        settings["trustCloudflare"] = json!(true);
+        configure(app.clone(), settings.clone()).await?;
+        settings["enabled"] = json!(false);
+        configure(app.clone(), settings).await?;
+        let _released =
+            tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
+        app.engine.shutdown().await?;
+        Ok(())
+    }
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn coordinator_stun_and_cross_network_snapshot_boundary() -> Result<()> {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
         let address = listener.local_addr()?;
@@ -922,6 +1167,7 @@ mod tests {
             );
         }
         let registry = Arc::new(Registry {
+            trust_cloudflare: false,
             epoch: uuid::Uuid::new_v4(),
             feeds: Mutex::new(HashMap::new()),
             waiters: Arc::new(tokio::sync::Semaphore::new(64)),
@@ -1060,7 +1306,7 @@ mod tests {
             !awake.reset && awake.cursor > first.cursor && awake.changes.len() == 1,
             "受管消息必须立即唤醒正确成员"
         );
-        app.engine.shutdown().await;
+        app.engine.shutdown().await?;
         Ok(())
     }
 }
