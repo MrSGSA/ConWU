@@ -1,5 +1,7 @@
 # ConWU
 
+> 当前分支为 `experiment/rust-rewrite`，版本 `1.4.5-rust.1`。Rust 自有后台与核心的独立重写实验已放在 [rust/README.md](rust/README.md)。实验使用独立数据目录和服务名，本轮只在本地构建与测试，不部署、不发布。下方保留正式版的使用说明。
+
 当你异地串流美美游戏却碰上 UDP 限速时，可以试试ConWU。它在两台设备间建立直连通道，通过TCP打洞以及FakeTCP+HTTP(UDP2RAW）、Phantun、mimic、tcpraw、HTTPS与TCP等协议来规避运营商对UDP的限制！目前支持 Windows 和 Linux 双端。
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。

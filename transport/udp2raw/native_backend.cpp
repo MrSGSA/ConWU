@@ -330,6 +330,26 @@ void init_filter(int port) {
     } else if (bind_addr_used) {
         filter += " and ip.DstAddr == " + std::string(local_addr.get_ip());
     }
+    // The Rust controller can share its listener port with live kernel STUN
+    // connections. These exact configured observers are control tuples only.
+    if (program_mode == server_mode && raw_mode == mode_faketcp) {
+        const char *observers = getenv("CONWU_TCP_OBSERVERS");
+        if (observers && *observers) {
+            std::string all(observers);
+            if (all.size() > 2048) fail("too many TCP observers");
+            size_t start = 0; unsigned count = 0;
+            while (start < all.size()) {
+                size_t end = all.find(';', start);
+                std::string text = all.substr(start, end == std::string::npos ? end : end - start);
+                address_t observer;
+                if (++count > 32 || text.size() > 64 || observer.from_str(text.data()) != 0 || observer.get_type() != AF_INET)
+                    fail("invalid TCP observer");
+                filter += " and (ip.SrcAddr != " + std::string(observer.get_ip()) + " or tcp.SrcPort != " + std::to_string(observer.get_port()) + ")";
+                if (end == std::string::npos) break;
+                start = end + 1;
+            }
+        }
+    }
     if (raw_mode == mode_udp && program_mode == server_mode) {
         // A default receiver can start before the managed STUN mapping exists.
         // Leave standard STUN replies with their connected kernel socket, even

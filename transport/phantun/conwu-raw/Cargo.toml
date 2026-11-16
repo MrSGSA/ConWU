@@ -17,5 +17,8 @@ async-trait = "0.1"
 [target.'cfg(target_os = "windows")'.dependencies]
 windivert = { version = "=0.7.0-beta.4", features = ["vendored"] }
 
+[build-dependencies]
+cc = "=1.11.1"
+
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

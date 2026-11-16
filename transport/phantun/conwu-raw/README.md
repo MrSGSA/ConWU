@@ -20,10 +20,27 @@ business relay. TCPRAW still needs a successful kernel TCP connection. Mimic
 needs an inbound TCP-format route to the host. A gateway lease or STUN result
 alone does not prove inbound reachability.
 
-Both modes use WinDivert on Windows and AF_PACKET/raw IPv4 on Linux. Only the
-packet I/O trait and Linux I/O adapter are shared with the MIT/Apache Phantun
-component; its fake TCP stack is not used. The Windows port does not claim
-Mimic's eBPF/XDP performance. Datagram size is bounded to 1448 bytes, queues to
+Windows Mimic requires Microsoft XDP 1.4.0 and uses only Generic AF_XDP for
+Ethernet receive, transmit and protected kernel-control RX injection. It does
+not load WinDivert or fall back to it. All active RSS queues on each attached
+IPv4 interface are covered; an explicitly selected unsupported interface fails
+startup. Rules match only the owned IPv4 addresses and TCP destination port.
+The port bitmap remains alive until program close because the XDP API pins,
+rather than copies, its pages. Ring/UMEM ownership ends after receiver workers
+join and socket handles close. Source routing and Ethernet next-hop lookup use
+Windows IP Helper; no per-packet raw-IP injection or new kernel driver is used.
+
+Windows TCPRAW retains its independent WinDivert adapter and narrow TTL=1
+kernel-output guard. The executable delay-loads that DLL only for TCPRAW.
+Current XDP built-in predicates cannot express the existing source-port/TTL
+guard without broader outbound interception. No mixed XDP/WinDivert Mimic path
+or broad host TCP interception is included.
+
+Linux continues to use AF_PACKET/raw IPv4 for both carriers. Only the packet
+I/O trait and Linux I/O adapter are shared with the MIT/Apache Phantun component;
+its fake TCP stack is not used. Mimic wire conversion and MeshLink encryption
+remain in user mode; AF_XDP I/O is not a claim of an in-kernel protocol port or
+Linux eBPF-equivalent performance. Datagram size is bounded to 1448 bytes, queues to
 512 entries and live flows to 128. Pending handshakes expire within 10 seconds.
 No data or identity key is accepted from these unauthenticated carrier headers:
 ConWU's parent retains member approval, MeshLink AEAD and replay protection.
@@ -36,9 +53,20 @@ Distribution must include this source, the pinned Cargo.lock, its referenced
 local adapter sources, GPL-2.0 license and dependency notices. The main ConWU
 application retains its MIT license and communicates through the documented
 process/loopback datagram ABI.
-The Windows helper selects WinDivert's GPLv2 licensing alternative; the other
+The TCPRAW helper selects WinDivert's GPLv2 licensing alternative; the other
 separate components can use its LGPLv3 alternative. Official WinDivert source
 and all of its licensing alternatives accompany the Windows bundle.
 
-Upstream binary interoperability and real WAN throughput require separate
-validation. The default protocol and existing networks remain unchanged.
+The vendored XDP SDK headers are unmodified MIT-licensed version 1.4.0 files;
+see native/xdp-sdk/PROVENANCE.txt. Build with scripts/Build-Phantun.ps1 on Windows
+(MSVC C++ and the Windows SDK are required) or the existing Linux build route.
+scripts/Get-XdpRuntime.ps1 pins the official runtime package and verifies its
+SHA-256, per-file hashes and Microsoft driver/catalog signatures. New Windows
+MSI/managed installations install this runtime before restoring networks. They
+reuse a compatible shared runtime and never uninstall/overwrite another app's
+running XDP component. Standalone use requires an already installed runtime.
+
+Windows/Linux role swaps, protected STUN, shared receiver, AEAD isolation and
+reconnection have independent local integration checks. Real WAN throughput,
+power usage and physical streaming require separate validation. The wire
+protocol and saved network identities remain compatible.

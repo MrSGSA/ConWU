@@ -604,7 +604,7 @@ pub async fn run(config: Config) -> io::Result<()> {
         }));
     }
     event(
-        json!({"event":"ready","abi":1,"carrier":config.carrier.name(),"role":if config.server{"server"}else{"client"},"pid":std::process::id(),"source":config.source.to_string(),"udp":engine.udp.as_ref().and_then(|s|s.local_addr().ok()).map(|s|s.to_string())}),
+        json!({"event":"ready","abi":1,"carrier":config.carrier.name(),"backend":device.name(),"role":if config.server{"server"}else{"client"},"pid":std::process::id(),"source":config.source.to_string(),"udp":engine.udp.as_ref().and_then(|s|s.local_addr().ok()).map(|s|s.to_string())}),
     );
     let work = async {
         let mut buffer = [0u8; 65535];
@@ -823,7 +823,7 @@ impl Engine {
                     }
                 }
             }));
-            event(json!({"event":"peer-opened","abi":1,"udp":udp.local_addr()?.to_string()}));
+            event(json!({"event":"peer-opened","abi":1,"udp":udp.local_addr()?.to_string(),"peer":flow.remote.to_string()}));
             flow.udp = Some(udp);
             flow.opened = true;
         }
@@ -1053,6 +1053,7 @@ impl Engine {
     async fn message(&mut self, message: Message) -> io::Result<()> {
         match message {
             Message::Protect(peer, id) => {
+                self.device.protect_tcp_peer(peer)?;
                 *self.config.control_peer.write().unwrap() = Some(peer);
                 event(json!({"event":"protected","abi":1,"peer":peer.to_string(),"id":id}));
             }

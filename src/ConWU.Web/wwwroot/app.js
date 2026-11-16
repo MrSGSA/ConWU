@@ -372,13 +372,14 @@ const logSnapshots=new Map(),seenLogEntries=new Map();
 let logOrdinal=0;
 function appendLogLine(line,source,timestamp){
  const match=line.match(/^(\d\d:\d\d:\d\d) (?:\[(INFO|WARN|ERROR|DEBUG)\] )?([\s\S]*)$/);
- const time=match?.[1]||'',message=match?.[3]||line;
+ const simple=line.match(/^\[(INFO|WARN|ERROR|DEBUG)\] ([\s\S]*)$/);
+ const time=match?.[1]||(Number.isFinite(timestamp)?new Date(timestamp).toLocaleTimeString('zh-CN',{hour12:false}):''),message=match?.[3]||simple?.[2]||line;
  if(!Number.isFinite(timestamp)){
   const date=new Date();
   if(time){const parts=time.split(':').map(Number);date.setHours(...parts,0);if(date.getTime()>Date.now()+300000)date.setDate(date.getDate()-1);}
   timestamp=date.getTime();
  }
- logLines.push({time,level:match?.[2]||'INFO',message:source?'['+source+'] '+message:message,timestamp,ordinal:logOrdinal++});
+ logLines.push({time,level:match?.[2]||simple?.[1]||'INFO',message:source?'['+source+'] '+message:message,timestamp,ordinal:logOrdinal++});
 }
 function appendLogs(lines,key='device',source=''){
  if(!lines.length)return;

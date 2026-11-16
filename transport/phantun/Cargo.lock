@@ -83,6 +83,7 @@ name = "conwu-raw"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "cc",
  "fake-tcp",
  "flume",
  "libc",

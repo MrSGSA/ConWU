@@ -1,0 +1,8 @@
+Microsoft XDP-for-Windows SDK 1.4.0, MIT license.
+Unmodified include/ files from the official Microsoft NuGet package:
+https://api.nuget.org/v3-flatcontainer/microsoft.xdp-for-windows.sdk/1.4.0/microsoft.xdp-for-windows.sdk.1.4.0.nupkg
+Package SHA-256: 27332a319287fed2bb716c9c9f2b4b43cf56921421424437eec87bbae8abe590
+Upstream commit: d372b52577a724e04fa4c06acb90bbfa4719fc25
+LICENSE from https://github.com/microsoft/xdp-for-windows/blob/v1.4.0/LICENSE
+API version 3 is compiled header-only. No xdpapi.dll is loaded by this helper.
+The signed Microsoft XDP runtime driver is a separate installation dependency.

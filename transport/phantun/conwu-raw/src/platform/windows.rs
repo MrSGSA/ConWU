@@ -1,4 +1,4 @@
-// Shared I/O adapted from the MIT/Apache ConWU Raw carrier adapter.
+// TCPRAW-only legacy Windows I/O. Mimic uses xdp.rs and cannot enter this adapter.
 use crate::{Carrier, Config};
 use fake_tcp::{packet::MAX_PACKET_LEN, tun::TunDevice};
 use std::{
@@ -14,11 +14,17 @@ pub struct Device {
     handle: Arc<WinDivert<NetworkLayer>>,
     received: flume::Receiver<Vec<u8>>,
     closing: Arc<AtomicBool>,
-    _kernel_output: Option<WinDivert<NetworkLayer>>,
+    _kernel_output: WinDivert<NetworkLayer>,
 }
 
 impl Device {
     pub fn open(config: &Config) -> io::Result<Self> {
+        if config.carrier != Carrier::TcpRaw {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Windows Mimic requires XDP; WinDivert fallback is disabled",
+            ));
+        }
         let filter = if config.server {
             format!(
                 "inbound and ip and tcp and tcp.DstPort == {}{}",
@@ -31,40 +37,35 @@ impl Device {
             )
         } else {
             format!(
-                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {}{} and tcp.DstPort == {}",
+                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {} and tcp.DstPort == {}",
                 config.remote.ip(),
                 config.source.ip(),
-                if config.peer_reflexive { String::new() } else { format!(" and tcp.SrcPort == {}", config.remote.port()) },
+                config.remote.port(),
                 config.source.port()
             )
         };
-        let mut flags = WinDivertFlags::default();
-        let kernel_output = if config.carrier == Carrier::TcpRaw {
-            flags = flags.set_sniff();
-            let exact = if config.server {
-                format!("tcp.SrcPort == {}", config.source.port())
-            } else {
-                format!(
-                    "ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {} and tcp.DstPort == {}",
-                    config.source.ip(),
-                    config.remote.ip(),
-                    config.source.port(),
-                    config.remote.port()
-                )
-            };
-            Some(
-                WinDivert::network(
-                    &format!("outbound and ip and tcp and ip.TTL == 1 and ({})", exact),
-                    -1,
-                    WinDivertFlags::default().set_drop(),
-                )
-                .map_err(io::Error::other)?,
-            )
+        let flags = WinDivertFlags::default().set_sniff();
+        let exact = if config.server {
+            format!("tcp.SrcPort == {}", config.source.port())
         } else {
-            None
+            format!(
+                "ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {} and tcp.DstPort == {}",
+                config.source.ip(),
+                config.remote.ip(),
+                config.source.port(),
+                config.remote.port()
+            )
         };
-        let handle = Arc::new(WinDivert::network(&filter, 0, flags)
-            .map_err(|error| io::Error::other(format!("{}; filter={}", error, filter)))?);
+        let kernel_output = WinDivert::network(
+            &format!("outbound and ip and tcp and ip.TTL == 1 and ({})", exact),
+            -1,
+            WinDivertFlags::default().set_drop(),
+        )
+        .map_err(io::Error::other)?;
+        let handle = Arc::new(
+            WinDivert::network(&filter, 0, flags)
+                .map_err(|error| io::Error::other(format!("{}; filter={}", error, filter)))?,
+        );
         handle
             .set_param(WinDivertParam::QueueLength, 4096)
             .map_err(io::Error::other)?;
@@ -79,7 +80,6 @@ impl Device {
         let capture = handle.clone();
         let quit = closing.clone();
         let protected = config.control_peer.clone();
-        let sniff=config.carrier==Carrier::TcpRaw;
         std::thread::Builder::new()
             .name("raw-carrier-capture".into())
             .spawn(move || {
@@ -89,18 +89,17 @@ impl Device {
                 while !quit.load(Ordering::Relaxed) {
                     match capture.recv_wait(&mut buffer, 100) {
                         Ok(Some(packet)) => {
-                            // Preserve the original WinDivert metadata. A
-                            // reinjected control packet resumes below us and
-                            // reaches the kernel TCP socket, without looping.
+                            // TCPRAW sniffing already leaves the kernel copy
+                            // intact, including any same-port STUN control flow.
                             let peer = *protected.read().unwrap();
-                            if peer.is_some_and(|peer| crate::packet::tcp_remote(&packet.data) == Some(peer)) {
-                                if !sniff { if let Err(error) = capture.send(&packet) {
-                                    eprintln!("STUN control reinjection failed: {}", error);
-                                    break;
-                                }}
+                            if peer.is_some_and(|peer| {
+                                crate::packet::tcp_remote(&packet.data) == Some(peer)
+                            }) {
                                 continue;
                             }
-                            if packet.data.len() > MAX_PACKET_LEN { continue; }
+                            if packet.data.len() > MAX_PACKET_LEN {
+                                continue;
+                            }
                             match sender.try_send(packet.data.to_vec()) {
                                 Ok(()) | Err(flume::TrySendError::Full(_)) => {}
                                 Err(flume::TrySendError::Disconnected(_)) => break,
@@ -162,7 +161,7 @@ impl TunDevice for Device {
         self.inject(buffer)
     }
     fn name(&self) -> String {
-        "WinDivert".into()
+        "windivert-tcpraw".into()
     }
 }
 

@@ -25,7 +25,8 @@ function coordinatorValue(){
 }
 const compactCodeValue=value=>String(value||'').toUpperCase().replace(/[\s\u2010-\u2015-]/g,'').replace(/O/g,'0').replace(/[IL]/g,'1');
 const formatCompact=value=>compactCodeValue(value).match(/.{1,4}/g)?.join('-')||'';
-const validCompactCode=value=>/^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{16}$/.test(compactCodeValue(value));
+const compactLimit=value=>compactCodeValue(value).startsWith('2')?36:16;
+const validCompactCode=value=>{const code=compactCodeValue(value);return /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]+$/.test(code)&&code.length===compactLimit(code);};
 function normalizedJoinCoordinator(value){
  if(!value.trim())return '';
  try{const url=new URL(value.trim());if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw Error();if(!url.pathname.endsWith('/'))url.pathname+='/';return url.href;}
@@ -41,12 +42,13 @@ configFromStatus=function(s){
 };
 function directGroups(value,placeholder=false){
  const code=compactCodeValue(value);
- return `<div class="direct-groups" aria-hidden="true">${Array.from({length:4},(_,g)=>`<div class="direct-group">${Array.from({length:4},(_,i)=>{const c=code[g*4+i];return `<span class="direct-digit ${c?'filled':placeholder?'placeholder':''}">${esc(c||(placeholder?'X':''))}</span>`;}).join('')}</div>`).join('')}</div>`;
+ const extended=compactLimit(code)===36;
+ return `<div class="direct-groups${extended?' extended':''}" aria-hidden="true">${Array.from({length:extended?9:4},(_,g)=>`<div class="direct-group">${Array.from({length:4},(_,i)=>{const c=code[g*4+i];return `<span class="direct-digit ${c?'filled':placeholder?'placeholder':''}">${esc(c||(placeholder?'X':''))}</span>`;}).join('')}</div>`).join('')}</div>`;
 }
 function helpLink(kind){return `<div class="form-help"><button class="help-link" type="button" data-ui-action="help-${kind}">如何${kind==='create'?'创建':'加入'}网络？</button></div>`;}
 function openHelp(kind){
  const create=kind==='create';$('help-title').textContent=create?'如何创建网络？':'如何加入网络？';
- const steps=create?['首先输入“网络名称”与设置“网络设置”；','在本机生成16位“直连码”。']:['在“输入框”处填写目标主机所生成的16位“直连码”','等待目标主机通过“加入申请”批准本机加入'];
+ const steps=create?['首先输入“网络名称”与设置“网络设置”；','在本机生成“直连码”（IPv4 为 16 位；TCP／HTTPS 可选择 36 位 IPv6 码）。']:['在“输入框”处填写目标主机所生成的“直连码”','等待目标主机通过“加入申请”批准本机加入'];
  $('help-content').innerHTML=steps.map((s,i)=>`<p class="help-step"><span>${i?'②':'①'}</span>${esc(s)}</p>`).join('');$('help-dialog').showModal();
 }
 function initializeDrafts(){
@@ -79,6 +81,8 @@ function updateInvitationDialog(){
  const n=row(ui.codeId);if(!n||!n.status.isOwner){closeInvitation();return;}
  $('invitation-title').textContent=n.name;
  const code=invitationCode(),display=$('invitation-code');
+ $('invitation-code-length').textContent=code?code.length+' 位':'';
+ $('invitation-family').hidden=!['tcp-only','https-only'].includes(n.status.settings?.pathSelection)||!n.status.isOwner;
  display.setAttribute('aria-label',code?'本机直连码：'+formatCompact(code):'尚未生成直连码');
  if(display.dataset.code!==code){display.innerHTML=directGroups(code,true);display.dataset.code=code;}
  const entry=n.status.entryPreparation,existing=n.status.settings?.connectionSource==='existing';
@@ -94,6 +98,7 @@ function updateInvitationDialog(){
 function openInvitation(id){
  const n=row(id);if(!n?.status.isOwner)throw Error('此网络不是本机创建的网络。');
  ui.codeId=id;$('invitation-error').textContent='';
+ $('invitation-family').value='';
  const dialog=$('invitation-dialog');if(!dialog.open)dialog.showModal();updateInvitationDialog();controls();
 }
 function closeInvitation(){ui.codeId='';$('invitation-dialog').close();$('invitation-error').textContent='';}
@@ -103,7 +108,7 @@ joinPage=function(){
  const n=pendingJoin(),p=n?.status.pairing,waiting=p?.active&&!p.owner,done=ui.joinId&&n?.status.networkId;let form;
  if(waiting)form=`<div class="waiting-card"><div class="status-orbit">${icon('clock')}</div><h2>等待主机同意</h2><p>${esc(p.peerName||'目标主机')} 将核对并批准本次申请。</p>${kv('双方校验码',p.verification||'正在交换',true)}<p class="hint">${esc(p.state)}</p><div class="form-actions"><button class="btn" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消申请</button></div></div>`;
  else if(done)form=`<div class="waiting-card"><div class="status-orbit success">${icon('check')}</div><h2>已加入 ${esc(n.name)}</h2><p>已获取主机网络设置，${n.status.directPeers?'已建立直连。':'正在建立直连。'}</p>${kv('本机虚拟 IP',n.status.virtualIp,true)}${kv('目标设备',n.status.peers[0]?.name||'目标主机')}<div class="form-actions"><button class="btn primary" data-page="overview">查看概况</button><button class="btn" data-ui-action="another-join">加入其他网络</button></div></div>`;
- else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的16位直连码" type="text" maxlength="19" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError)}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
+ else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError)}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
  return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article>${networkList(false)}</div>`;
 };
 function requestsPage(){return heading('加入申请','核对设备与校验码，决定是否允许加入。')+incomingPage().replaceAll('data-action="approve"','data-ui-action="approve"').replaceAll('data-action="reject"','data-ui-action="reject"').replaceAll('data-request-network=','data-network=');}
@@ -458,7 +463,7 @@ async function create(){
  }finally{ui.creating=false;controls();}
 }
 async function join(){
- const code=compactCodeValue(joinInviteValue);if(!validCompactCode(code))throw Error('请输入完整的 16 位直连码。');
+ const code=compactCodeValue(joinInviteValue);if(!validCompactCode(code))throw Error('请输入完整的直连码：IPv4 为 16 位，IPv6 为 36 位。');
  const reply=await command('network',{networkId:'',network:{action:'join-compact',autoConfigure:true,code,service:'',certificatePin:'',mode:'faketcp',name:'连接 '+(all().length+1),expectedNetwork:''}});
  ui.joinId=reply.status?.selectedNetworkId||selectedNetwork;render();notify('申请已发送，等待主机批准');
 }
@@ -468,23 +473,24 @@ bindJoinInput=function(){
  const visibleOffset=offset=>Math.min(input.value.length,offset+Math.floor(offset/4));
  const updateSlots=()=>{
   const value=compactCodeValue(input.value),start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd);
+  const groups=document.querySelector('#join-card .direct-groups');if(groups&&groups.classList.contains('extended')!==(compactLimit(value)===36))groups.outerHTML=directGroups(value,true);
   document.querySelectorAll('#join-card .direct-digit').forEach((digit,i)=>{
    digit.textContent=value[i]||'X';digit.classList.toggle('filled',!!value[i]);digit.classList.toggle('placeholder',!value[i]);
-   digit.classList.toggle('active',document.activeElement===input&&start===end&&i===Math.min(start,15));digit.classList.toggle('selected',document.activeElement===input&&i>=start&&i<end);
+   digit.classList.toggle('active',document.activeElement===input&&start===end&&i===Math.min(start,compactLimit(value)-1));digit.classList.toggle('selected',document.activeElement===input&&i>=start&&i<end);
   });
  };
  const apply=(value,start,end=start)=>{
-  joinInviteValue=compactCodeValue(value).slice(0,16);input.value=formatCompact(joinInviteValue);input.setSelectionRange(visibleOffset(start),visibleOffset(end));
+  joinInviteValue=compactCodeValue(value).slice(0,compactLimit(value));input.value=formatCompact(joinInviteValue);input.setSelectionRange(visibleOffset(start),visibleOffset(end));
   joinError='';$('join-error').textContent='';updateSlots();
  };
  const replaceSelection=text=>{
-  const start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd),current=compactCodeValue(input.value),room=16-(current.length-(end-start)),insertion=compactCodeValue(text).slice(0,Math.max(0,room));
+  const start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd),current=compactCodeValue(input.value),raw=compactCodeValue(text),room=compactLimit(current.slice(0,start)+raw+current.slice(end))-(current.length-(end-start)),insertion=raw.slice(0,Math.max(0,room));
   apply(current.slice(0,start)+insertion+current.slice(end),start+insertion.length);
  };
  input.oninput=()=>apply(input.value,logicalOffset(input.selectionStart),logicalOffset(input.selectionEnd));
  input.onbeforeinput=e=>{
   if(!['deleteContentBackward','deleteContentForward'].includes(e.inputType))return;e.preventDefault();
-  let start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd);if(start===end){if(e.inputType==='deleteContentBackward')start=Math.max(0,start-1);else end=Math.min(16,end+1);}
+  let start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd);if(start===end){if(e.inputType==='deleteContentBackward')start=Math.max(0,start-1);else end=Math.min(compactLimit(input.value),end+1);}
   const value=compactCodeValue(input.value);apply(value.slice(0,start)+value.slice(end),start);
  };
  input.onpaste=e=>{e.preventDefault();replaceSelection(e.clipboardData.getData('text/plain'));};
@@ -522,7 +528,7 @@ async function generateFor(id){
  const n=row(id);if(!n)throw Error('此网络已被移除。');const s=n.status;
  if(s.pairing?.candidate&&!await confirmAction('重新生成直连码？','当前尚未处理的申请将被取消。','重新生成'))return;
  if(ui.codeId===id)$('invitation-error').textContent='';
- await command('network',{networkId:id,network:{action:'invite-compact',expectedNetwork:s.networkId}},true);render();notify('直连码已生成');
+ await command('network',{networkId:id,network:{action:'invite-compact',expectedNetwork:s.networkId,entryFamily:$('invitation-family').hidden?'':$('invitation-family').value}},true);render();notify('直连码已生成');
 }
 async function testEntry(){const editor=ui.editor,source=entryTestSource(),values=drafts.network.entries.local.filter(v=>v.trim());if(!values.length)throw Error('请先填写本机入口。');await command('network',{networkId:'',network:{action:'resolve-entries',settings:{...settingsDto(),existingEntries:values.map(source=>({peerSlot:0,source}))}}},true);if(ui.editor!==editor||entryTestSource()!==source||!$('test-results'))return;const results=workspaceState.entryResolutions||[];$('test-status').textContent=results.filter(r=>!r.error).length+'/'+results.length+' 个来源解析成功';$('test-results').innerHTML=results.map(r=>`<div class="note" style="margin-bottom:8px">${esc(r.error||r.endpoints.join('、'))}</div>`).join('');}
 

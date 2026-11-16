@@ -146,7 +146,7 @@ async fn forward_server(socket: Socket, target: SocketAddrV4, mut hello:tokio::s
     let udp = udp_endpoint()?;
     udp.connect(target).await?;
     let _lifetime = PeerLifetime(udp.local_addr()?);
-    event(json!({"event":"peer-opened", "abi":ABI, "udp":udp.local_addr()?.to_string()}));
+    event(json!({"event":"peer-opened", "abi":ABI, "udp":udp.local_addr()?.to_string(), "peer":socket.remote_addr().to_string()}));
     let mut from_udp = [0u8; 2048];
     let mut from_tcp = [0u8; 1500];
     let mut last_received = tokio::time::Instant::now();

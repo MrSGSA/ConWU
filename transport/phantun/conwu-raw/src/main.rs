@@ -145,7 +145,7 @@ fn main() {
     if std::env::args().skip(1).collect::<Vec<_>>() == ["--conwu-info"] {
         println!(
             "{}",
-            json!({"component":"ConWU.RawCarriers","abi":1,"platform":std::env::consts::OS,"carriers":["mimic-v1-zero-padding","tcpraw-v1-kernel-handshake"],"maxDatagram":MAX_DATAGRAM,"fixedSourcePort":true,"boundedConnections":true,"parentWatchdog":true,"inputStop":true,"routeCloseEvents":true,"routeOpenEvents":true,"samePortMimic":true,"samePortTcpraw":true,"tcpControlGuard":1,"assistedPunch":1})
+            json!({"component":"ConWU.RawCarriers","abi":1,"platform":std::env::consts::OS,"carriers":["mimic-v1-zero-padding","tcpraw-v1-kernel-handshake"],"maxDatagram":MAX_DATAGRAM,"fixedSourcePort":true,"boundedConnections":true,"parentWatchdog":true,"inputStop":true,"routeCloseEvents":true,"routeOpenEvents":true,"samePortMimic":true,"samePortTcpraw":true,"tcpControlGuard":1,"assistedPunch":1,"windowsMimicBackend":"xdp-afxdp-generic","windowsTcprawBackend":"windivert-tcpraw","mimicBackendFallback":false,"xdpRuntimeVersion":"1.4.0"})
         );
         return;
     }

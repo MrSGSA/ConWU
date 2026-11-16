@@ -8,4 +8,6 @@ pub trait TunDevice: Send + Sync {
     async fn send(&self, buf: &[u8]) -> io::Result<usize>;
     fn try_send(&self, buf: &[u8]) -> io::Result<()>;
     fn name(&self) -> String;
+    /// Install a same-port kernel control-flow exception before acknowledging it.
+    fn protect_tcp_peer(&self, _peer: std::net::SocketAddrV4) -> io::Result<()> { Ok(()) }
 }

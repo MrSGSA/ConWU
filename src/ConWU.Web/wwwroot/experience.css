@@ -126,6 +126,10 @@ html[data-theme=light]{color-scheme:light;--bg:#f0f2f8;--surface:#fff;--raised:#
 .device-table-foot .direct-total{color:var(--muted)}
 .code-control.direct-code-control{height:77px;margin-top:16px;margin-bottom:14px}
 .direct-groups{height:100%;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;align-items:end;padding-bottom:12px}
+.code-control.direct-code-control:has(.direct-groups.extended){height:203px}
+.direct-groups.extended{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 18px;align-content:center;padding-bottom:0}
+.direct-groups.extended .direct-group:nth-child(3n)::after{display:none}
+#invitation-family{max-width:100%;margin-bottom:12px}
 .direct-group{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:3px;position:relative}
 .direct-group:not(:last-child)::after{content:'-';position:absolute;right:-10px;top:9px;font:16px/1.5 ui-monospace,Consolas,monospace;color:var(--dim);pointer-events:none}
 .direct-digit{display:grid;place-items:center;height:44px;border-bottom:2px solid var(--line);font:550 20px/1.4 ui-monospace,"Cascadia Code",Consolas,monospace;color:var(--text);min-width:0}
