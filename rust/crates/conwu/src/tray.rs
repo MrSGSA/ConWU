@@ -2,7 +2,21 @@
 pub fn start(
     panel: std::sync::Arc<crate::web::Panel>,
 ) -> tokio::task::JoinHandle<anyhow::Result<()>> {
-    tokio::task::spawn_blocking(move || windows::run(panel))
+    tokio::task::spawn_blocking(move || windows::run(windows::Context::Embedded(panel)))
+}
+#[cfg(windows)]
+pub async fn client(data: std::path::PathBuf, open: bool) -> anyhow::Result<()> {
+    let runtime = tokio::runtime::Handle::current();
+    if open {
+        let response = crate::control::call(&data, &serde_json::json!({"method":"open"})).await?;
+        crate::platform::open_browser(
+            response["url"]
+                .as_str()
+                .ok_or_else(|| anyhow::anyhow!("面板地址缺失"))?,
+        )?;
+    }
+    tokio::task::spawn_blocking(move || windows::run(windows::Context::Service { data, runtime }))
+        .await?
 }
 #[cfg(windows)]
 mod windows {
@@ -15,6 +29,44 @@ mod windows {
         UI::{Shell::*, WindowsAndMessaging::*},
     };
     const CALLBACK: u32 = WM_APP + 31;
+    pub enum Context {
+        Embedded(Arc<Panel>),
+        Service {
+            data: std::path::PathBuf,
+            runtime: tokio::runtime::Handle,
+        },
+    }
+    impl Context {
+        fn open(&self) {
+            match self {
+                Self::Embedded(panel) => {
+                    let _ = crate::platform::open_browser(&panel.link());
+                }
+                Self::Service { data, runtime } => {
+                    if let Ok(response) = runtime.block_on(crate::control::call(
+                        data,
+                        &serde_json::json!({"method":"open"}),
+                    )) {
+                        if let Some(url) = response["url"].as_str() {
+                            let _ = crate::platform::open_browser(url);
+                        }
+                    }
+                }
+            }
+        }
+        fn stopped(&self) -> bool {
+            match self {
+                Self::Embedded(panel) => panel.app.engine.cancel.is_cancelled(),
+                Self::Service { .. } => false,
+            }
+        }
+        fn title(&self) -> String {
+            match self {
+                Self::Embedded(_) => "ConWU foreground".into(),
+                Self::Service { data, .. } => crate::control::name(data).unwrap_or_default(),
+            }
+        }
+    }
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
     }
@@ -26,24 +78,18 @@ mod windows {
     ) -> LRESULT {
         // SAFETY: the window is confined to its creating thread. Its Panel Arc
         // outlives the message pump and is released only after DestroyWindow.
-        let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Arc<Panel>;
+        let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Context;
         if !pointer.is_null() {
             let panel = unsafe { &*pointer };
             match message {
                 CALLBACK => {
                     if lparam as u32 == WM_LBUTTONDBLCLK {
-                        let _ = crate::platform::open_browser(&panel.link());
+                        panel.open();
                     } else if lparam as u32 == WM_RBUTTONUP {
                         let menu = unsafe { CreatePopupMenu() };
                         if !menu.is_null() {
                             unsafe {
                                 AppendMenuW(menu, MF_STRING, 1, wide("打开 WebUI").as_ptr());
-                                AppendMenuW(
-                                    menu,
-                                    MF_STRING,
-                                    2,
-                                    wide("退出 Rust 实验后台").as_ptr(),
-                                );
                                 let mut point: POINT = std::mem::zeroed();
                                 GetCursorPos(&mut point);
                                 SetForegroundWindow(hwnd);
@@ -58,10 +104,7 @@ mod windows {
                                 );
                                 DestroyMenu(menu);
                                 if selection == 1 {
-                                    let _ = crate::platform::open_browser(&panel.link());
-                                } else if selection == 2 {
-                                    panel.app.engine.cancel.cancel();
-                                    DestroyWindow(hwnd);
+                                    panel.open();
                                 }
                             }
                         }
@@ -69,7 +112,7 @@ mod windows {
                     return 0;
                 }
                 WM_TIMER => {
-                    if panel.app.engine.cancel.is_cancelled() {
+                    if panel.stopped() {
                         unsafe { DestroyWindow(hwnd) };
                     }
                     return 0;
@@ -87,10 +130,14 @@ mod windows {
         }
         unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
     }
-    pub fn run(panel: Arc<Panel>) -> Result<()> {
+    pub fn run(panel: Context) -> Result<()> {
         unsafe {
             let instance = GetModuleHandleW(std::ptr::null());
             let name = wide("ConWURustExperimentTray");
+            let title = wide(&panel.title());
+            if !FindWindowW(name.as_ptr(), title.as_ptr()).is_null() {
+                return Ok(());
+            }
             let mut class: WNDCLASSW = std::mem::zeroed();
             class.lpfnWndProc = Some(window);
             class.hInstance = instance;
@@ -99,7 +146,7 @@ mod windows {
             let hwnd = CreateWindowExW(
                 0,
                 name.as_ptr(),
-                wide("ConWU").as_ptr(),
+                title.as_ptr(),
                 0,
                 0,
                 0,
@@ -112,11 +159,7 @@ mod windows {
             );
             ensure!(!hwnd.is_null(), "无法创建实验托盘窗口");
             let context = Box::new(panel);
-            SetWindowLongPtrW(
-                hwnd,
-                GWLP_USERDATA,
-                (&*context as *const Arc<Panel>) as isize,
-            );
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&*context as *const Context) as isize);
             let mut icon: NOTIFYICONDATAW = std::mem::zeroed();
             icon.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
             icon.hWnd = hwnd;

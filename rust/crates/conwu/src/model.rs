@@ -6,11 +6,24 @@ use std::collections::BTreeMap;
 
 pub const VERSION: &str = "1.4.5-rust.1";
 pub const TCP_STUN: &[&str] = &[
-    "stun.nextcloud.com:3478",
     "fwa.lifesizecloud.com:3478",
+    "stun.nextcloud.com:3478",
     "stun.sipnet.com:3478",
     "global.turn.twilio.com:3478",
 ];
+pub fn default_tcp_stun() -> Vec<String> {
+    let mut result: Vec<String> = TCP_STUN.iter().map(|s| s.to_string()).collect();
+    for server in include_str!("../../../assets/tcp-stun-snapshot.txt")
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && !s.starts_with('#'))
+    {
+        if !result.iter().any(|old| old.eq_ignore_ascii_case(server)) {
+            result.push(server.to_owned());
+        }
+    }
+    result
+}
 pub const PKARR: &[&str] = &["https://pkarr.pubky.app", "https://pkarr.pubky.org"];
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -31,6 +44,7 @@ pub struct Settings {
     pub source_port: u16,
     pub stream_flow_lanes: bool,
     pub port_control_mapping: bool,
+    pub tcp_peer_reflexive: bool,
     pub connection_source: String,
     pub direct_mode: bool,
     pub discovery_mode: String,
@@ -59,13 +73,22 @@ impl Default for Settings {
             source_port: 44691,
             stream_flow_lanes: false,
             port_control_mapping: false,
+            tcp_peer_reflexive: true,
             connection_source: "custom".into(),
             direct_mode: true,
             discovery_mode: "pkarr".into(),
             existing_entries: vec![],
             entry_refresh_seconds: 60,
-            tcp_stun: TCP_STUN.iter().map(|s| s.to_string()).collect(),
-            udp_stun: vec!["stun.nextcloud.com:3478".into()],
+            tcp_stun: default_tcp_stun(),
+            udp_stun: [
+                "stun.miwifi.com:3478",
+                "stun.chat.bilibili.com:3478",
+                "stun.hitv.com:3478",
+                "stun.nextcloud.com:3478",
+            ]
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
             pkarr_gateways: PKARR.iter().map(|s| s.to_string()).collect(),
             pkarr_publish: true,
             allow_manual_quality_requests: false,
@@ -114,7 +137,9 @@ impl Settings {
             );
         }
         ensure!(
-            self.tcp_stun.len() <= 8 && self.udp_stun.len() <= 8 && self.pkarr_gateways.len() <= 8,
+            self.tcp_stun.len() <= 256
+                && self.udp_stun.len() <= 256
+                && self.pkarr_gateways.len() <= 8,
             "发现服务器过多"
         );
         for server in self.tcp_stun.iter().chain(&self.udp_stun) {
@@ -255,6 +280,8 @@ pub struct Database {
     pub networks: Vec<Network>,
     pub configurations: Vec<Configuration>,
     pub departures: Vec<PendingDeparture>,
+    pub rejoin_credentials: Vec<conwu_core::rejoin::Credential>,
+    pub rejoin_history: BTreeMap<String, Vec<conwu_core::rejoin::History>>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -286,6 +313,8 @@ impl Default for Database {
             networks: vec![],
             configurations: vec![],
             departures: vec![],
+            rejoin_credentials: vec![],
+            rejoin_history: BTreeMap::new(),
         }
     }
 }

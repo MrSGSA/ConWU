@@ -17,6 +17,285 @@ pub(crate) async fn app() -> Result<Arc<backend::App>> {
     let root = project().join("out/lab").join(conwu_core::id());
     open_app(root).await
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
+    let host = app().await?;
+    let guest = app().await?;
+    let hid = create(&host, "入口申请", "tcp", false).await?;
+    let entry = host
+        .db
+        .read()
+        .unwrap()
+        .networks
+        .iter()
+        .find(|n| n.id == hid)
+        .unwrap()
+        .settings
+        .existing_entries[0]
+        .source
+        .clone();
+    ensure!(host.engine.pairing(&hid).is_null(), "无需预先生成临时房间");
+    cmd(
+        &guest,
+        json!({"method":"network","network":{"action":"join-entry","entry":entry,"mode":"tcp"}}),
+    )
+    .await?;
+    let gid = guest.db.read().unwrap().selected_network_id.clone();
+    wait("入口 SAS", || {
+        host.engine.pairing(&hid)["verification"]
+            .as_str()
+            .is_some_and(|s| s.len() == 6)
+    })
+    .await?;
+    let pairing = host.engine.pairing(&hid);
+    ensure!(
+        pairing["verification"] == guest.engine.pairing(&gid)["verification"],
+        "入口申请也须绑定 SAS"
+    );
+    ensure!(
+        guest
+            .db
+            .read()
+            .unwrap()
+            .networks
+            .iter()
+            .find(|n| n.id == gid)
+            .unwrap()
+            .profile
+            .is_none(),
+        "不能在审批前入网"
+    );
+    cmd(&host,json!({"method":"network","networkId":hid,"network":{"action":"approve","verification":pairing["verification"],"candidate":pairing["candidate"]}})).await?;
+    wait("入口批准", || {
+        guest
+            .db
+            .read()
+            .unwrap()
+            .networks
+            .iter()
+            .any(|n| n.id == gid && n.profile.is_some())
+    })
+    .await?;
+    let (panel, web) = web::Panel::start(host.clone(), 0).await?;
+    host.store.write(
+        "panel.private.json",
+        &serde_json::to_vec(&json!({"origin":panel.origin,"secret":panel.bootstrap}))?,
+        false,
+    )?;
+    let client = cli::Client::open(&host.store.root)?;
+    ensure!(
+        client.call(json!({"method":"status"})).await?["status"]["networks"]
+            .as_array()
+            .unwrap()
+            .len()
+            == 1,
+        "CLI 应看到原网络"
+    );
+    client
+        .mutate(json!({"method":"patch","patch":{"deviceName":"CLI 测试"}}))
+        .await?;
+    ensure!(
+        host.db.read().unwrap().device_name == "CLI 测试",
+        "CLI 操作应落盘"
+    );
+    host.engine.shutdown().await;
+    guest.engine.shutdown().await;
+    web.await??;
+    Ok(())
+}
+
+#[test]
+fn coordination_snapshots_preserve_revocations_and_reject_corruption() -> Result<()> {
+    let root = project().join("out/lab").join(conwu_core::id());
+    let store = store::Store::open(&root)?;
+    let mut owner = conwu_core::identity::Profile::create("tcp")?;
+    let former = owner.issue(None)?.member;
+    owner.remove_peer(former.slot)?;
+    let registry = std::collections::BTreeMap::from([(
+        owner.pair.network.clone(),
+        coordination_store::Registration {
+            auth: "AB".repeat(32),
+            directory: owner.directory.clone().unwrap(),
+        },
+    )]);
+    let bytes = serde_json::to_vec(&registry)?;
+    store.write("coordinator.json", &bytes, false)?;
+    let backup = root.join("test.slcoord");
+    coordination_store::backup(&store, &backup, true)?;
+    coordination_store::inspect(&backup)?;
+    ensure!(
+        coordination_store::restore(&store, &backup, false).is_err(),
+        "恢复必须明确确认"
+    );
+    let result = coordination_store::restore(&store, &backup, true)?;
+    ensure!(
+        std::path::Path::new(result["previousSnapshot"].as_str().unwrap()).is_file(),
+        "完整保存回退点"
+    );
+    let restored = coordination_store::decode(&std::fs::read(root.join("coordinator.json"))?)?;
+    let directory = &restored[&owner.pair.network].directory;
+    ensure!(
+        directory.next_slot == owner.directory.as_ref().unwrap().next_slot
+            && !directory.members.contains(&former),
+        "撤销记录及槽位高水位不能回退"
+    );
+    let mut invalid = bytes.clone();
+    let value = serde_json::from_slice::<Value>(&invalid)?;
+    let mut records = value.clone();
+    records[&owner.pair.network]["Directory"]["Signature"] = json!("invalid");
+    invalid = serde_json::to_vec(&records)?;
+    ensure!(
+        coordination_store::decode(&invalid).is_err(),
+        "伪造成员目录不能导入"
+    );
+    let entry = serde_json::to_string(&registry[&owner.pair.network])?;
+    let duplicate = format!(
+        "{{\"{}\":{},\"{}\":{}}}",
+        owner.pair.network, entry, owner.pair.network, entry
+    );
+    ensure!(
+        coordination_store::decode(duplicate.as_bytes()).is_err(),
+        "重复网络ID不能覆盖高水位"
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_admin_login_origin_csrf_and_local_command_boundary() -> Result<()> {
+    // DrvFS cannot enforce Unix mode bits. Only this permissions fixture uses
+    // a native Linux filesystem; no production credential is copied there.
+    #[cfg(unix)]
+    let app = open_app(
+        std::path::PathBuf::from("/tmp")
+            .join(format!("conwu-rust-permissions-{}", conwu_core::id())),
+    )
+    .await?;
+    #[cfg(windows)]
+    let app = app().await?;
+    let password = "ConWU isolated test password";
+    let config = remote_admin::Config::create("https://control.example/", password)?;
+    ensure!(
+        config.verify(password) && !config.verify("wrong"),
+        "兼容PBKDF2密码验证"
+    );
+    ensure!(
+        remote_admin::Config::create("https://control.example/path", password).is_err(),
+        "不能静默忽略管理来源路径"
+    );
+    app.store
+        .write("remote-admin.json", &serde_json::to_vec(&config)?, false)?;
+    let router = web::remote_router(app.clone())?
+        .layer(axum::Extension("198.51.100.1:50000".parse::<SocketAddr>()?));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+    let origin = format!("http://{}", listener.local_addr()?);
+    let cancel = app.engine.cancel.clone();
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(cancel.cancelled_owned())
+            .await
+    });
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let headers = || {
+        let mut h = reqwest::header::HeaderMap::new();
+        h.insert("Host", "control.example".parse().unwrap());
+        h.insert("Origin", "https://control.example".parse().unwrap());
+        h
+    };
+    ensure!(
+        client
+            .get(format!("{origin}/admin/"))
+            .headers(headers())
+            .send()
+            .await?
+            .status()
+            == 303,
+        "未登录跳转登录"
+    );
+    ensure!(
+        client
+            .post(format!("{origin}/admin/api/login"))
+            .headers(headers())
+            .json(&json!({"password":"wrong"}))
+            .send()
+            .await?
+            .status()
+            == 401,
+        "错误密码不能登录"
+    );
+    let logged = client
+        .post(format!("{origin}/admin/api/login"))
+        .headers(headers())
+        .json(&json!({"password":password}))
+        .send()
+        .await?;
+    ensure!(logged.status() == 200, "正确密码应可登录");
+    let cookie = logged
+        .headers()
+        .get("set-cookie")
+        .context("缺少会话Cookie")?
+        .to_str()?
+        .to_owned();
+    ensure!(
+        cookie.contains("Secure") && cookie.contains("Path=/admin/"),
+        "远程会话需独立安全Cookie"
+    );
+    let session: Value = logged.json().await?;
+    let mut auth = headers();
+    auth.insert("Cookie", cookie.split(';').next().unwrap().parse()?);
+    ensure!(
+        client
+            .get(format!("{origin}/admin/api/status"))
+            .headers(auth.clone())
+            .send()
+            .await?
+            .status()
+            == 200,
+        "登录后可查询"
+    );
+    ensure!(client.post(format!("{origin}/admin/api/command")).headers(auth.clone()).json(&json!({"method":"patch","operationId":uuid::Uuid::new_v4(),"patch":{"deviceName":"untrusted"}})).send().await?.status()==403,"远程操作也必须带CSRF");
+    ensure!(
+        client
+            .post(format!("{origin}/admin/api/local"))
+            .headers(auth.clone())
+            .json(&json!({"secret":"","command":{"method":"status"}}))
+            .send()
+            .await?
+            .status()
+            != 200,
+        "远程管理不能访问本地CLI权限"
+    );
+    auth.insert(
+        "X-StreamLink-CSRF",
+        session["csrf"].as_str().unwrap().parse()?,
+    );
+    ensure!(
+        client
+            .post(format!("{origin}/admin/api/logout"))
+            .headers(auth.clone())
+            .json(&json!({}))
+            .send()
+            .await?
+            .status()
+            == 204,
+        "退出应撤销会话"
+    );
+    ensure!(
+        client
+            .get(format!("{origin}/admin/api/status"))
+            .headers(auth)
+            .send()
+            .await?
+            .status()
+            == 401,
+        "退出后不可继续查询"
+    );
+    app.engine.shutdown().await;
+    server.await??;
+    Ok(())
+}
 async fn open_app(root: std::path::PathBuf) -> Result<Arc<backend::App>> {
     let store = Arc::new(store::Store::open(&root)?);
     let (app, events) = backend::App::open(store, root.join("components"), true)?;
@@ -540,6 +819,7 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
     let p = conwu_core::identity::Profile::create_for_device("tcp", &node, None)?;
     let mut settings = model::Settings::default();
     settings.path_selection = "tcp-only".into();
+    ensure!(settings.tcp_stun.len() > 80, "应包含原版完整默认STUN列表");
     let value = json!({"DeviceName":"迁移实验","NodeSigningPrivate":node,"Mesh":p,"SavedNetworkSettings":settings,"Enabled":true,"AutoStart":false,"ExistingEntries":[],"SecretNeverExpose":"do not copy"});
     let bytes = serde_json::to_vec(&value)?;
     #[cfg(windows)]
@@ -563,6 +843,10 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
     ensure!(
         db.node_private == node && db.networks[0].profile.as_ref().unwrap().member == p.member,
         "迁移应保留网络身份"
+    );
+    ensure!(
+        db.networks[0].settings.tcp_stun == settings.tcp_stun,
+        "导入不可截断原版STUN列表"
     );
     ensure!(
         !serde_json::to_string(&db)?.contains("do not copy"),
@@ -596,6 +880,105 @@ async fn changing_and_removing_listener_releases_owned_ports() -> Result<()> {
     app.engine.remove(&id).await?;
     let removed = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, new))?;
     drop((released, removed));
+    app.engine.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn removal_cancels_pending_discovery_commit_before_reusing_port() -> Result<()> {
+    let root = project().join("out/lab").join(conwu_core::id());
+    let store = Arc::new(store::Store::open(&root)?);
+    // Deliberately do not start the event actor: a UI operation may hold its
+    // transaction while waiting for the network it is removing to stop.
+    let (app, mut events) = backend::App::open(store, root.join("components"), true)?;
+    let listen = port();
+    let mut settings = model::Settings::default();
+    settings.path_selection = "tcp-only".into();
+    settings.listen_port = listen;
+    settings.source_port = port();
+    settings.tcp_stun.clear();
+    settings.pkarr_gateways.clear();
+    settings
+        .extra
+        .insert("disableGatewayMapping".into(), json!(true));
+    settings.existing_entries.push(model::Entry {
+        peer_slot: 0,
+        source: SocketAddr::new(local_ip()?, listen).to_string(),
+    });
+    let network = model::Network {
+        id: conwu_core::id(),
+        name: "取消发现提交".into(),
+        configuration_id: conwu_core::id(),
+        settings,
+        profile: Some(conwu_core::identity::Profile::create("tcp")?),
+        enabled: true,
+        paused: false,
+        created_here: true,
+        created_at: conwu_core::unix_seconds(),
+        approved_settings: None,
+        peer_name: String::new(),
+        pkarr_seed: conwu_core::crypto::b64([17u8; 32]),
+        pkarr_sequence: 0,
+        peer_pkarr: String::new(),
+        bootstrap: vec![],
+        creation_operation: String::new(),
+        creation_digest: String::new(),
+    };
+    app.engine.install(network.clone()).await?;
+    let pending = tokio::time::timeout(Duration::from_secs(3), events.recv())
+        .await?
+        .context("未收到发现序号预留")?;
+    ensure!(
+        matches!(&pending, runtime::Event::Discovery { .. }),
+        "应等待发现提交回执"
+    );
+    // Keep the unacknowledged reply alive throughout removal.
+    tokio::time::timeout(Duration::from_secs(3), app.engine.remove(&network.id)).await??;
+    ensure!(
+        app.engine.current(&network.id).is_none(),
+        "取消后不得留下运行代次"
+    );
+    let released = std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, listen))?;
+    drop(released);
+    drop(pending);
+    app.engine.install(network.clone()).await?;
+    tokio::time::timeout(Duration::from_secs(3), app.engine.remove(&network.id)).await??;
+    app.engine.shutdown().await;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn stun_failures_rotate_into_the_rest_of_the_saved_catalogue() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let app = app().await?;
+    let unavailable = port();
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let server = listener.local_addr()?;
+    let reply = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await?;
+        let mut request = [0u8; 20];
+        stream.read_exact(&mut request).await?;
+        let mut response = request.to_vec();
+        response[..4].copy_from_slice(&[1, 1, 0, 12]);
+        response.extend_from_slice(&[0, 1, 0, 8, 0, 1, 0xC0, 0x00, 203, 0, 113, 1]);
+        stream.write_all(&response).await?;
+        Ok::<_, anyhow::Error>(())
+    });
+    let mut servers = vec![format!("127.0.0.1:{unavailable}"); 8];
+    servers.push(server.to_string());
+    let source = port();
+    ensure!(
+        discovery::observe_tcp(source, &servers, &app.engine, "tcp")
+            .await
+            .is_err(),
+        "首轮只能使用有界的前八项"
+    );
+    let observed = discovery::observe_tcp(source, &servers, &app.engine, "tcp").await?;
+    ensure!(
+        observed.observer == server && observed.mapped == "203.0.113.1:49152".parse()?,
+        "下一轮应使用列表后部服务器且校验STUN回复"
+    );
+    reply.await??;
     app.engine.shutdown().await;
     Ok(())
 }

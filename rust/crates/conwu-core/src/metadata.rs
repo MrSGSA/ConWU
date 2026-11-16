@@ -44,6 +44,25 @@ pub struct Envelope {
 pub struct Snapshot {
     pub directory: Directory,
     pub nodes: Vec<Envelope>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traversal: Vec<crate::traversal::Message>,
+    #[serde(flatten)]
+    pub capabilities: DiscoveryCapabilities,
+}
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct DiscoveryCapabilities {
+    pub traversal_version: u8,
+    pub udp_ipv6: u8,
+    pub fake_tcp_ipv6: u8,
+    pub tcp_prediction: u8,
+    pub tcp_peer_reflexive: u8,
+    pub udp_exploration: u8,
+    pub quality_feedback: u8,
+    pub standby_paths: u8,
+    pub path_diagnostics: u8,
+    pub auto_quality: u8,
+    pub diagnostic_timing: u8,
 }
 fn signed(network: &str, e: &Envelope) -> Result<Vec<u8>> {
     c::signed_json(

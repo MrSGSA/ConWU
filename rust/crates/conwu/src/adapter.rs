@@ -89,13 +89,8 @@ mod linux {
             // SAFETY: ifreq storage is initialized, its name fits IFNAMSIZ,
             // and file remains owned for the temporary interface lifetime.
             ensure!(
-                unsafe {
-                    libc::ioctl(
-                        file.as_raw_fd(),
-                        0x400454ca as libc::c_ulong,
-                        request.as_mut_ptr(),
-                    )
-                } >= 0,
+                unsafe { libc::ioctl(file.as_raw_fd(), 0x400454ca as _, request.as_mut_ptr(),) }
+                    >= 0,
                 "TUNSETIFF failed: {}",
                 std::io::Error::last_os_error()
             );

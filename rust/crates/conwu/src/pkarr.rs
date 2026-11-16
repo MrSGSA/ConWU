@@ -213,7 +213,7 @@ pub fn read(key: &str, wire: &[u8]) -> Result<Record> {
 }
 impl Client {
     pub fn open(store: Arc<Store>) -> Result<Arc<Self>> {
-        let file = store.root.join("pkarr-checkpoints.json");
+        let file = store.checked_file("pkarr-checkpoints.json")?;
         let checkpoints = if file.exists() {
             ensure!(
                 std::fs::metadata(&file)?.len() <= 1024 * 1024,
@@ -253,6 +253,15 @@ impl Client {
             }
         }
         records.sort_by_key(|r| r.sequence);
+        if let Some(best) = records.last() {
+            ensure!(
+                records
+                    .iter()
+                    .filter(|r| r.sequence == best.sequence)
+                    .all(|r| r.wire == best.wire),
+                "PKARR网关返回同序号的冲突公告"
+            );
+        }
         let record = records.pop().context("PKARR 网关暂无有效记录")?;
         let digest = hex::encode(c::hash(&record.wire));
         let mut checkpoints = self.checkpoints.lock().unwrap();

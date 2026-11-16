@@ -33,6 +33,8 @@ pub struct Panel {
     tickets: Mutex<HashMap<String, Instant>>,
     sessions: Mutex<HashMap<String, Session>>,
     rate: Mutex<(Instant, u32)>,
+    remote: Option<crate::remote_admin::Config>,
+    login_rate: Mutex<(Instant, u8)>,
 }
 impl Panel {
     pub async fn start(
@@ -49,6 +51,8 @@ impl Panel {
             tickets: Mutex::new(HashMap::new()),
             sessions: Mutex::new(HashMap::new()),
             rate: Mutex::new((Instant::now(), 0)),
+            remote: None,
+            login_rate: Mutex::new((Instant::now(), 0)),
         });
         let router = Router::new()
             .fallback(any(handle))
@@ -81,13 +85,55 @@ impl Panel {
         response.headers_mut().insert(
             header::SET_COOKIE,
             format!(
-                "{}={id}; HttpOnly; SameSite=Strict; Path=/; Max-Age={age}",
-                self.cookie_name
+                "{}={id}; HttpOnly; SameSite=Strict; Path={}; Max-Age={age}{}",
+                self.cookie_name,
+                if self.remote.is_some() {
+                    "/admin/"
+                } else {
+                    "/"
+                },
+                if self.remote.is_some() {
+                    "; Secure"
+                } else {
+                    ""
+                }
             )
             .parse()
             .expect("generated cookie"),
         );
         response
+    }
+}
+pub fn remote_router(app: Arc<App>) -> Result<Router> {
+    let Some(config) = crate::remote_admin::Config::load(&app.store.root)? else {
+        return Ok(Router::new());
+    };
+    let panel = Arc::new(Panel {
+        origin: config.origin.clone(),
+        app,
+        bootstrap: String::new(),
+        cookie_name: "ConwuRemoteSession".into(),
+        tickets: Mutex::new(HashMap::new()),
+        sessions: Mutex::new(HashMap::new()),
+        rate: Mutex::new((Instant::now(), 0)),
+        remote: Some(config),
+        login_rate: Mutex::new((Instant::now(), 0)),
+    });
+    Ok(Router::new()
+        .route("/admin", any(remote_handle))
+        .route("/admin/", any(remote_handle))
+        .route("/admin/{*path}", any(remote_handle))
+        .layer(middleware::from_fn(security_headers))
+        .with_state(panel))
+}
+async fn remote_handle(
+    State(panel): State<Arc<Panel>>,
+    axum::Extension(remote): axum::Extension<SocketAddr>,
+    request: Request,
+) -> Response {
+    match process(panel, remote, request).await {
+        Ok(response) => response,
+        Err(_) => StatusCode::BAD_REQUEST.into_response(),
     }
 }
 async fn security_headers(request: Request, next: Next) -> Response {
@@ -126,9 +172,9 @@ async fn handle(
 }
 async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Result<Response> {
     let headers = request.headers();
-    let authority = panel.origin.strip_prefix("http://").unwrap();
+    let authority = panel.origin.split_once("://").unwrap().1;
     ensure!(
-        remote.ip().is_loopback() && text(headers, "host") == authority,
+        (panel.remote.is_some() || remote.ip().is_loopback()) && text(headers, "host") == authority,
         "非法面板来源"
     );
     let origin = text(headers, "origin");
@@ -150,7 +196,18 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
             return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
         }
     }
-    let path = request.uri().path().to_string();
+    let raw_path = request.uri().path();
+    if panel.remote.is_some() && raw_path == "/admin" {
+        return Ok(axum::response::Redirect::to("/admin/login").into_response());
+    }
+    let path = if panel.remote.is_some() {
+        raw_path
+            .strip_prefix("/admin")
+            .context("远程面板路径无效")?
+    } else {
+        raw_path
+    }
+    .to_string();
     let query = request.uri().query().unwrap_or("").to_string();
     let post = request.method() == "POST";
     let get = request.method() == "GET";
@@ -159,14 +216,36 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
         "非法请求方法或查询"
     );
     if get && !path.starts_with("/api/") {
+        if panel.remote.is_some() && path == "/" {
+            let cookies = text(headers, "cookie");
+            let id = cookies
+                .split(';')
+                .map(str::trim)
+                .find_map(|s| s.strip_prefix("ConwuRemoteSession="))
+                .unwrap_or("");
+            if !panel.sessions.lock().unwrap().get(id).is_some_and(|s| {
+                s.seen.elapsed() < Duration::from_secs(1800)
+                    && s.issued.elapsed() < Duration::from_secs(14400)
+            }) {
+                return Ok(axum::response::Redirect::to("/admin/login").into_response());
+            }
+        }
         let file = match path.as_str() {
             "/" => "index.html",
+            "/login" if panel.remote.is_some() => "remote-login.html",
+            "/login.js" if panel.remote.is_some() => "remote-login.js",
             "/streamlink-tokyo-45.svg" => "icon.svg",
             "/app.js" | "/workspace.js" | "/experience.js" | "/uu-takeover.js" | "/style.css"
             | "/experience.css" | "/icon.svg" => &path[1..],
             _ => return Ok(StatusCode::NOT_FOUND.into_response()),
         };
         let file = ASSETS.get_file(file).context("界面资源缺失")?;
+        if panel.remote.is_some() && path == "/" {
+            let html = std::str::from_utf8(file.contents())?
+                .replace("href=\"/", "href=\"/admin/")
+                .replace("src=\"/", "src=\"/admin/");
+            return Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response());
+        }
         let content = if path.ends_with(".js") {
             "text/javascript; charset=utf-8"
         } else if path.ends_with(".css") {
@@ -202,7 +281,10 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
     } else {
         Value::Null
     };
-    if post && matches!(path.as_str(), "/api/open" | "/api/stop") {
+    if panel.remote.is_none()
+        && post
+        && matches!(path.as_str(), "/api/open" | "/api/stop" | "/api/local")
+    {
         let secret = body["secret"].as_str().unwrap_or("");
         if !conwu_core::crypto::eq(secret.as_bytes(), panel.bootstrap.as_bytes()) {
             return Ok(StatusCode::UNAUTHORIZED.into_response());
@@ -211,16 +293,50 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
             panel.app.engine.cancel.cancel();
             return Ok(StatusCode::NO_CONTENT.into_response());
         }
+        if path == "/api/local" {
+            let command = &body["command"];
+            let result = if command["method"] == "open" {
+                json!({"ok":true,"url":panel.link()})
+            } else if command["method"] == "status" {
+                panel.app.reply(
+                    command["networkId"].as_str().unwrap_or(""),
+                    command["operationId"].as_str(),
+                )
+            } else {
+                panel.app.submit(command.clone())?
+            };
+            return Ok(axum::Json(result).into_response());
+        }
         return Ok(axum::Json(json!({"url":panel.link()})).into_response());
     }
-    if post && path == "/api/session" {
-        let ticket = body["ticket"].as_str().context("缺少面板票据")?;
-        let accepted = panel
-            .tickets
-            .lock()
-            .unwrap()
-            .remove(ticket)
-            .is_some_and(|t| t.elapsed() < Duration::from_secs(60));
+    if post
+        && (panel.remote.is_none() && path == "/api/session"
+            || panel.remote.is_some() && path == "/api/login")
+    {
+        let accepted = if let Some(config) = &panel.remote {
+            {
+                let mut rate = panel.login_rate.lock().unwrap();
+                if rate.0.elapsed() >= Duration::from_secs(60) {
+                    *rate = (Instant::now(), 0);
+                }
+                rate.1 = rate.1.saturating_add(1);
+                if rate.1 > 5 {
+                    return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());
+                }
+            }
+            let password =
+                zeroize::Zeroizing::new(body["password"].as_str().unwrap_or("").to_owned());
+            let config = config.clone();
+            tokio::task::spawn_blocking(move || config.verify(&password)).await?
+        } else {
+            let ticket = body["ticket"].as_str().context("缺少面板票据")?;
+            panel
+                .tickets
+                .lock()
+                .unwrap()
+                .remove(ticket)
+                .is_some_and(|t| t.elapsed() < Duration::from_secs(60))
+        };
         if !accepted {
             return Ok(StatusCode::UNAUTHORIZED.into_response());
         }
@@ -288,6 +404,10 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
         }
         age
     };
+    if post && path == "/api/logout" && panel.remote.is_some() {
+        panel.sessions.lock().unwrap().remove(&cookie);
+        return Ok(panel.authenticated(StatusCode::NO_CONTENT.into_response(), "", 0));
+    }
     if get && path == "/api/status" {
         let params = url::form_urlencoded::parse(query.as_bytes()).collect::<Vec<_>>();
         let mut seen = HashSet::new();

@@ -120,7 +120,7 @@ pub async fn apply(data: PathBuf, nonce: String, parent: u32) -> Result<()> {
     );
     // Parent exits gracefully and releases its exclusive Store lease before any
     // replacement. No network access or download occurs from this point on.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(90);
     let store = loop {
         match Store::open(&data) {
             Ok(store) => break store,
@@ -160,6 +160,16 @@ pub async fn apply(data: PathBuf, nonce: String, parent: u32) -> Result<()> {
                 || name == "stream-private.pem"
                 || name == "pkarr-checkpoints.json"
                 || name == "coordinator.json")
+            || path.is_file()
+                && matches!(
+                    name.as_ref(),
+                    "stream-certificate.der"
+                        | "coordinator-legacy.json"
+                        | "remote-admin.json"
+                        | "ui-user.sid"
+                        | "coordinator-certificate.pem"
+                        | "coordinator-private.pem"
+                )
         {
             std::fs::copy(&path, backup.join(path.file_name().unwrap()))?;
         }

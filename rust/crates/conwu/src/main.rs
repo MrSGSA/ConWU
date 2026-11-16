@@ -1,17 +1,26 @@
 mod adapter;
 mod assistance;
 mod backend;
+#[cfg(windows)]
+mod capture;
+mod cli;
+mod control;
+mod coordination_store;
 mod coordinator;
 mod discovery;
 mod dns;
 mod flow;
 mod gateway;
 mod logging;
+mod managed;
 mod migration;
 mod model;
+mod native;
+mod native_map;
 mod pkarr;
 mod platform;
 mod raw;
+mod remote_admin;
 mod runtime;
 mod store;
 #[cfg(test)]
@@ -29,10 +38,19 @@ use std::{path::PathBuf, sync::Arc};
 #[command(name = "conwu", about = "ConWU Rust 隔离实验，数据目录必须单独指定")]
 struct Cli {
     #[command(subcommand)]
-    command: Command,
+    command: Option<Command>,
 }
 #[derive(Subcommand)]
 enum Command {
+    #[cfg(windows)]
+    Tray {
+        #[arg(long,default_value_os_t=cli::default_data())]
+        data: PathBuf,
+        #[arg(long)]
+        no_open: bool,
+    },
+    #[command(external_subcommand)]
+    Manage(Vec<String>),
     #[command(hide = true)]
     ApplyUpdate {
         #[arg(long)]
@@ -48,8 +66,14 @@ enum Command {
         #[arg(long)]
         data: PathBuf,
     },
-    Run {
+    AuthorizeUi {
+        #[arg(long,default_value_os_t=cli::default_data())]
+        data: PathBuf,
         #[arg(long)]
+        sid: String,
+    },
+    Run {
+        #[arg(long,default_value_os_t=cli::default_data())]
         data: PathBuf,
         #[arg(long)]
         components: Option<PathBuf>,
@@ -66,7 +90,8 @@ enum Command {
     },
     Version,
     Stop {
-        #[arg(long)]
+        network: Option<String>,
+        #[arg(long,default_value_os_t=cli::default_data())]
         data: PathBuf,
     },
     Panel {
@@ -85,7 +110,21 @@ fn main() -> Result<()> {
         )
         .with_writer(std::io::stderr)
         .init();
-    let command = Cli::parse().command;
+    let command = Cli::parse_from(cli::normalize_args(std::env::args_os()))
+        .command
+        .unwrap_or_else(|| {
+            #[cfg(windows)]
+            {
+                Command::Tray {
+                    data: cli::default_data(),
+                    no_open: false,
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                Command::Manage(vec!["help".into()])
+            }
+        });
     #[cfg(windows)]
     if matches!(command, Command::Run { service: true, .. }) {
         return platform::dispatch_service();
@@ -94,6 +133,21 @@ fn main() -> Result<()> {
 }
 async fn run(command: Command) -> Result<()> {
     match command {
+        #[cfg(windows)]
+        Command::Tray { data, no_open } => crate::tray::client(data, !no_open).await?,
+        Command::AuthorizeUi { data, sid } => {
+            anyhow::ensure!(
+                sid.starts_with("S-1-")
+                    && sid.len() <= 192
+                    && sid
+                        .bytes()
+                        .all(|b| b.is_ascii_digit() || matches!(b, b'S' | b'-')),
+                "授权SID无效"
+            );
+            let store = store::Store::open(&data)?;
+            store.write("ui-user.sid", sid.as_bytes(), false)?;
+        }
+        Command::Manage(args) => cli::execute(args).await?,
         Command::ApplyUpdate {
             data,
             nonce,
@@ -111,6 +165,15 @@ async fn run(command: Command) -> Result<()> {
         }
         Command::Version => println!("ConWU {} · Rust experiment", model::VERSION),
         Command::Panel { data } => {
+            #[cfg(windows)]
+            if let Ok(reply) = control::call(&data, &serde_json::json!({"method":"open"})).await {
+                platform::open_browser(
+                    reply["url"]
+                        .as_str()
+                        .ok_or_else(|| anyhow::anyhow!("后台未返回面板地址"))?,
+                )?;
+                return Ok(());
+            }
             let bytes = tokio::fs::read(data.join("panel.private.json")).await?;
             anyhow::ensure!(bytes.len() <= 8192, "面板信息过大");
             let file: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -140,7 +203,18 @@ async fn run(command: Command) -> Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("后台未返回面板票据"))?,
             )?;
         }
-        Command::Stop { data } => {
+        Command::Stop { data, network } => {
+            if let Some(network) = network {
+                return cli::execute(vec![
+                    "stop".into(),
+                    network,
+                    "--data".into(),
+                    data.to_str()
+                        .ok_or_else(|| anyhow::anyhow!("数据路径无效"))?
+                        .into(),
+                ])
+                .await;
+            }
             let file: serde_json::Value =
                 serde_json::from_slice(&tokio::fs::read(data.join("panel.private.json")).await?)?;
             let origin = file["origin"]
@@ -186,6 +260,8 @@ async fn run(command: Command) -> Result<()> {
                 event_app.events(events).await;
             });
             let (panel, web) = web::Panel::start(app.clone(), port).await?;
+            #[cfg(windows)]
+            control::start(panel.clone())?;
             let url = panel.link();
             store.write(
                 "panel.private.json",
@@ -197,6 +273,7 @@ async fn run(command: Command) -> Result<()> {
             println!("{url}");
             app.log("INFO", "ConWU Rust 实验后台已启动；使用独立数据目录");
             app.boot().await;
+            app.supervise();
             app.start_departures();
             uu::start(app.clone());
             #[cfg(windows)]
@@ -208,7 +285,7 @@ async fn run(command: Command) -> Result<()> {
             if !no_open && !service {
                 platform::open_browser(&url)?;
             }
-            tokio::select! {r=tokio::signal::ctrl_c()=>r?,_=app.engine.cancel.cancelled()=>{},_=platform::service_cancel().cancelled_owned()=>{}}
+            tokio::select! {r=platform::shutdown_signal()=>r?,_=app.engine.cancel.cancelled()=>{},_=platform::service_cancel().cancelled_owned()=>{}}
             app.engine.shutdown().await;
             #[cfg(windows)]
             if let Some(tray) = tray {

@@ -33,6 +33,11 @@ while(await Console.In.ReadLineAsync() is {} line){
    "pkarr-state-open"=>PkarrState(false),
    "assist-verify"=>Assist(),
    "benchmark"=>Benchmark(),
+   "rejoin-create"=>RejoinCreate(),
+   "rejoin-resolve"=>RejoinResolve(),
+   "traversal-sign"=>TraversalSign(),
+   "traversal-verify"=>TraversalVerify(),
+   "path-digest"=>new{digest=Convert.ToHexString(PathNomination.ContextDigest(JsonSerializer.Deserialize<TraversalAttemptContext>(r.GetProperty("context").GetRawText())!))},
    _=>throw new InvalidOperationException("Unknown oracle operation")
   };
   Console.WriteLine(JsonSerializer.Serialize(new{ok=true,result},options));
@@ -44,6 +49,10 @@ while(await Console.In.ReadLineAsync() is {} line){
   object NewPair(){pair?.Dispose();pair=new();return new{pair.PublicKey,pair.Commitment};}
   object Derive(){var shared=pair!.Derive(Text("publicKey"),Text("commitment"),Text("room"),Text("candidate"),r.GetProperty("owner").GetBoolean());try{return new{shared=Convert.ToHexString(shared),sas=PairKeyExchange.Verification(shared),cipher=PairKeyExchange.EncryptInvitation(shared,"oracle approval",Text("room"),Text("candidate"))};}finally{CryptographicOperations.ZeroMemory(shared);}}
   MeshProfile Profile()=>JsonSerializer.Deserialize<MeshProfile>(r.GetProperty("profile").GetRawText())!;
+  object RejoinCreate(){pair??=new();var proof=MeshRejoin.Create(MeshRejoin.Retain(Profile()),Text("code"),pair)!;return new{proof=JsonSerializer.SerializeToElement(proof),pair.Commitment,digest=MeshRejoin.Fingerprint(proof)};}
+  object RejoinResolve(){var member=MeshRejoin.Resolve(Profile(),JsonSerializer.Deserialize<MeshRejoinProof>(r.GetProperty("proof").GetRawText()),Text("code"),Text("commitment"));return new{member=JsonSerializer.SerializeToElement(member)};}
+  object TraversalSign()=>JsonSerializer.SerializeToElement(MeshTraversal.Sign(Profile(),JsonSerializer.Deserialize<MeshTraversalMessage>(r.GetProperty("message").GetRawText())!));
+  object TraversalVerify(){var p=Profile();var m=JsonSerializer.Deserialize<MeshTraversalMessage>(r.GetProperty("message").GetRawText())!;MeshTraversal.Verify(p.Pair.Network,p.Directory!.Members.Single(x=>x.Slot==m.FromSlot),p.Directory.Members.Single(x=>x.Slot==m.ToSlot),m);return new{valid=true,fingerprint=Convert.ToHexString(MeshTraversal.Fingerprint(p.Pair.Network,m))};}
   object OpenMetadata(){var p=Profile();var envelope=JsonSerializer.Deserialize<MeshEnvelope>(r.GetProperty("envelope").GetRawText())!;return JsonSerializer.SerializeToElement(MeshMetadata.Open(p,p.Directory!.Members.Single(m=>m.Slot==envelope.Slot),envelope));}
   object SealMetadata(){var p=Profile();var node=JsonSerializer.Deserialize<MeshAnnouncement>(r.GetProperty("announcement").GetRawText())!;return JsonSerializer.SerializeToElement(MeshMetadata.Seal(p,node));}
   object Departure(){var notice=JsonSerializer.Deserialize<NetworkDeparture>(r.GetProperty("notice").GetRawText())!;notice.Validate(Text("owner"));return new{valid=true};}

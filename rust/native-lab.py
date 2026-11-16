@@ -5,6 +5,7 @@ The optional lab API must be enabled for this executable only.
 """
 import base64
 import json
+import os
 import socket
 import struct
 import subprocess
@@ -24,7 +25,9 @@ created = []
 def run(*args):
     subprocess.run(args, check=True, stdout=subprocess.DEVNULL)
 def rpc(index, body):
-    result = subprocess.run(['ip', 'netns', 'exec', names[index], 'python3', str(root / 'rust/lab-client.py'), str(directory / str(index)), json.dumps(body)], check=True, capture_output=True, text=True)
+    result = subprocess.run(['ip', 'netns', 'exec', names[index], 'python3', str(root / 'rust/lab-client.py'), str(directory / str(index)), json.dumps(body)], capture_output=True, text=True)
+    if result.returncode:
+        raise RuntimeError(f"RPC {body.get('method')}: {result.stderr[-2000:]}")
     return json.loads(result.stdout)
 def wait(label, condition):
     until = time.monotonic() + 25
@@ -44,7 +47,9 @@ def packet(source, target, marker):
     return bytes(ip) + udp
 results = []
 real_tun = '--tun' in sys.argv
-modes = [mode for mode in sys.argv[1:] if mode != '--tun'] or ['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp']
+assisted = '--assisted' in sys.argv
+managed = '--managed' in sys.argv
+modes = [mode for mode in sys.argv[1:] if not mode.startswith('--')] or ['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp']
 try:
     for name in names:
         run('ip', 'netns', 'add', name)
@@ -58,17 +63,29 @@ try:
         log = (directory / ('process-' + str(index) + '.log')).open('wb')
         command = ['ip', 'netns', 'exec', names[index], str(root / 'out/rust-target-linux/debug/conwu'), 'run', '--data', str(directory / str(index)), '--components', str(root / 'out/rust-components-linux'), '--no-open', '--no-tray']
         if not real_tun: command.append('--memory')
-        process = subprocess.Popen(command, stdout=log, stderr=log)
+        environment = os.environ.copy()
+        if assisted and index == 1:
+            environment['CONWU_LAB_FORCE_ASSISTANCE'] = '1'
+        if managed:
+            environment['CONWU_LAB_FORCE_MANAGED'] = '1'
+        process = subprocess.Popen(command, stdout=log, stderr=log, env=environment)
         processes.append(process)
         wait('backend start', lambda i=index: (directory / str(i) / 'panel.private.json').exists())
+    if assisted:
+        rpc(0, {'method': 'save-settings', 'settingsBatch': {'device': {'settings': {'coordinator': {'enabled': True, 'listenUrl': 'https://0.0.0.0:1145'}}}}})
+        pin = rpc(0, {'method': '_status'})['status']['coordinator']['certificatePin']
     for offset, mode in enumerate(modes):
         begin = time.monotonic()
         listen = 48000 + offset * 10
         settings = rpc(0, {'method': '_status'})['status']['networkDefaults']
         settings.update(pathSelection=mode + '-only', connectionSource='existing', discoveryMode='existing', listenPort=listen, sourcePort=listen + 1, existingEntries=[{'peerSlot': 0, 'source': '192.0.2.1:' + str(listen)}])
+        if assisted:
+            settings.update(connectionSource='custom', discoveryMode='coordinator', service='https://192.0.2.1:1145', certificatePin=pin, existingEntries=[], tcpStun=['192.0.2.1:1145'], disableGatewayMapping=True)
         config = rpc(0, {'method': 'configuration', 'configuration': {'action': 'save', 'id': '', 'name': mode, 'expectedRevision': 0, 'settings': settings}})
         created_network = rpc(0, {'method': 'network', 'network': {'action': 'create-direct', 'name': mode, 'configurationId': config['configurationId'], 'mode': mode}})
         host = created_network['status']['selectedNetworkId']
+        if assisted:
+            wait('retained source candidate ' + mode, lambda: next(n['status'] for n in rpc(0, {'method': '_status'})['status']['networks'] if n['id'] == host)['entryPreparation']['state'] == 'Ready')
         invitation = rpc(0, {'method': 'network', 'networkId': host, 'network': {'action': 'invite-compact', 'expectedNetwork': host}})
         host_pair = next(n for n in invitation['status']['networks'] if n['id'] == host)['status']['pairing']
         joined = rpc(1, {'method': 'network', 'network': {'action': 'join-compact', 'code': host_pair['code'], 'name': mode}})
@@ -82,6 +99,8 @@ try:
         def row(index, identity):
             return next(n['status'] for n in rpc(index, {'method': '_status'})['status']['networks'] if n['id'] == identity)
         wait('direct path ' + mode, lambda: row(0, host)['directPeers'] == 1 and row(1, guest)['directPeers'] == 1)
+        if managed:
+            wait('authenticated SLN1 selection ' + mode, lambda: (row(0, host).get('managedTraversal') or {}).get('selected') and (row(1, guest).get('managedTraversal') or {}).get('selected'))
         h, g = row(0, host), row(1, guest)
         if real_tun:
             for index, target in [(0, g['virtualIp']), (1, h['virtualIp'])]:
@@ -93,9 +112,10 @@ try:
             for index, identity in [(0, host), (1, guest)]:
                 received = rpc(index, {'method': 'lab-read', 'networkId': identity})['operation']['result']['packets']
                 assert len(received) == 1 and len(base64.b64decode(received[0])) == 1028
-        results.append({'mode': mode, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
+        results.append({'mode': mode, 'assisted': assisted, 'managed': managed, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
         print(json.dumps(results[-1]), flush=True)
-    (root / 'out' / ('tun-lab-result.json' if real_tun else 'native-lab-result.json')).write_text(json.dumps(results, indent=2))
+    result_name = ('managed-' if managed else 'assisted-' if assisted else '') + ('tun-lab-result.json' if real_tun else 'native-lab-result.json')
+    (root / 'out' / result_name).write_text(json.dumps(results, indent=2))
 finally:
     for index, process in enumerate(processes):
         try:

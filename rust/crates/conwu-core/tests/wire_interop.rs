@@ -50,6 +50,67 @@ impl Drop for Oracle {
 }
 #[test]
 #[ignore = "development oracle required"]
+fn legacy_rejoin_and_traversal_contracts() {
+    let mut o = Oracle::new();
+    let fixture = o.call(json!({"op":"identity-fixture"}));
+    let owner: Profile = serde_json::from_value(fixture["owner"].clone()).unwrap();
+    let guest: Profile = serde_json::from_value(fixture["guest"].clone()).unwrap();
+    let rejoin = o.call(json!({"op":"rejoin-create","profile":guest,"code":"123456"}));
+    let proof: conwu_core::rejoin::Proof = serde_json::from_value(rejoin["proof"].clone()).unwrap();
+    assert_eq!(proof.fingerprint().unwrap(), rejoin["digest"]);
+    assert_eq!(
+        proof
+            .resolve(
+                &owner,
+                "123456",
+                rejoin["commitment"].as_str().unwrap(),
+                &[]
+            )
+            .unwrap(),
+        Some(guest.member.clone())
+    );
+    let commitment = KeyExchange::new(None).unwrap().commitment;
+    let proof = conwu_core::rejoin::Credential::retain(&guest)
+        .unwrap()
+        .prove("654321", &commitment)
+        .unwrap();
+    let result=o.call(json!({"op":"rejoin-resolve","profile":owner,"code":"654321","commitment":commitment,"proof":proof}));
+    assert_eq!(
+        result["member"],
+        serde_json::to_value(&guest.member).unwrap()
+    );
+    let now = conwu_core::unix_seconds();
+    let mut message:conwu_core::traversal::Message=serde_json::from_value(json!({"Version":1,"MessageId":uuid::Uuid::new_v4(),"FromSlot":owner.member.slot,"FromDevice":owner.member.device,"FromBoot":uuid::Uuid::new_v4(),"ToSlot":guest.member.slot,"ToDevice":guest.member.device,"ToBoot":uuid::Uuid::new_v4(),"Sequence":1,"AttemptId":uuid::Uuid::new_v4(),"NominationRevision":1,"ValidationNonce":uuid::Uuid::new_v4(),"Profile":2,"ProtocolClientSlot":1,"NominatorSlot":1,"Candidate":{"Id":uuid::Uuid::new_v4(),"Version":1,"Endpoint":"203.0.113.10:45000","ObservationTarget":"198.51.100.10:3478","ObservedAt":now,"Expires":now+90,"Purpose":2},"PeerCandidate":null,"Stage":1,"Expires":now+55,"Signature":""})).unwrap();
+    message.sign(&owner).unwrap();
+    let verified = o.call(json!({"op":"traversal-verify","profile":owner,"message":message}));
+    assert_eq!(
+        verified["fingerprint"],
+        hex::encode_upper(message.fingerprint(&owner.pair.network).unwrap())
+    );
+    let signed: conwu_core::traversal::Message = serde_json::from_value(
+        o.call(json!({"op":"traversal-sign","profile":owner,"message":message})),
+    )
+    .unwrap();
+    signed
+        .verify(&owner.pair.network, &owner.member, &guest.member)
+        .unwrap();
+    let mut full = message;
+    full.stage = 3;
+    let mut remote = full.candidate.clone().unwrap();
+    remote.id = uuid::Uuid::new_v4();
+    remote.endpoint = "198.51.100.20:45000".into();
+    full.peer_candidate = Some(remote);
+    full.sign(&owner).unwrap();
+    let context =
+        conwu_core::path::Context::from_message(&owner.pair.network, &full, true).unwrap();
+    let digest = o.call(json!({"op":"path-digest","context":context}));
+    assert_eq!(
+        digest["digest"],
+        hex::encode_upper(context.digest().unwrap())
+    );
+}
+#[test]
+#[ignore = "development oracle required"]
 fn legacy_crypto_and_wire_compatibility() {
     let mut o = Oracle::new();
     for value in [

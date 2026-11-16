@@ -54,8 +54,9 @@ impl App {
         let tls = TlsIdentity::load(&store)?;
         let pkarr = pkarr::Client::open(store.clone())?;
         let (events, receiver) = mpsc::channel(128);
-        let engine = Engine::new(tls, events, components, memory, pkarr);
+        let engine = Engine::new(store.clone(), tls, events, components, memory, pkarr);
         *engine.device_name.write().unwrap() = db.device_name.clone();
+        *engine.node_private.write().unwrap() = db.node_private.clone();
         let (commands, queue) = mpsc::channel(64);
         let logs = crate::logging::Journal::open(&store)?;
         let local_update = crate::updates::restore(&store).unwrap_or_else(|e|
@@ -226,7 +227,10 @@ impl App {
         out["deviceSettings"] = device;
         out["networkDefaults"] = serde_json::to_value(Settings::default()).unwrap();
         out["deviceSettingsRevision"] = json!(revision(&db.device_settings));
-        out["configurations"]=json!(db.configurations.iter().map(|c|json!({"id":c.id,"name":c.name,"revision":c.revision,"settings":c.settings,"networks":db.networks.iter().filter(|n|n.configuration_id==c.id).map(|n|json!({"id":n.id,"name":n.name,"enabled":n.enabled,"state":"applied","error":""})).collect::<Vec<_>>()})).collect::<Vec<_>>());
+        out["configurations"]=json!(db.configurations.iter().map(|c|json!({"id":c.id,"name":c.name,"revision":c.revision,"settings":c.settings,"networks":db.networks.iter().filter(|n|n.configuration_id==c.id).map(|n|{
+            let applied=!n.enabled||self.engine.current(&n.id).is_some_and(|r|r.config.read().unwrap().settings==n.settings);
+            json!({"id":n.id,"name":n.name,"enabled":n.enabled,"state":if applied{"applied"}else{"pending"},"error":if applied{""}else{"已保存，尚未成功应用；请重试"}})
+        }).collect::<Vec<_>>()})).collect::<Vec<_>>());
         out["aggregate"] = json!({"networkCount":db.networks.len(),"connectedNetworks":connected,"connectingNetworks":db.networks.len()-connected,"offlineNetworks":0,"totalDevices":aggregate.len(),"sentBytes":sent,"receivedBytes":received,"peers":aggregate});
         out["logs"] = json!([]);
         out["logEntries"] = json!(self.logs.rows());
@@ -236,6 +240,15 @@ impl App {
         out["desktop"] = self.desktop.read().unwrap().clone();
         out["coordinator"] = crate::coordinator::status();
         out["uuTakeover"] = crate::uu::status(self);
+        out["nativeTransport"] = json!(
+            self.engine
+                .fake_mappings
+                .read()
+                .unwrap()
+                .values()
+                .map(|m| m.status())
+                .collect::<Vec<_>>()
+        );
         out
     }
     fn network_status(&self, n: &Network, db: &Database) -> Value {
@@ -279,6 +292,7 @@ impl App {
             let connection = json!({"phase":phase,"detail":metrics.phase,"elapsedMs":if live{(unix_seconds()-metrics.since)*1000}else{0},"failureCode":metrics.error});
             out["connection"] = connection.clone();
             out["entryPreparation"] = json!({"state":if metrics.local_endpoints.is_empty(){"Preparing"}else{"Ready"},"detail":if metrics.local_endpoints.is_empty(){"等待入口候选"}else{"本机入口已准备"},"endpoint":metrics.local_endpoints.first().cloned().unwrap_or_default(),"receiverReady":running.is_some()});
+            out["managedTraversal"] = metrics.managed.clone();
             out["adapter"] = json!({"ready":running.is_some(),"provider":metrics.adapter,"state":if running.is_some(){"Ready"}else{"Stopped"}});
             if let Some(peer) = peer {
                 out["peers"] = json!([{"slot":peer.slot,"name":if n.peer_name.is_empty(){"对端"}else{&n.peer_name},"deviceId":peer.device,"virtualIp":runtime::member_ip(p,&peer).unwrap().to_string(),"connected":live,"degraded":false,"rttMs":metrics.rtt,"phase":phase,"connection":connection,"actualTransport":p.pair.mode,"traversalMethod":if n.settings.existing_only(){"ExistingEntry"}else{"Autonomous"},"sentBytes":metrics.sent,"receivedBytes":metrics.received,"droppedPackets":metrics.dropped,"connectedSince":metrics.since,"outerTarget":metrics.endpoint,"outerSource":"Rust","entryDirection":"Direct","quality":"Unknown","streamFlows":metrics.stream_flows}]);
@@ -348,6 +362,14 @@ impl App {
         operations.insert(command.id, op);
     }
     pub async fn boot(self: &Arc<Self>) {
+        let settings = self.db.read().unwrap().device_settings.clone();
+        if settings["coordinator"]["enabled"] == true {
+            if let Err(error) =
+                crate::coordinator::configure(self.clone(), settings["coordinator"].clone()).await
+            {
+                self.log("ERROR", &format!("本机协调服务启动失败：{error}"));
+            }
+        }
         let networks = self.db.read().unwrap().networks.clone();
         for n in networks {
             if n.enabled && n.profile.is_some() {
@@ -356,11 +378,23 @@ impl App {
                 }
             }
         }
-        let settings = self.db.read().unwrap().device_settings.clone();
-        if settings["coordinator"]["enabled"] == true {
-            let _ =
-                crate::coordinator::configure(self.clone(), settings["coordinator"].clone()).await;
-        }
+    }
+    pub fn supervise(self: &Arc<Self>) {
+        let app = self.clone();
+        self.engine.tracker.spawn(async move{
+            loop{
+                tokio::select!{_=app.engine.cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(10))=>{}}
+                let ids=app.db.read().unwrap().networks.iter().filter(|n|n.enabled&&n.profile.is_some()&&app.engine.current(&n.id).is_none_or(|r|r.cancel.is_cancelled())).map(|n|n.id.clone()).collect::<Vec<_>>();
+                for id in ids{
+                    let Ok(_transaction)=app.transaction.try_lock()else{continue};
+                    let network=app.db.read().unwrap().networks.iter().find(|n|n.id==id&&n.enabled&&n.profile.is_some()).cloned();
+                    if let Some(network)=network{if let Err(error)=app.engine.install(network).await{app.log("WARN",&format!("网络启动将在后台重试：{error}"));}}
+                }
+                let Ok(_transaction)=app.transaction.try_lock()else{continue};
+                let settings=app.db.read().unwrap().device_settings["coordinator"].clone();
+                if settings["enabled"]==true&&crate::coordinator::status()["running"]!=true{if let Err(error)=crate::coordinator::configure(app.clone(),settings).await{app.log("WARN",&format!("协调监听将在后台重试：{error}"));}}
+            }
+        });
     }
     pub async fn events(self: Arc<Self>, mut events: mpsc::Receiver<Event>) {
         while let Some(event) =
@@ -420,9 +454,24 @@ impl App {
                     match result {
                         Ok(n) => {
                             self.log("INFO", &format!("已加入网络 {}", n.name));
-                            let engine = self.engine.clone();
+                            let app = self.clone();
                             self.engine.tracker.spawn(async move {
-                                if let Err(e) = engine.install(n).await {
+                                let _transaction = app.transaction.lock().await;
+                                if app.engine.cancel.is_cancelled() {
+                                    return;
+                                }
+                                let current = app
+                                    .db
+                                    .read()
+                                    .unwrap()
+                                    .networks
+                                    .iter()
+                                    .find(|network| network.id == n.id && network.enabled)
+                                    .cloned();
+                                let Some(n) = current else {
+                                    return;
+                                };
+                                if let Err(e) = app.engine.install(n).await {
                                     tracing::error!("加入后的虚拟网卡启动失败：{e}");
                                 }
                             });
@@ -492,6 +541,23 @@ impl App {
                 )
             }
             "configuration" => self.configuration(id, &body["configuration"]).await,
+            "coordinator-maintenance" => {
+                ensure!(
+                    crate::coordinator::status()["running"] != true,
+                    "请先关闭本机协调角色再备份或恢复"
+                );
+                let input = &body["maintenance"];
+                let path = std::path::Path::new(input["path"].as_str().context("缺少备份路径")?);
+                match input["action"].as_str() {
+                    Some("backup") => crate::coordination_store::backup(&self.store, path, true),
+                    Some("restore") => crate::coordination_store::restore(
+                        &self.store,
+                        path,
+                        input["confirmRollback"] == true,
+                    ),
+                    _ => anyhow::bail!("未知协调维护操作"),
+                }
+            }
             "network" => {
                 let mut action = body["network"].clone();
                 ensure!(action.is_object(), "网络操作无效");
@@ -568,7 +634,10 @@ impl App {
     }
     async fn save_device(self: &Arc<Self>, action: &Value) -> Result<()> {
         let mut next = self.db.read().unwrap().clone();
-        if let Some(expected) = action["expectedDeviceRevision"]
+        if let Some(expected) = action
+            .get("expectedDeviceRevision")
+            .or_else(|| action.get("expectedRevision"))
+            .unwrap_or(&Value::Null)
             .as_str()
             .filter(|s| !s.is_empty())
         {
@@ -579,10 +648,22 @@ impl App {
         }
         if let Some(patch) = action.get("patch") {
             if let Some(name) = patch["deviceName"].as_str() {
+                ensure!(
+                    patch["expectedDeviceName"]
+                        .as_str()
+                        .is_none_or(|v| v == next.device_name),
+                    "设备名已改变，请刷新后保存"
+                );
                 c::check_name(name)?;
                 next.device_name = name.into();
             }
             if let Some(level) = patch["logLevel"].as_str() {
+                ensure!(
+                    patch["expectedLogLevel"]
+                        .as_str()
+                        .is_none_or(|v| v == next.log_level),
+                    "日志等级已改变，请刷新后保存"
+                );
                 ensure!(
                     ["info", "warn", "error", "debug", "off"].contains(&level),
                     "日志等级无效"
@@ -595,6 +676,12 @@ impl App {
             next.device_settings["coordinator"] = coordinator.clone();
         }
         if let Some(auto) = action["autoStart"].as_bool() {
+            ensure!(
+                action["expectedAutoStart"].as_bool().is_none_or(
+                    |v| v == next.device_settings["autoStart"].as_bool().unwrap_or(false)
+                ),
+                "开机启动设置已改变，请刷新"
+            );
             if auto != next.device_settings["autoStart"].as_bool().unwrap_or(false) {
                 crate::platform::configure_startup(self, auto).await?;
             }
@@ -820,8 +907,42 @@ impl App {
             self.log("INFO", &format!("已创建网络 {name}"));
             return Ok(Value::Null);
         }
-        if kind == "join-compact" {
-            let code = DirectCode::import(action["code"].as_str().context("请填写直连码")?)?;
+        if matches!(kind, "join-compact" | "join-entry") {
+            let codes = if kind == "join-entry" {
+                let mode = action["mode"].as_str().unwrap_or("faketcp");
+                ensure!(
+                    conwu_core::code::valid_mode(mode) && mode != "udp",
+                    "请选择当前六种协议"
+                );
+                let entry = crate::model::Entry {
+                    peer_slot: 0,
+                    source: action["entry"].as_str().context("请填写目标入口")?.into(),
+                };
+                let endpoints = discovery::resolve(
+                    &[entry],
+                    mode,
+                    &self.engine.pkarr,
+                    &Settings::default().pkarr_gateways,
+                )
+                .await;
+                ensure!(!endpoints.is_empty(), "没有从目标入口取得可用地址");
+                endpoints
+                    .into_iter()
+                    .take(8)
+                    .map(|endpoint| DirectCode {
+                        endpoint,
+                        mode: mode.into(),
+                        room: conwu_core::pairing::ENTRY_LOCATOR.into(),
+                        punch: false,
+                        coordinator: false,
+                    })
+                    .collect::<Vec<_>>()
+            } else {
+                vec![DirectCode::import(
+                    action["code"].as_str().context("请填写直连码")?,
+                )?]
+            };
+            let code = &codes[0];
             ensure!(
                 code.mode != "udp",
                 "此版本不再接入直接 UDP 网络，请使用当前六种协议的直连码"
@@ -861,8 +982,10 @@ impl App {
             next.selected_network_id = id.clone();
             let name = next.device_name.clone();
             let node = next.node_private.clone();
+            let retained = next.rejoin_credentials.last().cloned();
             self.commit(next)?;
-            self.engine.start_guest(id, code, name, node, requested);
+            self.engine
+                .start_guest(id, codes, name, node, requested, retained);
             return Ok(Value::Null);
         }
         if kind == "resolve-entries" {
@@ -896,6 +1019,18 @@ impl App {
             );
         }
         match kind {
+            "rename-network" => {
+                let name = action["name"].as_str().context("缺少网络名称")?;
+                c::check_name(name)?;
+                let mut next = self.db.read().unwrap().clone();
+                let n = next.networks.iter_mut().find(|n| n.id == id).unwrap();
+                n.name = name.into();
+                let updated = n.clone();
+                self.commit(next)?;
+                if self.engine.current(id).is_some() {
+                    self.engine.install(updated).await?;
+                }
+            }
             "invite-compact" | "invite" => {
                 let local = n
                     .settings
@@ -963,6 +1098,7 @@ impl App {
             "approve" => {
                 let updated = {
                     let mut next = self.db.read().unwrap().clone();
+                    let history = next.rejoin_history.get(id).cloned().unwrap_or_default();
                     let n = next.networks.iter_mut().find(|n| n.id == id).unwrap();
                     let profile = n.profile.as_mut().context("网络身份缺失")?;
                     let mut rooms = self.engine.rooms.lock().unwrap();
@@ -972,6 +1108,7 @@ impl App {
                         "申请已变化"
                     );
                     let mut trial = host.clone();
+                    trial.rejoin_history = history;
                     let mut approved = n.settings.approved(
                         profile,
                         &n.name,
@@ -998,6 +1135,8 @@ impl App {
                     )?;
                     n.peer_name = host.state.guest_name.clone();
                     let updated = n.clone();
+                    next.rejoin_history
+                        .insert(id.into(), trial.rejoin_history.clone());
                     self.store.save(&next)?;
                     *self.db.write().unwrap() = next;
                     *host = trial;
@@ -1037,6 +1176,57 @@ impl App {
             }
             "leave" | "delete-network" | "forget-network" | "remove-network" => {
                 ensure!(action["confirmReplace"] == true, "请确认退出并删除网络");
+                if kind == "delete-network" {
+                    let mut retired = n.profile.clone().context("网络身份缺失")?;
+                    ensure!(!retired.owner_private.is_empty(), "仅主机能删除整个网络");
+                    let peers = retired
+                        .directory
+                        .as_ref()
+                        .unwrap()
+                        .members
+                        .iter()
+                        .filter(|m| m.slot != retired.member.slot)
+                        .map(|m| m.slot)
+                        .collect::<Vec<_>>();
+                    for slot in peers {
+                        retired.remove_peer(slot)?;
+                    }
+                    self.engine
+                        .notify_directory(id, retired.directory.clone().unwrap())
+                        .await?;
+                    if n.settings.discovery_mode == "coordinator" && !n.settings.service.is_empty()
+                    {
+                        let publish = async {
+                            crate::transport::pinned_http(&n.settings.certificate_pin)?
+                                .put(
+                                    url::Url::parse(&n.settings.service)?.join(&format!(
+                                        "v3/mesh/{}/directory",
+                                        retired.pair.network
+                                    ))?,
+                                )
+                                .bearer_auth(hex::encode_upper(retired.pair.key("discovery-auth")))
+                                .json(retired.directory.as_ref().unwrap())
+                                .send()
+                                .await?
+                                .error_for_status()?;
+                            Ok::<_, anyhow::Error>(())
+                        };
+                        if !matches!(
+                            tokio::time::timeout(std::time::Duration::from_secs(1), publish).await,
+                            Ok(Ok(()))
+                        ) {
+                            self.log("WARN", "发现服务尚未确认网络清理，本机按用户操作删除网络");
+                        }
+                    }
+                }
+                if kind == "leave" {
+                    ensure!(
+                        n.profile
+                            .as_ref()
+                            .is_some_and(|p| p.owner_private.is_empty()),
+                        "主机请使用删除网络，或断开连接以保留网络"
+                    );
+                }
                 let notice = if kind == "leave" {
                     let p = n.profile.as_ref().context("网络尚未批准")?;
                     Some(conwu_core::departure::Notice::create(p)?)
@@ -1050,6 +1240,14 @@ impl App {
                         "退出通知队列已满，请先恢复与主机的连接"
                     );
                     let p = n.profile.as_ref().unwrap();
+                    if let Some(credential) = conwu_core::rejoin::Credential::retain(p) {
+                        next.rejoin_credentials
+                            .retain(|c| c.network != credential.network);
+                        next.rejoin_credentials.push(credential);
+                        if next.rejoin_credentials.len() > 32 {
+                            next.rejoin_credentials.remove(0);
+                        }
+                    }
                     let mut entries = n
                         .settings
                         .existing_entries
@@ -1095,6 +1293,9 @@ impl App {
                 n.peer_name.clear();
                 n.settings.existing_entries.retain(|e| e.peer_slot >= 0);
                 let n = n.clone();
+                if let Some(history) = next.rejoin_history.get_mut(id) {
+                    history.retain(|h| h.current_slot != slot);
+                }
                 self.commit(next)?;
                 self.engine.install(n).await?;
             }

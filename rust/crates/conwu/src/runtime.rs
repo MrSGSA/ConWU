@@ -63,6 +63,7 @@ pub enum Event {
 }
 #[derive(Default, Clone)]
 pub struct Metrics {
+    pub managed: Value,
     pub stream_flows: Value,
     pub connected: bool,
     pub since: i64,
@@ -79,6 +80,8 @@ pub struct Metrics {
     pub local_endpoints: Vec<String>,
 }
 struct Route {
+    nomination: Option<conwu_core::path::Nomination>,
+    path: uuid::Uuid,
     flow: Option<Arc<crate::flow::Group>>,
     tx: mpsc::Sender<Vec<u8>>,
     cancel: CancellationToken,
@@ -95,10 +98,13 @@ struct Peer {
     assembly: Option<conwu_core::metadata::Assembly>,
 }
 pub struct Running {
+    network_finished: CancellationToken,
+    discovery_finished: CancellationToken,
+    managed_finished: CancellationToken,
     refresh: tokio::sync::Notify,
-    boot: uuid::Uuid,
+    pub(crate) boot: uuid::Uuid,
     peer_state: Mutex<Option<conwu_core::rendezvous::State>>,
-    pub config: RwLock<Network>,
+    pub config: RwLock<Arc<Network>>,
     pub metrics: RwLock<Metrics>,
     pub memory: Option<Arc<Memory>>,
     adapter: Arc<dyn Adapter>,
@@ -117,9 +123,13 @@ struct Listener {
     policy: ListenerPolicy,
 }
 pub struct Engine {
+    pub store: Arc<crate::store::Store>,
+    pub fake_mappings: RwLock<HashMap<u16, Arc<crate::native_map::Mapping>>>,
+    pub(crate) stun_cursor: Mutex<HashMap<(String, u16), usize>>,
     assists: Mutex<HashMap<String, CancellationToken>>,
     pub flow_groups: Mutex<HashMap<String, Arc<crate::flow::Group>>>,
     pub device_name: RwLock<String>,
+    pub node_private: RwLock<String>,
     pub raw_controls: Mutex<HashMap<(String, u16), crate::raw::Control>>,
     pub raw_tables: Mutex<HashMap<(String, u16), String>>,
     pub raw_observers: Mutex<std::collections::HashSet<String>>,
@@ -140,6 +150,7 @@ pub struct Engine {
 }
 impl Engine {
     pub fn new(
+        store: Arc<crate::store::Store>,
         identity: TlsIdentity,
         events: mpsc::Sender<Event>,
         components: PathBuf,
@@ -147,9 +158,13 @@ impl Engine {
         pkarr: Arc<pkarr::Client>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            store,
+            fake_mappings: RwLock::new(HashMap::new()),
+            stun_cursor: Mutex::new(HashMap::new()),
             assists: Mutex::new(HashMap::new()),
             flow_groups: Mutex::new(HashMap::new()),
             device_name: RwLock::new("ConWU".into()),
+            node_private: RwLock::new(String::new()),
             raw_controls: Mutex::new(HashMap::new()),
             raw_tables: Mutex::new(HashMap::new()),
             raw_observers: Mutex::new(std::collections::HashSet::new()),
@@ -172,6 +187,53 @@ impl Engine {
     pub fn current(&self, id: &str) -> Option<Arc<Running>> {
         self.networks.read().unwrap().get(id).cloned()
     }
+    pub async fn notify_directory(&self, id: &str, directory: identity::Directory) -> Result<()> {
+        let Some(running) = self.current(id) else {
+            return Ok(());
+        };
+        let profile = running
+            .config
+            .read()
+            .unwrap()
+            .profile
+            .clone()
+            .context("网络身份缺失")?;
+        conwu_core::metadata::successor(
+            &directory,
+            profile.directory.as_ref().context("成员目录缺失")?,
+        )?;
+        let snapshot = conwu_core::metadata::Snapshot {
+            directory,
+            nodes: vec![],
+            traversal: vec![],
+            capabilities: Default::default(),
+        };
+        for _ in 0..3 {
+            let frames = conwu_core::metadata::frames(&snapshot)?;
+            {
+                let mut guard = running.peer.lock().unwrap();
+                let Some(peer) = guard.as_mut() else {
+                    return Ok(());
+                };
+                let targets = peer
+                    .routes
+                    .values()
+                    .filter(|r| r.verified)
+                    .map(|r| r.tx.clone())
+                    .collect::<Vec<_>>();
+                for payload in frames {
+                    if let Some(frame) = peer.link.synchronize(&payload)? {
+                        let frame = link::wrap(&profile.pair.network, &frame)?;
+                        for tx in &targets {
+                            let _ = tx.try_send(frame.clone());
+                        }
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(80)).await;
+        }
+        Ok(())
+    }
     pub fn find_wire(&self, wire: &str) -> Option<Arc<Running>> {
         self.networks
             .read()
@@ -188,6 +250,12 @@ impl Engine {
             .cloned()
     }
     pub async fn install(self: &Arc<Self>, network: Network) -> Result<()> {
+        if self
+            .current(&network.id)
+            .is_some_and(|r| r.cancel.is_cancelled())
+        {
+            self.remove(&network.id).await?;
+        }
         let profile = network.profile.as_ref().context("网络身份尚未批准")?;
         profile.validate()?;
         ensure!(
@@ -266,7 +334,7 @@ impl Engine {
                 network.settings.mode()?.to_owned(),
                 network.settings.listen_port,
             );
-            *prior.config.write().unwrap() = network;
+            *prior.config.write().unwrap() = Arc::new(network);
             prior.refresh.notify_one();
             if old_key != new_key {
                 self.release_unused_listener(&old_key).await?;
@@ -321,10 +389,13 @@ impl Engine {
         )
         .await?;
         let running = Arc::new(Running {
+            network_finished: CancellationToken::new(),
+            discovery_finished: CancellationToken::new(),
+            managed_finished: CancellationToken::new(),
             refresh: tokio::sync::Notify::new(),
             boot: uuid::Uuid::new_v4(),
             peer_state: Mutex::new(None),
-            config: RwLock::new(network),
+            config: RwLock::new(Arc::new(network)),
             metrics: RwLock::new(metrics),
             memory,
             adapter,
@@ -335,19 +406,31 @@ impl Engine {
         let engine = self.clone();
         let run = running.clone();
         self.tracker.spawn(async move {
+            let _finished = run.network_finished.clone().drop_guard();
             engine.network_loop(run).await;
         });
         let engine = self.clone();
+        let run = running.clone();
         self.tracker.spawn(async move {
-            engine.discovery_loop(running).await;
+            let _finished = run.discovery_finished.clone().drop_guard();
+            engine.discovery_loop(run).await;
+        });
+        let engine = self.clone();
+        self.tracker.spawn(async move {
+            let _finished = running.managed_finished.clone().drop_guard();
+            crate::managed::run(engine, running).await;
         });
         Ok(())
     }
     pub async fn remove(&self, id: &str) -> Result<()> {
+        self.cancel_guest(id);
         if let Some(stop) = self.assists.lock().unwrap().remove(id) {
             stop.cancel();
         }
-        let removed = self.networks.write().unwrap().remove(id);
+        // Keep the cancelled generation registered until its tasks have released
+        // their sockets. A timed out stop must not allow a new generation to
+        // bind the same port while the old owner is still alive.
+        let removed = self.current(id);
         if let Some(r) = removed {
             r.cancel.cancel();
             if let Some(peer) = r.peer.lock().unwrap().as_mut() {
@@ -355,10 +438,28 @@ impl Engine {
                     route.cancel.cancel();
                 }
             }
+            tokio::time::timeout(Duration::from_secs(45), async {
+                tokio::join!(
+                    r.network_finished.cancelled(),
+                    r.discovery_finished.cancelled(),
+                    r.managed_finished.cancelled()
+                );
+            })
+            .await
+            .context("旧网络资源尚未释放，请稍后重试")?;
             let key = {
                 let n = r.config.read().unwrap();
                 (n.settings.mode()?.to_owned(), n.settings.listen_port)
             };
+            {
+                let mut networks = self.networks.write().unwrap();
+                if networks
+                    .get(id)
+                    .is_some_and(|current| Arc::ptr_eq(current, &r))
+                {
+                    networks.remove(id);
+                }
+            }
             self.release_unused_listener(&key).await?;
         }
         self.rooms.lock().unwrap().remove(id);
@@ -381,7 +482,7 @@ impl Engine {
     }
     async fn stop_listener(listener: Listener) -> Result<()> {
         listener.cancel.cancel();
-        tokio::time::timeout(Duration::from_secs(5), listener.finished.cancelled())
+        tokio::time::timeout(Duration::from_secs(25), listener.finished.cancelled())
             .await
             .context("旧监听未能及时释放，请查看承载组件状态")?;
         Ok(())
@@ -513,11 +614,40 @@ impl Engine {
         Ok(())
     }
     pub async fn dial(self: &Arc<Self>, id: &str, endpoint: SocketAddr) -> Result<()> {
+        #[cfg(feature = "lab-api")]
+        ensure!(
+            std::env::var_os("CONWU_LAB_FORCE_MANAGED").is_none(),
+            "实验强制验证受管路径"
+        );
         let running = self.current(id).context("网络已移除")?;
         let config = running.config.read().unwrap().clone();
         let profile = config.profile.as_ref().unwrap();
         let mode = config.settings.mode()?;
         if !config.settings.existing_only() && !stream_mode(mode) {
+            if mode == "faketcp" {
+                let mapping = self
+                    .fake_mappings
+                    .read()
+                    .unwrap()
+                    .get(&config.settings.listen_port)
+                    .cloned();
+                if let Some(mapping) = mapping {
+                    let greeting = {
+                        let mut peer = running.peer.lock().unwrap();
+                        let peer = peer.as_mut().context("尚无已批准成员")?;
+                        link::wrap(&profile.pair.network, &peer.link.hello()?)?
+                    };
+                    mapping
+                        .punch(endpoint, !config.created_here, &greeting, false)
+                        .await?;
+                    return Ok(());
+                }
+                // A normal client can still reach the peer's explicit/UPnP
+                // receiver when STUN is temporarily unavailable locally.
+                if config.created_here {
+                    return Ok(());
+                }
+            }
             let control = self
                 .raw_controls
                 .lock()
@@ -561,14 +691,43 @@ impl Engine {
     }
     pub async fn serve(
         self: Arc<Self>,
-        mut pipe: Pipe,
+        pipe: Pipe,
         mode: String,
         endpoint: SocketAddr,
         outbound: Option<String>,
     ) {
+        self.serve_inner(pipe, mode, endpoint, outbound, None).await;
+    }
+    pub(crate) async fn serve_managed(
+        self: Arc<Self>,
+        pipe: Pipe,
+        endpoint: SocketAddr,
+        id: String,
+        context: conwu_core::path::Context,
+        revision: i64,
+        remaining: Duration,
+    ) {
+        self.serve_inner(
+            pipe,
+            "faketcp".into(),
+            endpoint,
+            Some(id),
+            Some((context, revision, remaining)),
+        )
+        .await;
+    }
+    async fn serve_inner(
+        self: Arc<Self>,
+        mut pipe: Pipe,
+        mode: String,
+        endpoint: SocketAddr,
+        outbound: Option<String>,
+        nomination: Option<(conwu_core::path::Context, i64, Duration)>,
+    ) {
         let route = conwu_core::id();
         let mut accepted = std::collections::HashSet::<String>::new();
         let mut last_valid = Instant::now();
+        let mut last_route_check = Instant::now();
         let mut flow: Option<Arc<crate::flow::Group>> = None;
         if let Some(id) = outbound {
             if let Some(running) = self.current(&id) {
@@ -586,12 +745,33 @@ impl Engine {
                         }
                     }
                 }
-                if self.attach(&running, &route, &pipe, endpoint, flow.clone()) {
+                if self.attach(
+                    &running,
+                    &route,
+                    &pipe,
+                    endpoint,
+                    flow.clone(),
+                    nomination.clone(),
+                ) {
                     accepted.insert(id);
                 }
             }
         }
         loop {
+            if last_route_check.elapsed() >= Duration::from_secs(1) {
+                last_route_check = Instant::now();
+                if !accepted.is_empty()
+                    && accepted.iter().all(|id| {
+                        self.current(id).is_none_or(|r| {
+                            r.peer.lock().unwrap().as_ref().is_none_or(|p| {
+                                p.routes.get(&route).is_none_or(|p| p.cancel.is_cancelled())
+                            })
+                        })
+                    })
+                {
+                    break;
+                }
+            }
             if flow.as_ref().is_some_and(|g| g.cancel.is_cancelled()) {
                 break;
             }
@@ -644,6 +824,12 @@ impl Engine {
             let Some((wire, body)) = link::unwrap(&frame) else {
                 continue;
             };
+            if nomination
+                .as_ref()
+                .is_some_and(|(context, _, _)| context.network_id != wire)
+            {
+                continue;
+            }
             if flow.as_ref().is_some_and(|g| g.network != wire) {
                 continue;
             }
@@ -658,7 +844,7 @@ impl Engine {
                 n.id.clone()
             };
             if !accepted.contains(&id) {
-                if !self.attach(&running, &route, &pipe, endpoint, flow.clone()) {
+                if !self.attach(&running, &route, &pipe, endpoint, flow.clone(), None) {
                     continue;
                 }
                 accepted.insert(id);
@@ -688,6 +874,7 @@ impl Engine {
         pipe: &Pipe,
         endpoint: SocketAddr,
         flow: Option<Arc<crate::flow::Group>>,
+        nomination: Option<(conwu_core::path::Context, i64, Duration)>,
     ) -> bool {
         let n = running.config.read().unwrap();
         let mut guard = running.peer.lock().unwrap();
@@ -697,7 +884,19 @@ impl Engine {
         if peer.routes.len() >= 8 {
             return false;
         }
+        let path = uuid::Uuid::new_v4();
+        let nomination = match nomination {
+            Some((context, revision, remaining)) => {
+                match conwu_core::path::Nomination::new(context, path, revision, remaining, true) {
+                    Ok(n) => Some(n),
+                    Err(_) => return false,
+                }
+            }
+            None => None,
+        };
         let route = Route {
+            path,
+            nomination,
             tx: flow
                 .as_ref()
                 .map(|f| f.tx.clone())
@@ -752,16 +951,119 @@ impl Engine {
             return false;
         }
         let mut rooms = self.rooms.lock().unwrap();
+        let mut admission_target = None;
+        if request.method == "join"
+            && request.entry_admission
+            && request.code == pairing::ENTRY_LOCATOR
+        {
+            let mut eligible =
+                self.networks
+                    .read()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|(id, running)| {
+                        let n = running.config.read().unwrap();
+                        let p = n.profile.as_ref()?;
+                        if !n.enabled
+                            || n.paused
+                            || p.owner_private.is_empty()
+                            || p.directory.as_ref()?.closed
+                            || !request.target_network.is_empty()
+                                && request.target_network != p.pair.network
+                        {
+                            return None;
+                        }
+                        let known =
+                            request.identity.as_ref().is_some_and(|i| {
+                                i.valid(&request.commitment)
+                                    && identity::network_id(&i.public_key).ok().is_some_and(
+                                        |device| {
+                                            p.directory.as_ref().unwrap().members.iter().any(|m| {
+                                                m.slot != p.member.slot && m.device == device
+                                            })
+                                        },
+                                    )
+                            });
+                        let former = request
+                            .rejoin
+                            .as_ref()
+                            .is_some_and(|p2| p2["Network"] == p.pair.network);
+                        if p.directory.as_ref().unwrap().members.len() >= 2 && !known && !former {
+                            return None;
+                        }
+                        if rooms.get(id).is_some_and(|(h, _)| {
+                            h.ticket.expires > unix_seconds()
+                                && h.state.outcome.is_empty()
+                                && (!h.state.approved || !h.delivered)
+                                && !h.state.candidate.is_empty()
+                                && (!h.entry_admission
+                                    || h.state.guest_commitment != request.commitment)
+                        }) {
+                            return None;
+                        }
+                        Some((
+                            if known {
+                                0
+                            } else if former {
+                                1
+                            } else {
+                                2
+                            },
+                            id.clone(),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+            eligible.sort();
+            if let Some((_, id)) = eligible.first() {
+                admission_target = Some(id.clone());
+                if !rooms.get(id).is_some_and(|(h, _)| {
+                    h.entry_admission
+                        && h.ticket.expires > unix_seconds()
+                        && h.state.outcome.is_empty()
+                        && !h.state.approved
+                }) {
+                    if let Ok(mut host) = Host::new(
+                        &self.device_name.read().unwrap(),
+                        Some(&self.node_private.read().unwrap()),
+                    ) {
+                        host.entry_admission = true;
+                        rooms.insert(id.clone(), (host, String::new()));
+                    }
+                }
+            } else {
+                return false;
+            }
+        }
         for (network, (host, _)) in rooms.iter_mut() {
+            if admission_target.as_ref().is_some_and(|id| id != network) {
+                continue;
+            }
             let matches = if request.method == "join" {
-                request.code == host.ticket.code
+                request.entry_admission == host.entry_admission
+                    && request.code
+                        == if host.entry_admission {
+                            pairing::ENTRY_LOCATOR
+                        } else {
+                            &host.ticket.code
+                        }
             } else {
                 request.room == host.ticket.room
             };
             if !matches {
                 continue;
             }
-            if let Some(reply) = host.handle(frame, network) {
+            let wire = self
+                .current(network)
+                .and_then(|r| {
+                    r.config
+                        .read()
+                        .unwrap()
+                        .profile
+                        .as_ref()
+                        .map(|p| p.pair.network.clone())
+                })
+                .unwrap_or_default();
+            if let Some(reply) = host.handle(frame, &wire) {
                 let _ = tx.try_send(reply);
                 return true;
             }
@@ -871,7 +1173,8 @@ impl Engine {
             crate::discovery::public(client.endpoint.ip()),
             "辅助直连码需要公网 IPv4 协调节点"
         );
-        let state=client.room("create",&json!({"Endpoint":endpoint.to_string(),"HostRoom":room,"Commitment":commitment,"Mode":n.settings.mode()?,"Ready":true})).await?;
+        let native_prepare = n.settings.mode()? == "faketcp";
+        let state=client.room("create",&json!({"Endpoint":endpoint.to_string(),"HostRoom":room,"Commitment":commitment,"Mode":n.settings.mode()?,"Ready":!native_prepare})).await?;
         let code = DirectCode {
             endpoint: client.endpoint,
             mode: n.settings.mode()?.into(),
@@ -893,14 +1196,21 @@ impl Engine {
         let engine = self.clone();
         let id = id.to_owned();
         self.tracker.spawn(async move {
-            let key=state["Room"].as_str().unwrap().to_owned();let mut prior=uuid::Uuid::nil();
+            let key=state["Room"].as_str().unwrap().to_owned();let mut prior=uuid::Uuid::nil();let mut ready=!native_prepare;
             loop {
                 if state["Expires"].as_i64().unwrap_or(0)<=unix_seconds(){break;}
-                let input=json!({"Token":state["Token"],"Endpoint":endpoint.to_string(),"Ready":true});
+                let input=json!({"Token":state["Token"],"Endpoint":endpoint.to_string(),"Ready":ready});
                 let updated=tokio::select!{_=stop.cancelled()=>break,r=client.room(&key,&input)=>r};
                 if let Ok(updated)=updated {
                     let matching=["Room","Token","HostRoom","Commitment","HostEndpoint","Mode"].iter().all(|k|updated[*k]==state[*k]);
                     if !matching{break;}
+                    if native_prepare&&!ready {
+                        if let Some(peer)=updated["GuestEndpoint"].as_str().and_then(|s|crate::assistance::candidate(s).ok()) {
+                            let local=engine.current(&id).map(|r|r.config.read().unwrap().settings.listen_port);
+                            let mapping=local.and_then(|p|engine.fake_mappings.read().unwrap().get(&p).cloned());
+                            if let Some(mapping)=mapping {ready=mapping.prepare(peer,false,false).await.is_ok();}
+                        }
+                    }
                     if let Some(round)=updated["Round"].as_str().and_then(|s|uuid::Uuid::parse_str(s).ok()).filter(|r|!r.is_nil()&&*r!=prior) {
                         if let Some(peer)=updated["GuestEndpoint"].as_str().and_then(|s|crate::assistance::candidate(s).ok()) {
                             prior=round;
@@ -940,6 +1250,17 @@ impl Engine {
                 engine.serve(pipe, mode, endpoint, None).await;
             });
         } else {
+            if mode == "faketcp" {
+                let mapping = self
+                    .fake_mappings
+                    .read()
+                    .unwrap()
+                    .get(&n.settings.listen_port)
+                    .cloned()
+                    .context("FakeTCP 同源接收器未就绪")?;
+                mapping.punch(endpoint, false, &[], false).await?;
+                return Ok(());
+            }
             let control = self
                 .raw_controls
                 .lock()
@@ -957,7 +1278,7 @@ impl Engine {
         let mut last_control = Instant::now() - Duration::from_secs(10);
         let mut last_metadata = Instant::now() - Duration::from_secs(10);
         let mut metadata_revision = 0;
-        loop {
+        'network: loop {
             tokio::select! {_=running.cancel.cancelled()=>break,_=timer.tick()=>{}}
             let n = running.config.read().unwrap().clone();
             let Some(profile) = n.profile.as_ref() else {
@@ -967,6 +1288,22 @@ impl Engine {
             let Some(peer) = peer_guard.as_mut() else {
                 continue;
             };
+            if peer.link.connected() {
+                for route in peer.routes.values_mut() {
+                    if let Some(nomination) = route.nomination.as_mut() {
+                        for control in nomination.tick() {
+                            if let Ok(Some(frame)) = peer.link.control(&control) {
+                                let _ = route
+                                    .tx
+                                    .try_send(link::wrap(&profile.pair.network, &frame).unwrap());
+                            }
+                        }
+                        if nomination.stage == conwu_core::path::Stage::Cancelled {
+                            route.cancel.cancel();
+                        }
+                    }
+                }
+            }
             if last_control.elapsed() >= Duration::from_secs(1) {
                 last_control = Instant::now();
                 peer.routes.retain(|_, r| {
@@ -1056,7 +1393,8 @@ impl Engine {
                             .cloned()
                             .unwrap_or_default(),
                         name,
-                        traversal: None,
+                        traversal: crate::managed::capabilities(&running)
+                            .and_then(|c| serde_json::to_value(c).ok()),
                         pkarr_source: source,
                         existing_endpoints: Some(own),
                         existing_entry_only: n.settings.existing_only(),
@@ -1066,6 +1404,8 @@ impl Engine {
                         conwu_core::metadata::Envelope::seal(profile, &announcement)
                     {
                         let snapshot = conwu_core::metadata::Snapshot {
+                            capabilities: Default::default(),
+                            traversal: vec![],
                             directory: profile.directory.clone().unwrap(),
                             nodes: vec![envelope],
                         };
@@ -1091,7 +1431,8 @@ impl Engine {
                     Ok(None) => break,
                     Err(e) => {
                         running.metrics.write().unwrap().error = e.to_string();
-                        break;
+                        running.cancel.cancel();
+                        break 'network;
                     }
                 };
                 if n.paused
@@ -1146,6 +1487,40 @@ impl Engine {
                 break;
             };
             let mode = n.settings.mode().unwrap();
+            let restart = self
+                .listeners
+                .lock()
+                .unwrap()
+                .get(&(mode.into(), n.settings.listen_port))
+                .is_none_or(|l| l.finished.is_cancelled());
+            if restart {
+                let mut observers = n.settings.tcp_stun.clone();
+                if n.settings.discovery_mode == "coordinator" {
+                    if let Ok(url) = url::Url::parse(&n.settings.service) {
+                        if let (Some(host), Some(port)) =
+                            (url.host_str(), url.port_or_known_default())
+                        {
+                            observers.insert(0, format!("{host}:{port}"));
+                        }
+                    }
+                }
+                if let Err(e) = self
+                    .listen(
+                        mode,
+                        n.settings.listen_port,
+                        &observers,
+                        !n.settings.existing_only(),
+                        if !n.created_here && mode == "https" {
+                            profile.pair.transport_key_pin.as_deref()
+                        } else {
+                            None
+                        },
+                    )
+                    .await
+                {
+                    running.metrics.write().unwrap().error = format!("接收器恢复失败：{e}");
+                }
+            }
             let now = unix_seconds();
             let local = n
                 .settings
@@ -1155,7 +1530,9 @@ impl Engine {
                 .cloned()
                 .collect::<Vec<_>>();
             let mut own = tokio::select! {_=running.cancel.cancelled()=>break,r=discovery::resolve(&local,mode,&self.pkarr,&n.settings.pkarr_gateways)=>r};
-            if !n.settings.existing_only() && n.settings.port_control_mapping {
+            if !n.settings.existing_only()
+                && n.settings.extra.get("disableGatewayMapping") != Some(&json!(true))
+            {
                 if gateway
                     .as_ref()
                     .is_some_and(|g| g.port() != n.settings.listen_port)
@@ -1172,9 +1549,12 @@ impl Engine {
                             gateway = None;
                         }
                     } else {
-                        gateway = crate::gateway::Lease::acquire(n.settings.listen_port)
-                            .await
-                            .ok();
+                        gateway = crate::gateway::Lease::acquire(
+                            n.settings.listen_port,
+                            n.settings.port_control_mapping,
+                        )
+                        .await
+                        .ok();
                     }
                     next_gateway = now + 15;
                 }
@@ -1190,48 +1570,70 @@ impl Engine {
                 {
                     own.push(candidate)
                 }
-                if mapping
-                    .as_ref()
-                    .is_some_and(|m| m.local.port() != n.settings.listen_port)
-                {
+                if mode == "faketcp" {
                     mapping = None;
-                }
-                if mapping.is_none()
-                    || mapping
-                        .as_ref()
-                        .is_some_and(|m| m.stream.peer_addr().is_err())
-                {
-                    let mut observers = n.settings.tcp_stun.clone();
-                    if n.settings.discovery_mode == "coordinator" && !n.settings.service.is_empty()
-                    {
-                        if let Ok(url) = url::Url::parse(&n.settings.service) {
-                            if url.path() == "/" {
-                                if let (Some(host), Some(port)) =
-                                    (url.host_str(), url.port_or_known_default())
-                                {
-                                    observers.insert(0, format!("{host}:{port}"));
-                                }
+                    let current = self
+                        .fake_mappings
+                        .read()
+                        .unwrap()
+                        .get(&n.settings.listen_port)
+                        .cloned();
+                    if let Some(current) = current {
+                        if let Ok(candidate) = current.refresh().await {
+                            own.push(candidate);
+                        }
+                        if running.metrics.read().unwrap().connected {
+                            let peer = running.metrics.read().unwrap().endpoint.parse().ok();
+                            if let Some(peer) = peer {
+                                current.freeze(peer).await;
                             }
                         }
                     }
-                    if let Ok(observed) =
-                        discovery::observe_tcp(n.settings.listen_port, &observers, &self, mode)
-                            .await
+                } else {
+                    if mapping
+                        .as_ref()
+                        .is_some_and(|m| m.local.port() != n.settings.listen_port)
                     {
-                        mapping = Some(observed);
-                    }
-                }
-                if let Some(observed) = mapping.as_mut() {
-                    if let Ok(Ok(mapped)) = tokio::time::timeout(
-                        Duration::from_secs(3),
-                        discovery::stun_tcp(&mut observed.stream),
-                    )
-                    .await
-                    {
-                        observed.mapped = mapped;
-                        own.push(mapped);
-                    } else {
                         mapping = None;
+                    }
+                    if mapping.is_none()
+                        || mapping
+                            .as_ref()
+                            .is_some_and(|m| m.stream.peer_addr().is_err())
+                    {
+                        let mut observers = n.settings.tcp_stun.clone();
+                        if n.settings.discovery_mode == "coordinator"
+                            && !n.settings.service.is_empty()
+                        {
+                            if let Ok(url) = url::Url::parse(&n.settings.service) {
+                                if url.path() == "/" {
+                                    if let (Some(host), Some(port)) =
+                                        (url.host_str(), url.port_or_known_default())
+                                    {
+                                        observers.insert(0, format!("{host}:{port}"));
+                                    }
+                                }
+                            }
+                        }
+                        if let Ok(observed) =
+                            discovery::observe_tcp(n.settings.listen_port, &observers, &self, mode)
+                                .await
+                        {
+                            mapping = Some(observed);
+                        }
+                    }
+                    if let Some(observed) = mapping.as_mut() {
+                        if let Ok(Ok(mapped)) = tokio::time::timeout(
+                            Duration::from_secs(3),
+                            discovery::stun_tcp(&mut observed.stream),
+                        )
+                        .await
+                        {
+                            observed.mapped = mapped;
+                            own.push(mapped);
+                        } else {
+                            mapping = None;
+                        }
                     }
                 }
             }
@@ -1283,7 +1685,8 @@ impl Engine {
                         .map(ToString::to_string)
                         .unwrap_or_default(),
                     name: self.device_name.read().unwrap().clone(),
-                    traversal: None,
+                    traversal: crate::managed::capabilities(&running)
+                        .and_then(|c| serde_json::to_value(c).ok()),
                     pkarr_source: None,
                     existing_endpoints: Some(own.iter().map(ToString::to_string).collect()),
                     existing_entry_only: false,
@@ -1296,13 +1699,10 @@ impl Engine {
                     if let Ok(snapshot) =
                         tokio::select! {_=running.cancel.cancelled()=>break,r=exchange=>r}
                     {
-                        let _ = self
-                            .events
-                            .send(Event::Snapshot {
-                                id: n.id.clone(),
-                                snapshot,
-                            })
-                            .await;
+                        tokio::select! {
+                            _ = running.cancel.cancelled() => break,
+                            _ = self.events.send(Event::Snapshot { id: n.id.clone(), snapshot }) => {}
+                        }
                     }
                 }
                 if !running.metrics.read().unwrap().connected && remote_member(profile).is_some() {
@@ -1362,17 +1762,21 @@ impl Engine {
                         .max(n.pkarr_sequence + 1)
                         .max(last_sequence + 1);
                     let (send, recv) = oneshot::channel(); // Sequence reservation is persisted by the event actor before publication below.
-                    if self
-                        .events
-                        .send(Event::Discovery {
-                            id: n.id.clone(),
-                            sequence,
-                            reply: send,
-                        })
-                        .await
-                        .is_ok()
-                        && matches!(recv.await, Ok(Ok(())))
-                    {
+                    let reserved = tokio::select! {
+                        _ = running.cancel.cancelled() => break,
+                        result = self.events.send(Event::Discovery {
+                            id: n.id.clone(), sequence, reply: send,
+                        }) => result.is_ok()
+                    };
+                    let persisted = if reserved {
+                        tokio::select! {
+                            _ = running.cancel.cancelled() => break,
+                            result = recv => matches!(result, Ok(Ok(())))
+                        }
+                    } else {
+                        false
+                    };
+                    if persisted {
                         last_sequence = sequence;
                         let mut a = pkarr::Announcement {
                             version: 1,
@@ -1399,10 +1803,10 @@ impl Engine {
                             }
                             a.state = state.seal(profile, &peer, &source, &a).ok();
                         }
-                        let published = self
-                            .pkarr
-                            .publish(&seed, sequence, &a, &n.settings.pkarr_gateways)
-                            .await;
+                        let published = tokio::select! {
+                            _ = running.cancel.cancelled() => break,
+                            result = self.pkarr.publish(&seed, sequence, &a, &n.settings.pkarr_gateways) => result
+                        };
                         {
                             let mut metrics = running.metrics.write().unwrap();
                             let peer = metrics
@@ -1474,17 +1878,25 @@ impl Engine {
     pub fn start_guest(
         self: &Arc<Self>,
         id: String,
-        code: DirectCode,
+        codes: Vec<DirectCode>,
         name: String,
         node_private: String,
         requested_ip: String,
+        retained: Option<conwu_core::rejoin::Credential>,
     ) {
         self.cancel_guest(&id);
         self.guest_states.write().unwrap().insert(id.clone(),json!({"active":true,"owner":false,"state":"正在联系目标主机","code":"","verification":"","candidate":"","peerName":"","expires":unix_seconds()+300,"format":"compact","method":"direct","direct":true}));
         let stop = self.cancel.child_token();
         self.guests.lock().unwrap().insert(id.clone(), stop.clone());
         let engine = self.clone();
-        self.tracker.spawn(async move{let result=tokio::select!{_=stop.cancelled()=>return,r=engine.join(&id,&code,&name,&node_private,&requested_ip,&stop)=>r};if let Err(e)=result{let _=engine.events.send(Event::GuestState{id,state:json!({"active":false,"owner":false,"state":e.to_string(),"error":e.to_string(),"code":"","expires":0})}).await;}});
+        self.tracker.spawn(async move {
+            let mut last=anyhow::anyhow!("没有可联系的入口");
+            for code in codes {
+                let result=tokio::select!{_=stop.cancelled()=>return,r=engine.join(&id,&code,&name,&node_private,&requested_ip,retained.as_ref(),&stop)=>r};
+                match result {Ok(())=>return,Err(e)=>last=e}
+            }
+            let _=engine.events.send(Event::GuestState{id,state:json!({"active":false,"owner":false,"state":last.to_string(),"error":last.to_string(),"code":"","expires":0})}).await;
+        });
     }
     async fn guest_state(&self, id: &str, state: Value) {
         self.guest_states.write().unwrap().insert(id.into(), state);
@@ -1496,6 +1908,7 @@ impl Engine {
         name: &str,
         node_private: &str,
         requested_ip: &str,
+        retained: Option<&conwu_core::rejoin::Credential>,
         stop: &CancellationToken,
     ) -> Result<()> {
         let key = KeyExchange::new(Some(node_private))?;
@@ -1511,6 +1924,10 @@ impl Engine {
             target.room = state["HostRoom"].as_str().unwrap().into();
             assistance = Some((client, state));
         }
+        let rejoin = retained
+            .map(|c| c.prove(&target.room, &key.commitment))
+            .transpose()?;
+        let rejoin_digest = rejoin.as_ref().map(|p| p.fingerprint()).transpose()?;
         let mut request = Request {
             method: "join".into(),
             code: target.room.clone(),
@@ -1519,9 +1936,16 @@ impl Engine {
             network_settings_version: 1,
             identity: key.identity.clone(),
             requested_ip: requested_ip.into(),
+            rejoin: rejoin.map(|p| serde_json::to_value(p).unwrap()),
+            entry_admission: target.room == pairing::ENTRY_LOCATOR,
             ..Default::default()
         };
         let direct = async {
+            #[cfg(feature = "lab-api")]
+            anyhow::ensure!(
+                std::env::var_os("CONWU_LAB_FORCE_ASSISTANCE").is_none(),
+                "实验强制验证协同准备分支"
+            );
             let mut pipe = if stream_mode(&code.mode) {
                 transport::connect(&code.mode, target.endpoint, "", true, stop).await?
             } else {
@@ -1534,7 +1958,7 @@ impl Engine {
             Ok::<_, anyhow::Error>((pipe, ticket))
         };
         let initial = tokio::time::timeout(Duration::from_secs(8), direct).await;
-        let observation: Option<discovery::TcpObservation>;
+        let observation: Option<crate::raw::ClientObservation>;
         let (mut pipe, ticket) = match initial {
             Ok(Ok(connected)) => {
                 observation = None;
@@ -1553,16 +1977,13 @@ impl Engine {
                 let servers = if let Some((client, _)) = &assistance {
                     vec![client.endpoint.to_string()]
                 } else {
-                    crate::model::TCP_STUN
-                        .iter()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>()
+                    crate::model::default_tcp_stun()
                 };
                 let mut pipe = if stream_mode(&code.mode) {
                     let observed =
                         discovery::observe_tcp(crate::raw::free_tcp()?, &servers, self, &code.mode)
                             .await?;
-                    observation = Some(observed);
+                    observation = Some(crate::raw::ClientObservation::tcp(observed));
                     None
                 } else {
                     let (pipe, observed) = crate::raw::observed_client(
@@ -1631,6 +2052,7 @@ impl Engine {
                         )
                         .await?;
                 }
+                observed.start(target.endpoint).await?;
                 if pipe.is_none() {
                     let socket =
                         transport::tcp_open(target.endpoint, observed.local.port()).await?;
@@ -1665,6 +2087,7 @@ impl Engine {
         }
         let mut request = Request {
             method: "poll".into(),
+            entry_admission: target.room == pairing::ENTRY_LOCATOR,
             room: ticket.room.clone(),
             token: ticket.token.clone(),
             ..Default::default()
@@ -1698,6 +2121,10 @@ impl Engine {
             );
             let reply = rpc(&mut pipe, &mut request, stop).await?;
             let state = reply.state.context("缺少配对状态")?;
+            ensure!(
+                state.rejoin_digest == rejoin_digest,
+                "重新加入证明摘要已改变"
+            );
             ensure!(
                 state.candidate == ticket.candidate
                     && state.guest_commitment == key.commitment
@@ -1781,7 +2208,7 @@ impl Engine {
     pub async fn shutdown(&self) {
         self.cancel.cancel();
         self.tracker.close();
-        let _ = tokio::time::timeout(Duration::from_secs(12), self.tracker.wait()).await;
+        let _ = tokio::time::timeout(Duration::from_secs(65), self.tracker.wait()).await;
     }
 }
 impl Running {
@@ -1816,11 +2243,38 @@ impl Running {
                 .try_send(link::wrap(&profile.pair.network, &reply).unwrap());
         }
         if received.pong == Some(route.challenge) {
-            route.verified = true;
+            if route.nomination.is_none() {
+                route.verified = true;
+            }
             self.metrics.write().unwrap().rtt =
                 Some(route.challenged.elapsed().as_secs_f64() * 1000.0);
-            if peer.chosen.is_none() {
+            if peer.chosen.is_none() && route.verified {
                 peer.chosen = Some(route_id.into());
+            }
+        }
+        if let Some(control) = received.control {
+            if let Some(nomination) = route.nomination.as_mut() {
+                let responses = nomination.receive(route.path, &control);
+                if nomination.switch_requested() {
+                    route.verified = true;
+                    if peer.chosen.is_none() {
+                        peer.chosen = Some(route_id.into());
+                    }
+                }
+                if nomination.stage == conwu_core::path::Stage::Selected {
+                    self.metrics.write().unwrap().managed = json!({"phase":"Selected","attempt":nomination.attempt(),"selected":true,"fullMtuQualified":true});
+                }
+                // Switch locally before Commit is emitted.
+                for response in responses {
+                    if let Ok(Some(frame)) = peer.link.control(&response) {
+                        let _ = route
+                            .tx
+                            .try_send(link::wrap(&profile.pair.network, &frame).unwrap());
+                    }
+                }
+                if nomination.stage == conwu_core::path::Stage::Cancelled {
+                    route.cancel.cancel();
+                }
             }
         }
         if let Some(packet) = received.packet {

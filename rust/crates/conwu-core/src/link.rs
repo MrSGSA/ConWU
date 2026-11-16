@@ -150,6 +150,14 @@ impl Link {
         self.encode(9, self.remote_epoch.unwrap(), payload, 0)
             .map(Some)
     }
+    pub fn control(&mut self, payload: &[u8]) -> Result<Option<Vec<u8>>> {
+        ensure!((1..=256).contains(&payload.len()), "路径控制长度无效");
+        if !self.connected() {
+            return Ok(None);
+        }
+        self.encode(7, self.remote_epoch.unwrap(), payload, 0)
+            .map(Some)
+    }
     pub fn receive(&mut self, message: &[u8], allow_lanes: bool) -> Received {
         self.try_receive(message, allow_lanes).unwrap_or_default()
     }

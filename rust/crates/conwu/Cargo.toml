@@ -39,6 +39,7 @@ url = "2"
 hickory-resolver = { version = "0.24", features = ["tokio-runtime"] }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 libloading = "0.8"
+ring = "0.17"
 rustls-pemfile = "2"
 roxmltree = "0.21"
 tar = "0.4"
@@ -47,6 +48,7 @@ hyper-util = { version = "0.1", features = ["server-auto", "service", "tokio"] }
 libc = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = { version = "0.6.6", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-service = "0.8"

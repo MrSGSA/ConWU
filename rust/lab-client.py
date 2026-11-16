@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 data = Path(sys.argv[1])
-action = json.loads(sys.argv[2])
+action = json.loads(sys.stdin.read() if sys.argv[2] == '-' else sys.argv[2])
 control = json.loads((data / 'panel.private.json').read_text())
 origin = control['origin']
 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))

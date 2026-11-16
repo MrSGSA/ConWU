@@ -3,6 +3,7 @@ pub mod crypto;
 pub mod identity;
 pub mod link;
 pub mod pairing;
+pub mod path;
 
 pub fn unix_seconds() -> i64 {
     std::time::SystemTime::now()
@@ -18,8 +19,10 @@ pub fn valid_id(value: &str) -> bool {
 }
 pub mod departure;
 pub mod metadata;
+pub mod rejoin;
 pub mod rendezvous;
 pub mod stream;
+pub mod traversal;
 
 /// ASP.NET REST uses camelCase; signed binary/embedded documents use PascalCase.
 /// Normalize only at the HTTP boundary; reject ambiguous duplicate spellings.

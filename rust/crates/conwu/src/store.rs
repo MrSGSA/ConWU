@@ -257,13 +257,95 @@ pub(crate) fn reject_link(path: &Path) -> Result<()> {
     Ok(())
 }
 #[cfg(unix)]
-fn private_directory(path: &Path) -> Result<()> {
+pub(crate) fn private_directory(path: &Path) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
     Ok(())
 }
 #[cfg(windows)]
-fn private_directory(path: &Path) -> Result<()> {
+pub(crate) fn private_directory(path: &Path) -> Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    let sid = current_sid()?;
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text: *const u16,
+            revision: u32,
+            result: *mut *mut std::ffi::c_void,
+            size: *mut u32,
+        ) -> i32;
+        fn GetSecurityDescriptorDacl(
+            descriptor: *const std::ffi::c_void,
+            present: *mut i32,
+            acl: *mut *mut std::ffi::c_void,
+            defaulted: *mut i32,
+        ) -> i32;
+        fn SetNamedSecurityInfoW(
+            name: *mut u16,
+            kind: u32,
+            information: u32,
+            owner: *const std::ffi::c_void,
+            group: *const std::ffi::c_void,
+            dacl: *const std::ffi::c_void,
+            sacl: *const std::ffi::c_void,
+        ) -> u32;
+    }
+    // Replace the DACL atomically. A previous interactive import must not
+    // leave its explicit user ACE behind when SYSTEM takes over the service.
+    let user = if sid == "S-1-5-18" {
+        String::new()
+    } else {
+        format!("(A;OICI;FA;;;{sid})")
+    };
+    let sddl = format!("D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA){user}")
+        .encode_utf16()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let mut descriptor = std::ptr::null_mut();
+    ensure!(
+        unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        } != 0,
+        "无法创建私密目录权限"
+    );
+    let mut present = 0;
+    let mut defaulted = 0;
+    let mut acl = std::ptr::null_mut();
+    let valid =
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) }
+            != 0
+            && present != 0;
+    let mut name = path
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect::<Vec<_>>();
+    let status = if valid {
+        unsafe {
+            SetNamedSecurityInfoW(
+                name.as_mut_ptr(),
+                1,
+                0x80000004,
+                std::ptr::null(),
+                std::ptr::null(),
+                acl,
+                std::ptr::null(),
+            )
+        }
+    } else {
+        87
+    };
+    unsafe { windows_sys::Win32::Foundation::LocalFree(descriptor) };
+    ensure!(status == 0, "无法保护私密目录：Windows错误 {status}");
+    Ok(())
+}
+#[cfg(windows)]
+pub(crate) fn current_sid() -> Result<String> {
     use std::os::windows::process::CommandExt;
     // The directory is experimental and newly owned; never ACL a production root.
     let who = std::process::Command::new("whoami.exe")
@@ -285,20 +367,7 @@ fn private_directory(path: &Path) -> Result<()> {
                 .all(|b| b.is_ascii_digit() || matches!(b, b'S' | b'-')),
         "用户 SID 无效"
     );
-    let status = std::process::Command::new("icacls.exe")
-        .arg(path)
-        .args([
-            "/inheritance:r",
-            "/grant:r",
-            &format!("*{sid}:(OI)(CI)F"),
-            "*S-1-5-18:(OI)(CI)F",
-        ])
-        .creation_flags(0x08000000)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()?;
-    ensure!(status.success(), "无法保护实验配置目录");
-    Ok(())
+    Ok(sid)
 }
 #[cfg(windows)]
 fn replace_windows(from: &Path, to: &Path) -> Result<()> {

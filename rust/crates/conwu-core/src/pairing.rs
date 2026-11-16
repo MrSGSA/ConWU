@@ -6,6 +6,7 @@ use crate::{
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+pub const ENTRY_LOCATOR: &str = "conwu-network-entry";
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
@@ -207,6 +208,8 @@ pub struct Host {
     pub state: State,
     guest: Option<Ticket>,
     pub delivered: bool,
+    pub rejoin_history: Vec<crate::rejoin::History>,
+    pub entry_admission: bool,
     window: Instant,
     replies: u8,
     bad_codes: u8,
@@ -237,6 +240,8 @@ impl Host {
             state,
             guest: None,
             delivered: false,
+            rejoin_history: vec![],
+            entry_admission: false,
             window: Instant::now(),
             replies: 0,
             bad_codes: 0,
@@ -256,7 +261,7 @@ impl Host {
         }
         let r: Request = decode(packet).ok()?;
         if !valid_id(&r.id)
-            || r.entry_admission
+            || r.entry_admission != self.entry_admission
             || !r.target_network.is_empty() && r.target_network != network
         {
             return None;
@@ -275,11 +280,16 @@ impl Host {
             "pairing expired"
         );
         if r.method == "join" {
-            ensure!(
-                r.rejoin.is_none(),
-                "legacy rejoin proofs require explicit recovery import"
-            );
-            if !c::eq(r.code.as_bytes(), self.ticket.code.as_bytes()) {
+            if let Some(proof) = &r.rejoin {
+                let proof: crate::rejoin::Proof = serde_json::from_value(proof.clone())?;
+                ensure!(proof.well_formed(), "重新加入证明格式无效");
+            }
+            let locator = if self.entry_admission {
+                ENTRY_LOCATOR
+            } else {
+                &self.ticket.code
+            };
+            if !c::eq(r.code.as_bytes(), locator.as_bytes()) {
                 self.bad_codes += 1;
                 anyhow::bail!("room locator mismatch")
             }
@@ -298,7 +308,8 @@ impl Host {
                 ensure!(
                     r.commitment == self.state.guest_commitment
                         && r.name == self.state.guest_name
-                        && r.requested_ip == self.state.requested_ip,
+                        && r.requested_ip == self.state.requested_ip
+                        && r.rejoin == self.state.rejoin,
                     "another candidate is pending"
                 );
                 return Ok(Reply {
@@ -314,6 +325,7 @@ impl Host {
             self.state.requested_ip = r.requested_ip.clone();
             self.state.network_settings_version = r.network_settings_version;
             self.state.guest_identity = r.identity.clone();
+            self.state.rejoin = r.rejoin.clone();
             self.state.host_public = self.key.public.clone();
             let guest = Ticket {
                 room: self.ticket.room.clone(),
@@ -390,6 +402,11 @@ impl Host {
             .transpose()?
             .unwrap_or_default();
         state.guest_identity = None;
+        state.rejoin_digest = state
+            .rejoin
+            .as_ref()
+            .map(|v| serde_json::from_value::<crate::rejoin::Proof>(v.clone())?.fingerprint())
+            .transpose()?;
         state.rejoin = None;
         Ok(Reply {
             id: r.id.clone(),
@@ -447,6 +464,32 @@ impl Host {
             .as_ref()
             .map(|p| identity::network_id(&p.public_key))
             .transpose()?;
+        let former = self
+            .state
+            .rejoin
+            .as_ref()
+            .map(|v| {
+                let proof: crate::rejoin::Proof = serde_json::from_value(v.clone())?;
+                proof.resolve(
+                    &next,
+                    if self.entry_admission {
+                        ENTRY_LOCATOR
+                    } else {
+                        &self.ticket.code
+                    },
+                    &self.state.guest_commitment,
+                    &self.rejoin_history,
+                )
+            })
+            .transpose()?
+            .flatten();
+        if let Some(former) = &former {
+            ensure!(
+                device.as_ref().is_none_or(|d| d == &former.device),
+                "重新加入与持久设备身份不符"
+            );
+        }
+        let device = device.or_else(|| former.as_ref().map(|m| m.device.clone()));
         let e = if let Some(device) = device.as_ref().filter(|device| {
             next.directory.as_ref().is_some_and(|d| {
                 d.members
@@ -459,6 +502,10 @@ impl Host {
             next.issue_for_device(requested, device)?
         };
         let bundle = identity::enrollment_bundle(&e, entries, settings)?;
+        if let Some(former) = former {
+            self.rejoin_history =
+                crate::rejoin::remember(&next, &self.rejoin_history, former, &e.member);
+        }
         let cipher =
             KeyExchange::encrypt(&shared, &bundle, &self.ticket.room, &self.state.candidate)?;
         self.state.ciphertext = cipher;

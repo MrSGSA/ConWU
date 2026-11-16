@@ -7,6 +7,16 @@ pub fn service_cancel() -> tokio_util::sync::CancellationToken {
         .get_or_init(tokio_util::sync::CancellationToken::new)
         .clone()
 }
+pub async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+        tokio::select! {r=tokio::signal::ctrl_c()=>r?,_=term.recv()=>{}}
+    }
+    #[cfg(windows)]
+    tokio::signal::ctrl_c().await?;
+    Ok(())
+}
 pub fn service_registered() -> bool {
     #[cfg(windows)]
     {
@@ -135,8 +145,11 @@ mod scm {
             process_id: None,
         };
         handler.set_service_status(status(ServiceState::Running))?;
-        let result =
-            tokio::runtime::Runtime::new()?.block_on(crate::run(crate::Cli::parse().command));
+        let result = tokio::runtime::Runtime::new()?.block_on(crate::run(
+            crate::Cli::parse()
+                .command
+                .ok_or_else(|| anyhow::anyhow!("服务运行参数缺失"))?,
+        ));
         handler.set_service_status(status(ServiceState::Stopped))?;
         result
     }

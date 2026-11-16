@@ -2,6 +2,7 @@
 import hashlib
 import subprocess
 import tarfile
+import sys
 from pathlib import Path
 
 cache = Path('/mnt/d/Codex/cache/rust-linux-1.95')
@@ -9,8 +10,12 @@ archives = [
     (cache / 'downloads/rustc-1.95.0-x86_64-unknown-linux-gnu.tar.xz', '8426a3d170a5879f5682f5fbdd024a1779b3951e7baba685af2d6dc32a6dfc15'),
     (cache / 'downloads/rust-std-1.95.0-x86_64-unknown-linux-gnu.tar.xz', '047ea7098803d3500fa1072e9cee5392697e21525559e4458128a2bf874aa382'),
 ]
+if '--musl-only' in sys.argv:
+    archives=[(cache/'downloads/rust-std-1.95.0-x86_64-unknown-linux-musl.tar.xz','aee540abf132920f791ef781489851a078d69dff493fb628d49c1d573f92bb3a')]
 cargo = cache / 'downloads/cargo-1.95.0-x86_64-unknown-linux-gnu.tar.xz'
-if cargo.exists() and cargo.stat().st_size:
+if '--musl-only' in sys.argv:
+    pass
+elif cargo.exists() and cargo.stat().st_size:
     archives.append((cargo, 'e74edd2cf7d0f1f1383b4f00eb90c843750bc489e2ccf7214e6476678a907425'))
 else:
     # The newer official Cargo download is independently SHA-256 verified by

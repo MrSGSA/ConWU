@@ -12,7 +12,7 @@ use conwu_core::{
     identity::{self, Directory},
     metadata::{Envelope, Snapshot},
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -21,13 +21,225 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio_util::sync::CancellationToken;
-
-#[derive(Clone, Serialize, Deserialize)]
-struct Registration {
-    auth: String,
-    directory: Directory,
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct WatchRequest {
+    pub slot: u8,
+    pub device: String,
+    pub boot_id: uuid::Uuid,
+    pub request_id: uuid::Uuid,
+    pub server_epoch: uuid::Uuid,
+    pub after: i64,
+    pub expires: i64,
+    pub signature: String,
 }
+impl WatchRequest {
+    fn signed(&self, network: &str) -> Result<Vec<u8>> {
+        c::signed_json(
+            &json!({"domain":"streamlink-mesh-watch-v1","network":network,"Slot":self.slot,"Device":self.device,"BootId":self.boot_id,"RequestId":self.request_id,"ServerEpoch":self.server_epoch,"After":self.after,"Expires":self.expires}),
+        )
+    }
+    pub(crate) fn create(
+        profile: &conwu_core::identity::Profile,
+        boot: uuid::Uuid,
+        epoch: uuid::Uuid,
+        after: i64,
+    ) -> Result<Self> {
+        let mut r = Self {
+            slot: profile.member.slot,
+            device: profile.member.device.clone(),
+            boot_id: boot,
+            request_id: uuid::Uuid::new_v4(),
+            server_epoch: epoch,
+            after,
+            expires: conwu_core::unix_seconds() + 40,
+            signature: String::new(),
+        };
+        r.signature = c::sign(&profile.signing_private, &r.signed(&profile.pair.network)?)?;
+        Ok(r)
+    }
+    fn verify(&self, network: &str, member: &identity::Member) -> Result<()> {
+        let now = conwu_core::unix_seconds();
+        ensure!(
+            self.slot == member.slot
+                && self.device == member.device
+                && !self.boot_id.is_nil()
+                && !self.request_id.is_nil()
+                && self.after >= 0
+                && self.expires > now
+                && self.expires <= now + 45
+                && self.signature.len() < 256
+                && c::verify(&member.signing_key, &self.signed(network)?, &self.signature),
+            "协调等待身份签名无效"
+        );
+        Ok(())
+    }
+}
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct Change {
+    pub cursor: i64,
+    pub kind: String,
+    pub slot: u8,
+    pub target_slot: u8,
+}
+#[derive(serde::Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub(crate) struct WatchResponse {
+    pub server_epoch: uuid::Uuid,
+    pub cursor: i64,
+    pub reset: bool,
+    pub changes: Vec<Change>,
+    pub snapshot: Snapshot,
+}
+struct Account {
+    waiting: bool,
+    requests: HashMap<uuid::Uuid, i64>,
+    tokens: f64,
+    tick: Instant,
+}
+impl Default for Account {
+    fn default() -> Self {
+        Self {
+            waiting: false,
+            requests: HashMap::new(),
+            tokens: 8.,
+            tick: Instant::now(),
+        }
+    }
+}
+#[derive(Default)]
+struct Feed {
+    cursor: i64,
+    changes: std::collections::VecDeque<Change>,
+    accounts: HashMap<u8, Account>,
+}
+impl Registry {
+    fn changed(&self, network: &str, kind: &str, slot: u8, target_slot: u8) {
+        let mut feeds = self.feeds.lock().unwrap();
+        let feed = feeds.entry(network.into()).or_default();
+        feed.cursor += 1;
+        feed.changes.push_back(Change {
+            cursor: feed.cursor,
+            kind: kind.into(),
+            slot,
+            target_slot,
+        });
+        while feed.changes.len() > 128 {
+            feed.changes.pop_front();
+        }
+        drop(feeds);
+        self.changes.notify_waiters();
+    }
+    fn snapshot(&self, network: &str, slot: u8, boot: uuid::Uuid) -> Result<Snapshot> {
+        let rows = self.registrations.lock().unwrap();
+        let r = rows.get(network).context("网络未注册")?;
+        let nodes = self
+            .nodes
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(key, (e, t))| {
+                key.starts_with(&format!("{network}/"))
+                    && t.elapsed() < Duration::from_secs(180)
+                    && r.directory
+                        .members
+                        .iter()
+                        .any(|m| m.slot == e.slot && m.device == e.device)
+            })
+            .map(|(_, (e, _))| e.clone())
+            .collect();
+        let traversal = self
+            .traversal
+            .lock()
+            .unwrap()
+            .get_mut(network)
+            .map(|i| {
+                i.snapshot()
+                    .into_iter()
+                    .filter(|m| {
+                        m.to_slot == slot
+                            && m.to_boot == boot
+                            && r.directory
+                                .members
+                                .iter()
+                                .any(|p| p.slot == m.from_slot && p.device == m.from_device)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Snapshot {
+            directory: r.directory.clone(),
+            nodes,
+            traversal,
+            capabilities: conwu_core::metadata::DiscoveryCapabilities {
+                traversal_version: 1,
+                tcp_peer_reflexive: 1,
+                ..Default::default()
+            },
+        })
+    }
+}
+struct WaitGuard {
+    registry: Arc<Registry>,
+    network: String,
+    slot: u8,
+    _permit: tokio::sync::OwnedSemaphorePermit,
+}
+impl Drop for WaitGuard {
+    fn drop(&mut self) {
+        if let Some(a) = self
+            .registry
+            .feeds
+            .lock()
+            .unwrap()
+            .get_mut(&self.network)
+            .and_then(|f| f.accounts.get_mut(&self.slot))
+        {
+            a.waiting = false;
+        }
+    }
+}
+async fn signed_watch(
+    State(r): State<Arc<Registry>>,
+    Path(network): Path<String>,
+    request: Request,
+) -> Response {
+    let result=async{
+        let auth=authenticate(&r,&request,&network)?;let input:WatchRequest=body(request).await?;
+        let member={let rows=r.registrations.lock().unwrap();let Some(row)=rows.get(&network)else{return Ok(StatusCode::PRECONDITION_FAILED.into_response())};
+            if !c::eq(auth.as_bytes(),row.auth.as_bytes()){return Ok(StatusCode::UNAUTHORIZED.into_response());}
+            let Some(member)=row.directory.members.iter().find(|m|m.slot==input.slot)else{return Ok(StatusCode::FORBIDDEN.into_response())};member.clone()};
+        if input.verify(&network,&member).is_err(){return Ok(StatusCode::FORBIDDEN.into_response());}
+        let permit=match r.waiters.clone().try_acquire_owned(){Ok(p)=>p,Err(_)=>return Ok(StatusCode::SERVICE_UNAVAILABLE.into_response())};
+        {
+            let mut feeds=r.feeds.lock().unwrap();let feed=feeds.entry(network.clone()).or_default();let a=feed.accounts.entry(input.slot).or_default();
+            a.tokens=(a.tokens+a.tick.elapsed().as_secs_f64()*0.8).min(8.);a.tick=Instant::now();
+            a.requests.retain(|_,expires|*expires>conwu_core::unix_seconds());
+            if a.waiting||a.requests.contains_key(&input.request_id){return Ok(StatusCode::CONFLICT.into_response());}
+            if a.tokens<1.||a.requests.len()>=128{return Ok(StatusCode::TOO_MANY_REQUESTS.into_response());}
+            a.tokens-=1.;a.requests.insert(input.request_id,input.expires);a.waiting=true;
+        }
+        let _guard=WaitGuard{registry:r.clone(),network:network.clone(),slot:input.slot,_permit:permit};
+        let deadline=tokio::time::Instant::now()+Duration::from_secs(25.min((input.expires-conwu_core::unix_seconds()).max(0)as u64));
+        loop{
+            let notified=r.changes.notified();tokio::pin!(notified);notified.as_mut().enable();
+            if !r.registrations.lock().unwrap().get(&network).is_some_and(|row|row.directory.members.contains(&member)){return Ok(StatusCode::FORBIDDEN.into_response());}
+            let(cursor,reset,changes)={let feeds=r.feeds.lock().unwrap();let feed=feeds.get(&network).unwrap();let reset=input.server_epoch!=r.epoch||input.after>feed.cursor||feed.changes.front().is_some_and(|c|input.after<c.cursor-1);
+                let changes=feed.changes.iter().filter(|c|c.cursor>input.after&&(if c.target_slot!=0{c.target_slot==input.slot}else{c.slot==0||c.slot!=input.slot})).cloned().collect::<Vec<_>>();(feed.cursor,reset,changes)};
+            if reset||!changes.is_empty()||tokio::time::Instant::now()>=deadline{return Ok(axum::Json(WatchResponse{server_epoch:r.epoch,cursor,reset,changes,snapshot:r.snapshot(&network,input.slot,input.boot_id)?}).into_response());}
+            tokio::select!{_=r.app.engine.cancel.cancelled()=>return Ok(StatusCode::SERVICE_UNAVAILABLE.into_response()),_=tokio::time::sleep_until(deadline)=>{},_=notified=>{}}
+        }
+    }.await;
+    result.unwrap_or_else(|e: anyhow::Error| reply(Err(e)))
+}
+
+use crate::coordination_store::Registration;
 struct Registry {
+    epoch: uuid::Uuid,
+    feeds: Mutex<HashMap<String, Feed>>,
+    waiters: Arc<tokio::sync::Semaphore>,
+    traversal: Mutex<HashMap<String, conwu_core::traversal::Inbox>>,
     names: Mutex<HashMap<String, String>>,
     assist: crate::assistance::Assist,
     changes: tokio::sync::Notify,
@@ -130,11 +342,15 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
     let address: SocketAddr =
         format!("{}:{}", url.host_str().unwrap(), url.port().unwrap()).parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
+    ensure!(
+        !app.store.checked_file("coordinator-restore.json")?.exists(),
+        "协调恢复未完成，请显式重新恢复完整备份"
+    );
     let path = app.store.root.join("coordinator.json");
     let registrations = if path.exists() {
         let bytes = std::fs::read(path)?;
         ensure!(bytes.len() <= 8 * 1024 * 1024, "协调数据过大");
-        let registrations: BTreeMap<String, Registration> = serde_json::from_slice(&bytes)?;
+        let registrations = crate::coordination_store::decode(&bytes)?;
         for (network, r) in &registrations {
             identity::validate_directory(&r.directory, network, &r.directory.owner_key, 0)?;
             ensure!(
@@ -147,6 +363,10 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
         BTreeMap::new()
     };
     let registry = Arc::new(Registry {
+        epoch: uuid::Uuid::new_v4(),
+        feeds: Mutex::new(HashMap::new()),
+        waiters: Arc::new(tokio::sync::Semaphore::new(64)),
+        traversal: Mutex::new(HashMap::new()),
         names: Mutex::new(HashMap::new()),
         assist: crate::assistance::Assist::default(),
         changes: tokio::sync::Notify::new(),
@@ -160,18 +380,20 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
             "/health",
             get(|| async {
                 axum::Json(
-                    json!({"ok":true,"mesh":true,"pairwise":true,"version":"rust-experiment","punchAssist":1,"punchTcpStun":1,"punchModes":["faketcp","phantun","mimic","tcpraw","tcp","https"],"tcpAssist":1}),
+                    json!({"ok":true,"mesh":true,"pairwise":true,"version":"rust-experiment","meshProtocol":4,"pairNetworks":1,"nodeIdentity":1,"integratedCoordinator":1,"meshWatch":1,"meshTraversal":1,"punchAssist":1,"punchTcpStun":1,"punchModes":["faketcp","phantun","mimic","tcpraw","tcp","https"],"tcpAssist":1,"traversal":1,"nativeAbi":1}),
                 )
             }),
         )
         .route("/v3/mesh/{network}/directory", put(directory))
         .route("/v3/mesh/{network}/nodes/{slot}", put(publish))
         .route("/v3/mesh/{network}", get(read))
-        .route("/v3/mesh/{network}/watch", get(watch))
+        .route("/v3/mesh/{network}/watch", get(watch).post(signed_watch))
         .route("/v3/mesh/{network}/tcp-assist", post(member_assist))
+        .route("/v3/mesh/{network}/traversal",post(publish_traversal))
         .route("/v1/punch-assist/{action}", post(first_assist))
         .layer(DefaultBodyLimit::max(65536))
-        .with_state(registry.clone());
+        .with_state(registry.clone())
+        .merge(crate::web::remote_router(app.clone())?);
     let stop = app.engine.cancel.child_token();
     let mut certificate_pin = String::new();
     let tls = if url.scheme() == "https" {
@@ -276,17 +498,21 @@ async fn directory(
                     "协调授权不符"
                 );
                 conwu_core::metadata::successor(&directory, &prior.directory)?;
+                if directory.revision == prior.directory.revision {
+                    return Ok(json!({"ok":true}));
+                }
             }
             ensure!(
                 registrations.contains_key(&network) || registrations.len() < 4096,
                 "协调网络表已满"
             );
             let mut next = registrations.clone();
-            next.insert(network, Registration { auth, directory });
+            next.insert(network.clone(), Registration { auth, directory });
             r.app
                 .store
                 .write("coordinator.json", &serde_json::to_vec(&next)?, true)?;
             *registrations = next;
+            r.changed(&network, "directory", 0, 0);
             r.changes.notify_waiters();
             Ok(json!({"ok":true}))
         }
@@ -336,6 +562,7 @@ async fn publish(
                 r.names.lock().unwrap().insert(key.clone(), name);
             }
             nodes.insert(key, (envelope, Instant::now()));
+            r.changed(&network, "announcement", slot, 0);
             r.changes.notify_waiters();
             Ok(json!({"ok":true}))
         }
@@ -375,8 +602,20 @@ async fn read(
                 .map(|(_, (e, _))| e.clone())
                 .collect();
             Ok(json!(Snapshot {
+                capabilities: conwu_core::metadata::DiscoveryCapabilities {
+                    traversal_version: 1,
+                    tcp_peer_reflexive: 1,
+                    ..Default::default()
+                },
                 directory: registration.directory.clone(),
-                nodes
+                nodes,
+                traversal: r
+                    .traversal
+                    .lock()
+                    .unwrap()
+                    .get_mut(&network)
+                    .map(|i| i.snapshot())
+                    .unwrap_or_default(),
             }))
         }
         .await,
@@ -420,6 +659,44 @@ async fn first_assist(
         async {
             let input: Value = body(request).await?;
             r.assist.request(&action, &input, remote.ip())
+        }
+        .await,
+    )
+}
+async fn publish_traversal(
+    State(r): State<Arc<Registry>>,
+    Path(network): Path<String>,
+    request: Request,
+) -> Response {
+    reply(
+        async {
+            let auth = authenticate(&r, &request, &network)?;
+            #[derive(Deserialize)]
+            #[serde(rename_all = "PascalCase")]
+            struct Batch {
+                messages: Vec<conwu_core::traversal::Message>,
+            }
+            let batch: Batch = body(request).await?;
+            let registrations = r.registrations.lock().unwrap();
+            let registration = registrations.get(&network).context("网络未注册")?;
+            ensure!(
+                c::eq(auth.as_bytes(), registration.auth.as_bytes())
+                    && !registration.directory.closed,
+                "协调授权不符或网络已关闭"
+            );
+            let mut boxes = r.traversal.lock().unwrap();
+            ensure!(
+                boxes.len() < 4096 || boxes.contains_key(&network),
+                "打洞邮箱数量已满"
+            );
+            boxes.entry(network).or_default().insert(
+                &registration.directory.network,
+                &registration.directory,
+                batch.messages,
+            )?;
+            r.changed(&registration.directory.network, "traversal", 0, 0);
+            r.changes.notify_waiters();
+            Ok(json!({"ok":true}))
         }
         .await,
     )
@@ -645,6 +922,9 @@ mod tests {
             );
         }
         let registry = Arc::new(Registry {
+            epoch: uuid::Uuid::new_v4(),
+            feeds: Mutex::new(HashMap::new()),
+            waiters: Arc::new(tokio::sync::Semaphore::new(64)),
             app: app.clone(),
             names: Mutex::new(HashMap::new()),
             assist: crate::assistance::Assist::default(),
@@ -652,13 +932,14 @@ mod tests {
             registrations: Mutex::new(registrations),
             nodes: Mutex::new(nodes),
             rate: Mutex::new(HashMap::new()),
+            traversal: Mutex::new(HashMap::new()),
         });
         let request = Request::builder()
             .uri("/")
             .header("Authorization", format!("Bearer {token}"))
             .body(axum::body::Body::empty())?;
         let response = read(
-            State(registry),
+            State(registry.clone()),
             Path(profiles[0].pair.network.clone()),
             request,
         )
@@ -671,6 +952,114 @@ mod tests {
             "同设备的其他网络公告不能混入当前网络"
         );
         snapshot.nodes[0].open(&profiles[0], &profiles[0].member)?;
+        let watch_body = |input: &WatchRequest| -> Result<Request> {
+            Ok(Request::builder()
+                .uri("/")
+                .header("Authorization", format!("Bearer {token}"))
+                .body(axum::body::Body::from(serde_json::to_vec(input)?))?)
+        };
+        let input = WatchRequest::create(&profiles[0], uuid::Uuid::new_v4(), uuid::Uuid::nil(), 0)?;
+        let first = signed_watch(
+            State(registry.clone()),
+            Path(profiles[0].pair.network.clone()),
+            watch_body(&input)?,
+        )
+        .await;
+        ensure!(
+            first.status() == StatusCode::OK,
+            "签名等待首次应返回完整快照"
+        );
+        let first: WatchResponse =
+            serde_json::from_slice(&axum::body::to_bytes(first.into_body(), 196608).await?)?;
+        ensure!(
+            first.reset && first.snapshot.capabilities.traversal_version == 1,
+            "等待需声明真实受管协议能力"
+        );
+        let replay = signed_watch(
+            State(registry.clone()),
+            Path(profiles[0].pair.network.clone()),
+            watch_body(&input)?,
+        )
+        .await;
+        ensure!(
+            replay.status() == StatusCode::CONFLICT,
+            "相同等待请求不能反复占用资源"
+        );
+        let mut forged = WatchRequest::create(
+            &profiles[0],
+            input.boot_id,
+            first.server_epoch,
+            first.cursor,
+        )?;
+        forged.signature = "invalid".into();
+        ensure!(
+            signed_watch(
+                State(registry.clone()),
+                Path(profiles[0].pair.network.clone()),
+                watch_body(&forged)?
+            )
+            .await
+            .status()
+                == StatusCode::FORBIDDEN,
+            "网络Bearer不能冒充成员签名"
+        );
+        let next = WatchRequest::create(
+            &profiles[0],
+            input.boot_id,
+            first.server_epoch,
+            first.cursor,
+        )?;
+        let state = registry.clone();
+        let network = profiles[0].pair.network.clone();
+        let request = watch_body(&next)?;
+        let waiter =
+            tokio::spawn(async move { signed_watch(State(state), Path(network), request).await });
+        tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if registry
+                    .feeds
+                    .lock()
+                    .unwrap()
+                    .get(&profiles[0].pair.network)
+                    .and_then(|f| f.accounts.get(&profiles[0].member.slot))
+                    .is_some_and(|a| a.waiting)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await?;
+        let duplicate = WatchRequest::create(
+            &profiles[0],
+            input.boot_id,
+            first.server_epoch,
+            first.cursor,
+        )?;
+        ensure!(
+            signed_watch(
+                State(registry.clone()),
+                Path(profiles[0].pair.network.clone()),
+                watch_body(&duplicate)?
+            )
+            .await
+            .status()
+                == StatusCode::CONFLICT,
+            "同一成员仅保持一个等待"
+        );
+        registry.changed(
+            &profiles[0].pair.network,
+            "traversal",
+            0,
+            profiles[0].member.slot,
+        );
+        let awake = tokio::time::timeout(Duration::from_secs(2), waiter).await??;
+        let awake: WatchResponse =
+            serde_json::from_slice(&axum::body::to_bytes(awake.into_body(), 196608).await?)?;
+        ensure!(
+            !awake.reset && awake.cursor > first.cursor && awake.changes.len() == 1,
+            "受管消息必须立即唤醒正确成员"
+        );
         app.engine.shutdown().await;
         Ok(())
     }

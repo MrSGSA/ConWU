@@ -87,15 +87,19 @@ impl Lease {
         self.expires = Instant::now() + Duration::from_secs(lifetime as u64);
         Ok(())
     }
-    pub async fn acquire(port: u16) -> Result<Self> {
+    pub async fn acquire(port: u16, pcp_pmp: bool) -> Result<Self> {
         let (local, gateway) = tokio::task::spawn_blocking(route).await??;
+        if let Ok(lease) = upnp(local, gateway, port).await {
+            return Ok(lease);
+        }
+        ensure!(pcp_pmp, "网关 UPnP 未提供可用映射；PCP/NAT-PMP 后备未开启");
         if let Ok(lease) = pcp(local, gateway, port).await {
             return Ok(lease);
         }
         if let Ok(lease) = pmp(local, gateway, port).await {
             return Ok(lease);
         }
-        upnp(local, gateway, port).await
+        anyhow::bail!("UPnP、PCP 与 NAT-PMP 均未取得公网映射")
     }
     pub async fn close(&self) -> Result<()> {
         match &self.kind {

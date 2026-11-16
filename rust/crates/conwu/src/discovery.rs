@@ -479,13 +479,37 @@ pub async fn observe_tcp(
     engine: &crate::runtime::Engine,
     mode: &str,
 ) -> Result<TcpObservation> {
-    for server in servers.iter().take(8) {
-        for remote in endpoint(server)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .filter(SocketAddr::is_ipv4)
-        {
+    ensure!(servers.len() <= 256, "STUN 列表超过限制");
+    let key = (mode.to_owned(), port);
+    let start = *engine.stun_cursor.lock().unwrap().get(&key).unwrap_or(&0);
+    let count = servers.len().min(8);
+    // Bound each round's DNS and socket work, but do not permanently ignore
+    // entries after the first eight in a migrated/default server catalogue.
+    let order = (0..count).map(|offset| (start + offset) % servers.len());
+    engine.stun_cursor.lock().unwrap().insert(
+        key.clone(),
+        if servers.is_empty() {
+            0
+        } else {
+            (start + count) % servers.len()
+        },
+    );
+    let mut queries = futures_util::stream::FuturesUnordered::new();
+    for index in order {
+        let server = &servers[index];
+        queries.push(async move { (index, endpoint(server).await.unwrap_or_default()) });
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
+    let mut tried = std::collections::HashSet::new();
+    loop {
+        let (index, addresses) = match tokio::time::timeout_at(deadline, queries.next()).await {
+            Ok(Some(a)) => a,
+            _ => break,
+        };
+        for remote in addresses.into_iter().filter(SocketAddr::is_ipv4).take(8) {
+            if !tried.insert(remote) {
+                continue;
+            }
             let attempt = async {
                 crate::raw::prepare_observer(engine, mode, port, remote).await?;
                 let ip = local_route(remote)?;
@@ -495,6 +519,7 @@ pub async fn observe_tcp(
                     Some(socket2::Protocol::TCP),
                 )?;
                 socket.set_reuse_address(true)?;
+                socket.set_linger(Some(Duration::ZERO))?;
                 #[cfg(target_os = "linux")]
                 socket.set_reuse_port(true)?;
                 socket.bind(&SocketAddr::new(ip, port).into())?;
@@ -512,8 +537,12 @@ pub async fn observe_tcp(
                     observer: remote,
                 })
             };
-            if let Ok(Ok(result)) = tokio::time::timeout(Duration::from_millis(2500), attempt).await
-            {
+            let budget = std::cmp::min(
+                deadline,
+                tokio::time::Instant::now() + Duration::from_millis(1800),
+            );
+            if let Ok(Ok(result)) = tokio::time::timeout_at(budget, attempt).await {
+                engine.stun_cursor.lock().unwrap().insert(key, index);
                 return Ok(result);
             }
         }
