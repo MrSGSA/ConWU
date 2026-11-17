@@ -15,6 +15,7 @@ function connectedTime(p){return online&&p.connected&&p.connection?.phase==='Con
 function updateConnectedTimes(){for(const element of document.querySelectorAll('[data-connected-slot]')){const peer=state?.peers.find(p=>p.slot===Number(element.dataset.connectedSlot));element.textContent=peer?connectedTime(peer):'—';}}
 function entryDescription(p){if(p.outerTarget&&p.outerTarget!=='Unknown')return p.outerTarget;return p.entryDirection==='Inbound'?`入站直连 · 本机接收端口 ${state?.settings?.listenPort||'—'}`:'尚未取得已认证入口信息';}
 const phaseNames={Idle:'网络已就绪',Offline:'设备未在线',StartingAdapter:'准备虚拟网卡',WaitingPeer:'等待设备响应',WaitingEntry:'寻找入口',EntryUnavailable:'已有入口不可用',Connecting:'正在连接',Queued:'排队连接',Preparing:'准备直连',Verifying:'验证直连',Releasing:'回收资源',Blocked:'需要处理',Recovering:'恢复连接',Retrying:'等待重试',Paused:'已断开连接',Connected:'已直连'};
+function pendingRequest(p){return !!(p?.active&&p.owner&&p.candidate&&(p.pending??(!p.approved&&!p.delivered&&!p.outcome)));}
 try{theme=localStorage.getItem('streamlink-theme')==='light'?'light':'dark';}catch{}
 
 function notify(message){clearTimeout(toastTimer);$('toast').innerHTML=icon('check')+`<span>${esc(message)}</span>`;$('toast').classList.add('show');toastTimer=setTimeout(()=>$('toast').classList.remove('show'),3400);}
@@ -295,7 +296,7 @@ function render(next){
   traffic=rates(state);appendStatusLogs(state);
   if(!settingsHydrated||!dirtyCount()){const configuration=configFromStatus(state);settingsChanged=!same(saved,configuration);saved=configuration;drafts=clone(saved);baseRevision=state.settingsRevision||'';settingsHydrated=true;if(!defaults.identity.name)defaults.identity.name=state.deviceName;}
   const p=state.pairing,live=p?.active&&p.expires*1000>Date.now();pairCode=live&&p.owner&&!p.code.startsWith('SL')?p.code:'';pairExpires=live?p.expires*1000:0;invitation=live&&p.owner&&p.code.startsWith('SL6.')?p.code:'';inviteExpires=pairExpires;
-  incoming=!!(live&&p.owner&&p.candidate);joinStatus=live&&!p.owner?'waiting':'';joinModel=JSON.stringify([state.networkId,state.networkEnabled,state.settings?.directMode,state.settings?.connectionSource,p]);updateShell();
+  incoming=pendingRequest(p);joinStatus=live&&!p.owner?'waiting':'';joinModel=JSON.stringify([state.networkId,state.networkEnabled,state.settings?.directMode,state.settings?.connectionSource,p]);updateShell();
   if((page==='settings'||page==='create')&&!first&&oldNetwork===state.networkId&&$('settings-fields')){if(settingsChanged)renderFields();else{refreshSettingsTools();refreshEntryTargets();}const service=$('service-live-status');if(service)service.textContent=state.desktop?.serviceRegistered?(state.serviceReady?'已注册 · 正在运行':'已注册 · 已停止'):'尚未注册';controls();return;}
   if(page==='join'&&!first&&priorJoin===joinModel&&$('join-card')){controls();return;}
   if(page==='logs'&&!first&&$('terminal-lines')){updateLogView();controls();return;}

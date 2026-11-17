@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 六固定协议、手动选协议 | 六协议 Windows / Linux 真实 Wintun / TUN 配对、双向 ping、断开重连及全部网络重启恢复通过 | 最终候选 WAN 与持续业务 |
 | 自主打洞、第三方已有入口 | 两种模式均有独立实验；六协议协同 + TUN 双向 ping | WAN 抓包和恢复验证 |
-| Windows Mimic 纯 XDP | Generic AF_XDP 实机收发、多网络重启和清理通过，无 WinDivert 回退；扩大 NDIS 重绑时的启动等待 | 最新修订候选持续业务 |
+| Windows Mimic | 默认 WinDivert，入站所有权、窄范围 RST 抑制、同端口 STUN 和 peer-reflexive 握手保留；跨平台强制协调、双向 TUN 与重启通过，XDP 保留显式实验和启动回退 | 最新修订候选持续业务 |
 | FakeTCP 同源观察、prepared-start、捕获所有者 | Rust 管理 ABI、PID 绑定、捕获排他、确认退出；Windows / Linux 原生 broker、SLF1 / SLN1 与重连通过 | 最终候选实际链路 |
 | v3 签名 traversal 与历史受管路径 | .NET 双向互通及跨端受管状态机、SLF1、路径提名通过；历史未验证研究开关明确拒绝导入 | 实际协调监听与 WAN 恢复 |
 | 16 符号直连码、SAS、主机审批 | 原有协议主路径通过；IPv6 扩展码保留 | 跨版本配对与交付重试 |

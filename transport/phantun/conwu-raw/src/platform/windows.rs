@@ -1,4 +1,4 @@
-// TCPRAW-only legacy Windows I/O. Mimic uses xdp.rs and cannot enter this adapter.
+// Mimic owns inbound packets; TCPRAW sniffs the kernel's handshake packets.
 use crate::{Carrier, Config};
 use fake_tcp::{packet::MAX_PACKET_LEN, tun::TunDevice};
 use std::{
@@ -14,17 +14,14 @@ pub struct Device {
     handle: Arc<WinDivert<NetworkLayer>>,
     received: flume::Receiver<Vec<u8>>,
     closing: Arc<AtomicBool>,
-    _kernel_output: WinDivert<NetworkLayer>,
+    _kernel_output: Option<WinDivert<NetworkLayer>>,
+    mimic: bool,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl Device {
     pub fn open(config: &Config) -> io::Result<Self> {
-        if config.carrier != Carrier::TcpRaw {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "Windows Mimic requires XDP; WinDivert fallback is disabled",
-            ));
-        }
+        let mimic = config.carrier == Carrier::Mimic;
         let filter = if config.server {
             format!(
                 "inbound and ip and tcp and tcp.DstPort == {}{}",
@@ -37,14 +34,14 @@ impl Device {
             )
         } else {
             format!(
-                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {} and tcp.DstPort == {}",
+                "inbound and ip and tcp and ip.SrcAddr == {} and ip.DstAddr == {}{} and tcp.DstPort == {}",
                 config.remote.ip(),
                 config.source.ip(),
-                config.remote.port(),
+                if config.peer_reflexive { String::new() } else { format!(" and tcp.SrcPort == {}",config.remote.port()) },
                 config.source.port()
             )
         };
-        let flags = WinDivertFlags::default().set_sniff();
+        let flags = if mimic { WinDivertFlags::default() } else { WinDivertFlags::default().set_sniff() };
         let exact = if config.server {
             format!("tcp.SrcPort == {}", config.source.port())
         } else {
@@ -56,12 +53,20 @@ impl Device {
                 config.remote.port()
             )
         };
-        let kernel_output = WinDivert::network(
+        let kernel_output = if mimic { None } else { Some(WinDivert::network(
             &format!("outbound and ip and tcp and ip.TTL == 1 and ({})", exact),
             -1,
             WinDivertFlags::default().set_drop(),
         )
-        .map_err(io::Error::other)?;
+        .map_err(io::Error::other)?) };
+        let filter = if mimic {
+            // Inbound ownership suppresses kernel SYN-ACK/RST. Also catch a
+            // kernel RST for this owned local port, preserving protected STUN
+            // packets in the worker instead of dropping their control flow.
+            let source_ip = if config.source.ip().is_unspecified() { String::new() }
+                else { format!(" and ip.SrcAddr == {}",config.source.ip()) };
+            format!("({filter}) or (outbound and ip and tcp and tcp.Rst and tcp.SrcPort == {}{source_ip})",config.source.port())
+        } else { filter };
         let handle = Arc::new(
             WinDivert::network(&filter, 0, flags)
                 .map_err(|error| io::Error::other(format!("{}; filter={}", error, filter)))?,
@@ -80,7 +85,7 @@ impl Device {
         let capture = handle.clone();
         let quit = closing.clone();
         let protected = config.control_peer.clone();
-        std::thread::Builder::new()
+        let worker = std::thread::Builder::new()
             .name("raw-carrier-capture".into())
             .spawn(move || {
                 // A full IP buffer keeps oversized/malformed packets from ending
@@ -89,14 +94,20 @@ impl Device {
                 while !quit.load(Ordering::Relaxed) {
                     match capture.recv_wait(&mut buffer, 100) {
                         Ok(Some(packet)) => {
-                            // TCPRAW sniffing already leaves the kernel copy
-                            // intact, including any same-port STUN control flow.
                             let peer = *protected.read().unwrap();
                             if peer.is_some_and(|peer| {
-                                crate::packet::tcp_remote(&packet.data) == Some(peer)
+                                let remote = if packet.address.outbound() {
+                                    crate::packet::tcp_destination(&packet.data)
+                                } else { crate::packet::tcp_remote(&packet.data) };
+                                remote == Some(peer)
                             }) {
+                                if mimic && let Err(error) = capture.send(&packet) {
+                                    eprintln!("Mimic STUN control reinjection failed: {error}");
+                                    break;
+                                }
                                 continue;
                             }
+                            if mimic && packet.address.outbound() { continue; }
                             if packet.data.len() > MAX_PACKET_LEN {
                                 continue;
                             }
@@ -120,6 +131,8 @@ impl Device {
             received,
             closing,
             _kernel_output: kernel_output,
+            mimic,
+            worker: Some(worker),
         })
     }
 
@@ -161,7 +174,7 @@ impl TunDevice for Device {
         self.inject(buffer)
     }
     fn name(&self) -> String {
-        "windivert-tcpraw".into()
+        if self.mimic { "windivert-mimic" } else { "windivert-tcpraw" }.into()
     }
 }
 
@@ -169,5 +182,6 @@ impl Drop for Device {
     fn drop(&mut self) {
         self.closing.store(true, Ordering::Relaxed);
         let _ = self.handle.shutdown_handle().shutdown();
+        if let Some(worker) = self.worker.take() { let _ = worker.join(); }
     }
 }

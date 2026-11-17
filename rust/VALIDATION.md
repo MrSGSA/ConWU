@@ -35,6 +35,20 @@
 | 首次申请故障反馈 | 缺少本机承载组件且直连码允许协同探测时，立即保留本机错误并写入日志，不进入 STUN 等待；没有取得成员身份 |
 | 选区与新申请 | 实际界面轮询中保留概览选区，同时刷新新申请计数；加入阶段与后续失败原因在原表单中显示，输入的码保留便于重试 |
 | XDP 队列检查 | 新增不附加捕获规则的 RX/TX 实际队列检查；已在本机物理 Ethernet 验证就绪，安装脚本正常重复检查不重绑网卡 |
+| 协调同源与调度 | 当前开发分支 Windows 后台 37 项通过、2 项忽略，Linux 后台 34 项通过、1 项忽略；包含固定观察源 IP／端口的真实 TCP／TLS 套接字检查、首次过期重同步上限、旧轮次重放、响应大小限制和成员轮次续调度。核心、成员关系与安全检查分别 3／3／2 项通过；未运行的旧版 oracle 项目继续保留忽略。见 `coordinated-punch-20261117/windows-tests-current.log`、`linux-tests-current.log` 与两平台的 `*-tests-final.log` |
+| 双 NAT 协调与重启 | 六种承载均在双 Linux SNAT、conntrack 入站过滤、无静态 DNAT 且禁用网关映射的隔离环境中，通过首次 SAS 审批、逐字节双向加密报文及从机后台重启复连；入口刷新固定 60 秒，用于复现并验证断线唤醒。使用内存虚拟网卡，原生组件沿用既有构建。TCP／HTTPS／Phantun／Mimic／TCPRAW 在一轮中通过，FakeTCP 在为 WSL／NTFS 的 Unix socket 提供私有临时文件系统后单独补验通过。见 `coordinated-punch-20261117/dual-nat-six-final.log`、`dual-nat-faketcp-final.log` |
+
+双 NAT 夹具验证的是所述 SNAT 和过滤策略，未完成校园网目标相关映射、随机端口分配及公网双端严格 NAT 的实测；不据此宣称所有 NAT3／NAT4 可穿透，也不将其作为实际串流性能。上述接续开发仍使用 `1.5.0`，三机安装与发布结果由对应候选包的验收记录确认。
+
+## 2026-11-17 日用修复与 NAT 实验
+
+2026-11-17 新增日用修复的源码验收：Windows 后台最终 40 项通过、2 项忽略，Linux 首轮对应修复 37 项通过、1 项忽略，核心／成员关系／安全分别 3／3／2 项通过。Linux 末次补验在用户报告 UU 卡顿后中止，未将其列为完整通过；日用会话期间不重启重负载检查。实际内嵌 WebUI 的 Playwright 验证覆盖审批／拒绝后卡片与角标收尾、移除未批准申请、UU 旧状态兼容及网络过滤、更新结果手动关闭和自动收起，未出现页面 JavaScript 错误。
+
+Windows Mimic 默认 WinDivert 的修订已通过原始承载 14 项协议回归，以及 Windows Wintun／Linux TUN 的强制协调首次 SAS、双向报文、断开重连和 Windows 后台重启。TCPRAW 同样通过该跨平台组合。证据为 `out/daily-fixes-20261117/windows-tests-final.log`、`linux-tests-current.log`、`windows-raw-tests-current.log`、`web-presentation-final.log` 和 `windivert-cross-final.log`。此处为受控虚拟链路，未据此宣称 WLAN 日用长稳或新版 MSI 安装通过。此前纯 XDP 的历史验收不等于 AX211 WLAN 的队列稳定性；本轮实机已出现重复 TX bind `0x80070017`。
+
+生日碰撞首次独立 TCP 实验在缩小的 1024 端口空间中，一端稳定一端随机的 64×64 组合成功 3／3，双端随机组合成功 0／3；双方 WAN 的主动 SYN 和变化的源端口已记录，命名空间清理通过。证据 `out/lab/birthday-601f9c78/`，算法来源、边界和复现入口见 `docs/NAT穿透实验.md`。未接入产品，也没有公网成功率结论。
+
+同日用户报告笔记本连接台式机的 UU 频繁卡顿至 999ms，停止并行构建和网卡／承载实验后确认明显缓解。只读观测显示当前为 UU UDP 经 Phantun 传输，两端 ConWU 心跳约 17–20ms；采样未复现持续 999ms，台式虚拟网卡历史接收错误计数 1790 在两次读取间未增加。本轮开发测试干扰是当前最强线索，尚未隔离出 CPU、共享驱动或网卡重建的独立贡献。后续日用会话期间停止此类测试；跨平台脚本新增真实生产服务／SCM PID 校验和活跃流量拦截。诊断证据位于 `out/uu-latency-20261117/`，未安装开发改动或更改日用 UU 设置。
 
 ## 性能数据
 

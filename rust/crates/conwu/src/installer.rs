@@ -182,7 +182,7 @@ fn service_ui_grant(sid: &str) -> Result<()> {
     }
     Ok(())
 }
-fn drivers(root: &Path, require_mimic: bool) -> Result<()> {
+fn drivers(root: &Path) -> Result<()> {
     let components = root.join("app/components");
     let dll = components.join("WinDivert.dll");
     let library: libloading::Library =
@@ -200,22 +200,9 @@ fn drivers(root: &Path, require_mimic: bool) -> Result<()> {
         );
         close(handle);
     }
-    let script = components.join("install-xdp.ps1");
-    let runtime = components.join("xdp-runtime");
-    let mut args = vec![
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            script.to_str().context("XDP安装路径无效")?,
-            "-RuntimeDirectory",
-            runtime.to_str().context("XDP运行时路径无效")?,
-        ];
-    if require_mimic {
-        args.push("-RequireMimic");
-    }
-    run("powershell.exe", &args)?;
+    // Mimic now uses WinDivert by default. An optional XDP experiment must
+    // not make an otherwise healthy installation depend on WLAN XDP queues
+    // or rebind a shared driver during an update.
     Ok(())
 }
 fn configure(sid: &str, attempt: &str) -> Result<()> {
@@ -263,9 +250,7 @@ fn configure(sid: &str, attempt: &str) -> Result<()> {
     };
     store.write(&file, &serde_json::to_vec(&auth)?, false)?;
     store.write("ui-user.sid", auth.after.as_bytes(), false)?;
-    drivers(&root, db.networks.iter().any(|n| {
-        n.enabled && n.profile.is_some() && n.settings.path_selection == "mimic-only"
-    }))?;
+    drivers(&root)?;
     run(
         "sc.exe",
         &[

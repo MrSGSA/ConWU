@@ -273,14 +273,27 @@ pub async fn connect_role(
     identity: &TlsIdentity,
     parent: &CancellationToken,
 ) -> Result<Pipe> {
-    let socket = tcp_open(endpoint, port).await?;
+    let local = SocketAddr::new(crate::discovery::local_route(endpoint)?, port);
+    connect_role_from(mode, endpoint, pin, local, protocol_client, identity, parent).await
+}
+pub async fn connect_role_from(
+    mode: &str,
+    endpoint: SocketAddr,
+    pin: &str,
+    local: SocketAddr,
+    protocol_client: bool,
+    identity: &TlsIdentity,
+    parent: &CancellationToken,
+) -> Result<Pipe> {
+    let socket = tcp_open_from(endpoint, local).await?;
     if protocol_client {
         client_socket(mode, socket, pin, false, parent).await
     } else {
         accept(mode, socket, identity, parent).await
     }
 }
-pub async fn tcp_open(endpoint: SocketAddr, port: u16) -> Result<TcpStream> {
+pub async fn tcp_open_from(endpoint: SocketAddr, local: SocketAddr) -> Result<TcpStream> {
+    ensure!(endpoint.is_ipv4() == local.is_ipv4() && !local.ip().is_unspecified(), "同源 TCP 地址族或源地址无效");
     let socket = socket2::Socket::new(
         if endpoint.is_ipv4() {
             socket2::Domain::IPV4
@@ -294,8 +307,7 @@ pub async fn tcp_open(endpoint: SocketAddr, port: u16) -> Result<TcpStream> {
     #[cfg(target_os = "linux")]
     socket.set_reuse_port(true)?;
     socket.set_nonblocking(true)?;
-    let local = crate::discovery::local_route(endpoint)?;
-    socket.bind(&SocketAddr::new(local, port).into())?;
+    socket.bind(&local.into())?;
     let socket: std::net::TcpStream = socket.into();
     let future = tokio::net::TcpSocket::from_std_stream(socket).connect(endpoint);
     Ok(tokio::time::timeout(Duration::from_secs(6), future)

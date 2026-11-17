@@ -14,17 +14,17 @@ const uuTakeoverUi=(()=>{
   </article><article class="card pad"><h2>网络与接管状态</h2><p class="hint">网络上线后自动加入，离线后自动移除。</p><div id="uu-takeover-networks" role="list"></div></article></div>`;
  }
  function refresh(root,ready){
-  current=root?.uuTakeover||null;networks=root?.networks||[];
+  current=root?.uuTakeover||null;networks=(root?.networks||[]).filter(n=>!!n.status?.networkId);
   const toggle=document.getElementById('uu-takeover-enabled');if(!toggle)return;
   const desired=draft||current?.settings||{enabled:false};
   toggle.checked=!!desired.enabled;toggle.disabled=pending||!ready||!current?.supported;
-  const names={Disabled:'未开启',Applying:'正在应用',WaitingNetwork:'等待 ConWU 直连',ChooseNetwork:'请选择网络',WaitingUu:'等待 UU 启动',Ready:'已就绪，等待 UU 连接',Idle:'已检测到 UU 数据 · 当前低流量',Transmitting:'检测到 UU 经由 ConWU 传输',Error:'接管暂不可用',Stopped:'接管已停止',Unsupported:'本机暂不支持'};
-  document.getElementById('uu-takeover-state').textContent=pending?'正在保存…':!ready?'状态待刷新':names[current?.state]||'后台尚未支持此功能';
+  const names={Disabled:'未开启',Applying:'正在应用',WaitingNetwork:'等待 ConWU 直连',ChooseNetwork:'请选择网络',WaitingUu:'等待 UU 启动',Ready:'接管已就绪，等待实际流量',Active:'接管已启用，流量以右侧计数为准',Idle:'已检测到 UU 数据 · 当前低流量',Transmitting:'检测到 UU 经由 ConWU 传输',Error:'接管暂不可用',Stopped:'接管已停止',Unsupported:'本机暂不支持'};
+  document.getElementById('uu-takeover-state').textContent=pending?'正在保存…':!ready?'状态待刷新':names[current?.state]||current?.message||'正在读取接管状态';
   document.getElementById('uu-takeover-dot').className='dot'+(ready&&current?.rulesActive&&current?.trafficObserved?' good':'');
   document.getElementById('uu-takeover-error').textContent=error||(current?.state==='Error'?current.message:'');
   const list=document.getElementById('uu-takeover-networks');
   const rows=networks.map(n=>{const live=current?.networks?.find(v=>v.id===n.id),connected=ready&&n.status?.directPeers>0;
-   const label=!desired.enabled?'接管未开启':!connected?'等待网络直连':!current?.rulesActive?'等待 UU 启动':live?.trafficObserved?'检测到 UU 流量':'已自动就绪';
+   const label=!desired.enabled?'接管未开启':!connected?'等待网络直连':current?.state==='Error'?'接管恢复中':!current?.rulesActive?'等待 UU 启动':live?.trafficObserved?'检测到 UU 持续流量':live?.sessionConfirmed?'已检测到 UU 数据，当前流量较低':'已就绪，等待串流确认';
    return `<div class="method-row" role="listitem" data-uu-network="${esc(n.id)}"><div class="grow"><strong>${esc(n.name)}</strong><div class="hint mono">${esc(n.status?.virtualIp||'尚未分配虚拟 IP')}</div><div class="hint">${label}</div></div><div class="small mono">↓ ${fmt(live?.receivedBytes)}<br>↑ ${fmt(live?.sentBytes)}</div></div>`;}).join('');
   list.innerHTML=rows||'<p class="muted">尚无网络。创建或加入网络后，此处会自动显示。</p>';
  }

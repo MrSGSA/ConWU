@@ -165,13 +165,16 @@ impl App {
         )
     }
     pub fn reply(&self, network: &str, operation: Option<&str>) -> Value {
+        // Read completion before taking the state snapshot. Otherwise a long
+        // command may finish between the two reads and return "completed"
+        // together with its pre-change status (e.g. the interim direct code
+        // before the coordinator code replaces it).
+        let snapshot = operation.and_then(|id| self.operations.lock().unwrap().get(id).cloned());
         let mut result = json!({"ok":true,"api":1,"error":"","status":self.status(network)});
-        if let Some(id) = operation {
-            if let Some(op) = self.operations.lock().unwrap().get(id) {
-                result["operation"] = public_operation(op);
-                if let Some(c) = op.get("configurationId") {
-                    result["configurationId"] = c.clone();
-                }
+        if let Some(op) = snapshot {
+            result["operation"] = public_operation(&op);
+            if let Some(c) = op.get("configurationId") {
+                result["configurationId"] = c.clone();
             }
         }
         result
@@ -236,7 +239,7 @@ impl App {
         out["logEntries"] = json!(self.logs.rows());
         out["entryResolutions"] = self.entry_resolutions.read().unwrap().clone();
         out["update"] = self.update.read().unwrap().clone();
-        out["localUpdate"] = self.local_update.read().unwrap().clone();
+        out["localUpdate"] = crate::updates::status(self);
         out["desktop"] = self.desktop.read().unwrap().clone();
         out["coordinator"] = crate::coordinator::status();
         out["uuTakeover"] = crate::uu::status(self);
@@ -625,6 +628,7 @@ impl App {
                 }
                 crate::updates::command(self, action).await
             }
+            "update-dismiss" => crate::updates::dismiss(self, body["localUpdate"]["receiptId"].as_str().unwrap_or("")),
             "uu-takeover" => crate::uu::configure(self, body["uuTakeover"].clone()).await,
             "register-service" => {
                 crate::platform::install(self).await?;
@@ -1175,14 +1179,16 @@ impl App {
                 self.log("INFO", "已批准对端加入，正在交付网络配置");
             }
             "reject" => {
-                self.engine
-                    .rooms
-                    .lock()
-                    .unwrap()
-                    .get_mut(id)
-                    .context("没有待处理申请")?
-                    .0
-                    .reject()?;
+                let mut rooms = self.engine.rooms.lock().unwrap();
+                let host = &mut rooms.get_mut(id).context("没有待处理申请")?.0;
+                ensure!(
+                    action["candidate"].as_str() == Some(&host.state.candidate)
+                        && !host.state.candidate.is_empty()
+                        && host.ticket.expires > unix_seconds()
+                        && host.state.outcome.is_empty(),
+                    "申请已变化或已处理"
+                );
+                host.reject()?;
             }
             "pair-cancel" => {
                 self.engine.cancel_guest(id);
@@ -1252,13 +1258,14 @@ impl App {
                     ensure!(
                         n.profile
                             .as_ref()
-                            .is_some_and(|p| p.owner_private.is_empty()),
+                            .is_none_or(|p| p.owner_private.is_empty()),
                         "主机请使用删除网络，或断开连接以保留网络"
                     );
                 }
                 let notice = if kind == "leave" {
-                    let p = n.profile.as_ref().context("网络尚未批准")?;
-                    Some(conwu_core::departure::Notice::create(p)?)
+                    // An unapproved request has no member identity and cannot
+                    // sign a departure. Removing it only cancels local pairing.
+                    n.profile.as_ref().map(conwu_core::departure::Notice::create).transpose()?
                 } else {
                     None
                 };

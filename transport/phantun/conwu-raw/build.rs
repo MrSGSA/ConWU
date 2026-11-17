@@ -16,7 +16,7 @@ fn main() {
     for library in ["ntdll", "ws2_32", "iphlpapi", "delayimp"] {
         println!("cargo:rustc-link-lib={library}");
     }
-    // TCPRAW's legacy adapter is the only WinDivert caller. A Mimic process
-    // does not load that DLL, even though the executable contains both modes.
+    // The default Mimic/TCPRAW adapters use WinDivert. Delay loading still
+    // allows standalone XDP diagnostics before loading the capture DLL.
     println!("cargo:rustc-link-arg=/DELAYLOAD:WinDivert.dll");
 }

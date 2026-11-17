@@ -18,8 +18,16 @@ pub fn open(config: &Config) -> io::Result<Arc<dyn TunDevice>> {
     #[cfg(target_os = "windows")]
     {
         if config.carrier == crate::Carrier::Mimic {
-            // XDP is required. Startup failure never selects another backend.
-            Ok(Arc::new(xdp::Device::open(config)?))
+            // Generic XDP queue binding has repeatedly failed on the AX211
+            // WLAN adapter. Use WinDivert for normal operation; keep XDP as
+            // an explicit development option, with observable startup fallback.
+            if std::env::var("CONWU_MIMIC_IO").as_deref() == Ok("xdp") {
+                match xdp::Device::open(config) {
+                    Ok(device) => return Ok(Arc::new(device)),
+                    Err(error) => crate::event(serde_json::json!({"event":"backend-fallback","from":"xdp","to":"windivert","reason":error.to_string()})),
+                }
+            }
+            Ok(Arc::new(windows::Device::open(config)?))
         } else {
             Ok(Arc::new(windows::Device::open(config)?))
         }

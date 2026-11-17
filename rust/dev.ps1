@@ -1,8 +1,8 @@
 param([Parameter(ValueFromRemainingArguments=$true)][string[]]$CargoArguments)
 $ErrorActionPreference='Stop'
 $projectRoot=Split-Path $PSScriptRoot -Parent
-$env:CARGO_HOME='D:\Codex\cache\cargo-rust-rewrite'
-$env:CARGO_HTTP_PROXY='http://127.0.0.1:7897'
+$env:CARGO_HOME=if($env:CONWU_CARGO_HOME){$env:CONWU_CARGO_HOME}else{Join-Path $projectRoot 'out\cargo-home'}
+if($env:CONWU_CARGO_HTTP_PROXY){$env:CARGO_HTTP_PROXY=$env:CONWU_CARGO_HTTP_PROXY}
 $env:TEMP=Join-Path $projectRoot 'out\tmp'
 $env:TMP=$env:TEMP
 $null=New-Item -ItemType Directory -Force $env:TEMP

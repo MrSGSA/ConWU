@@ -44,6 +44,14 @@ async fn local_carrier_failure_is_reported_without_falling_into_stun() -> Result
         row["text"].as_str().is_some_and(|s| s.contains("申请加入 本机组件故障验收 失败"))
     }), "加入失败没有记录到统一日志");
     ensure!(!guest.db.read().unwrap().networks.iter().any(|n| n.profile.is_some()), "失败的申请取得了成员身份");
+    cmd(&guest, json!({"method":"network","networkId":id,"network":{
+        "action":"leave","confirmReplace":true
+    }})).await?;
+    {
+        let db = guest.db.read().unwrap();
+        ensure!(db.networks.is_empty() && db.selected_network_id.is_empty(), "未批准申请应能直接移除");
+        ensure!(db.departures.is_empty(), "未取得身份的申请不能生成离网通知");
+    }
     guest.engine.shutdown().await?;
     Ok(())
 }
@@ -79,6 +87,7 @@ async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
     })
     .await?;
     let pairing = host.engine.pairing(&hid);
+    ensure!(pairing["pending"] == true && pairing["phase"] == "Pending", "审批前应进入待处理状态");
     ensure!(
         pairing["verification"] == guest.engine.pairing(&gid)["verification"],
         "入口申请也须绑定 SAS"
@@ -97,6 +106,7 @@ async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
         "不能在审批前入网"
     );
     cmd(&host,json!({"method":"network","networkId":hid,"network":{"action":"approve","verification":pairing["verification"],"candidate":pairing["candidate"]}})).await?;
+    ensure!(host.engine.pairing(&hid)["pending"] == false, "批准后须立即退出待审批状态");
     wait("入口批准", || {
         guest
             .db
@@ -107,6 +117,9 @@ async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
             .any(|n| n.id == gid && n.profile.is_some())
     })
     .await?;
+    wait("批准配置交付确认", || host.engine.pairing(&hid)["delivered"] == true).await?;
+    let completed = host.engine.pairing(&hid);
+    ensure!(completed["active"] == false && completed["phase"] == "Completed", "交付后应收尾，且不影响内部重试房间");
     let (panel, web) = web::Panel::start(host.clone(), 0).await?;
     host.store.write(
         "panel.private.json",
@@ -132,6 +145,52 @@ async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
     host.engine.shutdown().await?;
     guest.engine.shutdown().await?;
     web.await??;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rejected_pairing_is_terminal_while_the_reply_room_is_retained() -> Result<()> {
+    let host = app().await?;
+    let guest = app().await?;
+    let hid = create(&host, "拒绝申请隔离验收", "tcp", false).await?;
+    cmd(&host,json!({"method":"network","networkId":hid,"network":{"action":"invite-compact"}})).await?;
+    let code = host.engine.pairing(&hid)["code"].clone();
+    cmd(&guest,json!({"method":"network","network":{"action":"join-compact","code":code}})).await?;
+    let gid = guest.db.read().unwrap().selected_network_id.clone();
+    wait("拒绝前揭示", || host.engine.pairing(&hid)["verification"].as_str().is_some_and(|v|v.len()==6)).await?;
+    let pending = host.engine.pairing(&hid);
+    ensure!(cmd(&host,json!({"method":"network","networkId":hid,"network":{"action":"reject","candidate":"stale"}})).await.is_err(), "旧页面不能拒绝新申请");
+    ensure!(host.engine.pairing(&hid)["pending"] == true, "迟到操作不能改变当前申请");
+    cmd(&host,json!({"method":"network","networkId":hid,"network":{"action":"reject","candidate":pending["candidate"]}})).await?;
+    let rejected = host.engine.pairing(&hid);
+    ensure!(rejected["active"] == false && rejected["pending"] == false && rejected["phase"] == "Rejected", "拒绝后不能继续显示待办");
+    ensure!(host.engine.rooms.lock().unwrap().contains_key(&hid), "保留房间以便从机获取拒绝结果");
+    wait("从机收到拒绝", || guest.engine.pairing(&gid)["active"] == false).await?;
+    ensure!(guest.db.read().unwrap().networks.iter().all(|n|n.profile.is_none()), "拒绝不能交付成员身份");
+    host.engine.shutdown().await?;
+    guest.engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_receipts_refresh_after_start_and_acknowledge_only_the_matching_result() -> Result<()> {
+    let app = app().await?;
+    store::write_update_record(&app.store.root,&json!({"state":"Installing","version":"fixture"}))?;
+    *app.local_update.write().unwrap()=updates::restore(&app.store)?;
+    let before = app.status("")["localUpdate"].clone();
+    store::write_update_record(&app.store.root,&json!({"state":"Installed","version":"fixture","attempt":"first"}))?;
+    let installed = app.status("")["localUpdate"].clone();
+    ensure!(installed["state"]=="Installed" && installed["receiptId"]!=before["receiptId"], "运行中的后台应读到更新 worker 的最终结果");
+    ensure!(updates::dismiss(&app,before["receiptId"].as_str().unwrap()).is_err(), "迟到确认不能清除新结果");
+    cmd(&app,json!({"method":"update-dismiss","localUpdate":{"receiptId":installed["receiptId"]}})).await?;
+    ensure!(app.status("")["localUpdate"]["acknowledged"]==true, "结果应可确认关闭");
+    ensure!(updates::restore(&app.store)?["acknowledged"]==true && app.store.root.join("last-update.json").is_file(), "确认必须跨重启保留，且不删除历史记录");
+    store::write_update_record(&app.store.root,&json!({"state":"Installed","version":"fixture","attempt":"second"}))?;
+    ensure!(app.status("")["localUpdate"]["acknowledged"]==false, "同版本的下一次安装必须有独立确认");
+    *app.local_update.write().unwrap()=json!({"state":"Ready","version":"future","ticket":"fixture"});
+    ensure!(updates::dismiss(&app,installed["receiptId"].as_str().unwrap()).is_err(), "旧结果不能关闭下一更新任务");
+    ensure!(app.status("")["localUpdate"]["state"]=="Ready", "磁盘旧结果不能覆盖新下载任务");
+    app.engine.shutdown().await?;
     Ok(())
 }
 
@@ -816,6 +875,37 @@ fn malformed_inputs_do_not_become_endpoints() {
         .validate()
         .is_err()
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn coordinated_stream_keeps_the_observed_ip_and_port_across_target_routes() -> Result<()> {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    let host = app().await?;
+    for mode in ["tcp", "https"] {
+        let reflector = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let retained = transport::tcp_open_from(reflector.local_addr()?, "127.0.0.2:0".parse()?).await?;
+        let local = retained.local_addr()?;
+        let (_reflection, reflected_source) = reflector.accept().await?;
+        ensure!(reflected_source == local, "观察连接必须保留实际源地址");
+        let listening = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let destination = listening.local_addr()?;
+        ensure!(discovery::local_route(destination)? != local.ip(), "夹具必须覆盖观察源与目标默认选路不同的情况");
+        let stop = tokio_util::sync::CancellationToken::new();
+        let incoming = async {
+            let (socket, source) = listening.accept().await?;
+            ensure!(source == local, "协调探测必须同时复用观察时的源 IP 和端口");
+            transport::client_socket(mode, socket, &host.engine.identity.pin, false, &stop).await
+        };
+        let outgoing = transport::connect_role_from(mode, destination, "", local, false, &host.engine.identity, &stop);
+        let (mut peer, mut server) = tokio::try_join!(incoming, outgoing)?;
+        server.tx.send(vec![37; 1028]).await?;
+        ensure!(tokio::time::timeout(Duration::from_secs(2), peer.rx.recv()).await? == Some(vec![37; 1028]), "同源反向建连必须交付完整报文");
+        peer.tx.send(vec![53; 1028]).await?;
+        ensure!(tokio::time::timeout(Duration::from_secs(2), server.rx.recv()).await? == Some(vec![53; 1028]), "同源通道必须双向可用");
+        stop.cancel();
+    }
+    host.engine.shutdown().await?;
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

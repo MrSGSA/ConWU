@@ -3,19 +3,34 @@ use anyhow::{Context, Result, ensure};
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
-pub fn restore(store: &crate::store::Store) -> Result<Value> {
+fn read_result(store: &crate::store::Store) -> Result<Value> {
     let last = store.checked_file("last-update.json")?;
-    let previous = if last.is_file() {
+    let mut previous = if last.is_file() {
         ensure!(std::fs::metadata(&last)?.len() <= 65536, "更新记录过大");
         serde_json::from_slice::<Value>(&std::fs::read(last)?)?
     } else {
         Value::Null
     };
+    if !previous.is_null() {
+        ensure!(previous.is_object(), "更新记录无效");
+        let receipt = crate::backend::revision(&previous);
+        previous["receiptId"] = json!(receipt);
+        let acknowledged = store.checked_file("update-notice-ack.json")?;
+        previous["acknowledged"] = json!(acknowledged.is_file()
+            && std::fs::metadata(&acknowledged)?.len() <= 4096
+            && serde_json::from_slice::<Value>(&std::fs::read(acknowledged)?)?["receiptId"] == receipt);
+        previous["supported"] = json!(true);
+    }
+    Ok(previous)
+}
+pub fn restore(store: &crate::store::Store) -> Result<Value> {
+    let previous = read_result(store)?;
     if !store.checked_file("update-ready.private.json")?.is_file() {
         return Ok(previous);
     }
     let ready: Value = serde_json::from_slice(&store.read_secret("update-ready.private.json")?)?;
-    if previous["state"] == "Installed" && previous["version"] == ready["version"] {
+    if matches!(previous["state"].as_str(), Some("Installing" | "Installed" | "Error"))
+        && previous["version"] == ready["version"] {
         return Ok(previous);
     }
     let path = crate::store::Store::resolve_root(std::path::Path::new(
@@ -42,6 +57,42 @@ pub fn restore(store: &crate::store::Store) -> Result<Value> {
         json!({"supported":true,"state":"Ready","message":"已恢复校验过的 Rust 安装包",
         "canInstall":cfg!(feature="local-install"),"version":ready["version"],"ticket":ready["ticket"]}),
     )
+}
+pub fn status(app: &App) -> Value {
+    let busy = app.update_busy.load(std::sync::atomic::Ordering::Acquire);
+    let mut current = app.local_update.write().unwrap();
+    // The worker writes its result after the new backend is already running.
+    // Refresh that small receipt, without hashing the installer on every poll
+    // or overwriting a new download/ready task with an older result.
+    if !busy && (current.is_null()
+        || matches!(current["state"].as_str(), Some("Installing" | "Installed" | "Error"))
+            && current["receiptId"].is_string()) {
+        if let Ok(result) = read_result(&app.store) {
+            if !result.is_null() && (current.is_null() || result["version"] == current["version"]) {
+                *current = result;
+            }
+        }
+    }
+    let mut value = current.clone();
+    if value.is_object() { value["busy"] = json!(busy); }
+    value
+}
+pub fn dismiss(app: &App, receipt: &str) -> Result<Value> {
+    use std::sync::atomic::Ordering;
+    ensure!(app.update_busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire).is_ok(), "更新任务正在进行");
+    struct Busy<'a>(&'a std::sync::atomic::AtomicBool);
+    impl Drop for Busy<'_> { fn drop(&mut self) { self.0.store(false, Ordering::Release); } }
+    let _busy = Busy(&app.update_busy);
+    let result = read_result(&app.store)?;
+    ensure!(matches!(result["state"].as_str(), Some("Installed" | "Error"))
+        && !receipt.is_empty() && result["receiptId"] == receipt, "更新结果已改变，请刷新");
+    let mut current = app.local_update.write().unwrap();
+    ensure!(current["receiptId"] == result["receiptId"]
+        && current["state"] == result["state"], "更新任务已改变，请刷新");
+    app.store.write("update-notice-ack.json", &serde_json::to_vec(&json!({"receiptId":receipt}))?, false)?;
+    *current = result;
+    current["acknowledged"] = json!(true);
+    Ok(Value::Null)
 }
 pub async fn check(source: &str) -> Result<Value> {
     ensure!(

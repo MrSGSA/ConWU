@@ -35,6 +35,12 @@ pub fn tcp_remote(bytes: &[u8]) -> Option<SocketAddrV4> {
     if start < 20 || bytes.len() < start + 20 { return None; }
     Some(SocketAddrV4::new(Ipv4Addr::new(bytes[12],bytes[13],bytes[14],bytes[15]),word(bytes,start)))
 }
+#[cfg(target_os = "windows")]
+pub fn tcp_destination(bytes: &[u8]) -> Option<SocketAddrV4> {
+    tcp_remote(bytes)?;
+    let start = (bytes[0] & 15) as usize * 4;
+    Some(SocketAddrV4::new(Ipv4Addr::new(bytes[16],bytes[17],bytes[18],bytes[19]),word(bytes,start+2)))
+}
 pub fn parse(bytes: &[u8]) -> Option<Segment<'_>> {
     if bytes.len() < 40 || bytes[0] >> 4 != 4 || bytes[9] != 6 || word(bytes, 6) & 0x3fff != 0 {
         return None;

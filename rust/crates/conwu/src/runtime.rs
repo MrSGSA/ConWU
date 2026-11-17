@@ -100,13 +100,14 @@ struct Peer {
     assembly: Option<conwu_core::metadata::Assembly>,
 }
 pub struct Running {
-    dialing: tokio::sync::Mutex<()>,
+    dialing: Arc<tokio::sync::Mutex<()>>,
     network_finished: CancellationToken,
     discovery_finished: CancellationToken,
     managed_finished: CancellationToken,
     refresh: tokio::sync::Notify,
     pub(crate) boot: uuid::Uuid,
     peer_state: Mutex<Option<conwu_core::rendezvous::State>>,
+    observed_source: RwLock<Option<SocketAddr>>,
     pub config: RwLock<Arc<Network>>,
     pub metrics: RwLock<Metrics>,
     pub memory: Option<Arc<Memory>>,
@@ -398,13 +399,14 @@ impl Engine {
         )
         .await?;
         let running = Arc::new(Running {
-            dialing: tokio::sync::Mutex::new(()),
+            dialing: Arc::new(tokio::sync::Mutex::new(())),
             network_finished: CancellationToken::new(),
             discovery_finished: CancellationToken::new(),
             managed_finished: CancellationToken::new(),
             refresh: tokio::sync::Notify::new(),
             boot: uuid::Uuid::new_v4(),
             peer_state: Mutex::new(None),
+            observed_source: RwLock::new(None),
             config: RwLock::new(Arc::new(network)),
             metrics: RwLock::new(metrics),
             memory,
@@ -624,15 +626,18 @@ impl Engine {
         Ok(())
     }
     pub async fn dial(self: &Arc<Self>, id: &str, endpoint: SocketAddr) -> Result<()> {
+        let running = self.current(id).context("网络已移除")?;
+        let Ok(_dialing) = running.dialing.try_lock() else {
+            return Ok(());
+        };
+        self.dial_reserved(id, endpoint, &running).await
+    }
+    async fn dial_reserved(self: &Arc<Self>, id: &str, endpoint: SocketAddr, running: &Arc<Running>) -> Result<()> {
         #[cfg(feature = "lab-api")]
         ensure!(
             std::env::var_os("CONWU_LAB_FORCE_MANAGED").is_none(),
             "实验强制验证受管路径"
         );
-        let running = self.current(id).context("网络已移除")?;
-        let Ok(_dialing) = running.dialing.try_lock() else {
-            return Ok(());
-        };
         ensure!(!running.cancel.is_cancelled(), "网络已取消");
         if running.metrics.read().unwrap().connected {
             return Ok(());
@@ -696,7 +701,13 @@ impl Engine {
             } else {
                 config.settings.listen_port
             };
-            tokio::select! {_=running.cancel.cancelled()=>anyhow::bail!("network stopped"),r=transport::connect_role(mode,endpoint,profile.pair.transport_key_pin.as_deref().unwrap_or(""),port,!config.created_here,&self.identity,&running.cancel)=>r?}
+            let local = running.observed_source.read().unwrap()
+                .filter(|source| source.port() == port && source.is_ipv4() == endpoint.is_ipv4());
+            let local = match local {
+                Some(local) => local,
+                None => SocketAddr::new(discovery::local_route(endpoint)?, port),
+            };
+            tokio::select! {_=running.cancel.cancelled()=>anyhow::bail!("network stopped"),r=transport::connect_role_from(mode,endpoint,profile.pair.transport_key_pin.as_deref().unwrap_or(""),local,!config.created_here,&self.identity,&running.cancel)=>r?}
         } else {
             crate::raw::connect(
                 self,
@@ -1103,7 +1114,27 @@ impl Engine {
         }
         if let Some((host, code)) = self.rooms.lock().unwrap().get(id) {
             let s = &host.state;
-            return json!({"active":host.ticket.expires>unix_seconds(),"owner":true,"code":code,"verification":host.sas().unwrap_or_default(),"candidate":s.candidate,"peerName":s.guest_name,"expires":s.expires,"state":if s.approved{"已批准，正在交付网络配置"}else if !s.outcome.is_empty(){&s.outcome}else if s.guest_public.is_empty(){"等待另一台设备输入直连码"}else{"请核对校验码后批准"},"format":"compact","method":"direct","direct":true,"proposedIp":s.requested_ip});
+            let expired = host.ticket.expires <= unix_seconds();
+            let active = !expired && !host.delivered && s.outcome.is_empty();
+            let pending = active && !s.approved && !s.candidate.is_empty();
+            let (phase, message) = if host.delivered && s.approved {
+                ("Completed", "已批准，网络配置已交付")
+            } else if s.outcome == "Rejected" {
+                ("Rejected", "已拒绝申请")
+            } else if s.outcome == "Cancelled" {
+                ("Cancelled", "申请已取消")
+            } else if expired {
+                ("Expired", "配对会话已过期")
+            } else if s.approved {
+                ("Delivering", "已批准，正在交付网络配置")
+            } else if pending {
+                ("Pending", "请核对校验码后批准")
+            } else {
+                ("Waiting", "等待另一台设备输入直连码")
+            };
+            // The room remains available for configuration/ACK retries even
+            // after the user has decided. A delivery is not another approval.
+            return json!({"active":active,"pending":pending,"phase":phase,"approved":s.approved,"delivered":host.delivered,"outcome":s.outcome,"owner":true,"code":code,"verification":host.sas().unwrap_or_default(),"candidate":s.candidate,"peerName":s.guest_name,"expires":s.expires,"state":message,"format":"compact","method":"direct","direct":true,"proposedIp":s.requested_ip});
         }
         Value::Null
     }
@@ -1223,36 +1254,73 @@ impl Engine {
         let engine = self.clone();
         let id = id.to_owned();
         self.tracker.spawn(async move {
-            let key=state["Room"].as_str().unwrap().to_owned();let mut prior=uuid::Uuid::nil();let mut ready=!native_prepare;
+            let key = state["Room"].as_str().unwrap().to_owned();
+            let mut prior = uuid::Uuid::nil();
+            let mut retry = String::new();
+            let mut ready = !native_prepare;
+            let mut probe_stop = stop.child_token();
             loop {
-                if state["Expires"].as_i64().unwrap_or(0)<=unix_seconds(){break;}
-                let input=json!({"Token":state["Token"],"Endpoint":endpoint.to_string(),"Ready":ready});
-                let updated=tokio::select!{_=stop.cancelled()=>break,r=client.room(&key,&input)=>r};
-                if let Ok(updated)=updated {
-                    let matching=["Room","Token","HostRoom","Commitment","HostEndpoint","Mode"].iter().all(|k|updated[*k]==state[*k]);
-                    if !matching{break;}
-                    if native_prepare&&!ready {
-                        if let Some(peer)=updated["GuestEndpoint"].as_str().and_then(|s|crate::assistance::candidate(s).ok()) {
-                            let local=engine.current(&id).map(|r|r.config.read().unwrap().settings.listen_port);
-                            let mapping=local.and_then(|p|engine.fake_mappings.read().unwrap().get(&p).cloned());
-                            if let Some(mapping)=mapping {ready=mapping.prepare(peer,false,false).await.is_ok();}
-                        }
-                    }
-                    if let Some(round)=updated["Round"].as_str().and_then(|s|uuid::Uuid::parse_str(s).ok()).filter(|r|!r.is_nil()&&*r!=prior) {
-                        if let Some(peer)=updated["GuestEndpoint"].as_str().and_then(|s|crate::assistance::candidate(s).ok()) {
-                            prior=round;
-                            let delay=updated["StartAfterMilliseconds"].as_i64().unwrap_or(-30000);
-                            if (-2000..=2000).contains(&delay) {
-                                tokio::select!{_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(delay.max(0) as u64))=>{}}
-                                let host=engine.clone();let task_id=id.clone();let token=stop.clone();
-                                engine.tracker.spawn(async move{let _=tokio::select!{_=token.cancelled()=>Ok(()),r=host.punch_unpaired(&task_id,peer)=>r};});
+                if state["Expires"].as_i64().unwrap_or(0) <= unix_seconds() {
+                    break;
+                }
+                // Once the direct pairing has reached the commitment reveal,
+                // further coordinator hints cannot improve that connection.
+                if engine.rooms.lock().unwrap().get(&id)
+                    .is_none_or(|(host, _)| !host.state.guest_public.is_empty())
+                {
+                    break;
+                }
+                let input = json!({"Token":state["Token"],"Endpoint":endpoint.to_string(),"Ready":ready,"RetryRound":retry});
+                let sent = Instant::now();
+                let updated = tokio::select! {_=stop.cancelled()=>break,r=client.room(&key,&input)=>r};
+                let round_trip = sent.elapsed();
+                if let Ok(updated) = updated {
+                    let matching = ["Room", "Token", "HostRoom", "Commitment", "HostEndpoint", "Mode"]
+                        .iter().all(|k| updated[*k] == state[*k]);
+                    if !matching { break; }
+                    if native_prepare && !ready {
+                        if let Some(peer) = updated["GuestEndpoint"].as_str()
+                            .and_then(|s| crate::assistance::candidate(s).ok())
+                        {
+                            let local = engine.current(&id).map(|r| r.config.read().unwrap().settings.listen_port);
+                            let mapping = local.and_then(|p| engine.fake_mappings.read().unwrap().get(&p).cloned());
+                            if let Some(mapping) = mapping {
+                                ready = tokio::select! {
+                                    _=stop.cancelled()=>break,
+                                    result=mapping.prepare(peer,false,false)=>result.is_ok(),
+                                };
                             }
                         }
                     }
+                    match crate::assistance::Schedule::read(&updated, round_trip) {
+                        Ok(crate::assistance::Schedule::Expired(round)) if round != prior => {
+                            retry = round.to_string();
+                        }
+                        Ok(crate::assistance::Schedule::Ready(round, delay)) if round != prior => {
+                            if let Some(peer) = updated["GuestEndpoint"].as_str()
+                                .and_then(|s| crate::assistance::candidate(s).ok())
+                            {
+                                prior = round;
+                                retry.clear();
+                                probe_stop.cancel();
+                                probe_stop = stop.child_token();
+                                let host = engine.clone();
+                                let task_id = id.clone();
+                                let token = probe_stop.clone();
+                                engine.tracker.spawn(async move {
+                                    tokio::select! {_=token.cancelled()=>return,_=tokio::time::sleep(delay)=>{}}
+                                    let _ = tokio::select! {_=token.cancelled()=>Ok(()),r=host.punch_unpaired(&task_id,peer)=>r};
+                                });
+                            }
+                        }
+                        Err(_) => break,
+                        _ => {}
+                    }
                 }
-                tokio::select!{_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(400))=>{}}
+                tokio::select! {_=stop.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(400))=>{}}
             }
-            let _=client.room(&key,&json!({"Token":state["Token"],"Close":true})).await;
+            probe_stop.cancel();
+            let _ = client.room(&key,&json!({"Token":state["Token"],"Close":true})).await;
         });
         Ok(())
     }
@@ -1261,11 +1329,16 @@ impl Engine {
         let n = running.config.read().unwrap().clone();
         let mode = n.settings.mode()?;
         if stream_mode(mode) {
-            let pipe = transport::connect_role(
+            let local = *running.observed_source.read().unwrap();
+            let local = match local.filter(|source| source.port() == n.settings.listen_port) {
+                Some(local) => local,
+                None => SocketAddr::new(discovery::local_route(endpoint)?, n.settings.listen_port),
+            };
+            let pipe = transport::connect_role_from(
                 mode,
                 endpoint,
                 "",
-                n.settings.listen_port,
+                local,
                 false,
                 &self.identity,
                 &running.cancel,
@@ -1367,6 +1440,12 @@ impl Engine {
                 let connected = peer.chosen.is_some() && peer.link.connected();
                 let mut metrics = running.metrics.write().unwrap();
                 if metrics.connected != connected {
+                    if !connected {
+                        // A healthy channel may use a 60-second discovery
+                        // interval. Loss must wake that sleeper immediately
+                        // so both NATs can take part in the next round.
+                        running.refresh.notify_one();
+                    }
                     let _ = self.events.try_send(Event::Log {
                         level: "INFO".into(),
                         text: format!(
@@ -1509,6 +1588,7 @@ impl Engine {
         let mut next_gateway = 0;
         let mut last_own = Vec::new();
         let mut last_ack = uuid::Uuid::nil();
+        let mut last_assist_round = uuid::Uuid::nil();
         loop {
             let n = running.config.read().unwrap().clone();
             let Some(profile) = n.profile.as_ref() else {
@@ -1665,6 +1745,7 @@ impl Engine {
                     }
                 }
             }
+            *running.observed_source.write().unwrap() = mapping.as_ref().map(|m| m.local);
             running.metrics.write().unwrap().local_endpoints =
                 own.iter().map(ToString::to_string).collect();
             let mut peer_candidates: Vec<SocketAddr> = Vec::new();
@@ -1746,22 +1827,35 @@ impl Engine {
                         )
                         .await
                         {
-                            if let Ok(state) = client.member(profile, running.boot, endpoint).await
-                            {
-                                if state["Version"] == 1 && state["Mode"] == mode {
-                                    if let Some(peer) = state["PeerEndpoint"]
-                                        .as_str()
-                                        .and_then(|s| crate::assistance::candidate(s).ok())
-                                        .filter(|p| discovery::public(p.ip()))
-                                    {
-                                        let delay = state["StartAfterMilliseconds"]
-                                            .as_i64()
-                                            .unwrap_or(-30000);
-                                        if (-2000..=5000).contains(&delay) {
-                                            let engine = self.clone();
-                                            let id = n.id.clone();
-                                            let token = running.cancel.clone();
-                                            self.tracker.spawn(async move {tokio::select!{_=token.cancelled()=>return,_=tokio::time::sleep(Duration::from_millis(delay.max(0) as u64))=>{}}let _=tokio::select!{_=token.cancelled()=>Ok(()),r=engine.dial(&id,peer)=>r};});
+                            if let Ok(reservation) = running.dialing.clone().try_lock_owned() {
+                                let sent = Instant::now();
+                                if let Ok(state) = client.member(profile, running.boot, endpoint).await
+                                {
+                                    if state["Version"] == 1 && state["Mode"] == mode {
+                                        if let Some(peer) = state["PeerEndpoint"]
+                                            .as_str()
+                                            .and_then(|s| crate::assistance::candidate(s).ok())
+                                            .filter(|p| discovery::public(p.ip()))
+                                        {
+                                            if let Ok(crate::assistance::Schedule::Ready(round, delay)) = crate::assistance::Schedule::read(&state, sent.elapsed())
+                                                && round != last_assist_round
+                                            {
+                                                last_assist_round = round;
+                                                let engine = self.clone();
+                                                let id = n.id.clone();
+                                                let token = running.cancel.clone();
+                                                let scheduled = running.clone();
+                                                self.tracker.spawn(async move {
+                                                    // Reserve the source-port owner before waiting,
+                                                    // so an ordinary retry cannot steal this round.
+                                                    let _reservation = reservation;
+                                                    tokio::select! {_=token.cancelled()=>return,_=tokio::time::sleep(delay)=>{}}
+                                                    let result = tokio::select! {_=token.cancelled()=>Ok(()),r=engine.dial_reserved(&id,peer,&scheduled)=>r};
+                                                    if let Err(error) = result {
+                                                        tracing::debug!(reason = %crate::logging::redact(&error.to_string()), "协调定时建连未完成");
+                                                    }
+                                                });
+                                            }
                                         }
                                     }
                                 }
@@ -1902,6 +1996,7 @@ impl Engine {
         if let Some(gateway) = gateway {
             let _ = gateway.close().await;
         }
+        *running.observed_source.write().unwrap() = None;
     }
     pub fn start_guest(
         self: &Arc<Self>,
@@ -2033,9 +2128,11 @@ impl Engine {
                 if let Some((client, state)) = &assistance {
                     let room = state["Room"].as_str().unwrap();
                     let until = unix_seconds() + 45;
+                    let mut retry = String::new();
                     loop {
                         ensure!(unix_seconds() < until, "本轮协调探测超时，未授予成员权限");
-                        let input = json!({"Token":state["Token"],"Endpoint":observed.mapped.to_string(),"Ready":true});
+                        let input = json!({"Token":state["Token"],"Endpoint":observed.mapped.to_string(),"Ready":true,"RetryRound":retry});
+                        let sent = Instant::now();
                         let update = tokio::select! {_=stop.cancelled()=>anyhow::bail!("加入已取消"),r=client.room(room,&input)=>r?};
                         ensure!(
                             [
@@ -2050,16 +2147,24 @@ impl Engine {
                             .all(|k| update[*k] == state[*k]),
                             "协调辅助绑定已改变"
                         );
-                        if update["Round"]
-                            .as_str()
-                            .is_some_and(|s| s != "00000000-0000-0000-0000-000000000000")
-                        {
-                            let delay = update["StartAfterMilliseconds"].as_i64().unwrap_or(-30000);
-                            ensure!((-2000..=2000).contains(&delay), "本轮同步探测时间已过期");
-                            tokio::time::sleep(Duration::from_millis(delay.max(0) as u64)).await;
-                            break;
+                        match crate::assistance::Schedule::read(&update, sent.elapsed())? {
+                            crate::assistance::Schedule::Ready(_, delay) => {
+                                tokio::select! {
+                                    _=stop.cancelled()=>anyhow::bail!("加入已取消"),
+                                    _=tokio::time::sleep(delay)=>{}
+                                }
+                                break;
+                            }
+                            crate::assistance::Schedule::Expired(round) => {
+                                retry = round.to_string();
+                                self.guest_state(id,json!({"active":true,"owner":false,"state":"协调探测时间已过，正在重新同步","expires":unix_seconds()+45})).await;
+                            }
+                            crate::assistance::Schedule::Waiting => {}
                         }
-                        tokio::time::sleep(Duration::from_millis(350)).await;
+                        tokio::select! {
+                            _=stop.cancelled()=>anyhow::bail!("加入已取消"),
+                            _=tokio::time::sleep(Duration::from_millis(350))=>{}
+                        }
                     }
                 } else {
                     let seed = c::hash(
@@ -2087,7 +2192,7 @@ impl Engine {
                 observed.start(target.endpoint).await?;
                 if pipe.is_none() {
                     let socket =
-                        transport::tcp_open(target.endpoint, observed.local.port()).await?;
+                        transport::tcp_open_from(target.endpoint, observed.local).await?;
                     pipe =
                         Some(transport::client_socket(&code.mode, socket, "", true, stop).await?);
                 }

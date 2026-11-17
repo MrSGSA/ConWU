@@ -43,6 +43,7 @@ def main():
     parser.add_argument('--managed', action='store_true', help='Require the signed SLF1/SLN1 path; test builds only')
     parser.add_argument('--assisted', action='store_true', help='Require the same-source coordinated pairing branch; test builds only')
     parser.add_argument('--app', type=Path, default=ROOT / 'out/rust-target/debug/conwu.exe')
+    parser.add_argument('--raw-app', type=Path, default=ROOT / 'out/rust-target/release/conwu-raw.exe')
     parser.add_argument('--linux-app', default=WSL_ROOT + '/out/rust-target-linux/debug/conwu')
     parser.add_argument('--public-fixture', action='store_true', help='Temporary documentation-address aliases on the owned WSL virtual link')
     parser.add_argument('--wsl-mtu', type=int, choices=[1500], help='Temporarily set the owned WSL test path to standard Ethernet MTU, then restore it')
@@ -54,6 +55,8 @@ def main():
             raise ValueError('The forced managed SLF1/SLN1 gate applies to FakeTCP')
     if os.name != 'nt':
         raise RuntimeError('Run this gate on Windows with the ArchLinux WSL distribution')
+    from live_session import require_idle
+    require_idle()
     if args.managed or args.assisted:
         for command in ([str(args.app), 'build-info'], ['wsl', '-d', 'ArchLinux', '-u', 'root', '--', args.linux_app, 'build-info']):
             if not json.loads(subprocess.check_output(command, text=True))['labApi']:
@@ -64,15 +67,21 @@ def main():
     linux_folder = WSL_ROOT + '/out/lab/' + folder.name
     components = folder / 'components'
     components.mkdir()
-    for name, source in {
-        'conwu-raw.exe': ROOT / 'out/rust-target/release/conwu-raw.exe',
+    candidates = {
+        'conwu-raw.exe': args.raw_app,
         'conwu-phantun.exe': ROOT / 'out/rust-target/release/conwu-phantun.exe',
         'udp2raw-native.exe': ROOT / 'out/native/udp2raw-native.exe',
         'wintun.dll': args.dependency_root / 'wintun/bin/amd64/wintun.dll',
         'WinDivert.dll': args.dependency_root / 'WinDivert-2.2.2-A/x64/WinDivert.dll',
         'WinDivert64.sys': args.dependency_root / 'WinDivert-2.2.2-A/x64/WinDivert64.sys',
         'xdpapi.dll': args.dependency_root / 'xdp-1.4.0/unpacked/runtime/native/xdpapi.dll',
-    }.items():
+    }
+    modes = args.modes or ['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp']
+    for name, source in candidates.items():
+        if name=='conwu-raw.exe' and not any(m in ('mimic','tcpraw') for m in modes): continue
+        if name=='conwu-phantun.exe' and 'phantun' not in modes: continue
+        if name=='udp2raw-native.exe' and 'faketcp' not in modes: continue
+        if name=='xdpapi.dll' and os.environ.get('CONWU_MIMIC_IO')!='xdp': continue
         if source.is_symlink() or not source.is_file():
             raise ValueError('Missing/linked component: ' + str(source))
         shutil.copyfile(source, components / name)

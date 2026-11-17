@@ -288,6 +288,12 @@ async fn spawn(
                     if v["event"] == "failed" || v["event"] == "peer-failed" {
                         anyhow::bail!("承载组件启动失败：{}", v["reason"].as_str().unwrap_or("组件未就绪"))
                     }
+                    if v["event"] == "backend-fallback" {
+                        let reason = crate::logging::redact(v["reason"].as_str().unwrap_or("XDP 未就绪"));
+                        let _ = engine.events.try_send(crate::runtime::Event::Log {
+                            level: "WARN".into(), text: format!("Mimic 已回退至 WinDivert：{reason}"),
+                        });
+                    }
                     if v["event"] == "ready" {
                         ensure!(
                             v["abi"] == 1
@@ -314,6 +320,11 @@ async fn spawn(
             return Err(error);
         }
     };
+    if let Some(backend) = ready["backend"].as_str() {
+        let _ = engine.events.try_send(crate::runtime::Event::Log {
+            level: "INFO".into(), text: format!("{mode} 承载已就绪（{}）",crate::logging::redact(backend)),
+        });
+    }
     let mut input = child.stdin.take().context("组件控制输入不可用")?;
     let (commands, mut queue) = mpsc::channel::<Value>(32);
     if let Some(pid) = child.id() {

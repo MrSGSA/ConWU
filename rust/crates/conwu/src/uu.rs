@@ -4,13 +4,14 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashSet},
     sync::{Arc, Mutex, OnceLock},
-    time::Duration,
+    time::{Duration, Instant},
 };
 #[derive(Default)]
 struct Counters {
     sent: u64,
     received: u64,
     buckets: BTreeMap<i64, u64>,
+    confirmed: bool,
 }
 #[derive(Default)]
 struct State {
@@ -19,6 +20,36 @@ struct State {
     error: String,
     networks: BTreeMap<String, Counters>,
     owners: HashSet<(u8, u16)>,
+    eligible: HashSet<String>,
+    generation: u64,
+}
+impl State {
+    fn reset_rules(&mut self) {
+        self.active = false;
+        self.owners.clear();
+        self.eligible.clear();
+        for c in self.networks.values_mut() {
+            c.buckets.clear();
+            c.confirmed = false;
+        }
+    }
+    fn traffic(&mut self, valid: &HashSet<String>, now: i64) -> Value {
+        self.networks.retain(|id, _| valid.contains(id));
+        let (mut sent, mut received, mut observed, mut confirmed) = (0, 0, false, false);
+        let rows = self.networks.iter_mut().map(|(id,c)| {
+            sent += c.sent; received += c.received;
+            let a = c.buckets.get(&(now-1)).copied().unwrap_or(0);
+            let b = c.buckets.get(&(now-2)).copied().unwrap_or(0);
+            let current = self.active && self.error.is_empty() && self.eligible.contains(id);
+            let live = current && a >= 16384 && b >= 16384;
+            c.confirmed |= live;
+            observed |= live;
+            confirmed |= current && c.confirmed;
+            json!({"id":id,"trafficObserved":live,"sessionConfirmed":current&&c.confirmed,
+                "sentBytes":c.sent,"receivedBytes":c.received,"bytesPerSecond":if current{(a+b)/2}else{0}})
+        }).collect::<Vec<_>>();
+        json!({"networks":rows,"sentBytes":sent,"receivedBytes":received,"trafficObserved":observed,"sessionConfirmed":confirmed})
+    }
 }
 static STATE: OnceLock<Mutex<State>> = OnceLock::new();
 fn state() -> &'static Mutex<State> {
@@ -27,12 +58,35 @@ fn state() -> &'static Mutex<State> {
 pub fn status(app: &App) -> Value {
     let db = app.db.read().unwrap();
     let settings = db.device_settings["uuTakeover"].clone();
-    let s = state().lock().unwrap();
-    let now = conwu_core::unix_seconds();
-    let mut sent = 0;
-    let mut received = 0;
-    let rows=s.networks.iter().map(|(id,c)|{sent+=c.sent;received+=c.received;let a=c.buckets.get(&(now-1)).copied().unwrap_or(0);let b=c.buckets.get(&(now-2)).copied().unwrap_or(0);json!({"id":id,"trafficObserved":a>=16384&&b>=16384,"sentBytes":c.sent,"receivedBytes":c.received,"bytesPerSecond":(a+b)/2})}).collect::<Vec<_>>();
-    json!({"supported":cfg!(windows),"settings":settings,"revision":revision(&settings),"state":if !s.error.is_empty(){"Error"}else if s.active{"Active"}else{"Idle"},"message":if !s.error.is_empty(){s.error.as_str()}else if s.active{"已自动接管 UU 选路，串流流量以右侧计数为准"}else{"等待开启功能、网络直连及 UU 运行"},"rulesActive":s.active,"processes":s.pids,"networks":rows,"sentBytes":sent,"receivedBytes":received})
+    let valid = db.networks.iter().filter(|n| n.profile.is_some()).map(|n|n.id.clone()).collect();
+    let mut s = state().lock().unwrap();
+    let traffic = s.traffic(&valid, conwu_core::unix_seconds());
+    let (phase, message) = if !cfg!(windows) {
+        ("Unsupported", "本平台暂不支持 UU 选路接管")
+    } else if settings["enabled"] != true {
+        ("Disabled", "接管未开启")
+    } else if !s.error.is_empty() {
+        ("Error", s.error.as_str())
+    } else if s.active {
+        if traffic["trafficObserved"] == true {
+            ("Transmitting", "已检测到 UU 持续经由 ConWU 传输")
+        } else if traffic["sessionConfirmed"] == true {
+            ("Idle", "本轮规则已检测到 UU 流量，当前流量较低")
+        } else {
+            ("Ready", "选路规则已就绪；重新连接 UU 会话后确认实际流量")
+        }
+    } else if s.eligible.is_empty() {
+        ("WaitingNetwork", "等待 ConWU 网络直连")
+    } else if s.pids.is_empty() {
+        ("WaitingUu", "等待 UU 启动")
+    } else {
+        ("Applying", "正在恢复 UU 选路规则")
+    };
+    json!({"supported":cfg!(windows),"settings":settings,"revision":revision(&settings),"state":phase,
+        "message":message,"rulesActive":s.active,"processes":s.pids,"sessionId":s.generation,
+        "confirmationScope":"currentRules","trafficObserved":traffic["trafficObserved"],
+        "sessionConfirmed":traffic["sessionConfirmed"],"networks":traffic["networks"],
+        "sentBytes":traffic["sentBytes"],"receivedBytes":traffic["receivedBytes"]})
 }
 pub async fn configure(app: &App, action: Value) -> Result<Value> {
     ensure!(cfg!(windows), "UU 远程接管目前支持 Windows");
@@ -62,7 +116,7 @@ pub fn observe(id: &str, p: &[u8], outbound: bool) {
             .unwrap(),
     );
     let mut s = state().lock().unwrap();
-    if !s.active || !s.owners.contains(&(p[9], port)) {
+    if !s.active || !s.eligible.contains(id) || !s.owners.contains(&(p[9], port)) {
         return;
     }
     let c = s.networks.entry(id.into()).or_default();
@@ -79,12 +133,82 @@ pub fn observe(id: &str, p: &[u8], outbound: bool) {
 }
 pub fn start(app: Arc<App>) {
     let tracker = app.engine.tracker.clone();
-    tracker.spawn(async move{let mut gate:Option<Gate>=None;let mut signature=String::new();loop{if app.engine.cancel.is_cancelled(){break}let enabled=app.db.read().unwrap().device_settings["uuTakeover"]["enabled"]==true;let networks=app.db.read().unwrap().networks.iter().filter_map(|n|app.engine.current(&n.id).filter(|r|r.metrics.read().unwrap().connected&&!n.paused).and_then(|_|n.profile.as_ref().and_then(|p|p.local_ip().ok())).map(|ip|(n.id.clone(),ip.to_string()))).collect::<Vec<_>>();
-            let result=if enabled&&!networks.is_empty(){processes()}else{Ok(vec![])};match result {Ok(pids)=>{let new=format!("{pids:?}/{networks:?}");if new!=signature {gate.take();state().lock().unwrap().active=false;signature=new;if !pids.is_empty(){match Gate::open(&app.engine.components,&networks,&pids){Ok(g)=>{gate=Some(g);let mut s=state().lock().unwrap();s.active=true;s.error.clear();s.pids=pids.clone();},Err(e)=>{state().lock().unwrap().error=e.to_string();signature.clear();}}}}
-                if gate.is_some(){match owners(&pids){Ok(owners)=>state().lock().unwrap().owners=owners,Err(e)=>{gate.take();let mut s=state().lock().unwrap();s.active=false;s.error=e.to_string();signature.clear();}}}
-            },Err(e)=>{gate.take();let mut s=state().lock().unwrap();s.active=false;s.error=e.to_string();}}
-            tokio::select!{_=app.engine.cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_millis(500))=>{}}
-        }drop(gate);state().lock().unwrap().active=false;});
+    tracker.spawn(async move {
+        let mut gate: Option<Gate> = None;
+        let mut signature = String::new();
+        let mut retry_at = Instant::now();
+        let (mut failures, mut owner_errors) = (0u32, 0u32);
+        loop {
+            if app.engine.cancel.is_cancelled() { break; }
+            let db = app.db.read().unwrap().clone();
+            let enabled = cfg!(windows) && db.device_settings["uuTakeover"]["enabled"] == true;
+            let mut connected = db.networks.iter().filter_map(|n| {
+                let p = n.profile.as_ref()?;
+                let running = app.engine.current(&n.id)?;
+                let metrics = running.metrics.read().unwrap();
+                (metrics.connected && n.enabled && !n.paused).then(||
+                    p.local_ip().ok().map(|ip|(n.id.clone(),ip.to_string(),running.boot,metrics.since,metrics.endpoint.clone())))?
+            }).collect::<Vec<_>>();
+            connected.sort_by(|a,b|a.0.cmp(&b.0));
+            let networks = connected.iter().map(|(id,ip,..)|(id.clone(),ip.clone())).collect::<Vec<_>>();
+            let result = if enabled && !networks.is_empty() { processes() } else { Ok(vec![]) };
+            match result {
+                Ok(mut pids) => {
+                    pids.sort_unstable(); pids.dedup();
+                    let next = format!("{enabled}/{pids:?}/{connected:?}");
+                    if next != signature {
+                        gate.take();
+                        let mut s = state().lock().unwrap();
+                        s.reset_rules(); s.error.clear(); s.pids = pids.clone();
+                        signature = next; failures = 0; owner_errors = 0; retry_at = Instant::now();
+                    }
+                    state().lock().unwrap().eligible = if enabled { networks.iter().map(|(id,_)|id.clone()).collect() } else { HashSet::new() };
+                    if !pids.is_empty() && gate.is_none() && Instant::now() >= retry_at {
+                        match Gate::open(&app.engine.components, &networks, &pids) {
+                            Ok(g) => {
+                                gate = Some(g);
+                                let mut s = state().lock().unwrap();
+                                s.active = true; s.error.clear(); s.generation += 1;
+                            }
+                            Err(error) => {
+                                state().lock().unwrap().error = error.to_string();
+                                failures = failures.saturating_add(1);
+                                retry_at = Instant::now() + retry_delay(failures);
+                            }
+                        }
+                    }
+                    if gate.is_some() {
+                        match owners(&pids) {
+                            Ok(owners) => { owner_errors = 0; failures = 0; let mut s = state().lock().unwrap(); s.owners = owners; s.error.clear(); }
+                            Err(error) => {
+                                owner_errors += 1;
+                                let mut s = state().lock().unwrap();
+                                // A changing socket table must not reuse stale
+                                // ownership to "confirm" another application.
+                                s.owners.clear(); s.error = error.to_string();
+                                if owner_errors >= 3 {
+                                    gate.take(); s.reset_rules();
+                                    failures = failures.saturating_add(1);
+                                    retry_at = Instant::now() + retry_delay(failures);
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(error) => {
+                    gate.take(); signature.clear();
+                    let mut s = state().lock().unwrap();
+                    s.reset_rules(); s.pids.clear(); s.error = error.to_string();
+                }
+            }
+            tokio::select! { _=app.engine.cancel.cancelled()=>break, _=tokio::time::sleep(Duration::from_millis(500))=>{} }
+        }
+        drop(gate);
+        let mut s = state().lock().unwrap(); s.reset_rules(); s.pids.clear(); s.error.clear();
+    });
+}
+fn retry_delay(failures: u32) -> Duration {
+    Duration::from_millis((500u64 << failures.min(5)).min(15000))
 }
 #[cfg(not(windows))]
 struct Gate;
@@ -310,11 +434,16 @@ mod windows {
                 matches!(code, 0 | 122) && size <= 16 * 1024 * 1024,
                 "套接字归属查询失败"
             );
-            let mut bytes = vec![0u8; size as usize];
-            ensure!(
-                table(bytes.as_mut_ptr().cast(), &mut size) == 0 && size >= 4,
-                "套接字归属表变化，请重试"
-            );
+            let mut bytes = vec![];
+            for _ in 0..3 {
+                ensure!((4..=16*1024*1024).contains(&size), "套接字归属表大小无效");
+                bytes.resize(size as usize, 0);
+                let code = table(bytes.as_mut_ptr().cast(), &mut size);
+                if code == 0 { break; }
+                ensure!(code == 122, "套接字归属查询失败：{code}");
+                bytes.clear();
+            }
+            ensure!(size >= 4 && bytes.len() >= size as usize, "套接字归属表变化，请重试");
             let count = u32::from_ne_bytes(bytes[..4].try_into()?) as usize;
             let width = if tcp { 24 } else { 12 };
             ensure!(4 + count * width <= size as usize, "套接字表截断");
@@ -334,5 +463,30 @@ mod windows {
         }
         own.retain(|p| !foreign.contains(p));
         Ok(own)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn rule_replacement_and_deleted_networks_cannot_reuse_traffic_confirmation() {
+        let valid = HashSet::from(["current".to_string()]);
+        let mut s = State { active:true, eligible:valid.clone(), ..State::default() };
+        s.networks.insert("deleted".into(), Counters { sent:999999, ..Counters::default() });
+        s.networks.insert("current".into(), Counters { sent:65536, buckets:BTreeMap::from([(98,32768),(99,32768)]), ..Counters::default() });
+        let report = s.traffic(&valid,100);
+        assert_eq!(report["trafficObserved"],true);
+        assert_eq!(report["sentBytes"],65536);
+        assert_eq!(report["networks"].as_array().unwrap().len(),1);
+        assert_eq!(s.traffic(&valid,110)["trafficObserved"],false);
+        assert_eq!(s.traffic(&valid,110)["sessionConfirmed"],true);
+        s.reset_rules(); s.active=true; s.eligible=valid.clone();
+        let report=s.traffic(&valid,110);
+        assert_eq!(report["trafficObserved"],false);
+        assert_eq!(report["sessionConfirmed"],false);
+        assert_eq!(report["sentBytes"],65536);
+        assert_eq!(retry_delay(1),Duration::from_secs(1));
+        assert_eq!(retry_delay(u32::MAX),Duration::from_secs(15));
     }
 }

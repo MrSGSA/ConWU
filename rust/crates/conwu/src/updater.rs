@@ -240,11 +240,11 @@ pub async fn apply(data: PathBuf, nonce: String, parent: u32) -> Result<()> {
     }
     let message = result
         .as_ref()
-        .map(|_| "安装已完成，正在恢复后台")
+        .map(|_| "更新已完成，后台与网络已恢复")
         .unwrap_or("本地安装未完成，已保留上一版本与设置");
     crate::store::write_update_record(
         &root,
-        &serde_json::json!({"supported":true,"state":if result.is_ok(){"Installed"}else{"Error"},"message":message,"detail":result.as_ref().err().map(|e|crate::logging::redact(&e.to_string())),"canInstall":false,"version":plan.version}),
+        &serde_json::json!({"supported":true,"state":if result.is_ok(){"Installed"}else{"Error"},"message":message,"detail":result.as_ref().err().map(|e|crate::logging::redact(&e.to_string())),"canInstall":false,"version":plan.version,"attempt":plan.nonce}),
     )?;
     result
 }

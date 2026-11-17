@@ -94,7 +94,7 @@ try:
                 name = route.request.url.split('?')[0].removeprefix(control['origin']).strip('/') or 'index.html'
                 response = route.fetch()
                 route.fulfill(response=response, body=(assets / name).read_bytes())
-            for path in ('/', '/app.js', '/experience.js'):
+            for path in ('/', '/app.js', '/workspace.js', '/uu-takeover.js', '/experience.js'):
                 page.route(control['origin'] + path, edited)
         page.goto(url)
         page.wait_for_function('() => workspaceState?.workspaceVersion === 1')
@@ -221,9 +221,88 @@ try:
         tick(page, 1)
         print('new request badge updates during selection passed', flush=True)
 
+        decisions = []
+        def presentation_mutation(route):
+            body = route.request.post_data_json
+            action = body.get('network', {}).get('action')
+            if body.get('method') == 'network' and action in ('approve', 'reject'):
+                pair = feed['status']['networks'][0]['status']['pairing']
+                assert body['network']['candidate'] == pair['candidate']
+                pair.update(pending=False, approved=action == 'approve',
+                    active=action == 'approve', outcome='' if action == 'approve' else 'Rejected',
+                    phase='Delivering' if action == 'approve' else 'Rejected')
+                decisions.append(action)
+            elif body.get('method') == 'network' and action == 'leave':
+                rows = feed['status']['networks']
+                target = next(n for n in rows if n['id'] == body['networkId'])
+                assert not target['status']['networkId']
+                feed['status']['networks'] = [n for n in rows if n['id'] != target['id']]
+                decisions.append('remove-request')
+            elif body.get('method') == 'update-dismiss':
+                result = feed['status']['localUpdate']
+                assert body['localUpdate']['receiptId'] == result['receiptId']
+                result['acknowledged'] = True
+                decisions.append('dismiss-update')
+            else:
+                route.continue_()
+                return
+            route.fulfill(json=dict(ok=True, api=1, status=feed['status'],
+                operation=dict(id=body['operationId'], completed=True, phase='', error='')))
+        page.route(control['origin']+'/api/command', presentation_mutation)
+        for decision in ('approve', 'reject'):
+            feed['status'] = copy.deepcopy(incoming)
+            feed['status']['networks'][0]['status']['pairing']['pending'] = True
+            tick(page, 1)
+            page.locator('[data-ui-action="'+decision+'"]').click()
+            page.wait_for_function("() => document.getElementById('content').textContent.includes('暂无加入申请')")
+            assert page.locator('#requests-count').is_hidden()
+        assert decisions == ['approve', 'reject']
+        print('approval and rejection remove cards and badges passed', flush=True)
+
+        uu = copy.deepcopy(original_status)
+        for number in (1, 2):
+            placeholder = copy.deepcopy(uu['networks'][0])
+            placeholder.update(id=uuid.uuid4().hex, name='连接 '+str(number))
+            placeholder['status'].update(networkId='', isOwner=False, networkCreatedHere=False)
+            uu['networks'].append(placeholder)
+        uu['uuTakeover'] = dict(supported=True, settings=dict(enabled=True),
+            state='Active', rulesActive=True, trafficObserved=False, networks=[])
+        feed['status'] = uu
+        tick(page, 1)
+        page.locator('button[data-page="uu"]').first.click()
+        assert '不支持' not in page.locator('#uu-takeover-state').inner_text()
+        assert page.locator('[data-uu-network]').count() == 1
+        assert '连接 1' not in page.locator('#uu-takeover-networks').inner_text()
+        uu['uuTakeover'].update(state='Ready')
+        tick(page, 1)
+        assert '等待实际流量' in page.locator('#uu-takeover-state').inner_text()
+        assert 'good' not in page.locator('#uu-takeover-dot').get_attribute('class')
+        uu['uuTakeover'].update(state='Transmitting', trafficObserved=True)
+        tick(page, 1)
+        assert 'good' in page.locator('#uu-takeover-dot').get_attribute('class')
+        print('UU legacy state, approved networks and traffic confirmation passed', flush=True)
+
+        updated = copy.deepcopy(original_status)
+        updated['localUpdate'] = dict(supported=True, state='Installed', busy=False,
+            version='1.5.0', message='更新已完成', receiptId='a'*64, acknowledged=False)
+        feed['status'] = updated
+        page.evaluate("localStorage.setItem('conwu-local-update',String(Date.now()));notice('正在本机安装',false,'update')")
+        tick(page, 1)
+        assert page.evaluate("localStorage.getItem('conwu-local-update')") is None
+        assert page.locator('#notice').is_hidden()
+        page.locator('button[data-page="settings"]').first.click()
+        assert '更新已完成' in page.locator('#local-update-state').inner_text()
+        page.locator('[data-ui-action="dismiss-update"]').click()
+        page.wait_for_function("() => !document.getElementById('local-update-state')")
+        updated['localUpdate'].update(receiptId='b'*64, acknowledged=False)
+        tick(page, 1)
+        page.wait_for_function("() => !document.getElementById('local-update-state')", timeout=20000)
+        assert decisions.count('dismiss-update') == 2
+        print('update receipt dismissal, automatic expiry and installation notice cleanup passed', flush=True)
+
         pending = copy.deepcopy(original_status)
         guest = pending['networks'][0]
-        guest['status'].update(networkId='', isOwner=False)
+        guest['status'].update(networkId='', isOwner=False, networkCreatedHere=False)
         guest['status']['pairing'] = dict(active=True, owner=False, expires=int(time.time())+120,
             verification='', state='正在启用本机承载组件')
         pending['selectedNetworkId'] = guest['id']
@@ -247,14 +326,23 @@ try:
         assert page.locator('#join-submit').is_visible()
         assert page.locator('#join-invite').input_value().replace('-', '') == ipv4_code
         page.unroute(control['origin']+'/api/command', injected_join)
+        page.locator('#unapproved-requests [data-ui-action="remove-network"]').click()
+        assert '移除加入申请' in page.locator('#dialog-title').inner_text()
+        page.locator('#dialog-confirm').click()
+        page.wait_for_function("() => !document.getElementById('unapproved-requests')")
+        assert decisions.count('remove-request') == 1
+        page.unroute(control['origin']+'/api/command', presentation_mutation)
         feed['status'] = None
-        page.unroute(control['origin']+'/api/status**', injected_status)
+        page.unroute_all(behavior='wait')
         print('joining setup phase and persistent failure detail passed', flush=True)
         assert not errors, errors
         result = dict(version=page.evaluate('workspaceState.version'), overviewSelection=True,
             mouseDragAcrossRefresh=True, multilineLogSelection=True, pendingLogsCatchUp=True,
             inputSelection=True, dialogSelection=True, ipv4Default16=True, explicitIpv6Code36=True,
             newRequestBadgeWhileSelecting=True, joinSetupPhase=True, joinFailureVisible=True,
+            decisionsRemoveCards=True, pendingRequestRemoval=True, uuStateCompatible=True,
+            uuExcludesUnapproved=True, uuTrafficConfirmation=True, updateDismissal=True,
+            updateSuccessExpires=True, updateNoticeCleanup=True,
             javascriptErrors=errors, isolatedMemoryBackend=True, embeddedAssets=not args.source_assets)
         print(json.dumps(result, ensure_ascii=True), flush=True)
         (data / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

@@ -1,5 +1,7 @@
 use std::{env, fs, path::PathBuf, process::Command};
 fn main() {
+    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../..");
+    println!("cargo:rerun-if-changed={}",root.join("src/ConWU.Web/wwwroot").display());
     println!("cargo:rerun-if-env-changed=CONWU_LINK_NO_MMAP");
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
         && env::var_os("CONWU_LINK_NO_MMAP").is_some()
@@ -17,7 +19,6 @@ fn main() {
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }
-    let root = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap()).join("../../..");
     let icon = root
         .join("src/ConWU.App/Assets/conwu.ico")
         .canonicalize()

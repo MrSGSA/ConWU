@@ -20,21 +20,30 @@ business relay. TCPRAW still needs a successful kernel TCP connection. Mimic
 needs an inbound TCP-format route to the host. A gateway lease or STUN result
 alone does not prove inbound reachability.
 
-Windows Mimic requires Microsoft XDP 1.4.0 and uses only Generic AF_XDP for
-Ethernet receive, transmit and protected kernel-control RX injection. It does
-not load WinDivert or fall back to it. All active RSS queues on each attached
-IPv4 interface are covered; an explicitly selected unsupported interface fails
-startup. Rules match only the owned IPv4 addresses and TCP destination port.
+Windows Mimic defaults to WinDivert after repeated Generic AF_XDP TX queue
+binding failures on the Intel AX211 WLAN adapter. Its inbound packets are
+owned, not sniffed, so the kernel cannot race the userspace handshake with a
+RST. A narrow guard suppresses kernel RSTs from the owned source port;
+same-port protected STUN control packets are reinjected unchanged. Client
+peer-reflexive learning stays limited to the selected peer IP and requires
+the existing handshake validation. Capture workers join before teardown.
+
+For development only, `CONWU_MIMIC_IO=xdp` requests Microsoft XDP 1.4.0 Generic
+AF_XDP receive/transmit. Startup errors emit a backend-fallback event and
+select WinDivert. A running XDP failure exits the helper so the parent can
+reconnect; protocol/identity are preserved. XDP is no longer an MSI prerequisite
+and existing shared XDP drivers are left in place. In the optional XDP path,
+all active RSS queues on each attached IPv4 interface are covered.
 The port bitmap remains alive until program close because the XDP API pins,
 rather than copies, its pages. Ring/UMEM ownership ends after receiver workers
 join and socket handles close. Source routing and Ethernet next-hop lookup use
 Windows IP Helper; no per-packet raw-IP injection or new kernel driver is used.
 
 Windows TCPRAW retains its independent WinDivert adapter and narrow TTL=1
-kernel-output guard. The executable delay-loads that DLL only for TCPRAW.
+kernel-output guard. The executable delay-loads the DLL for either WinDivert adapter.
 Current XDP built-in predicates cannot express the existing source-port/TTL
-guard without broader outbound interception. No mixed XDP/WinDivert Mimic path
-or broad host TCP interception is included.
+guard without broader outbound interception. An individual Mimic device uses
+one I/O backend; rules do not intercept unrelated host TCP ports.
 
 Linux continues to use AF_PACKET/raw IPv4 for both carriers. Only the packet
 I/O trait and Linux I/O adapter are shared with the MIT/Apache Phantun component;
@@ -62,9 +71,9 @@ see native/xdp-sdk/PROVENANCE.txt. Build with scripts/Build-Phantun.ps1 on Windo
 (MSVC C++ and the Windows SDK are required) or the existing Linux build route.
 scripts/Get-XdpRuntime.ps1 pins the official runtime package and verifies its
 SHA-256, per-file hashes and Microsoft driver/catalog signatures. New Windows
-MSI/managed installations install this runtime before restoring networks. They
-reuse a compatible shared runtime and never uninstall/overwrite another app's
-running XDP component. Standalone use requires an already installed runtime.
+installations retain these optional diagnostic files. The default installer
+checks WinDivert and restores networks without installing/rebinding XDP. An
+explicit XDP experiment requires an already installed compatible runtime.
 
 Windows/Linux role swaps, protected STUN, shared receiver, AEAD isolation and
 reconnection have independent local integration checks. Real WAN throughput,
