@@ -42,7 +42,7 @@
 
 ## 2026-11-17 日用修复与 NAT 实验
 
-2026-11-17 新增日用修复的源码验收：Windows 后台最终 40 项通过、2 项忽略，Linux 首轮对应修复 37 项通过、1 项忽略，核心／成员关系／安全分别 3／3／2 项通过。Linux 末次补验在用户报告 UU 卡顿后中止，未将其列为完整通过；日用会话期间不重启重负载检查。实际内嵌 WebUI 的 Playwright 验证覆盖审批／拒绝后卡片与角标收尾、移除未批准申请、UU 旧状态兼容及网络过滤、更新结果手动关闭和自动收起，未出现页面 JavaScript 错误。
+2026-11-17 新增日用修复的源码验收：Windows 后台最终 40 项通过、2 项忽略；用户授权正式交付后，以低优先级和两个逻辑核串行补验，Linux 后台 37 项通过、1 项忽略，核心／成员关系／安全分别 3／3／2 项通过，未提供的旧版 oracle 保持忽略。实际内嵌 WebUI 的 Playwright 验证覆盖审批／拒绝后卡片与角标收尾、移除未批准申请、UU 旧状态兼容及网络过滤、更新结果手动关闭和自动收起，未出现页面 JavaScript 错误。
 
 Windows Mimic 默认 WinDivert 的修订已通过原始承载 14 项协议回归，以及 Windows Wintun／Linux TUN 的强制协调首次 SAS、双向报文、断开重连和 Windows 后台重启。TCPRAW 同样通过该跨平台组合。证据为 `out/daily-fixes-20261117/windows-tests-final.log`、`linux-tests-current.log`、`windows-raw-tests-current.log`、`web-presentation-final.log` 和 `windivert-cross-final.log`。此处为受控虚拟链路，未据此宣称 WLAN 日用长稳或新版 MSI 安装通过。此前纯 XDP 的历史验收不等于 AX211 WLAN 的队列稳定性；本轮实机已出现重复 TX bind `0x80070017`。
 

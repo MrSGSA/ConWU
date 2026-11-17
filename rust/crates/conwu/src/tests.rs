@@ -256,7 +256,7 @@ async fn remote_admin_login_origin_csrf_and_local_command_boundary() -> Result<(
     // a native Linux filesystem; no production credential is copied there.
     #[cfg(unix)]
     let app = open_app(
-        std::path::PathBuf::from("/tmp")
+        std::env::temp_dir()
             .join(format!("conwu-rust-permissions-{}", conwu_core::id())),
     )
     .await?;
