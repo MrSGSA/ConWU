@@ -41,6 +41,7 @@ mod windows {
         UI::{Shell::*, WindowsAndMessaging::*},
     };
     const CALLBACK: u32 = WM_APP + 31;
+    static TASKBAR_CREATED: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
     pub enum Context {
         Embedded(Arc<Panel>),
         Service {
@@ -79,6 +80,24 @@ mod windows {
     fn wide(text: &str) -> Vec<u16> {
         text.encode_utf16().chain(Some(0)).collect()
     }
+    fn notification(hwnd: HWND) -> NOTIFYICONDATAW {
+        unsafe {
+            let instance = GetModuleHandleW(std::ptr::null());
+            let mut icon: NOTIFYICONDATAW = std::mem::zeroed();
+            icon.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
+            icon.hWnd = hwnd;
+            icon.uID = 1;
+            icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+            icon.uCallbackMessage = CALLBACK;
+            icon.hIcon = LoadIconW(instance, 101usize as *const u16);
+            if icon.hIcon.is_null() {
+                icon.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
+            }
+            let tip = wide("ConWU");
+            icon.szTip[..tip.len()].copy_from_slice(&tip);
+            icon
+        }
+    }
     unsafe extern "system" fn window(
         hwnd: HWND,
         message: u32,
@@ -90,6 +109,14 @@ mod windows {
         let pointer = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) } as *const Context;
         if !pointer.is_null() {
             let panel = unsafe { &*pointer };
+            if TASKBAR_CREATED.get().is_some_and(|id| *id == message) {
+                let icon = notification(hwnd);
+                if unsafe { Shell_NotifyIconW(NIM_ADD, &icon) } == 0
+                    && unsafe { Shell_NotifyIconW(NIM_MODIFY, &icon) } == 0 {
+                    tracing::warn!("Windows 任务栏重建后暂未恢复 ConWU 托盘图标");
+                }
+                return 0;
+            }
             match message {
                 CALLBACK => {
                     if lparam as u32 == WM_LBUTTONDBLCLK {
@@ -169,19 +196,11 @@ mod windows {
             ensure!(!hwnd.is_null(), "无法创建实验托盘窗口");
             let context = Box::new(panel);
             SetWindowLongPtrW(hwnd, GWLP_USERDATA, (&*context as *const Context) as isize);
-            let mut icon: NOTIFYICONDATAW = std::mem::zeroed();
-            icon.cbSize = std::mem::size_of::<NOTIFYICONDATAW>() as u32;
-            icon.hWnd = hwnd;
-            icon.uID = 1;
-            icon.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
-            icon.uCallbackMessage = CALLBACK;
-            icon.hIcon = LoadIconW(instance, 101usize as *const u16);
-            if icon.hIcon.is_null() {
-                icon.hIcon = LoadIconW(std::ptr::null_mut(), IDI_APPLICATION);
-            }
-            let tip = wide("ConWU");
-            icon.szTip[..tip.len()].copy_from_slice(&tip);
-            if Shell_NotifyIconW(NIM_ADD, &icon) == 0 {
+            let taskbar = *TASKBAR_CREATED.get_or_init(|| RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()));
+            ensure!(taskbar != 0, "无法监听 Windows 任务栏重建消息");
+            ChangeWindowMessageFilterEx(hwnd, taskbar, MSGFLT_ALLOW, std::ptr::null_mut());
+            let icon = notification(hwnd);
+            if Shell_NotifyIconW(NIM_ADD, &icon) == 0 && Shell_NotifyIconW(NIM_MODIFY, &icon) == 0 {
                 DestroyWindow(hwnd);
                 UnregisterClassW(name.as_ptr(), instance);
                 anyhow::bail!("无法添加实验托盘图标")

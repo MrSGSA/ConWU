@@ -182,7 +182,7 @@ fn service_ui_grant(sid: &str) -> Result<()> {
     }
     Ok(())
 }
-fn drivers(root: &Path) -> Result<()> {
+fn drivers(root: &Path, require_mimic: bool) -> Result<()> {
     let components = root.join("app/components");
     let dll = components.join("WinDivert.dll");
     let library: libloading::Library =
@@ -202,9 +202,7 @@ fn drivers(root: &Path) -> Result<()> {
     }
     let script = components.join("install-xdp.ps1");
     let runtime = components.join("xdp-runtime");
-    run(
-        "powershell.exe",
-        &[
+    let mut args = vec![
             "-NoProfile",
             "-NonInteractive",
             "-ExecutionPolicy",
@@ -213,8 +211,11 @@ fn drivers(root: &Path) -> Result<()> {
             script.to_str().context("XDP安装路径无效")?,
             "-RuntimeDirectory",
             runtime.to_str().context("XDP运行时路径无效")?,
-        ],
-    )?;
+        ];
+    if require_mimic {
+        args.push("-RequireMimic");
+    }
+    run("powershell.exe", &args)?;
     Ok(())
 }
 fn configure(sid: &str, attempt: &str) -> Result<()> {
@@ -262,7 +263,9 @@ fn configure(sid: &str, attempt: &str) -> Result<()> {
     };
     store.write(&file, &serde_json::to_vec(&auth)?, false)?;
     store.write("ui-user.sid", auth.after.as_bytes(), false)?;
-    drivers(&root)?;
+    drivers(&root, db.networks.iter().any(|n| {
+        n.enabled && n.profile.is_some() && n.settings.path_selection == "mimic-only"
+    }))?;
     run(
         "sc.exe",
         &[

@@ -5,6 +5,10 @@ use std::{io, sync::Arc};
 mod windows;
 #[cfg(target_os = "windows")]
 mod xdp;
+#[cfg(target_os = "windows")]
+pub fn xdp_probe(index: u32) -> io::Result<u32> {
+    xdp::probe(index)
+}
 // The Linux device is the shared, MIT/Apache raw IP I/O layer only; none of
 // Phantun's handshake or data stack participates in either new wire protocol.
 #[cfg(target_os = "linux")]

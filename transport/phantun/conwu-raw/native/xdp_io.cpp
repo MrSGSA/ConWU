@@ -78,7 +78,10 @@ struct Socket {
             XDP_HOOK_ID hook{XDP_HOOK_L2, XDP_HOOK_RX, XDP_HOOK_INJECT};
             check(XskSetSockopt(handle.value, XSK_SOCKOPT_TX_HOOK_ID, &hook, sizeof(hook)), "configure receive injection");
         }
-        check(XskBind(handle.value, index, queue, XSK_BIND_FLAG_GENERIC | (receive ? XSK_BIND_FLAG_RX : XSK_BIND_FLAG_TX)), "bind Generic interface/queue");
+        char binding[128];
+        snprintf(binding, sizeof(binding), "bind Generic interface %u queue %u %s", index, queue,
+                 receive ? "RX" : inject_receive ? "RX_INJECT" : "TX");
+        check(XskBind(handle.value, index, queue, XSK_BIND_FLAG_GENERIC | (receive ? XSK_BIND_FLAG_RX : XSK_BIND_FLAG_TX)), binding);
         check(XskActivate(handle.value, XSK_ACTIVATE_FLAG_NONE), "activate");
         UINT32 size = sizeof(info);
         check(XskGetSockopt(handle.value, XSK_SOCKOPT_RING_INFO, &info, &size), "get rings");
@@ -152,7 +155,7 @@ struct Interface {
     // Keep storage stable until the attached program has been closed.
     std::array<UINT8,XDP_PORT_SET_BUFFER_SIZE> ports{};
     Handle program, map;
-    void open(uint16_t port, uint32_t local_ip) {
+    void open_io() {
         Handle object;
         check(XdpInterfaceOpen(index, &object.value), "open interface");
         XDP_RSS_CAPABILITIES capabilities{};
@@ -175,6 +178,9 @@ struct Interface {
             check(XdpMapInsert(map.value, &i, &queue->socket.handle.value), "map receive queue");
             receivers.push_back(std::move(queue));
         }
+    }
+    void open(uint16_t port, uint32_t local_ip) {
+        open_io();
         // Match only owned IPv4 destinations, leaving IPv6 sockets on the same
         // port and other adapters/addresses entirely outside the capture path.
         ports.fill(0);
@@ -381,5 +387,20 @@ extern "C" void cw_xdp_protect(void *device,uint32_t ip,uint16_t port) {
 extern "C" uint32_t cw_xdp_interfaces(void *device) { return UINT32(static_cast<Context *>(device)->interfaces.size()); }
 extern "C" uint32_t cw_xdp_queues(void *device) {
     UINT32 total=0; for (auto &a:static_cast<Context *>(device)->interfaces) total+=UINT32(a->receivers.size()); return total;
+}
+extern "C" uint32_t cw_xdp_probe(uint32_t index, uint32_t *queues, char *error, uint32_t error_size) {
+    try {
+        if (!index || !queues) throw std::runtime_error("invalid XDP interface index");
+        Interface adapter;
+        adapter.index = index;
+        // Exercise the actual RX/TX queues without attaching a packet rule,
+        // redirecting traffic, or sending a frame. All handles close on return.
+        adapter.open_io();
+        *queues = UINT32(adapter.receivers.size());
+        return NO_ERROR;
+    } catch (const std::exception &e) {
+        if (error && error_size) snprintf(error,error_size,"%s",e.what());
+        return ERROR_GEN_FAILURE;
+    }
 }
 extern "C" void cw_xdp_close(void *device) { delete static_cast<Context *>(device); }

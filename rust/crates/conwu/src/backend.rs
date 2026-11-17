@@ -484,6 +484,16 @@ impl App {
                     }
                 }
                 Event::GuestState { id, state } => {
+                    if state["active"] == false {
+                        if let Some(error) = state["error"].as_str().filter(|s| !s.is_empty()) {
+                            let name = self.db.read().unwrap().networks.iter()
+                                .find(|network| network.id == id)
+                                .map(|network| network.name.clone());
+                            if let Some(name) = name {
+                                self.log("WARN", &format!("申请加入 {name} 失败：{error}"));
+                            }
+                        }
+                    }
                     self.engine.guest_states.write().unwrap().insert(id, state);
                 }
                 Event::Discovery {

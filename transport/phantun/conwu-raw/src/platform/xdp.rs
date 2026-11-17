@@ -35,7 +35,19 @@ unsafe extern "C" {
     fn cw_xdp_protect(device: *mut c_void, peer_ip: u32, peer_port: u16);
     fn cw_xdp_interfaces(device: *mut c_void) -> u32;
     fn cw_xdp_queues(device: *mut c_void) -> u32;
+    fn cw_xdp_probe(index: u32, queues: *mut u32, error: *mut c_char, error_size: u32) -> u32;
     fn cw_xdp_close(device: *mut c_void);
+}
+pub fn probe(index: u32) -> io::Result<u32> {
+    let mut queues = 0;
+    let mut error = [0 as c_char; 2048];
+    let status = unsafe { cw_xdp_probe(index, &mut queues, error.as_mut_ptr(), error.len() as u32) };
+    if status == 0 {
+        Ok(queues)
+    } else {
+        let message = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy();
+        Err(io::Error::other(message.into_owned()))
+    }
 }
 struct Callbacks {
     sender: flume::Sender<Vec<u8>>,
@@ -113,7 +125,7 @@ impl Device {
         };
         let pointer = NonNull::new(pointer).ok_or_else(|| {
             let text = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy();
-            io::Error::other(format!("Mimic XDP 启动失败：{text}。请安装或修复微软 XDP 1.4 运行时并检查网卡绑定；不会回退到 WinDivert"))
+            io::Error::other(format!("Mimic XDP 启动失败：{text}。请检查微软 XDP 运行时与当前网卡绑定，必要时重新安装当前版本进行修复。"))
         })?;
         let native = Native {
             pointer,

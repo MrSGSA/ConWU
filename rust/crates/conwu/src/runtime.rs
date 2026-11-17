@@ -1985,13 +1985,17 @@ impl Engine {
                 .context("主机没有返回配对会话")?;
             Ok::<_, anyhow::Error>((pipe, ticket))
         };
-        let initial = tokio::time::timeout(Duration::from_secs(8), direct).await;
+        // XDP initialization already has its own 45-second bound. The first
+        // contact must allow that setup plus the bounded pairing RPC to finish.
+        let initial_limit = if cfg!(windows) && code.mode == "mimic" { 55 } else { 8 };
+        let initial = tokio::time::timeout(Duration::from_secs(initial_limit), direct).await;
         let observation: Option<crate::raw::ClientObservation>;
         let (mut pipe, ticket) = match initial {
             Ok(Ok(connected)) => {
                 observation = None;
                 connected
             }
+            Ok(Err(error)) if error.is::<crate::raw::LocalCarrierError>() => return Err(error),
             failure => {
                 if !code.punch && !code.coordinator {
                     return match failure {

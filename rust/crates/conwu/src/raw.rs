@@ -18,6 +18,22 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+
+#[derive(Debug)]
+pub(crate) struct LocalCarrierError {
+    mode: String,
+    source: anyhow::Error,
+}
+impl std::fmt::Display for LocalCarrierError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "本机 {} 承载组件未就绪：{}", self.mode, self.source)
+    }
+}
+impl std::error::Error for LocalCarrierError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.source.as_ref())
+    }
+}
 fn stoppers() -> &'static Mutex<HashMap<u32, mpsc::WeakSender<Value>>> {
     static STOPPERS: OnceLock<Mutex<HashMap<u32, mpsc::WeakSender<Value>>>> = OnceLock::new();
     STOPPERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -270,7 +286,7 @@ async fn spawn(
             if let Some((_, json)) = line.split_once(' ') {
                 if let Ok(v) = serde_json::from_str::<Value>(json) {
                     if v["event"] == "failed" || v["event"] == "peer-failed" {
-                        anyhow::bail!("承载组件启动失败：{}", v["reason"])
+                        anyhow::bail!("承载组件启动失败：{}", v["reason"].as_str().unwrap_or("组件未就绪"))
                     }
                     if v["event"] == "ready" {
                         ensure!(
@@ -400,6 +416,17 @@ pub async fn connect(
     connect_ref(engine, mode, remote, port, parent).await
 }
 pub async fn connect_ref(
+    engine: &Engine,
+    mode: &str,
+    remote: SocketAddr,
+    port: u16,
+    parent: &CancellationToken,
+) -> Result<Pipe> {
+    connect_local(engine, mode, remote, port, parent)
+        .await
+        .map_err(|source| LocalCarrierError { mode: mode.into(), source }.into())
+}
+async fn connect_local(
     engine: &Engine,
     mode: &str,
     remote: SocketAddr,

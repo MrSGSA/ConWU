@@ -24,6 +24,7 @@ uint32_t cw_xdp_send(void *device, const uint8_t *ipv4, uint32_t length);
 void cw_xdp_protect(void *device, uint32_t peer_ip, uint16_t peer_port);
 uint32_t cw_xdp_interfaces(void *device);
 uint32_t cw_xdp_queues(void *device);
+uint32_t cw_xdp_probe(uint32_t interface_index, uint32_t *queues, char *error, uint32_t error_size);
 void cw_xdp_close(void *device);
 #ifdef __cplusplus
 }

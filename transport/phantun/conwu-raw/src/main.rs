@@ -142,6 +142,26 @@ pub fn udp_endpoint() -> io::Result<tokio::net::UdpSocket> {
     tokio::net::UdpSocket::from_std(socket.into())
 }
 fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        let args = std::env::args().skip(1).collect::<Vec<_>>();
+        if args.first().is_some_and(|s| s == "--xdp-probe") {
+            let index = args.get(1).and_then(|s| s.parse::<u32>().ok()).filter(|i| *i > 0);
+            let result = match index.filter(|_| args.len() == 2) {
+                Some(index) => platform::xdp_probe(index),
+                None => Err(invalid("--xdp-probe requires one positive interface index")),
+            };
+            let ok = result.is_ok();
+            match result {
+                Ok(queues) => event(json!({"event":"xdp-probe","abi":1,"ready":true,
+                    "interfaceIndex":index,"receiveQueues":queues,"redirectionAttached":false,
+                    "backend":"xdp-afxdp-generic"})),
+                Err(error) => event(json!({"event":"xdp-probe","abi":1,"ready":false,
+                    "interfaceIndex":index,"reason":error.to_string()})),
+            }
+            std::process::exit(if ok { 0 } else { 1 });
+        }
+    }
     if std::env::args().skip(1).collect::<Vec<_>>() == ["--conwu-info"] {
         println!(
             "{}",

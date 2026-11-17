@@ -134,9 +134,9 @@ function closeInvitation(){ui.codeId='';$('invitation-dialog').close();$('invita
 function pendingJoin(){return row(ui.joinId)||all().find(n=>n.status.pairing?.active&&!n.status.pairing.owner);}
 joinPage=function(){
  const n=pendingJoin(),p=n?.status.pairing,waiting=p?.active&&!p.owner,done=ui.joinId&&n?.status.networkId;let form;
- if(waiting)form=`<div class="waiting-card"><div class="status-orbit">${icon('clock')}</div><h2>等待主机同意</h2><p>${esc(p.peerName||'目标主机')} 将核对并批准本次申请。</p>${kv('双方校验码',p.verification||'正在交换',true)}<p class="hint">${esc(p.state)}</p><div class="form-actions"><button class="btn" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消申请</button></div></div>`;
+ if(waiting)form=`<div class="waiting-card"><div class="status-orbit">${icon('clock')}</div><h2>${p.verification?'等待主机同意':'正在联系主机'}</h2><p>${p.verification?esc(p.peerName||'目标主机')+' 将核对并批准本次申请。':'正在建立配对通道，请稍候。'}</p>${kv('双方校验码',p.verification||'正在交换',true)}<p class="hint">${esc(p.state)}</p><div class="form-actions"><button class="btn" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消申请</button></div></div>`;
  else if(done)form=`<div class="waiting-card"><div class="status-orbit success">${icon('check')}</div><h2>已加入 ${esc(n.name)}</h2><p>已获取主机网络设置，${n.status.directPeers?'已建立直连。':'正在建立直连。'}</p>${kv('本机虚拟 IP',n.status.virtualIp,true)}${kv('目标设备',n.status.peers[0]?.name||'目标主机')}<div class="form-actions"><button class="btn primary" data-page="overview">查看概况</button><button class="btn" data-ui-action="another-join">加入其他网络</button></div></div>`;
- else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError)}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
+ else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError||p?.error||'')}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
  return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article>${networkList(false)}</div>`;
 };
 function requestsPage(){return heading('加入申请','核对设备与校验码，决定是否允许加入。')+incomingPage().replaceAll('data-action="approve"','data-ui-action="approve"').replaceAll('data-action="reject"','data-ui-action="reject"').replaceAll('data-request-network=','data-network=');}
@@ -261,7 +261,7 @@ function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,ne
 render=function(next){
  const observed=!!next;
  if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';ui.unavailableMessage='';appendStatusLogs(next);initializeDrafts();if(observed)sampleTraffic(next);}
- if(observed&&holdAutomaticPaint())return;
+ if(observed){updateRequestBadge();if(holdAutomaticPaint())return;}
  ui.pendingPaint=false;
  if(ui.unavailableMessage){notice(ui.unavailableMessage,true,expired?'authorization':'backend');ui.unavailableMessage='';}
  if(workspaceState){if(online&&(noticeSource==='backend'||noticeSource==='pair'&&!workspaceState.networks.some(n=>n.status.pairing?.active))){lastPairError='';notice('');}if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&!row(ui.joinId))ui.joinId='';}
@@ -283,12 +283,16 @@ navigate=function(next){page=titles[next]?next:'overview';ui.signature='';render
 updateShell=function(){
  document.querySelectorAll('.nav[data-page]').forEach(b=>{const active=b.dataset.page===page;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
  document.title=titles[page]+' · ConWU';$('sidebar-name').textContent=workspaceState?.deviceName||'正在读取';$('sidebar-initials').textContent=(workspaceState?.deviceName||'CW').slice(0,2).toUpperCase();
- const count=all().filter(n=>n.status.pairing?.active&&n.status.pairing.owner&&n.status.pairing.candidate).length;
- $('requests-count').textContent=count;$('requests-count').hidden=!count;$('request-dot').hidden=true;$('settings-dirty-dot').hidden=!ui.device||same(ui.device,ui.deviceBase);
+ updateRequestBadge();$('request-dot').hidden=true;$('settings-dirty-dot').hidden=!ui.device||same(ui.device,ui.deviceBase);
  $('backend-state').textContent=!online&&installingLocally()?'正在本机更新':expired?'面板授权已过期':!online?'后台状态未更新':state?.serviceReady?'后台运行中':state?.state||'后台尚未就绪';
  $('backend-dot').className='dot'+(online&&!expired&&state?.serviceReady?' good':'');
  $('app-version').textContent=workspaceState?.version?'v'+workspaceState.version.split('+')[0]:'';
 };
+function updateRequestBadge(){
+ const count=all().filter(n=>n.status.pairing?.active&&n.status.pairing.owner&&n.status.pairing.candidate).length,badge=$('requests-count'),selection=window.getSelection();
+ if(badge.textContent!==String(count)&&!(selection&&!selection.isCollapsed&&selection.containsNode(badge,true)))badge.textContent=count;
+ badge.hidden=!count;
+}
 controls=function(){
  const paint=!holdAutomaticPaint(),updateRoot=$('software-update-details');if(paint&&updateRoot&&updateRoot.dataset.updateSignature!==updateSignature())updateRoot.outerHTML=updateDetails();
  const ready=online&&!expired&&state?.serviceReady&&!busy&&!ui.preparingCommand;
@@ -497,7 +501,7 @@ async function create(){
 async function join(){
  const code=compactCodeValue(joinInviteValue);if(!validCompactCode(code))throw Error('请输入完整的直连码：IPv4 为 16 位，IPv6 为 36 位。');
  const reply=await command('network',{networkId:'',network:{action:'join-compact',autoConfigure:true,code,service:'',certificatePin:'',mode:'faketcp',name:'连接 '+(all().length+1),expectedNetwork:''}});
- ui.joinId=reply.status?.selectedNetworkId||selectedNetwork;render();notify('申请已发送，等待主机批准');
+ ui.joinId=reply.status?.selectedNetworkId||selectedNetwork;render();const p=row(ui.joinId)?.status.pairing;if(p?.error)notice(p.error,true,'pair');else notify('正在联系目标主机');
 }
 bindJoinInput=function(){
  const input=$('join-invite');if(!input)return;

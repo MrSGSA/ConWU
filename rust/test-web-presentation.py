@@ -1,5 +1,6 @@
 """Exercise the real WebUI with an isolated memory backend (requires Playwright)."""
 import argparse
+import copy
 import json
 import os
 from pathlib import Path
@@ -185,14 +186,75 @@ try:
         assert page.locator('#invitation-family').input_value() == ''
         page.locator('#invitation-generate').click()
         page.wait_for_function("() => document.getElementById('invitation-code-length').textContent==='IPv4 · 16 位'")
+        ipv4_code = page.locator('#invitation-code').get_attribute('data-code')
         page.locator('#invitation-family').select_option('ipv6')
         page.locator('#invitation-generate').click()
         page.wait_for_function("() => document.getElementById('invitation-code-length').textContent==='IPv6 · 36 位'")
         assert len(page.locator('#invitation-code').get_attribute('data-code')) == 36
+
+        # Controlled status events exercise presentation only. Membership and
+        # authentication are covered by the backend's real pairing tests.
+        page.locator('button[data-ui-action="close-invitation"]').click()
+        page.locator('button[data-page="overview"]').first.click()
+        original_status = page.evaluate('JSON.parse(JSON.stringify(workspaceState))')
+        incoming = copy.deepcopy(original_status)
+        incoming['networks'][0]['status']['pairing'] = dict(active=True, owner=True,
+            candidate='a'*32, peerName='选区保留申请', verification='123456',
+            proposedIp='10.203.1.2', expires=int(time.time())+120, direct=True)
+        feed = {'status': incoming}
+        def injected_status(route):
+            response = route.fetch()
+            body = response.json()
+            if feed['status'] is not None:
+                body['status'] = feed['status']
+            route.fulfill(response=response, json=body)
+        page.route(control['origin']+'/api/status**', injected_status)
+        text = select_text(page, '#page-title')
+        tick(page, 1)
+        retained(page, text)
+        assert page.locator('#requests-count').is_visible()
+        assert page.locator('#requests-count').inner_text() == '1'
+        page.locator('button[data-page="requests"]').first.click()
+        assert '选区保留申请' in page.locator('#content').inner_text()
+        clear_selection(page)
+        feed['status'] = None
+        tick(page, 1)
+        print('new request badge updates during selection passed', flush=True)
+
+        pending = copy.deepcopy(original_status)
+        guest = pending['networks'][0]
+        guest['status'].update(networkId='', isOwner=False)
+        guest['status']['pairing'] = dict(active=True, owner=False, expires=int(time.time())+120,
+            verification='', state='正在启用本机承载组件')
+        pending['selectedNetworkId'] = guest['id']
+        def injected_join(route):
+            body = route.request.post_data_json
+            if body.get('method') == 'network' and body.get('network',{}).get('action') == 'join-compact':
+                feed['status'] = pending
+                route.fulfill(json=dict(ok=True, api=1, status=pending,
+                    operation=dict(id=body['operationId'], completed=True, phase='', error='')))
+            else:
+                route.continue_()
+        page.route(control['origin']+'/api/command', injected_join)
+        page.locator('button[data-page="join"]').first.click()
+        page.locator('#join-invite').fill(ipv4_code)
+        page.locator('#join-submit').click()
+        page.wait_for_function("() => document.querySelector('#join-card h2')?.textContent==='正在联系主机'")
+        message = '本机 Mimic XDP 队列检查失败（隔离测试）'
+        guest['status']['pairing'].update(active=False, error=message, state=message)
+        tick(page, 1)
+        assert page.locator('#join-error').inner_text() == message
+        assert page.locator('#join-submit').is_visible()
+        assert page.locator('#join-invite').input_value().replace('-', '') == ipv4_code
+        page.unroute(control['origin']+'/api/command', injected_join)
+        feed['status'] = None
+        page.unroute(control['origin']+'/api/status**', injected_status)
+        print('joining setup phase and persistent failure detail passed', flush=True)
         assert not errors, errors
         result = dict(version=page.evaluate('workspaceState.version'), overviewSelection=True,
             mouseDragAcrossRefresh=True, multilineLogSelection=True, pendingLogsCatchUp=True,
             inputSelection=True, dialogSelection=True, ipv4Default16=True, explicitIpv6Code36=True,
+            newRequestBadgeWhileSelecting=True, joinSetupPhase=True, joinFailureVisible=True,
             javascriptErrors=errors, isolatedMemoryBackend=True, embeddedAssets=not args.source_assets)
         print(json.dumps(result, ensure_ascii=True), flush=True)
         (data / 'result.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

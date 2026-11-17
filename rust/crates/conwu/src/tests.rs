@@ -19,6 +19,36 @@ pub(crate) async fn app() -> Result<Arc<backend::App>> {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_carrier_failure_is_reported_without_falling_into_stun() -> Result<()> {
+    let guest = app().await?;
+    let code = conwu_core::code::DirectCode {
+        endpoint: "192.0.2.23:443".parse()?,
+        mode: "mimic".into(),
+        room: "012345".into(),
+        punch: true,
+        coordinator: false,
+    };
+    cmd(&guest, json!({"method":"network","network":{
+        "action":"join-compact","code":code.issue()?,"name":"本机组件故障验收"
+    }})).await?;
+    let id = guest.db.read().unwrap().selected_network_id.clone();
+    tokio::time::timeout(Duration::from_secs(6), async {
+        while guest.engine.pairing(&id)["active"] != false {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    }).await.context("本机组件失败被错误地转入外部发现或打洞等待")?;
+    let pairing = guest.engine.pairing(&id);
+    let error = pairing["error"].as_str().context("本机组件失败未保留原因")?;
+    ensure!(error.contains("本机 mimic 承载组件未就绪"), "本机故障被误报成主机不可达：{error}");
+    ensure!(guest.status("")["logEntries"].as_array().unwrap().iter().any(|row| {
+        row["text"].as_str().is_some_and(|s| s.contains("申请加入 本机组件故障验收 失败"))
+    }), "加入失败没有记录到统一日志");
+    ensure!(!guest.db.read().unwrap().networks.iter().any(|n| n.profile.is_some()), "失败的申请取得了成员身份");
+    guest.engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn entry_admission_keeps_sas_and_cli_uses_local_secret() -> Result<()> {
     let host = app().await?;
     let guest = app().await?;
