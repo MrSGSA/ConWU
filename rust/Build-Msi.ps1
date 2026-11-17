@@ -40,7 +40,7 @@ $xml=[xml]@'
   <StandardDirectory Id="ProgramFiles64Folder" />
   <StandardDirectory Id="ProgramMenuFolder"><Directory Id="ApplicationMenuFolder" Name="ConWU" /><Directory Id="LegacyApplicationMenuFolder" Name="StreamLink" /></StandardDirectory>
   <StandardDirectory Id="DesktopFolder" />
-  <Feature Id="MainFeature" Title="ConWU" Level="1" />
+  <Feature Id="MainFeature" Title="ConWU" Level="1" AllowAdvertise="no" InstallDefault="local" />
   <CustomAction Id="SetArpLocation" Property="ARPINSTALLLOCATION" Value="[INSTALLFOLDER]" />
   <CustomAction Id="NewTransaction" BinaryRef="InstallerActions" DllEntry="NewTransaction" Execute="immediate" Return="check" />
   <CustomAction Id="SetPrepare" Property="PrepareUpgrade" Value="CAD" />
