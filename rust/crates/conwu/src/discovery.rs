@@ -148,7 +148,7 @@ pub async fn detailed(
         let result = tokio::time::timeout(Duration::from_secs(12), source(&entry.source, &mode, &client, &gateways)).await
             .unwrap_or_else(|_| Err(anyhow::anyhow!("入口解析超时")));
         let kind = if entry.source.starts_with("pkarr://") { "PKARR" } else if entry.source.starts_with("txt://") || entry.source.contains('#') && !entry.source.contains("://") { "TXT" } else if entry.source.starts_with("https://") { "HTTPS" } else if entry.source.starts_with("http://") { "HTTP" } else { "地址" };
-        serde_json::json!({"index":index,"peerSlot":entry.peer_slot,"kind":kind,"endpoints":result.as_ref().map(|v| v.iter().map(ToString::to_string).collect::<Vec<_>>()).unwrap_or_default(),"error":result.err().map(|e|crate::logging::redact(&e.to_string())).unwrap_or_default(),"elapsedMs":begin.elapsed().as_millis() as u64,"attempts":1,"allowCached":false,"lookupDetail":"独立解析，不沿用首次配对地址"})
+        serde_json::json!({"index":index,"peerSlot":entry.peer_slot,"kind":kind,"endpoints":result.as_ref().map(|v| v.iter().map(ToString::to_string).collect::<Vec<_>>()).unwrap_or_default(),"error":result.err().map(|e|{let message=crate::logging::redact(&e.to_string());if kind=="TXT"{format!("{message}，或请检查#标签名")}else{message}}).unwrap_or_default(),"elapsedMs":begin.elapsed().as_millis() as u64,"attempts":1,"allowCached":false,"lookupDetail":"独立解析，不沿用首次配对地址"})
     }) as futures_util::future::BoxFuture<'static, Value> }).collect();
     let mut rows = stream::iter(tasks)
         .buffer_unordered(4)
@@ -343,7 +343,6 @@ fn documents(records: &[String], tag: Option<&str>) -> Result<Vec<String>> {
     let prefix = format!("{}=", tag.unwrap_or("streamlink"));
     let mut selected = vec![];
     let mut untagged = vec![];
-    let mut labels = vec![];
     for record in records {
         let record = record.trim();
         let lines: Vec<_> = if record.starts_with('{') || record.starts_with('[') {
@@ -352,39 +351,6 @@ fn documents(records: &[String], tag: Option<&str>) -> Result<Vec<String>> {
             record.lines().map(str::trim).collect()
         };
         for line in lines {
-            // A shared TXT record can contain another application's endpoint
-            // alongside a named ConWU endpoint. Never feed `label=host:port`
-            // into DNS, or silently choose an unrelated unlabelled port.
-            for field in std::iter::once(line).chain(line.split_whitespace()) {
-                if let Some((label, value)) = field.split_once('=') {
-                    let label_valid = !label.is_empty()
-                        && label.len() <= 32
-                        && label.as_bytes()[0].is_ascii_alphabetic()
-                        && label
-                            .bytes()
-                            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'));
-                    let json_endpoints =
-                        serde_json::from_str::<Value>(value).ok().is_some_and(|v| {
-                            v.as_array()
-                                .or_else(|| v.get("endpoints").and_then(Value::as_array))
-                                .or_else(|| v.get("addresses").and_then(Value::as_array))
-                                .is_some_and(|a| {
-                                    !a.is_empty()
-                                        && a.iter().all(|s| {
-                                            s.as_str().is_some_and(|s| validate_endpoint(s).is_ok())
-                                        })
-                                })
-                        });
-                    if label_valid
-                        && (validate_endpoint(value).is_ok() || json_endpoints)
-                        && !labels
-                            .iter()
-                            .any(|s: &String| s.eq_ignore_ascii_case(label))
-                    {
-                        labels.push(label.to_owned());
-                    }
-                }
-            }
             let tagged = line
                 .get(..prefix.len())
                 .is_some_and(|p| p.eq_ignore_ascii_case(&prefix));
@@ -410,17 +376,7 @@ fn documents(records: &[String], tag: Option<&str>) -> Result<Vec<String>> {
     }
     ensure!(
         tag.is_none() || !selected.is_empty(),
-        "订阅中没有 {}= 入口，请检查标签与更新内容",
-        tag.unwrap_or("streamlink")
-    );
-    ensure!(
-        tag.is_some() || !selected.is_empty() || labels.is_empty(),
-        "DNS 已取得订阅，但入口使用了标签；请在订阅地址末尾添加 {}，选择需要的入口",
-        labels
-            .iter()
-            .map(|s| format!("#{s}"))
-            .collect::<Vec<_>>()
-            .join(" 或 ")
+        "selected subscription tag missing"
     );
     let source = if selected.is_empty() {
         untagged
@@ -463,29 +419,6 @@ fn documents(records: &[String], tag: Option<&str>) -> Result<Vec<String>> {
 #[cfg(test)]
 mod document_tests {
     #[test]
-    fn shared_subscription_requires_explicit_label_instead_of_a_dns_lookup() {
-        let records = vec![
-            "streamlink1=203.0.113.1:1612".to_owned(),
-            "tcp://203.0.113.1:1618".to_owned(),
-        ];
-        let error = super::documents(&records, None).unwrap_err().to_string();
-        assert!(error.contains("DNS 已取得订阅") && error.contains("#streamlink1"));
-        assert_eq!(
-            super::documents(&records, Some("streamlink1")).unwrap(),
-            ["203.0.113.1:1612"]
-        );
-        assert!(
-            super::documents(&records, Some("missing"))
-                .unwrap_err()
-                .to_string()
-                .contains("missing=")
-        );
-        assert_eq!(
-            super::documents(&["203.0.113.1:1612".into()], None).unwrap(),
-            ["203.0.113.1:1612"]
-        );
-    }
-    #[test]
     fn tags_json_and_shared_txt_records() {
         let parse = |s: &[&str], tag| {
             super::documents(&s.iter().map(|s| s.to_string()).collect::<Vec<_>>(), tag)
@@ -517,6 +450,14 @@ mod document_tests {
             1
         );
         assert!(parse(&["other=203.0.113.1:443"], Some("streamlink")).is_err());
+        assert_eq!(
+            parse(
+                &["desktop-entry=203.0.113.1:1612", "other=203.0.113.2:1618"],
+                Some("desktop-entry")
+            )
+            .unwrap(),
+            ["203.0.113.1:1612"]
+        );
     }
 }
 pub fn local_route(remote: SocketAddr) -> Result<IpAddr> {
