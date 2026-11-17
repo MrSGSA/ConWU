@@ -92,7 +92,7 @@ if($ProductCode){
  $identity=[guid]::Empty
  if(-not[guid]::TryParse($ProductCode,[ref]$identity) -or $identity -eq [guid]::Empty){throw 'Invalid stable MSI product code'}
  # A revised, unpublished candidate keeps its ProductCode and is applied as a
- # standard MSI small update with REINSTALL=ALL REINSTALLMODE=amus.
+ # standard MSI small update with REINSTALL=ALL REINSTALLMODE=vamus.
  $package.SetAttribute('ProductCode','{'+$identity.ToString('D').ToUpperInvariant()+'}')
 }
 $xml.SelectSingleNode('//w:MediaTemplate',$manager).SetAttribute('CompressionLevel',$Compression)
