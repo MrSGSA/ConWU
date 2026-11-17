@@ -194,6 +194,7 @@ def main():
                 raise ValueError('Microsoft XDP runtime hash mismatch: ' + name)
         for name in ('xdp.inf', 'xdp.sys', 'xdp.cat', 'xdpapi.dll', 'xdp-setup.ps1', 'xdppcw.man', 'xdp-runtime.json'):
             files[component_prefix + 'xdp-runtime/' + name] = (read(runtime / name), 0o644)
+        files[component_prefix + 'install-xdp.ps1'] = (b'\xef\xbb\xbf' + read(ROOT / 'rust/install-xdp.ps1'), 0o644)
     licenses = {
         "LICENSE": "LICENSE",
         "udp2raw-LICENSE.md": "transport/udp2raw/LICENSE.md",

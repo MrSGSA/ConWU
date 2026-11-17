@@ -474,6 +474,21 @@ async fn desktop_pairing_and_packets_over_tcp_and_https() -> Result<()> {
         }
         let h = host.engine.current(&hid).unwrap();
         let g = guest.engine.current(&gid).unwrap();
+        wait("首个心跳延迟", || {
+            [&h, &g]
+                .iter()
+                .all(|r| r.metrics.read().unwrap().rtt.is_some())
+        })
+        .await?;
+        for _ in 0..4 {
+            tokio::time::sleep(Duration::from_millis(800)).await;
+            ensure!(
+                [&h, &g]
+                    .iter()
+                    .all(|r| r.metrics.read().unwrap().rtt.is_some_and(|ms| ms < 750.0)),
+                "本地 RTT 不应累计同一心跳 nonce 的等待秒数"
+            );
+        }
         let hip = h
             .config
             .read()

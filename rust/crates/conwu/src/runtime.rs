@@ -88,6 +88,7 @@ struct Route {
     cancel: CancellationToken,
     endpoint: SocketAddr,
     challenge: i64,
+    rtt_recorded: bool,
     verified: bool,
     seen: Instant,
     challenged: Instant,
@@ -930,9 +931,10 @@ impl Engine {
             cancel: pipe.cancel.child_token(),
             endpoint,
             challenge: i64::from_be_bytes(c::random()),
+            rtt_recorded: false,
             verified: false,
             seen: Instant::now(),
-            challenged: Instant::now() - Duration::from_secs(2),
+            challenged: Instant::now() - Duration::from_secs(6),
         };
         if let Ok(hello) = peer.link.hello() {
             let _ = route
@@ -1341,6 +1343,7 @@ impl Engine {
                         if route.challenged.elapsed() > Duration::from_secs(5) {
                             route.challenge = i64::from_be_bytes(c::random());
                             route.challenged = Instant::now();
+                            route.rtt_recorded = false;
                         }
                         peer.link.probe(route.challenge).ok().flatten()
                     };
@@ -2285,8 +2288,13 @@ impl Running {
             if route.nomination.is_none() {
                 route.verified = true;
             }
-            self.metrics.write().unwrap().rtt =
-                Some(route.challenged.elapsed().as_secs_f64() * 1000.0);
+            // The same nonce is retried for five seconds. Only its first pong
+            // measures a round trip; retries must not include idle heartbeat time.
+            if !route.rtt_recorded {
+                self.metrics.write().unwrap().rtt =
+                    Some(route.challenged.elapsed().as_secs_f64() * 1000.0);
+                route.rtt_recorded = true;
+            }
             if peer.chosen.is_none() && route.verified {
                 peer.chosen = Some(route_id.into());
             }

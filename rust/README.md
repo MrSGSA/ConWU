@@ -50,6 +50,8 @@ conwu migrate --from <旧资料目录> --data <新的独立目录>
 
 Windows 使用官方 Wintun，Mimic 另需 Microsoft XDP 1.4.0。MSI 可安装随包签名运行时，普通实验启动不会安装驱动。Linux 使用 TUN，原始承载需要 `ip`、`nft` 和 raw socket 权限。TCP / HTTPS 支持 IPv6 外层和 36 位 IPv6 直连码，其余四种承载当前限 IPv4。
 
+MSI 的 `install-xdp.ps1` 以驱动服务和网卡绑定判断是否需要安装，不能仅使用 `netcfg -q` 的退出码：组件未安装时该命令也可能返回 0。安装完成后检查驱动运行状态，修复活动网卡上被禁用的 XDP 绑定；不会回退到 WinDivert。已有入口设置按协议显示地址族范围，出码默认优先 IPv4，TCP / HTTPS 可显式选择 IPv6。
+
 从 .NET 导入的 Windows 网络继续使用原有网卡所有权作用域、代次记录及类型，以便首次升级失败时原版仍可接回同一虚拟 IP；双方共享排他锁，不能同时运行同一网络。此兼容路径只读取和维护原有的网卡记录，不启动 .NET。
 
 Wintun 每次使用新 GUID，按网络保存独占代次记录；只有确认属于本网络且 PnP 已移除的残留接口才可从路由检查中排除。Windows 类配置缓存尚未释放时，会执行可取消的等待及一次新 GUID 重试。网卡初始化不占住异步工作线程，面板可继续读取状态。
@@ -83,3 +85,5 @@ cargo build --locked --release --manifest-path transport/phantun/Cargo.toml --wo
 WSL 构建可通过 `CONWU_LINUX_TOOLCHAIN_ROOT`、`CONWU_LINUX_CARGO_HOME`、`CONWU_LINUX_TARGET_DIR`、`CONWU_LINUX_TMPDIR` 仅为当前进程指定原生文件系统上的工具链、缓存、产物及临时目录，避免 DrvFs 的大量小文件读写。正式打包拒绝未提交的源文件和构建输入，暂存目录必须是新的空目录，防止混入旧版本文件。
 
 验证结果见 [VALIDATION.md](VALIDATION.md)，模块与边界见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+`python rust/test-web-presentation.py --app <候选程序>` 使用独立内存网卡后台及 Playwright 验证自动刷新下的概览、日志、输入框和弹窗文本选择，以及 IPv4 默认出码和显式 IPv6 出码。需预先安装 Python Playwright 与 Edge；测试不接触日用网络。`--source-assets` 只用于编译前检查工作区界面，正式验收不加此选项，以核对候选程序实际内嵌的界面。

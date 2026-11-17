@@ -9,6 +9,30 @@ let terminalTheme='auto';try{terminalTheme=localStorage.getItem('streamlink-term
 const liveLogView=updateLogView;
 updateLogView=function(){const prior=saved.logging.terminal;saved.logging.terminal=terminalTheme;try{liveLogView();}finally{saved.logging.terminal=prior;}};
 const ui={coordination:null,coordinationBase:null,codeId:'',joinId:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
+// Polling keeps running while text is selected. Delay DOM writes so a refresh
+// cannot destroy the browser's Range or an input's selected text mid-copy.
+function holdAutomaticPaint(){
+ const selection=window.getSelection(),input=document.activeElement;
+ let held=ui.selecting||selection&&!selection.isCollapsed;
+ try{held=held||input?.matches('input,textarea')&&input.selectionStart!==input.selectionEnd;}catch{}
+ if(held)ui.pendingPaint=true;
+ return !!held;
+}
+function resumePaint(){
+ if(ui.pendingPaint&&!holdAutomaticPaint()){
+  ui.pendingPaint=false;render();updateConnectedTimes();
+ }
+}
+document.addEventListener('pointerdown',e=>{if(e.button===0&&!e.target.closest('button,a,select,input[type="checkbox"],input[type="radio"]'))ui.selecting=true;},true);
+for(const event of ['pointerup','pointercancel'])document.addEventListener(event,()=>{ui.selecting=false;setTimeout(resumePaint,0);},true);
+document.addEventListener('selectionchange',()=>{if(ui.pendingPaint)setTimeout(resumePaint,0);});
+window.addEventListener('blur',()=>{ui.selecting=false;});
+const liveConnectedTimes=updateConnectedTimes;
+updateConnectedTimes=function(){if(!holdAutomaticPaint())liveConnectedTimes();};
+const selectedLogView=updateLogView;
+updateLogView=function(){if(!holdAutomaticPaint())selectedLogView();};
+const liveUnavailable=unavailable;
+unavailable=function(message){if(holdAutomaticPaint()){online=false;previousTraffic=null;ui.unavailableMessage=message;return;}liveUnavailable(message);};
 const all=()=>workspaceState?.networks||[],row=id=>all().find(n=>n.id===id);
 const protocolOf=p=>({'udp-only':'直接 UDP（旧网络）','tcp-only':'纯 TCP','https-only':'HTTPS','phantun-only':'Phantun','mimic-only':'Mimic（实验）','tcpraw-only':'TCPRAW（实验）'}[p?.pathSelection]||'FakeTCP + HTTP');
 const strategyOf=p=>p?.connectionSource==='existing'?'只使用已有入口':'自主打洞';
@@ -77,12 +101,16 @@ createPage=function(){
 };
 function invitationCode(){const p=row(ui.codeId)?.status.pairing;return p?.active&&p.expires*1000>Date.now()&&p.format==='compact'&&validCompactCode(p.code)?compactCodeValue(p.code):'';}
 function updateInvitationDialog(){
+ if(holdAutomaticPaint())return;
  const dialog=$('invitation-dialog');if(!dialog.open)return;
  const n=row(ui.codeId);if(!n||!n.status.isOwner){closeInvitation();return;}
  $('invitation-title').textContent=n.name;
  const code=invitationCode(),display=$('invitation-code');
- $('invitation-code-length').textContent=code?code.length+' 位':'';
- $('invitation-family').hidden=!['tcp-only','https-only'].includes(n.status.settings?.pathSelection)||!n.status.isOwner;
+ const dualStack=['tcp-only','https-only'].includes(n.status.settings?.pathSelection);
+ $('invitation-code-length').textContent=code?(code.length===36?'IPv6 · 36 位':'IPv4 · 16 位'):'';
+ $('invitation-family-field').hidden=!dualStack;
+ $('invitation-family').hidden=!dualStack;
+ $('invitation-family-hint').textContent=dualStack?'默认优先生成 IPv4 码；使用 IPv6 码时，双方均需具备可用的 IPv6 网络。':'当前协议使用 IPv4 入口，生成 16 位直连码。';
  display.setAttribute('aria-label',code?'本机直连码：'+formatCompact(code):'尚未生成直连码');
  if(display.dataset.code!==code){display.innerHTML=directGroups(code,true);display.dataset.code=code;}
  const entry=n.status.entryPreparation,existing=n.status.settings?.connectionSource==='existing';
@@ -232,7 +260,11 @@ function drawPage(){const pages={overview:overviewPage,create:createPage,join:jo
 function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;
- if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';if(noticeSource==='backend'||noticeSource==='pair'&&!next.networks.some(n=>n.status.pairing?.active)){lastPairError='';notice('');}appendStatusLogs(next);initializeDrafts();if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&!row(ui.joinId))ui.joinId='';if(observed)sampleTraffic(next);}
+ if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';ui.unavailableMessage='';appendStatusLogs(next);initializeDrafts();if(observed)sampleTraffic(next);}
+ if(observed&&holdAutomaticPaint())return;
+ ui.pendingPaint=false;
+ if(ui.unavailableMessage){notice(ui.unavailableMessage,true,expired?'authorization':'backend');ui.unavailableMessage='';}
+ if(workspaceState){if(online&&(noticeSource==='backend'||noticeSource==='pair'&&!workspaceState.networks.some(n=>n.status.pairing?.active))){lastPairError='';notice('');}if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&!row(ui.joinId))ui.joinId='';}
  if(!workspaceState){$('content').innerHTML=heading('ConWU','正在读取本机后台状态。');controls();return;}
  const chosen=row(selectedNetwork)?.status;state=chosen?{...workspaceState,...chosen,desktop:workspaceState.desktop}:workspaceState;
  networkActive=!!state.networkId;owner=!!state.isOwner;createdAt=(state.networkEstablishedAt||0)*1000;
@@ -258,9 +290,9 @@ updateShell=function(){
  $('app-version').textContent=workspaceState?.version?'v'+workspaceState.version.split('+')[0]:'';
 };
 controls=function(){
- const updateRoot=$('software-update-details');if(updateRoot&&updateRoot.dataset.updateSignature!==updateSignature())updateRoot.outerHTML=updateDetails();
+ const paint=!holdAutomaticPaint(),updateRoot=$('software-update-details');if(paint&&updateRoot&&updateRoot.dataset.updateSignature!==updateSignature())updateRoot.outerHTML=updateDetails();
  const ready=online&&!expired&&state?.serviceReady&&!busy&&!ui.preparingCommand;
- uuTakeoverUi.refresh(workspaceState,ready);
+ if(paint)uuTakeoverUi.refresh(workspaceState,ready);
  for(const b of document.querySelectorAll('[data-ui-action]')){
   const action=b.dataset.uiAction;
   if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','close-invitation','open-local-service','open-coordination-settings','close-coordination-settings','close-update-source'].includes(action))b.disabled=!!ui.editor?.saving;
@@ -272,13 +304,13 @@ controls=function(){
  for(const b of document.querySelectorAll('[data-ui-action="download-update"],[data-ui-action="install-update"]'))b.disabled=!ready||workspaceState?.localUpdate?.busy;
  if($('save-device')){
   const changed=!same(ui.device,ui.deviceBase);$('save-device').disabled=!ready||!changed;
-  $('revert-device').disabled=!!ui.savingDevice||!changed;$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
+  $('revert-device').disabled=!!ui.savingDevice||!changed;if(paint)$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
  }
  if($('save-coordination')){
   const changed=!same(ui.coordination,ui.coordinationBase);
   $('save-coordination').disabled=!ready||!!ui.savingCoordination||!changed;
   $('restore-coordination').disabled=!!ui.savingCoordination||!changed;
-  $('coordination-save-state').textContent=ui.savingCoordination?'保存中…':changed?'有未保存的更改':'已保存';
+  if(paint)$('coordination-save-state').textContent=ui.savingCoordination?'保存中…':changed?'有未保存的更改':'已保存';
   $('coordination-save-state').className='save-state'+(changed?' dirty':'');
  }
  for(const input of document.querySelectorAll('[data-ui-scope="coordination"],[data-ui-scope="coordinationSwitch"]'))input.disabled=!ready||!!ui.savingCoordination;
@@ -294,7 +326,7 @@ controls=function(){
  if(ui.editor){
   const ro=ui.editor.readOnly,changed=editorChanged();
   for(const b of $('network-edit-actions').querySelectorAll('button'))b.disabled=ro||!changed||(b.dataset.uiAction==='restore-editor'?!!ui.editor.saving:!ready);
-  $('network-save-state').textContent=ro?'主机设置 · 仅供查看':ui.editor.saving?'保存中…':changed?'有未保存的更改':'没有未保存的修改';$('network-save-state').className='save-state'+(!ro&&changed?' dirty':'');
+  if(paint)$('network-save-state').textContent=ro?'主机设置 · 仅供查看':ui.editor.saving?'保存中…':changed?'有未保存的更改':'没有未保存的修改';$('network-save-state').className='save-state'+(!ro&&changed?' dirty':'');
   if($('settings-fields'))$('settings-fields').inert=!!ui.editor.saving;
  }
 };
@@ -336,7 +368,7 @@ function editorFields(){
   if(d.route==='server')fields=`<section class="discovery-settings"><h3>HTTPS 协调服务器</h3><label class="field"><span>协调服务器地址</span><input data-key="url" value="${esc(drafts.coordination.url)}" placeholder="https://coord.example.com/" spellcheck="false"></label><label class="field"><span>证书 SHA-256 指纹（可选）</span><input class="mono" data-key="pin" value="${esc(drafts.certificate.pin)}" placeholder="留空使用系统证书信任" spellcheck="false"></label></section>`;
   return `<h3>配对与发现方式</h3><label class="field"><span>发现方式</span><select data-key="route">${[['pkarr','PKARR 自动发现（默认）'],['server','自建协调服务器（高级）'],['direct','仅直连码 · 手动更新入口']].map(([v,t])=>`<option value="${v}" ${d.route===v?'selected':''}>${t}</option>`).join('')}</select></label><div class="note discovery-note">${icon('info')}<span>${tips[d.route]||tips.pkarr}</span></div>${fields}`;
  }
- if(section==='entry')return `<h3>本机已有入口</h3><div class="entry-copy"><p class="hint">填写本机的公网 IP:端口、已打通的地址或 HTTPS/TXT 等订阅链接。</p><p class="hint">若填写的不是可更新的订阅链接，入口变化后需要重新填写新入口地址。</p></div><div class="entry-rows">${d.entries.local.map((v,i)=>entryRow(v,i,d.entries.local.length)).join('')}</div><div class="test-row"><button class="btn compact" data-ui-action="test-entry">${icon('refresh')}测试地址</button><span id="test-status" class="hint"></span></div><div id="test-results"></div><label class="field"><span>订阅更新间隔（秒）</span><input data-key="refresh" type="number" min="1" max="86400" value="${d.refresh*Number(d.unit||1)}"></label>`;
+ if(section==='entry')return `<h3>本机已有入口</h3><div class="entry-copy"><p class="hint">填写本机的公网 IP:端口、已打通的地址或 HTTPS/TXT 等订阅链接。${['tcp','https'].includes(d.protocol)?'支持 IPv4／IPv6；IPv6 地址使用 [地址]:端口。':'当前协议使用 IPv4；纯 TCP／HTTPS 也支持 IPv6 入口。'}</p><p class="hint">若填写的不是可更新的订阅链接，入口变化后需要重新填写新入口地址。</p></div><div class="entry-rows">${d.entries.local.map((v,i)=>entryRow(v,i,d.entries.local.length)).join('')}</div><div class="test-row"><button class="btn compact" data-ui-action="test-entry">${icon('refresh')}测试地址</button><span id="test-status" class="hint"></span></div><div id="test-results"></div><label class="field"><span>订阅更新间隔（秒）</span><input data-key="refresh" type="number" min="1" max="86400" value="${d.refresh*Number(d.unit||1)}"></label>`;
  if(section==='virtual'){
   if(ui.editor.id)return `<h3>本机在此网络中的虚拟 IP</h3>${readRows([['当前虚拟 IP',row(ui.editor.id)?.status.virtualIp],['修改方式','网络创建后地址固定；需要更换地址时重新创建网络。']])}`;
   return `<h3>本机在此网络中的虚拟 IP</h3><div class="radio-cards">${[['auto','自动分配','自动选择可用网段，避免与其他网络冲突。'],['custom','自定义地址','指定本机在此网络使用的私有 IPv4 地址。']].map(([v,t,h])=>`<label class="radio-card"><input type="radio" name="virtual-mode" data-key="virtualMode" value="${v}" ${ui.editor.ipMode===v?'checked':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div>${ui.editor.ipMode==='custom'?`<label class="field"><span>自定义虚拟 IP</span><input class="mono" id="new-network-ip" value="${esc(newNetworkIp)}" placeholder="10.171.139.1" spellcheck="false"></label>`:''}`;
@@ -355,7 +387,7 @@ function readOnlyEditor(){
 }
 function pkarrRows(status){return status?.source?[['本机发现地址',status.source],['当前发布入口',(status.endpoints||[]).join('\n')],['最近发布',status.publishedAt?new Date(status.publishedAt*1000).toLocaleString():'尚未成功发布'],['本次接受发布的网关',`${status.acceptedGateways||0} / ${status.totalGateways||0}`],['对端入口确认',status.peerAcknowledged?'对端已确认当前入口':'等待对端确认当前入口'],['最近对端公告',status.peerSeenAt?new Date(status.peerSeenAt*1000).toLocaleString():'尚未收到'],['发布状态说明',status.error||'无发布错误'],['查询状态说明',status.queryError||'无查询错误']]:[];}
 function pkarrDetails(status){return status?.source?readRows(pkarrRows(status)):'';}
-function refreshPkarrStatus(){const status=row(ui.editor?.id)?.status.pkarr;if($('pkarr-live-state'))$('pkarr-live-state').textContent=status?.state||'创建并启动网络后开始发布';if($('pkarr-live-details'))$('pkarr-live-details').innerHTML=pkarrDetails(status);}
+function refreshPkarrStatus(){if(holdAutomaticPaint())return;const status=row(ui.editor?.id)?.status.pkarr;if($('pkarr-live-state'))$('pkarr-live-state').textContent=status?.state||'创建并启动网络后开始发布';if($('pkarr-live-details'))$('pkarr-live-details').innerHTML=pkarrDetails(status);}
 function editorSections(){
  const p=ui.editor?.readOnly?row(ui.editor.id)?.status.settings:null,existing=p?p.connectionSource==='existing':drafts.network.mode==='existing';
  return privateFields.filter(([key])=>key==='entry'?existing:['discovery','stun'].includes(key)?!existing:true);

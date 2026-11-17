@@ -77,8 +77,10 @@ fn run(program: &str, args: &[&str]) -> Result<()> {
         .output()?;
     ensure!(
         output.status.success(),
-        "系统安装步骤 {program} 失败（{:?}）",
-        output.status.code()
+        "系统安装步骤 {program} 失败（{:?}）：{} {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).trim(),
+        String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())
 }
@@ -198,26 +200,21 @@ fn drivers(root: &Path) -> Result<()> {
         );
         close(handle);
     }
-    let status = std::process::Command::new("netcfg.exe")
-        .args(["-q", "ms_xdp"])
-        .creation_flags(0x08000000)
-        .output()?;
-    if !status.status.success() {
-        let script = components.join("xdp-runtime/xdp-setup.ps1");
-        run(
-            "powershell.exe",
-            &[
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                script.to_str().context("XDP安装路径无效")?,
-                "-Install",
-                "xdp",
-            ],
-        )?;
-    }
+    let script = components.join("install-xdp.ps1");
+    let runtime = components.join("xdp-runtime");
+    run(
+        "powershell.exe",
+        &[
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            script.to_str().context("XDP安装路径无效")?,
+            "-RuntimeDirectory",
+            runtime.to_str().context("XDP运行时路径无效")?,
+        ],
+    )?;
     Ok(())
 }
 fn configure(sid: &str, attempt: &str) -> Result<()> {
