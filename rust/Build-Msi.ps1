@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BundleRoot,[Parameter(Mandatory)][string]$OutputPath,[string]$ValidationInstance,[Parameter(Mandatory)][string]$MsiVersion,[ValidateSet('high','mszip')][string]$Compression='high')
+param([Parameter(Mandatory)][string]$BundleRoot,[Parameter(Mandatory)][string]$OutputPath,[string]$ValidationInstance,[Parameter(Mandatory)][string]$MsiVersion,[ValidateSet('high','mszip')][string]$Compression='high',[string]$ProductCode)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$BundleRoot=[IO.Path]::GetFullPath($BundleRoot);$OutputPath=[IO.Path]::GetFullPath($OutputPath)
 $manifest=Get-Content -LiteralPath (Join-Path $BundleRoot '.conwu-rust-package') -Raw|ConvertFrom-Json
@@ -88,6 +88,13 @@ $xml=[xml]@'
 $ns='http://wixtoolset.org/schemas/v4/wxs';$manager=[Xml.XmlNamespaceManager]::new($xml.NameTable);$manager.AddNamespace('w',$ns)
 function Node([string]$name,[hashtable]$attributes){$n=$xml.CreateElement($name,$ns);foreach($entry in $attributes.GetEnumerator()){if([string]$entry.Value -ne ''){$n.SetAttribute($entry.Key,[string]$entry.Value)}};return ,$n}
 $package=$xml.DocumentElement.FirstChild;$package.SetAttribute('Name',$productName);$package.SetAttribute('Version',$MsiVersion);$package.SetAttribute('UpgradeCode',$upgrade)
+if($ProductCode){
+ $identity=[guid]::Empty
+ if(-not[guid]::TryParse($ProductCode,[ref]$identity) -or $identity -eq [guid]::Empty){throw 'Invalid stable MSI product code'}
+ # A revised, unpublished candidate keeps its ProductCode and is applied as a
+ # standard MSI small update with REINSTALL=ALL REINSTALLMODE=amus.
+ $package.SetAttribute('ProductCode','{'+$identity.ToString('D').ToUpperInvariant()+'}')
+}
 $xml.SelectSingleNode('//w:MediaTemplate',$manager).SetAttribute('CompressionLevel',$Compression)
 $programs=$xml.SelectSingleNode('//w:StandardDirectory[@Id="ProgramFiles64Folder"]',$manager)
 $fragment=$xml.CreateDocumentFragment();$fragment.InnerXml=$directory.Replace('<Directory ','<Directory xmlns="'+$ns+'" ');$programs.AppendChild($fragment)|Out-Null

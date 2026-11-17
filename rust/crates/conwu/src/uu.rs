@@ -145,6 +145,42 @@ mod windows {
             reserved: u32,
         ) -> u32;
     }
+    fn allowed_path(path: &Path) -> bool {
+        let Some(file) = path.file_name() else {
+            return false;
+        };
+        let Some(root) = path.parent() else {
+            return false;
+        };
+        matches!(
+            file.to_string_lossy().to_ascii_lowercase().as_str(),
+            "gameviewer.exe" | "gameviewerserver.exe"
+        ) && ["ProgramFiles", "ProgramFiles(x86)"]
+            .iter()
+            .filter_map(std::env::var_os)
+            .any(|p| {
+                root.to_string_lossy().eq_ignore_ascii_case(
+                    &std::path::PathBuf::from(p)
+                        .join("Netease")
+                        .join("GameViewer")
+                        .join("bin")
+                        .to_string_lossy(),
+                )
+            })
+    }
+    #[test]
+    fn installed_uu_processes_are_recognized_without_allowing_other_locations() {
+        let root = std::path::PathBuf::from(std::env::var_os("ProgramFiles").unwrap())
+            .join("Netease")
+            .join("GameViewer")
+            .join("bin");
+        assert!(allowed_path(&root.join("GameViewer.exe")));
+        assert!(allowed_path(&root.join("GameViewerServer.exe")));
+        assert!(allowed_path(&root.join("GAMEVIEWER.EXE")));
+        assert!(!allowed_path(&root.join("GameViewerHealthd.exe")));
+        assert!(!allowed_path(&root.join("other").join("GameViewer.exe")));
+        assert!(!allowed_path(Path::new(r"C:\Users\Public\GameViewer.exe")));
+    }
     fn allowed(pid: u32) -> Option<*mut c_void> {
         unsafe {
             let handle = OpenProcess(0x1000 | 0x100000, 0, pid);
@@ -159,21 +195,7 @@ mod windows {
             }
             let path =
                 std::path::PathBuf::from(std::ffi::OsString::from_wide(&buffer[..n as usize]));
-            let file = path.file_name()?.to_string_lossy();
-            let root = path.parent()?;
-            let valid = matches!(
-                file.to_ascii_lowercase().as_str(),
-                "gameviewer.exe" | "gameviewerserver.exe"
-            ) && ["ProgramFiles", "ProgramFiles(x86)"]
-                .iter()
-                .filter_map(std::env::var_os)
-                .any(|p| {
-                    root.to_string_lossy().eq_ignore_ascii_case(
-                        &std::path::PathBuf::from(p)
-                            .join("Netease/GameViewer/bin")
-                            .to_string_lossy(),
-                    )
-                });
+            let valid = allowed_path(&path);
             if valid {
                 Some(handle)
             } else {
