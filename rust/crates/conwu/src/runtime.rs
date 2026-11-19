@@ -25,6 +25,9 @@ use std::{
 use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio_util::{sync::CancellationToken, task::TaskTracker};
 
+mod candidates;
+use candidates::CandidateAttempts;
+
 pub enum Event {
     DepartureDelivered {
         id: String,
@@ -625,12 +628,24 @@ impl Engine {
         });
         Ok(())
     }
-    pub async fn dial(self: &Arc<Self>, id: &str, endpoint: SocketAddr) -> Result<()> {
-        let running = self.current(id).context("网络已移除")?;
+    async fn try_dial(
+        self: &Arc<Self>,
+        id: &str,
+        endpoint: SocketAddr,
+        running: &Arc<Running>,
+    ) -> bool {
+        #[cfg(feature = "lab-api")]
+        if std::env::var_os("CONWU_LAB_ONLY_MEMBER_ASSIST").is_some() {
+            return false;
+        }
+        if running.cancel.is_cancelled() || running.metrics.read().unwrap().connected {
+            return false;
+        }
         let Ok(_dialing) = running.dialing.try_lock() else {
-            return Ok(());
+            return false;
         };
-        self.dial_reserved(id, endpoint, &running).await
+        let _ = self.dial_reserved(id, endpoint, running).await;
+        true
     }
     async fn dial_reserved(self: &Arc<Self>, id: &str, endpoint: SocketAddr, running: &Arc<Running>) -> Result<()> {
         #[cfg(feature = "lab-api")]
@@ -797,6 +812,9 @@ impl Engine {
         loop {
             if last_route_check.elapsed() >= Duration::from_secs(1) {
                 last_route_check = Instant::now();
+                if last_valid.elapsed() >= Duration::from_secs(18) {
+                    break;
+                }
                 if !accepted.is_empty()
                     && accepted.iter().all(|id| {
                         self.current(id).is_none_or(|r| {
@@ -812,7 +830,7 @@ impl Engine {
             if flow.as_ref().is_some_and(|g| g.cancel.is_cancelled()) {
                 break;
             }
-            let frame = tokio::select! {_=self.cancel.cancelled()=>break,_=pipe.cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(3))=>{if last_valid.elapsed()>Duration::from_secs(18){break}continue},p=pipe.rx.recv()=>match p{Some(p)=>p,None=>break}};
+            let frame = tokio::select! {_=self.cancel.cancelled()=>break,_=pipe.cancel.cancelled()=>break,_=tokio::time::sleep(Duration::from_secs(3))=>continue,p=pipe.rx.recv()=>match p{Some(p)=>p,None=>break}};
             if conwu_core::stream::is_control(&frame) && stream_mode(&mode) {
                 if frame[5] == 5 {
                     let key = hex::encode(&frame[28..44]);
@@ -1378,7 +1396,7 @@ impl Engine {
         let mut last_control = Instant::now() - Duration::from_secs(10);
         let mut last_metadata = Instant::now() - Duration::from_secs(10);
         let mut metadata_revision = 0;
-        'network: loop {
+        loop {
             tokio::select! {_=running.cancel.cancelled()=>break,_=timer.tick()=>{}}
             let n = running.config.read().unwrap().clone();
             let Some(profile) = n.profile.as_ref() else {
@@ -1532,32 +1550,41 @@ impl Engine {
                     }
                 }
             }
+            let mut addresses = None;
+            let mut sent = 0;
+            let mut dropped = 0;
+            let mut adapter_error = None;
             for _ in 0..64 {
                 let packet = match running.adapter.read() {
                     Ok(Some(p)) => p,
                     Ok(None) => break,
                     Err(e) => {
-                        running.metrics.write().unwrap().error = e.to_string();
-                        running.cancel.cancel();
-                        break 'network;
+                        adapter_error = Some(e.to_string());
+                        break;
                     }
                 };
-                if n.paused
-                    || !n.enabled
-                    || !link::valid_packet(&packet)
-                    || packet[12..16] != profile.local_ip().unwrap().octets()
-                {
-                    running.metrics.write().unwrap().dropped += 1;
+                if n.paused || !n.enabled || !link::valid_packet(&packet) {
+                    dropped += 1;
                     continue;
                 }
-                let Some(remote) = remote_member(profile) else {
+                let (local, remote) = *addresses.get_or_insert_with(|| {
+                    let local = profile.local_ip().unwrap().octets();
+                    let remote = remote_member(profile)
+                        .map(|member| member_ip(profile, &member).unwrap().octets());
+                    (local, remote)
+                });
+                if packet[12..16] != local {
+                    dropped += 1;
+                    continue;
+                }
+                let Some(remote) = remote else {
                     continue;
                 };
-                if packet[16..20] != member_ip(profile, &remote).unwrap().octets() {
+                if packet[16..20] != remote {
                     continue;
                 }
                 let Some(route) = peer.chosen.as_ref().and_then(|id| peer.routes.get(id)) else {
-                    running.metrics.write().unwrap().dropped += 1;
+                    dropped += 1;
                     continue;
                 };
                 let lane = if route.flow.as_ref().is_some_and(|f| f.negotiated()) {
@@ -1572,10 +1599,21 @@ impl Engine {
                         .is_ok()
                     {
                         crate::uu::observe(&n.id, &packet, true);
-                        running.metrics.write().unwrap().sent += packet.len() as u64;
+                        sent += packet.len() as u64;
                     } else {
-                        running.metrics.write().unwrap().dropped += 1;
+                        dropped += 1;
                     }
+                }
+            }
+            if sent != 0 || dropped != 0 || adapter_error.is_some() {
+                let mut metrics = running.metrics.write().unwrap();
+                metrics.sent += sent;
+                metrics.dropped += dropped;
+                if let Some(error) = adapter_error {
+                    metrics.error = error;
+                    drop(metrics);
+                    running.cancel.cancel();
+                    break;
                 }
             }
         }
@@ -1588,7 +1626,9 @@ impl Engine {
         let mut next_gateway = 0;
         let mut last_own = Vec::new();
         let mut last_ack = uuid::Uuid::nil();
-        let mut last_assist_round = uuid::Uuid::nil();
+        let mut last_assist_round = None;
+        let mut candidate_attempts = CandidateAttempts::default();
+        let mut last_connected_since = 0;
         loop {
             let n = running.config.read().unwrap().clone();
             let Some(profile) = n.profile.as_ref() else {
@@ -1698,50 +1738,20 @@ impl Engine {
                         }
                     }
                 } else {
-                    if mapping
-                        .as_ref()
-                        .is_some_and(|m| m.local.port() != n.settings.listen_port)
+                    let mut observers = n.settings.tcp_stun.clone();
+                    if n.settings.discovery_mode == "coordinator"
+                        && let Ok(url) = url::Url::parse(&n.settings.service)
+                        && url.path() == "/"
+                        && let (Some(host), Some(port)) = (url.host_str(), url.port_or_known_default())
                     {
-                        mapping = None;
+                        observers.insert(0, format!("{host}:{port}"));
                     }
-                    if mapping.is_none()
-                        || mapping
-                            .as_ref()
-                            .is_some_and(|m| m.stream.peer_addr().is_err())
-                    {
-                        let mut observers = n.settings.tcp_stun.clone();
-                        if n.settings.discovery_mode == "coordinator"
-                            && !n.settings.service.is_empty()
-                        {
-                            if let Ok(url) = url::Url::parse(&n.settings.service) {
-                                if url.path() == "/" {
-                                    if let (Some(host), Some(port)) =
-                                        (url.host_str(), url.port_or_known_default())
-                                    {
-                                        observers.insert(0, format!("{host}:{port}"));
-                                    }
-                                }
-                            }
-                        }
-                        if let Ok(observed) =
-                            discovery::observe_tcp(n.settings.listen_port, &observers, &self, mode)
-                                .await
-                        {
-                            mapping = Some(observed);
-                        }
-                    }
-                    if let Some(observed) = mapping.as_mut() {
-                        if let Ok(Ok(mapped)) = tokio::time::timeout(
-                            Duration::from_secs(3),
-                            discovery::stun_tcp(&mut observed.stream),
-                        )
-                        .await
-                        {
-                            observed.mapped = mapped;
-                            own.push(mapped);
-                        } else {
-                            mapping = None;
-                        }
+                    mapping = tokio::select! {
+                        _ = running.cancel.cancelled() => break,
+                        result = discovery::refresh_or_observe_tcp(mapping.take(), n.settings.listen_port, &observers, &self, mode) => result.ok(),
+                    };
+                    if let Some(observed) = &mapping {
+                        own.push(observed.mapped);
                     }
                 }
             }
@@ -1828,19 +1838,29 @@ impl Engine {
                         .await
                         {
                             if let Ok(reservation) = running.dialing.clone().try_lock_owned() {
-                                let sent = Instant::now();
-                                if let Ok(state) = client.member(profile, running.boot, endpoint).await
-                                {
+                                let connected_since = running.metrics.read().unwrap().since;
+                                // Later attempts in the same outage use the regular schedule.
+                                let wait = last_assist_round.is_none_or(|(_, since)| since != connected_since)
+                                    && n.settings.existing_entries.iter().all(|entry| entry.peer_slot >= 0);
+                                let response = tokio::select! {
+                                    _ = running.cancel.cancelled() => break,
+                                    response = client.member(profile, running.boot, endpoint, wait) => response,
+                                };
+                                if let Ok((state, rtt)) = response {
                                     if state["Version"] == 1 && state["Mode"] == mode {
                                         if let Some(peer) = state["PeerEndpoint"]
                                             .as_str()
                                             .and_then(|s| crate::assistance::candidate(s).ok())
                                             .filter(|p| discovery::public(p.ip()))
                                         {
-                                            if let Ok(crate::assistance::Schedule::Ready(round, delay)) = crate::assistance::Schedule::read(&state, sent.elapsed())
-                                                && round != last_assist_round
+                                            let schedule = crate::assistance::Schedule::read(&state, rtt);
+                                            if let Ok(crate::assistance::Schedule::Expired(round)) = &schedule {
+                                                last_assist_round = Some((*round, connected_since));
+                                            }
+                                            if let Ok(crate::assistance::Schedule::Ready(round, delay)) = schedule
+                                                && last_assist_round.is_none_or(|(previous, _)| previous != round)
                                             {
-                                                last_assist_round = round;
+                                                last_assist_round = Some((round, connected_since));
                                                 let engine = self.clone();
                                                 let id = n.id.clone();
                                                 let token = running.cancel.clone();
@@ -1850,6 +1870,7 @@ impl Engine {
                                                     // so an ordinary retry cannot steal this round.
                                                     let _reservation = reservation;
                                                     tokio::select! {_=token.cancelled()=>return,_=tokio::time::sleep(delay)=>{}}
+                                                    tracing::debug!(network = %id, %round, "执行成员协调建连");
                                                     let result = tokio::select! {_=token.cancelled()=>Ok(()),r=engine.dial_reserved(&id,peer,&scheduled)=>r};
                                                     if let Err(error) = result {
                                                         tracing::debug!(reason = %crate::logging::redact(&error.to_string()), "协调定时建连未完成");
@@ -1951,7 +1972,18 @@ impl Engine {
                     }
                 }
             }
-            let connected = running.metrics.read().unwrap().connected;
+            let (connected, connected_since, last_direct) = {
+                let metrics = running.metrics.read().unwrap();
+                (
+                    metrics.connected,
+                    metrics.since,
+                    metrics.endpoint.parse().ok(),
+                )
+            };
+            if connected_since != last_connected_since {
+                candidate_attempts.clear();
+                last_connected_since = connected_since;
+            }
             if !connected && remote_member(profile).is_some() {
                 let mut entries = n
                     .settings
@@ -1975,7 +2007,10 @@ impl Engine {
                         }
                     }
                 }
-                let mut targets: Vec<SocketAddr> = if entries.is_empty() && n.peer_pkarr.is_empty()
+                // Direct discovery has no subscription to resolve. A peer
+                // may still advertise its PKARR identity during a live link.
+                let direct = !n.settings.existing_only() && n.settings.discovery_mode == "direct";
+                let mut targets: Vec<SocketAddr> = if entries.is_empty() && (direct || n.peer_pkarr.is_empty())
                 {
                     n.bootstrap.iter().filter_map(|s| s.parse().ok()).collect()
                 } else {
@@ -1984,11 +2019,12 @@ impl Engine {
                 if !n.settings.existing_only() {
                     targets.extend(peer_candidates);
                 }
-                for target in targets.into_iter().take(4) {
-                    if running.cancel.is_cancelled() {
+                let candidates = candidate_attempts.order(targets, last_direct);
+                for target in candidates.into_iter().take(4) {
+                    if !self.try_dial(&n.id, target, &running).await {
                         break;
                     }
-                    let _ = self.dial(&n.id, target).await;
+                    candidate_attempts.record(target);
                 }
             }
             tokio::select! {_=running.cancel.cancelled()=>break,_=running.refresh.notified()=>{last_publish=0;},_=tokio::time::sleep(Duration::from_secs(if connected{n.settings.entry_refresh_seconds.max(5).min(60)}else{5}))=>{}}
@@ -2363,6 +2399,11 @@ impl Engine {
     }
 }
 impl Running {
+    #[cfg(windows)]
+    pub(crate) fn routes_to_peer(&self, local: Ipv4Addr, peer: Ipv4Addr) -> bool {
+        self.adapter.routes_to_peer(local, peer)
+    }
+
     pub(crate) fn receive(
         &self,
         body: &[u8],
@@ -2444,14 +2485,12 @@ impl Running {
                 && packet[12..16] == member_ip(profile, &remote).unwrap().octets()
                 && packet[16..20] == profile.local_ip().unwrap().octets()
             {
-                let mut m = self.metrics.write().unwrap();
-                match self.adapter.write(&packet) {
-                    Ok(true) => {
-                        crate::uu::observe(&n.id, &packet, false);
-                        m.received += packet.len() as u64
-                    }
-                    _ => m.dropped += 1,
-                };
+                if self.adapter.write(&packet).is_ok_and(|written| written) {
+                    crate::uu::observe(&n.id, &packet, false);
+                    self.metrics.write().unwrap().received += packet.len() as u64;
+                } else {
+                    self.metrics.write().unwrap().dropped += 1;
+                }
             }
         }
         if let Some(payload) = received.synchronization {

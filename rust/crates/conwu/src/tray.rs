@@ -72,7 +72,9 @@ mod windows {
         }
         fn title(&self) -> String {
             match self {
-                Self::Embedded(_) => "ConWU foreground".into(),
+                Self::Embedded(panel) => {
+                    crate::control::name(&panel.app.store.root).unwrap_or_default()
+                }
                 Self::Service { data, .. } => crate::control::name(data).unwrap_or_default(),
             }
         }
@@ -170,7 +172,15 @@ mod windows {
         unsafe {
             let instance = GetModuleHandleW(std::ptr::null());
             let name = wide("ConWURustExperimentTray");
-            let title = wide(&panel.title());
+            let identity = panel.title();
+            let lease_name = format!(
+                r"Local\ConWU.Tray.{}",
+                identity.rsplit('.').next().unwrap_or("foreground")
+            );
+            let Some(_lease) = crate::desktop::TrayLease::acquire(&lease_name)? else {
+                return Ok(());
+            };
+            let title = wide(&identity);
             if !FindWindowW(name.as_ptr(), title.as_ptr()).is_null() {
                 return Ok(());
             }

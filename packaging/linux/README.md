@@ -2,17 +2,17 @@
 
 与 Windows 使用同一套双机多网络核心，也可兼任 HTTPS 协调设备。每个网络一主一从，通道双向；不提供串流中继。配置和入口格式见[入口与配置](../../docs/ConWU-入口与配置.md)。
 
-本包为 Linux x86_64 / glibc 自包含包，包含 .NET 10 运行库与静态原生传输。参与网络需要 TUN、iproute2、nftables、iptables 和 root 或对应网络权限；仅提供协调不需要 TUN。Alpine/musl 和 ARM64 不适用此包。
+正式版提供 Linux x86_64 静态 musl 包。安装需要 Python 3 和 systemd。组网使用 TUN 和相应网络权限，原始承载还需要 `ip` 和 `nft`。
 
 ## 安装
 
-解压后运行 `sudo ./install.sh`，安装为 `streamlink.service`。普通更新停止原服务后替换程序，保留 `/var/lib/streamlink`；旧程序保留在 `/opt/streamlink/releases`，切换失败会尝试恢复。`--no-start` 可先安装再手动启动。
+解压正式版归档后运行 `sudo ./install.sh`，安装为 `streamlink.service`。当前程序位于 `/opt/conwu/current`，设置位于 `/var/lib/conwu`。首次从 .NET 版升级会导入 `/var/lib/streamlink` 的设置，并保留上一版的程序和匹配的设置备份。可用 `--no-start` 先安装再手动启动。
 
-`sudo ./uninstall.sh` 卸载程序并保留设置。非 systemd 系统可运行 `sudo ./runtime/conwu run`，自行管理后台进程。兼容命令 `streamlink` 保留。
+`sudo ./uninstall.sh` 卸载程序并保留设置。需要自行管理后台时，可从解压目录运行 `sudo ./conwu run --no-open`。安装后也可使用兼容命令 `streamlink`。
 
 ## WebUI
 
-默认管理界面只监听本机 `127.0.0.1:47821`。运行 `sudo conwu web` 获取一次性登录链接，可通过 SSH 本地转发访问。
+本机管理界面默认在回环地址分配端口。运行 `sudo conwu web` 获取一次性登录链接，可按链接上的端口通过 SSH 本地转发访问。
 
 需要通过域名直接管理时，先从受保护的标准输入设置密码：
 
@@ -23,7 +23,7 @@ sudo systemctl restart streamlink
 
 密码需为 16–256 个非控制字符，文件内容不会回显。若此设备已经通过 HTTPS 域名提供协调服务，使用同一个域名设置远程管理，重启后即可访问该域名下的 `/admin/`，无需另改 Tunnel 路由；未登录时会进入密码登录页。协调路径继续工作。
 
-需要独立管理域名时，也可以将 HTTPS 反向代理／Tunnel 的 `/admin/` 路径转到 `http://127.0.0.1:47823`，保留外部 Host，访问 `https://manage.example.com/admin/login`。不要把整个协调地址转到管理端口。
+使用独立管理域名时，可将 HTTPS 反向代理或 Tunnel 的 `/admin/` 路径指向已配置的协调监听，并保留外部 Host。入口为 `https://manage.example.com/admin/`。
 
 登录使用密码、Secure/HttpOnly Cookie、CSRF 和来源校验；协调请求不能获得管理权限。`conwu remote-admin disable` 后重启服务可关闭远程管理。未配置密码时不启动该监听。
 
@@ -54,6 +54,6 @@ sudo conwu network approve <网络操作ID> <双方校验码>
 
 ## 版本与回退
 
-1.1 的双机目录和接收格式要求两端同步更新。已有 preview.1 的网络设置迁入配置库时分别保存，不自动合并；旧单网络权限不兼容时明确提示。更新不重置已经保存的同语义设置。
+升级和回退的详细步骤见 [Rust 安装与回退](../../rust/README.md#安装更新与回退)。旧 .NET 发行包的安装说明可从 [v1.4.5](https://github.com/MrSGSA/ConWU/blob/v1.4.5/packaging/linux/README.md)查阅。
 
 手动回退前停止服务，使用原程序和与其匹配的受保护配置备份。长期公网串流及真实 NAT 的结论由用户实测确认；本机验证不代替实际串流。

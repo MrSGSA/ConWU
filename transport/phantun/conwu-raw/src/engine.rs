@@ -16,6 +16,7 @@ use tokio::{
 };
 
 const LIMIT: usize = 128;
+const MIMIC_RECONNECT_IDLE: Duration = Duration::from_secs(15);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
     SynSent,
@@ -37,6 +38,7 @@ struct Flow {
     timestamp: Option<(u32, u32)>,
     timestamp_at: Instant,
     last_received: Instant,
+    last_payload_received: Instant,
     last_sent: Instant,
     created: Instant,
     retry_at: Instant,
@@ -292,7 +294,7 @@ mod tests {
         host.incoming(parse(&packets[1]).unwrap()).await.unwrap();
         assert_eq!(receive(&target).await, vec![12; 100]);
         assert_eq!(receive(&target).await, vec![11; 100]);
-        host.message(Message::Output(remote, vec![33; 79]))
+        host.message(Message::Output(remote, host.flows[&remote].generation, vec![33; 79]))
             .await
             .unwrap();
         let reply = hostwire.packets().pop().unwrap();
@@ -326,7 +328,8 @@ mod tests {
         for packet in guestwire.packets() { host.incoming(parse(&packet).unwrap()).await.unwrap(); }
         for packet in hostwire.packets() { guest.incoming(parse(&packet).unwrap()).await.unwrap(); }
         assert_eq!(receive(&target).await, vec![57; 91]);
-        host.message(Message::Output(guest.config.source, vec![71; 83])).await.unwrap();
+        let peer = guest.config.source;
+        host.message(Message::Output(peer, host.flows[&peer].generation, vec![71; 83])).await.unwrap();
         guest.incoming(parse(&hostwire.packets().pop().unwrap()).unwrap()).await.unwrap();
         assert_eq!(receive(&application).await, vec![71; 83]);
     }
@@ -343,6 +346,41 @@ mod tests {
         host.message(Message::Punch(peer, vec![])).await.unwrap();
         assert!(host.flows[&peer].phase == Phase::Established);
         assert!(wire.packets().is_empty());
+    }
+    #[tokio::test]
+    async fn mimic_rebuilds_a_stale_tuple_after_peer_restart() {
+        let target = udp_endpoint().unwrap();
+        let target_addr = v4(target.local_addr().unwrap()).unwrap();
+        for simultaneous in [false, true] {
+            let (mut host, host_wire) = fixture(true, target_addr);
+            let (mut guest, guest_wire) = fixture(true, target_addr);
+            guest.config.source = "198.18.0.2:41421".parse().unwrap();
+            let peer = guest.config.source;
+            let mut stale = Flow::new(host.config.source, peer, Phase::Established);
+            stale.last_payload_received = Instant::now() - MIMIC_RECONNECT_IDLE;
+            let old_generation = stale.generation;
+            host.flows.insert(peer, stale);
+
+            if simultaneous {
+                host.message(Message::Punch(peer, Vec::new())).await.unwrap();
+                assert_eq!(host.flows[&peer].phase, Phase::SynSent);
+            }
+            let greeting = vec![57; 91];
+            guest.message(Message::Punch(host.config.source, greeting.clone())).await.unwrap();
+            for _ in 0..4 {
+                for packet in guest_wire.packets() {
+                    host.incoming(parse(&packet).unwrap()).await.unwrap();
+                }
+                for packet in host_wire.packets() {
+                    guest.incoming(parse(&packet).unwrap()).await.unwrap();
+                }
+            }
+            assert_ne!(host.flows[&peer].generation, old_generation);
+            assert_eq!(host.flows[&peer].phase, Phase::Established);
+            assert_eq!(receive(&target).await, greeting);
+            host.message(Message::Output(peer, old_generation, vec![77; 91])).await.unwrap();
+            assert!(host_wire.packets().is_empty());
+        }
     }
     #[tokio::test]
     async fn assisted_two_listeners_send_greetings_only_after_handshake() {
@@ -458,6 +496,7 @@ impl Flow {
             timestamp: None,
             timestamp_at: now,
             last_received: now,
+            last_payload_received: now,
             last_sent: now,
             created: now,
             retry_at: now,
@@ -501,7 +540,7 @@ enum Message {
     Punch(SocketAddrV4, Vec<u8>),
     Protect(SocketAddrV4, String),
     Client(SocketAddr, Vec<u8>),
-    Output(SocketAddrV4, Vec<u8>),
+    Output(SocketAddrV4, u64, Vec<u8>),
     Connected(SocketAddrV4, Option<u64>, TcpStream),
     ConnectFailed(SocketAddrV4,u64,String),
     Closed(SocketAddrV4,u64),
@@ -684,6 +723,14 @@ fn prepare_system(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)
 }
 impl Engine {
+    fn stale_mimic_flow(&self, peer: SocketAddrV4) -> bool {
+        self.config.carrier == Carrier::Mimic
+            && self.flows.get(&peer).is_some_and(|flow| {
+                flow.phase == Phase::Established
+                    && flow.last_payload_received.elapsed() >= MIMIC_RECONNECT_IDLE
+            })
+    }
+
     fn admit(&mut self) -> bool {
         if self.admission_at.elapsed() >= Duration::from_secs(1) {
             self.admissions = 0;
@@ -815,11 +862,12 @@ impl Engine {
             let pump = udp.clone();
             let tx = self.tx.clone();
             let remote = flow.remote;
+            let generation = flow.generation;
             flow.pump = Some(tokio::spawn(async move {
                 let mut bytes = [0u8; 2048];
                 while let Ok(size) = pump.recv(&mut bytes).await {
                     if size > 0 && size <= MAX_DATAGRAM {
-                        let _ = tx.try_send(Message::Output(remote, bytes[..size].to_vec()));
+                        let _ = tx.try_send(Message::Output(remote, generation, bytes[..size].to_vec()));
                     }
                 }
             }));
@@ -883,6 +931,11 @@ impl Engine {
                 observation.timestamp = segment.timestamp;
             }
             return Ok(());
+        }
+        if self.config.server && segment.flags & (SYN | ACK | RST | FIN) == SYN
+            && self.stale_mimic_flow(key)
+        {
+            self.flows.remove(&key);
         }
         if !self.flows.contains_key(&key) {
             if !self.config.server
@@ -1013,6 +1066,7 @@ impl Engine {
                 segment.flags & PSH != 0 && !segment.payload.is_empty()
             };
             if deliver && segment.payload.len() <= MAX_DATAGRAM {
+                flow.last_payload_received = flow.last_received;
                 if after(consumed, flow.ack) || consumed == flow.ack {
                     flow.ack = consumed;
                 }
@@ -1062,6 +1116,11 @@ impl Engine {
                     || self.config.source.ip().is_unspecified()
                     || *self.config.control_peer.read().unwrap() == Some(peer)
                     || hello.len()>128 { return Ok(()); }
+                // Empty TCP ACKs can outlive the old encrypted path across a
+                // restart. A scheduled reconnect needs a fresh SYN on this tuple.
+                if self.stale_mimic_flow(peer) {
+                    self.flows.remove(&peer);
+                }
                 if let Some(mut flow)=self.flows.remove(&peer) {
                     if !hello.is_empty(){self.output(&mut flow,&hello)?;}
                     self.flows.insert(peer,flow);return Ok(());
@@ -1105,9 +1164,11 @@ impl Engine {
                     self.flows.insert(key, flow);
                 }
             }
-            Message::Output(key, data) => {
+            Message::Output(key, generation, data) => {
                 if let Some(mut flow) = self.flows.remove(&key) {
-                    self.output(&mut flow, &data)?;
+                    if flow.generation == generation {
+                        self.output(&mut flow, &data)?;
+                    }
                     self.flows.insert(key, flow);
                 }
             }

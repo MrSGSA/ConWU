@@ -125,7 +125,7 @@ impl Prepared {
         let shared = profile.shared_key(peer)?;
         let check = NativeCheck::new(&context, &shared)?;
         let raw_key = c::hkdf(&*shared, &check.digest, b"streamlink-native-outer-v1");
-        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let socket = crate::raw::bind_bridge().await?;
         let application = if context.protocol_client {
             Some(UdpSocket::bind("127.0.0.1:0").await?.local_addr()?)
         } else {

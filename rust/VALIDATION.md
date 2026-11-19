@@ -1,6 +1,6 @@
 # Rust 替换验证
 
-源码版本 `1.5.0`。本表记录发布前的隔离与兼容验收；原始证据保存在本工作区 `out/`，具体安装包的三机试切与发布结果另见 Release 随附的 `verification.json`。
+源码版本为 `1.5.1`。本表保留 1.5.0 的历史隔离与兼容验收，并补充 1.5.1 的候选验证。原始证据保存在本工作区 `out/`。
 
 ## 已完成的验收
 
@@ -20,6 +20,7 @@
 | 完整维护源 | D 盘保留当前完整 MSI，登记到 Windows Installer SourceList；上一版含完整程序、设置和原 MSI |
 | Windows 自带更新 | 正常 UI / CSRF 命令触发已下载 MSI，后台、两个真实网卡、网络身份和维护源保留；故障包拒绝并恢复，见 `parity-windows-update-fixed-result.json` / `parity-windows-update-fault-result.json` |
 | Windows 托盘与服务启动 | 普通用户启动停止中的服务、broker 状态及私密资料拒绝访问通过；托盘冷启动 / 正常退出独立复测通过：`parity-msi-user-start-current.json` / `parity-msi-user-tray-final.json`。首次组合测试的 12 秒托盘等待不足，35 秒复测通过 |
+| 托盘去重与自启动后续修正（源码） | Windows 原生模块独立运行 5 项检查通过：窗口创建前的并发占用、跨进程排他及释放、关闭启动项只影响本实例、服务设置失败恢复原启动项。`production,local-install` 配置编译检查通过。本机已安装程序的两次同时 `--startup` 启动均退出，原托盘与正式服务 PID 保持不变。旧 GUID 验收实例遗留的 Run 项已移除，测试托盘正常关闭、测试服务停用且数据保留。证据位于 `out/tray-20261118/`；原生模块修正尚未打包安装，已公开 R6 包的验收范围不变 |
 | Linux 自带更新 | 独立 systemd worker 不被旧服务进程组终止；成功更新与启动退出 42 的故障候选回退均恢复真实 TUN、协调及网络身份：`parity-linux-update-result.json` |
 | Linux 随包安装器 | 首次安装、覆盖安装、启动失败回退、保留资料卸载均通过，包含真实 TUN 及完整上一版设置：`parity-linux-install-result.json` |
 | IPv6 | 隔离双栈网络内 TCP、HTTPS 经 36 位直连码配对、真实 TUN 双向通信通过：`parity-ipv6-tun-current.log`；没有据此宣称公网双栈或其余四种承载已通过 IPv6 验证 |

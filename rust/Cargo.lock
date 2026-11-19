@@ -334,7 +334,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "conwu"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "conwu-core"
-version = "1.5.0"
+version = "1.5.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

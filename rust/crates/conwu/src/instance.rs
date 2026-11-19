@@ -57,6 +57,14 @@ pub fn service_name() -> String {
         "ConWURustExperiment".into()
     }
 }
+#[cfg(windows)]
+pub fn startup_name() -> String {
+    if validation().is_some() || !cfg!(feature = "production") {
+        service_name()
+    } else {
+        "StreamLink".into()
+    }
+}
 pub fn linux_unit() -> &'static str {
     if cfg!(feature = "production") {
         "streamlink.service"

@@ -873,28 +873,45 @@ async fn member_assist(
     reply(
         async {
             let source = client_source(r.trust_cloudflare, &request, remote);
+            let wait = request.uri().query() == Some("wait=1");
             let auth = authenticate(&r, &request, &network)?;
             let input: crate::assistance::MemberRequest = body(request).await?;
+            let (_permit, member, peer) = {
+                let registrations = r.registrations.lock().unwrap();
+                let registration = registrations.get(&network).context("网络未注册")?;
+                ensure!(
+                    c::eq(auth.as_bytes(), registration.auth.as_bytes()),
+                    "协调授权不符"
+                );
+                let member = registration
+                    .directory
+                    .members
+                    .iter()
+                    .find(|m| m.slot == input.slot)
+                    .context("协同成员未授权")?;
+                input.verify(&network, member, source)?;
+                let peer = registration
+                    .directory
+                    .members
+                    .iter()
+                    .find(|m| m.slot != input.slot)
+                    .context("尚无对机成员")?;
+                let permit = wait.then(|| r.waiters.clone().try_acquire_owned().ok()).flatten();
+                let Some(permit) = permit else {
+                    return r.assist.member(&network, input, peer);
+                };
+                (permit, member.clone(), peer.clone())
+            };
+            let result = r.assist.wait_member(&network, input, &peer, &r.app.engine.cancel).await?;
             let registrations = r.registrations.lock().unwrap();
             let registration = registrations.get(&network).context("网络未注册")?;
             ensure!(
-                c::eq(auth.as_bytes(), registration.auth.as_bytes()),
-                "协调授权不符"
+                c::eq(auth.as_bytes(), registration.auth.as_bytes())
+                    && registration.directory.members.contains(&member)
+                    && registration.directory.members.contains(&peer),
+                "协同成员授权已改变"
             );
-            let member = registration
-                .directory
-                .members
-                .iter()
-                .find(|m| m.slot == input.slot)
-                .context("协同成员未授权")?;
-            input.verify(&network, member, source)?;
-            let peer = registration
-                .directory
-                .members
-                .iter()
-                .find(|m| m.slot != input.slot)
-                .context("尚无对机成员")?;
-            r.assist.member(&network, input, peer.slot)
+            Ok(result)
         }
         .await,
     )

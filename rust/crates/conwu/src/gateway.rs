@@ -271,7 +271,6 @@ fn gateway_url(s: &str, gateway: Ipv4Addr) -> Result<url::Url> {
 }
 async fn bounded(response: reqwest::Response) -> Result<String> {
     use futures_util::StreamExt;
-    let response = response.error_for_status()?;
     ensure!(
         response.content_length().is_none_or(|n| n <= 65536),
         "UPnP 应答过大"
@@ -300,16 +299,44 @@ async fn soap(
     let body = format!(
         "<?xml version=\"1.0\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{service}\">{args}</u:{action}></s:Body></s:Envelope>"
     );
-    bounded(
-        client
-            .post(url.clone())
-            .header("Content-Type", "text/xml; charset=utf-8")
-            .header("SOAPAction", format!("\"{service}#{action}\""))
-            .body(body)
-            .send()
-            .await?,
-    )
-    .await
+    let response = client
+        .post(url.clone())
+        .header("Content-Type", "text/xml; charset=utf-8")
+        .header("SOAPAction", format!("\"{service}#{action}\""))
+        .body(body)
+        .send()
+        .await?;
+    let status = response.status();
+    let body = bounded(response).await?;
+    if !status.is_success() {
+        if let Ok(doc) = roxmltree::Document::parse(&body) {
+            if let Some(code) = doc
+                .descendants()
+                .find(|n| n.tag_name().name() == "UPnPError")
+                .and_then(|n| n.children().find(|c| c.tag_name().name() == "errorCode"))
+                .and_then(|n| n.text())
+                .and_then(|s| s.trim().parse::<u16>().ok())
+            {
+                return Err(UpnpFault(code).into());
+            }
+        }
+        anyhow::bail!("UPnP {action} 返回 {status}");
+    }
+    Ok(body)
+}
+#[derive(Debug)]
+struct UpnpFault(u16);
+impl std::fmt::Display for UpnpFault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "UPnP 网关错误 {}", self.0)
+    }
+}
+impl std::error::Error for UpnpFault {}
+fn arbitrary_port(service: &str) -> bool {
+    service
+        .strip_prefix("urn:schemas-upnp-org:service:WANIPConnection:")
+        .and_then(|s| s.parse::<u16>().ok())
+        .is_some_and(|v| v >= 2)
 }
 fn query(port: u16) -> String {
     format!(
@@ -364,13 +391,13 @@ async fn upnp(local: Ipv4Addr, gateway: Ipv4Addr, port: u16) -> Result<Lease> {
         .local_address(IpAddr::V4(local))
         .timeout(Duration::from_secs(3))
         .build()?;
-    let xml = bounded(client.get(location.clone()).send().await?).await?;
+    let xml = bounded(client.get(location.clone()).send().await?.error_for_status()?).await?;
     let (url, service) = {
         let doc = roxmltree::Document::parse(&xml)?;
         let (control, service) = doc
             .descendants()
             .filter(|n| n.tag_name().name() == "service")
-            .find_map(|node| {
+            .filter_map(|node| {
                 let kind = node
                     .children()
                     .find(|n| n.tag_name().name() == "serviceType")?
@@ -387,34 +414,75 @@ async fn upnp(local: Ipv4Addr, gateway: Ipv4Addr, port: u16) -> Result<Lease> {
                     None
                 }
             })
+            .max_by_key(|(_, service)| arbitrary_port(service))
             .context("网关不提供 UPnP 映射")?;
         (
             gateway_url(location.join(control)?.as_str(), gateway)?,
             service.to_string(),
         )
     };
+    upnp_lease(client, url, service, local, gateway, port).await
+}
+async fn upnp_lease(
+    client: reqwest::Client,
+    url: url::Url,
+    service: String,
+    local: Ipv4Addr,
+    gateway: Ipv4Addr,
+    port: u16,
+) -> Result<Lease> {
     let ip = upnp_ip(&client, &url, &service).await?;
-    let endpoint = public_endpoint(ip, port)?;
-    let query = query(port);
-    ensure!(
-        soap(
-            &client,
-            &url,
-            &service,
-            "GetSpecificPortMappingEntry",
-            &query
-        )
-        .await
-        .is_err(),
-        "此端口已有映射，拒绝覆盖"
-    );
+    public_endpoint(ip, port)?;
+    let available = match soap(
+        &client,
+        &url,
+        &service,
+        "GetSpecificPortMappingEntry",
+        &query(port),
+    )
+    .await
+    {
+        Ok(_) => false,
+        Err(e) if e.downcast_ref::<UpnpFault>().is_some_and(|f| f.0 == 714) => true,
+        Err(e) => return Err(e),
+    };
+    let any = arbitrary_port(&service);
+    ensure!(available || any, "此外部端口已被使用，网关不支持另分端口");
     let description = format!("ConWU Rust {}", conwu_core::id());
-    let args = format!(
-        "{query}<NewInternalPort>{port}</NewInternalPort><NewInternalClient>{local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{description}</NewPortMappingDescription><NewLeaseDuration>3600</NewLeaseDuration>"
-    );
-    soap(&client, &url, &service, "AddPortMapping", &args).await?;
+    let args = |external| {
+        format!(
+            "{}<NewInternalPort>{port}</NewInternalPort><NewInternalClient>{local}</NewInternalClient><NewEnabled>1</NewEnabled><NewPortMappingDescription>{description}</NewPortMappingDescription><NewLeaseDuration>3600</NewLeaseDuration>",
+            query(external)
+        )
+    };
+    let alternate = if available {
+        match soap(&client, &url, &service, "AddPortMapping", &args(port)).await {
+            Ok(_) => false,
+            // A different client may have claimed the port since the query.
+            Err(e) if any && e.downcast_ref::<UpnpFault>().is_some_and(|f| f.0 == 718) => true,
+            Err(e) => return Err(e),
+        }
+    } else {
+        true
+    };
+    let external = if alternate {
+        let reply = soap(&client, &url, &service, "AddAnyPortMapping", &args(0)).await?;
+        let doc = roxmltree::Document::parse(&reply)?;
+        doc.descendants()
+            .find(|n| n.tag_name().name() == "AddAnyPortMappingResponse")
+            .and_then(|n| {
+                n.children()
+                    .find(|c| c.tag_name().name() == "NewReservedPort")
+            })
+            .and_then(|n| n.text())
+            .context("网关未返回实际分配的外部端口")?
+            .trim()
+            .parse()?
+    } else {
+        port
+    };
     Ok(Lease {
-        endpoint,
+        endpoint: public_endpoint(ip, external)?,
         renew: Instant::now() + Duration::from_secs(1800),
         expires: Instant::now() + Duration::from_secs(3600),
         kind: Kind::Upnp {
@@ -479,6 +547,151 @@ fn route() -> Result<(Ipv4Addr, Ipv4Addr)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn gateway_lookup_faults_distinguish_a_free_port_from_a_failed_query() -> Result<()> {
+        use axum::{
+            http::{HeaderMap, StatusCode},
+            routing::post,
+        };
+        use std::sync::{Arc, Mutex};
+        for (lookup, add, expected) in [
+            (714, 0, Some(40000)),
+            (714, 718, Some(51000)),
+            (501, 0, None),
+        ] {
+            let changes = Arc::new(Mutex::new(Vec::new()));
+            let recorded = changes.clone();
+            let router = axum::Router::new().route("/", post(move |headers: HeaderMap| {
+                let changes = recorded.clone();
+                async move {
+                    let fault = |code| (StatusCode::INTERNAL_SERVER_ERROR, format!("<Fault><UPnPError><errorCode>{code}</errorCode></UPnPError></Fault>"));
+                    let header = headers["SOAPAction"].to_str().unwrap().trim_matches('"');
+                    match header.split_once('#').unwrap().1 {
+                        "GetExternalIPAddress" => (StatusCode::OK, "<r><NewExternalIPAddress>203.0.113.9</NewExternalIPAddress></r>".into()),
+                        "GetSpecificPortMappingEntry" => fault(lookup),
+                        "AddPortMapping" => {
+                            changes.lock().unwrap().push("fixed");
+                            if add == 0 { (StatusCode::OK, "<r/>".into()) } else { fault(add) }
+                        }
+                        "AddAnyPortMapping" => {
+                            changes.lock().unwrap().push("alternate");
+                            (StatusCode::OK, "<AddAnyPortMappingResponse><NewReservedPort>51000</NewReservedPort></AddAnyPortMappingResponse>".into())
+                        }
+                        action => panic!("unexpected SOAP action {action}"),
+                    }
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+            let url = url::Url::parse(&format!("http://{}/", listener.local_addr()?))?;
+            let server = tokio::spawn(async move { axum::serve(listener, router).await });
+            let result = upnp_lease(
+                crate::discovery::http_client()?,
+                url,
+                "urn:schemas-upnp-org:service:WANIPConnection:2".into(),
+                Ipv4Addr::LOCALHOST,
+                Ipv4Addr::LOCALHOST,
+                40000,
+            )
+            .await;
+            assert_eq!(result.ok().map(|l| l.endpoint.port()), expected);
+            assert_eq!(
+                changes.lock().unwrap().as_slice(),
+                match expected {
+                    None => &[][..],
+                    Some(40000) => &["fixed"][..],
+                    _ => &["fixed", "alternate"][..],
+                }
+            );
+            server.abort();
+        }
+        Ok(())
+    }
+    #[tokio::test]
+    async fn gateway_assigns_an_alternate_port_and_only_that_lease_is_renewed_or_removed()
+    -> Result<()> {
+        use axum::{http::HeaderMap, routing::post};
+        use std::sync::{Arc, Mutex};
+        let calls = Arc::new(Mutex::new(Vec::<(String, String)>::new()));
+        let recorded = calls.clone();
+        let router = axum::Router::new().route("/control", post(move |headers: HeaderMap, body: String| {
+            let recorded = recorded.clone();
+            async move {
+                let header = headers["SOAPAction"].to_str().unwrap().trim_matches('"');
+                let action = header.split_once('#').unwrap().1;
+                let doc = roxmltree::Document::parse(&body).unwrap();
+                let field = |name| doc.descendants().find(|n| n.tag_name().name() == name)
+                    .and_then(|n| n.text()).unwrap_or("");
+                let external = field("NewExternalPort");
+                let mut calls = recorded.lock().unwrap();
+                calls.push((action.into(), external.into()));
+                match action {
+                    "GetExternalIPAddress" => "<r><NewExternalIPAddress>203.0.113.9</NewExternalIPAddress></r>".into(),
+                    "GetSpecificPortMappingEntry" if external == "40000" =>
+                        "<r><NewPortMappingDescription>other application</NewPortMappingDescription></r>".into(),
+                    "GetSpecificPortMappingEntry" => {
+                        let description = calls.iter().find(|(k, _)| k == "description").unwrap().1.as_str();
+                        format!("<r><NewInternalClient>127.0.0.1</NewInternalClient><NewInternalPort>40000</NewInternalPort><NewPortMappingDescription>{description}</NewPortMappingDescription></r>")
+                    }
+                    "AddAnyPortMapping" => {
+                        assert_eq!(field("NewInternalPort"), "40000");
+                        assert_eq!(external, "0");
+                        calls.push(("description".into(), field("NewPortMappingDescription").into()));
+                        "<AddAnyPortMappingResponse><NewReservedPort>51000</NewReservedPort></AddAnyPortMappingResponse>".into()
+                    }
+                    _ => "<r/>".into(),
+                }
+            }
+        }));
+        let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+        let url = url::Url::parse(&format!("http://{}/control", listener.local_addr()?))?;
+        let server = tokio::spawn(async move { axum::serve(listener, router).await });
+        let mut lease = upnp_lease(
+            crate::discovery::http_client()?,
+            url.clone(),
+            "urn:schemas-upnp-org:service:WANIPConnection:2".into(),
+            Ipv4Addr::LOCALHOST,
+            Ipv4Addr::LOCALHOST,
+            40000,
+        )
+        .await?;
+        assert_eq!(lease.port(), 40000);
+        assert_eq!(lease.endpoint, "203.0.113.9:51000".parse()?);
+        lease.extend().await?;
+        lease.close().await?;
+        assert!(
+            upnp_lease(
+                crate::discovery::http_client()?,
+                url,
+                "urn:schemas-upnp-org:service:WANIPConnection:1".into(),
+                Ipv4Addr::LOCALHOST,
+                Ipv4Addr::LOCALHOST,
+                40000
+            )
+            .await
+            .is_err()
+        );
+        let calls = calls.lock().unwrap();
+        let changed: Vec<_> = calls
+            .iter()
+            .filter(|(k, _)| {
+                matches!(
+                    k.as_str(),
+                    "AddAnyPortMapping" | "AddPortMapping" | "DeletePortMapping"
+                )
+            })
+            .map(|(k, p)| (k.as_str(), p.as_str()))
+            .collect();
+        assert_eq!(
+            changed,
+            [
+                ("AddAnyPortMapping", "0"),
+                ("AddPortMapping", "51000"),
+                ("DeletePortMapping", "51000")
+            ]
+        );
+        server.abort();
+        Ok(())
+    }
     #[test]
     fn pcp_nonce_and_ports() {
         let request = pcp_wire(Ipv4Addr::new(192, 168, 1, 2), 40000, 50000, [7; 12], 3600);

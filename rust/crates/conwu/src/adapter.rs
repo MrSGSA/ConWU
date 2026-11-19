@@ -14,6 +14,10 @@ pub trait Adapter: Send + Sync {
     fn warnings(&self) -> Vec<serde_json::Value> {
         Vec::new()
     }
+    #[cfg(windows)]
+    fn routes_to_peer(&self, _local: Ipv4Addr, _peer: Ipv4Addr) -> bool {
+        false
+    }
 }
 pub struct Memory {
     outgoing: Mutex<VecDeque<Vec<u8>>>,
@@ -236,6 +240,7 @@ mod windows {
     pub struct Wintun {
         _library: libloading::Library,
         adapter: Handle,
+        luid: u64,
         session: Handle,
         close: Close,
         end: Close,
@@ -664,6 +669,7 @@ mod windows {
                 let driver = Self {
                     _library: library,
                     adapter,
+                    luid,
                     session,
                     close,
                     end,
@@ -721,6 +727,31 @@ mod windows {
         }
         fn warnings(&self) -> Vec<serde_json::Value> {
             self.warnings.clone()
+        }
+        fn routes_to_peer(&self, local: Ipv4Addr, peer: Ipv4Addr) -> bool {
+            use windows_sys::Win32::{
+                NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2},
+                Networking::WinSock::{AF_INET, SOCKADDR_INET},
+            };
+            let mut dst = SOCKADDR_INET::default();
+            dst.Ipv4.sin_family = AF_INET;
+            dst.Ipv4.sin_addr.S_un.S_addr = u32::from_ne_bytes(peer.octets());
+            let mut route = MIB_IPFORWARD_ROW2::default();
+            let mut src = SOCKADDR_INET::default();
+            unsafe {
+                GetBestRoute2(
+                    std::ptr::null(),
+                    0,
+                    std::ptr::null(),
+                    &dst,
+                    0,
+                    &mut route,
+                    &mut src,
+                ) == 0
+                    && route.InterfaceLuid.Value == self.luid
+                    && src.si_family == AF_INET
+                    && src.Ipv4.sin_addr.S_un.S_addr.to_ne_bytes() == local.octets()
+            }
         }
     }
     impl Drop for Wintun {

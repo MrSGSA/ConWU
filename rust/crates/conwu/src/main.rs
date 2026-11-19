@@ -6,6 +6,8 @@ mod backend;
 mod capture;
 mod cli;
 mod control;
+#[cfg(windows)]
+mod desktop;
 mod coordination_store;
 mod coordinator;
 mod discovery;

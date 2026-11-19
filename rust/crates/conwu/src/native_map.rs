@@ -192,7 +192,7 @@ impl Mapping {
         };
         #[cfg(windows)]
         let session = self.capture.register(descriptor.clone())?;
-        let proxy = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let proxy = crate::raw::bind_bridge().await?;
         let bridge = if client {
             let reserve = UdpSocket::bind("127.0.0.1:0").await?;
             reserve.local_addr()?
@@ -246,7 +246,7 @@ impl Mapping {
         let last = Arc::new(Mutex::new(Instant::now()));
         if client {
             proxy.connect(bridge).await?;
-            let relay = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+            let relay = crate::raw::bind_bridge().await?;
             relay.connect(self.target).await?;
             let relay_address = relay.local_addr()?;
             self.peers.lock().unwrap().insert(relay_address, peer);
@@ -283,13 +283,12 @@ impl Mapping {
                         if relays.len() >= 32 {
                             continue;
                         }
-                        let Ok(socket) = UdpSocket::bind("127.0.0.1:0").await else {
+                        let Ok(relay) = crate::raw::bind_bridge().await else {
                             break;
                         };
-                        if socket.connect(target).await.is_err() {
+                        if relay.connect(target).await.is_err() {
                             break;
                         }
-                        let relay = Arc::new(socket);
                         let Ok(local) = relay.local_addr() else { break };
                         addresses.lock().unwrap().insert(local, peer);
                         let receiver = relay.clone();
@@ -370,15 +369,9 @@ impl Mapping {
             .get(&peer)
             .context("原生准备已取消")?
             .bridge;
-        let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+        let socket = crate::raw::bind_bridge().await?;
         socket.connect(bridge).await?;
-        Ok(crate::raw::udp_pipe(
-            socket,
-            parent,
-            None,
-            None,
-            &self.tracker,
-        ))
+        Ok(crate::raw::udp_pipe(socket, parent, &self.tracker))
     }
     pub async fn freeze(&self, peer: SocketAddr) {
         #[cfg(windows)]

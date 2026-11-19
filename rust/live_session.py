@@ -83,8 +83,11 @@ def require_idle():
     uu=status.get('uuTakeover') or {}
     observed=uu.get('trafficObserved') or any(n.get('trafficObserved') for n in uu.get('networks',[]))
     connected=any(n.get('status',{}).get('directPeers',0)>0 for n in status.get('networks',[]))
-    if connected and uu.get('settings',{}).get('enabled') and uu.get('rulesActive') and observed:
-        raise SystemExit('检测到日用 UU 正在经 ConWU 传输，未启动网卡重建/承载实验。请在会话空闲时运行。')
+    if connected and uu.get('settings',{}).get('enabled') and uu.get('rulesActive'):
+        if uu.get('observationAvailable') is False:
+            raise SystemExit('日用 UU 规则仍在工作，暂时无法确认流量，未启动网卡重建/承载实验。')
+        if observed:
+            raise SystemExit('检测到日用 UU 正在经 ConWU 传输，未启动网卡重建/承载实验。请在会话空闲时运行。')
 
 
 if __name__=='__main__':

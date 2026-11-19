@@ -1,6 +1,6 @@
 # ConWU Rust 迁移与替换验收
 
-源码版本：`1.5.0`。完整验证范围见 [VALIDATION.md](VALIDATION.md)；对应安装包的三机升级与发布结果以 Release 随附的 `verification.json` 为准。
+源码版本为 `1.5.1`。隔离验证见 [VALIDATION.md](VALIDATION.md)，候选改动见 [1.5.1 版本说明](../docs/releases/1.5.1.md)。
 
 ConWU 自有核心、后台、配置存储、配对、发现、系统管理和更新逻辑已迁至 Rust，继续使用现有 HTML / CSS / JavaScript 界面。日常运行不启动 .NET；`compat/ConWU.DotnetOracle` 只用于开发时的协议对照。
 
@@ -15,6 +15,8 @@ ConWU 自有核心、后台、配置存储、配对、发现、系统管理和�
 | `production,local-install` | 保留 `StreamLink-PersonalFeature` | `%ProgramData%/ConWU`，与旧资料目录分离 |
 
 Linux 默认服务为 `conwu-rust-experiment.service`，正式构建保留 `streamlink.service`。`lab-api` 只开放测试用内存网卡注入，打包器拒绝交付带此 feature 的程序。`build-info` 可核对版本、产品身份、平台及 feature。
+
+Windows 托盘按数据目录和交互会话保留一个实例，并在创建窗口前原子占用身份；重复打开仍可进入原有 WebUI。开机启动同时控制后台服务与本实例的托盘 Run 项，关闭后不会在下次登录时由托盘重新启动后台。新建 MSI 隔离验收实例默认手动启动，验收后应停止其服务、关闭其托盘并移除测试开机项，保留必要的验收资料。
 
 ## 运行与迁移
 

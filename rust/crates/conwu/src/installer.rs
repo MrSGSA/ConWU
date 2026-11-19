@@ -216,7 +216,7 @@ fn configure(sid: &str, attempt: &str) -> Result<()> {
             crate::migration::import(&legacy, &store)?;
         } else {
             let mut db = crate::model::Database::default();
-            db.device_settings["autoStart"] = json!(true);
+            db.device_settings["autoStart"] = json!(instance::validation().is_none());
             store.save(&db)?;
         }
     }
@@ -251,19 +251,7 @@ fn configure(sid: &str, attempt: &str) -> Result<()> {
     store.write(&file, &serde_json::to_vec(&auth)?, false)?;
     store.write("ui-user.sid", auth.after.as_bytes(), false)?;
     drivers(&root)?;
-    run(
-        "sc.exe",
-        &[
-            "config",
-            &instance::service_name(),
-            "start=",
-            if db.device_settings["autoStart"] == true {
-                "auto"
-            } else {
-                "demand"
-            },
-        ],
-    )?;
+    crate::platform::configure_windows_startup(db.device_settings["autoStart"] == true)?;
     run(
         "sc.exe",
         &[

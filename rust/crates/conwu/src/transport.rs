@@ -7,6 +7,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivatePkcs8KeyDer, ServerName, UnixTime},
 };
 use std::{
+    collections::VecDeque,
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::Duration,
@@ -492,8 +493,14 @@ fn tcp_pipe(socket: TcpStream, parent: &CancellationToken) -> Pipe {
                 Ok(bytes)
             };
             let bytes = tokio::select! {_=reader_stop.cancelled()=>break,r=read=>match r{Ok(b)=>b,Err(_)=>break}};
-            if incoming.try_send(bytes).is_err() {
-                break;
+            tokio::select! {
+                biased;
+                _ = reader_stop.cancelled() => break,
+                result = incoming.send(bytes) => {
+                    if result.is_err() {
+                        break;
+                    }
+                }
             }
         }
     });
@@ -530,15 +537,73 @@ where
     let (mut writer, mut reader) = ws.split();
     tokio::spawn(async move {
         let _guard = stop.clone().drop_guard();
-        loop {
-            tokio::select! {biased;_=stop.cancelled()=>break,item=reader.next()=>{
-                match item{Some(Ok(Message::Binary(body)))=>{if body.is_empty()||body.len()>16384{break}let frames=if batch{parse_batch(&body)}else if body.len()<=MAX{Ok(vec![body.to_vec()])}else{Err(anyhow::anyhow!("oversize datagram"))};let Ok(frames)=frames else{break};for frame in frames{if incoming.try_send(frame).is_err(){stop.cancel();break}}},Some(Ok(Message::Ping(data)))=>{if !ws_send(&mut writer,Message::Pong(data),&stop).await{break}},Some(Ok(Message::Pong(_)))=>{},_=>break}
-            },frame=outgoing.recv()=>{
-                let Some(frame)=frame else{break};if frame.is_empty()||frame.len()>MAX{break}
-                let mut body=if batch{let mut b=Vec::with_capacity(16384);push_frame(&mut b,&frame);b}else{frame};
-                if batch{for _ in 1..16{if body.len()+MAX+2>16384{break}match outgoing.try_recv(){Ok(f)if !f.is_empty()&&f.len()<=MAX=>push_frame(&mut body,&f),_=>break}}}
-                if !ws_send(&mut writer,Message::Binary(body.into()),&stop).await{break}
-            }}
+        let mut pending = VecDeque::new();
+        'pipe: loop {
+            while let Some(frame) = pending.pop_front() {
+                match incoming.try_send(frame) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(frame)) => {
+                        pending.push_front(frame);
+                        break;
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => break 'pipe,
+                }
+            }
+            // Keep at most one decoded message outside the receive queue. The
+            // writer can continue while the receiver makes room for it.
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                permit = incoming.reserve(), if !pending.is_empty() => {
+                    let Ok(permit) = permit else { break };
+                    permit.send(pending.pop_front().unwrap());
+                }
+                item = reader.next(), if pending.is_empty() => match item {
+                    Some(Ok(Message::Binary(body))) if !body.is_empty() && body.len() <= 16384 => {
+                        if batch {
+                            let Ok(frames) = parse_batch(&body) else { break };
+                            pending.extend(frames);
+                        } else if body.len() <= MAX {
+                            pending.push_back(body.to_vec());
+                        } else {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Ping(data))) => {
+                        if !ws_send(&mut writer, Message::Pong(data), &stop).await {
+                            break;
+                        }
+                    }
+                    Some(Ok(Message::Pong(_))) => {}
+                    _ => break,
+                },
+                frame = outgoing.recv() => {
+                    let Some(frame) = frame else { break };
+                    if frame.is_empty() || frame.len() > MAX {
+                        break;
+                    }
+                    let body = if batch {
+                        let mut body = Vec::with_capacity(16384);
+                        push_frame(&mut body, &frame);
+                        for _ in 1..16 {
+                            if body.len() + MAX + 2 > 16384 {
+                                break;
+                            }
+                            match outgoing.try_recv() {
+                                Ok(frame) if !frame.is_empty() && frame.len() <= MAX => {
+                                    push_frame(&mut body, &frame);
+                                }
+                                _ => break,
+                            }
+                        }
+                        body
+                    } else {
+                        frame
+                    };
+                    if !ws_send(&mut writer, Message::Binary(body.into()), &stop).await {
+                        break;
+                    }
+                }
+            }
         }
         stop.cancel();
         let _ = tokio::time::timeout(Duration::from_millis(100), writer.close()).await;
@@ -571,4 +636,60 @@ fn parse_batch(body: &[u8]) -> Result<Vec<Vec<u8>>> {
         at += n;
     }
     Ok(frames)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio_tungstenite::tungstenite::protocol::Role;
+
+    async fn verify_receive_backpressure(mut sender: Pipe, mut receiver: Pipe) -> Result<()> {
+        tokio::time::timeout(Duration::from_secs(6), async {
+            let capacity = receiver.rx.max_capacity();
+            let count = capacity + 32;
+            for sequence in 0..count {
+                sender.tx.send(sequence.to_be_bytes().to_vec()).await?;
+            }
+            while receiver.rx.len() < capacity {
+                tokio::task::yield_now().await;
+            }
+
+            // The receive side is still full. The reverse direction must be usable.
+            let reply = b"reverse direction".to_vec();
+            receiver.tx.send(reply.clone()).await?;
+            assert_eq!(sender.rx.recv().await, Some(reply));
+
+            for sequence in 0..count {
+                assert_eq!(receiver.rx.recv().await, Some(sequence.to_be_bytes().to_vec()));
+            }
+            assert!(!receiver.cancel.is_cancelled());
+            Ok::<_, anyhow::Error>(())
+        })
+        .await.context("收包积压时无法继续双向传输")??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tcp_keeps_order_and_reverse_traffic_when_receive_queue_fills() -> Result<()> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let (client, (server, _)) =
+            tokio::try_join!(TcpStream::connect(listener.local_addr()?), listener.accept())?;
+        let stop = CancellationToken::new();
+        verify_receive_backpressure(tcp_pipe(client, &stop), tcp_pipe(server, &stop)).await
+    }
+
+    #[tokio::test]
+    async fn websocket_keeps_order_and_reverse_traffic_when_receive_queue_fills() -> Result<()> {
+        for batch in [false, true] {
+            let (client, server) = tokio::io::duplex(65536);
+            let client = WebSocketStream::from_raw_socket(client, Role::Client, None).await;
+            let server = WebSocketStream::from_raw_socket(server, Role::Server, None).await;
+            let stop = CancellationToken::new();
+            verify_receive_backpressure(
+                ws_pipe(client, batch, &stop, String::new()),
+                ws_pipe(server, batch, &stop, String::new()),
+            ).await?;
+        }
+        Ok(())
+    }
 }

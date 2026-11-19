@@ -105,35 +105,52 @@ pub async fn configure_startup(app: &App, enabled: bool) -> Result<()> {
         "请先注册独立的 Rust 实验后台服务，再设置开机启动"
     );
     let result = tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut command =
-            std::process::Command::new(if cfg!(windows) { "sc.exe" } else { "systemctl" });
-        let service_name = crate::instance::service_name();
-        command.args(if cfg!(windows) {
-            vec![
-                "config",
-                &service_name,
-                "start=",
-                if enabled { "auto" } else { "demand" },
-            ]
-        } else {
-            vec![
+        #[cfg(windows)]
+        configure_windows_startup(enabled)?;
+        #[cfg(target_os = "linux")]
+        {
+            let mut command = std::process::Command::new("systemctl");
+            command.args([
                 if enabled { "enable" } else { "disable" },
                 crate::instance::linux_unit(),
-            ]
-        });
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            command.creation_flags(0x08000000);
+            ]);
+            command.stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+            ensure!(command.status()?.success(), "实验服务的启动设置保存失败");
         }
-        command
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        ensure!(command.status()?.success(), "实验服务的启动设置保存失败");
         Ok(())
     })
     .await?;
     result
+}
+#[cfg(windows)]
+pub(crate) fn configure_windows_startup(enabled: bool) -> Result<()> {
+    use std::os::windows::process::CommandExt;
+    let command = if enabled {
+        let exe = std::env::current_exe()?;
+        let launcher = exe.parent()
+            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("app")))
+            .and_then(|p| p.parent())
+            .map(|p| p.join("ConWU.exe"))
+            .filter(|p| p.is_file())
+            .unwrap_or(exe);
+        let launcher = filesystem_argument(&launcher)?;
+        let launcher = launcher.to_str().ok_or_else(|| anyhow::anyhow!("开机程序路径不是有效 Unicode"))?;
+        let args = crate::instance::validation()
+            .map(|id| format!("--validation-instance {id} --startup"))
+            .unwrap_or_else(|| "--startup".into());
+        Some(format!("\"{launcher}\" {args}"))
+    } else {
+        None
+    };
+    crate::desktop::update_startup(&crate::instance::startup_name(), command.as_deref(), || {
+        let output = std::process::Command::new("sc.exe")
+            .args(["config", &crate::instance::service_name(), "start=", if enabled { "auto" } else { "demand" }])
+            .creation_flags(0x08000000).output()?;
+        if output.status.success() { Ok(()) }
+        else { Err(std::io::Error::other(format!("后台自启动设置失败：{} {}",
+            String::from_utf8_lossy(&output.stdout).trim(), String::from_utf8_lossy(&output.stderr).trim()))) }
+    })?;
+    Ok(())
 }
 pub fn start(app: std::sync::Arc<App>) {
     if app.engine.memory {

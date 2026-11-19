@@ -1121,6 +1121,40 @@ async fn removal_cancels_pending_discovery_commit_before_reusing_port() -> Resul
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn host_refresh_keeps_first_stun_reply_and_reobserves_a_closed_stream() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let app = app().await?;
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let servers = [listener.local_addr()?.to_string()];
+    let source = port();
+    let reflector = tokio::spawn(async move {
+        for external in [49152u16, 49153] {
+            let (mut socket, peer) = listener.accept().await?;
+            ensure!(peer.port() == source, "重新观察须保留接收端口");
+            let mut request = [0u8; 20];
+            socket.read_exact(&mut request).await?;
+            let mut reply = request.to_vec();
+            reply[..4].copy_from_slice(&[1, 1, 0, 12]);
+            reply.extend_from_slice(&[0, 1, 0, 8, 0, 1]);
+            reply.extend_from_slice(&external.to_be_bytes());
+            reply.extend_from_slice(&[203, 0, 113, 7]);
+            socket.write_all(&reply).await?;
+            socket.shutdown().await?;
+        }
+        Ok::<_, anyhow::Error>(())
+    });
+    let first =
+        discovery::refresh_or_observe_tcp(None, source, &servers, &app.engine, "tcp").await?;
+    assert_eq!(first.mapped.port(), 49152);
+    let next = discovery::refresh_or_observe_tcp(Some(first), source, &servers, &app.engine, "tcp")
+        .await?;
+    assert_eq!(next.mapped.port(), 49153);
+    reflector.await??;
+    app.engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn stun_failures_rotate_into_the_rest_of_the_saved_catalogue() -> Result<()> {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let app = app().await?;

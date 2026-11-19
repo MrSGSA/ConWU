@@ -116,11 +116,14 @@ foreach($item in $all){
  # changing the pinned driver release requires an explicit migration policy.
  if($relative -in @('app/components/WinDivert64.sys','app/components/WinDivert.dll','app/components/wintun.dll')){$component.SetAttribute('NeverOverwrite','yes')}
  if($fileId -eq 'ServiceExe'){
-  $serviceNode=Node 'ServiceInstall' @{Id='InstallNetworkService';Name=$service;DisplayName='ConWU Network';Type='ownProcess';Start='auto';ErrorControl='normal';Account='LocalSystem';Vital='yes';Arguments=$validationArgs.Trim()};$component.AppendChild($serviceNode)|Out-Null
+  $startType=if($ValidationInstance){'demand'}else{'auto'}
+  $serviceNode=Node 'ServiceInstall' @{Id='InstallNetworkService';Name=$service;DisplayName='ConWU Network';Type='ownProcess';Start=$startType;ErrorControl='normal';Account='LocalSystem';Vital='yes';Arguments=$validationArgs.Trim()};$component.AppendChild($serviceNode)|Out-Null
   $component.AppendChild((Node 'ServiceControl' @{Id='ControlNetworkService';Name=$service;Start='install';Stop='both';Remove='uninstall';Wait='yes'}))|Out-Null
  }
  if($fileId -eq 'LauncherExe'){
   $startupName=if($ValidationInstance){$service}else{'StreamLink'}
+  # ConfigureAuthorization reconciles this MSI-owned entry with the preserved
+  # autoStart preference; a fresh validation instance defaults to disabled.
   $component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key='Software\Microsoft\Windows\CurrentVersion\Run';Name=$startupName;Type='string';Value=('"[#LauncherExe]" '+$validationArgs+'--startup')}))|Out-Null
   foreach($value in @(@('ProductCode','[ProductCode]'),@('InstallLocation','[INSTALLFOLDER]'))){$component.AppendChild((Node 'RegistryValue' @{Root='HKLM';Key=$registryKey;Name=$value[0];Type='string';Value=$value[1]}))|Out-Null}
  }

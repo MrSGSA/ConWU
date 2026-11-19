@@ -13,11 +13,15 @@ use std::{
     sync::Mutex,
     time::{Duration, Instant},
 };
+use tokio::sync::oneshot;
+use tokio_util::sync::CancellationToken;
 
 const FIRST_CONTACT_LEAD: Duration = Duration::from_secs(1);
 const LATE_TOLERANCE: Duration = Duration::from_secs(2);
 const MAX_FIRST_CONTACT_ROUNDS: u8 = 3;
 const MEMBER_LEAD: Duration = Duration::from_secs(8);
+const WAITING_MEMBER_LEAD: Duration = Duration::from_secs(2);
+const MEMBER_WAIT: Duration = Duration::from_secs(4);
 
 pub enum Schedule {
     Waiting,
@@ -39,7 +43,9 @@ impl Schedule {
             .as_i64()
             .context("协调探测时间缺失")?;
         ensure!((-30000..=MEMBER_LEAD.as_millis() as i64).contains(&delay), "协调探测时间无效");
-        let transit = round_trip.as_millis().min(60000) as i64 / 2;
+        let server_wait =
+            Duration::from_millis(state["ServerWaitMilliseconds"].as_u64().unwrap_or(0));
+        let transit = round_trip.saturating_sub(server_wait).as_millis().min(60000) as i64 / 2;
         let remaining = delay - transit;
         if remaining < -(LATE_TOLERANCE.as_millis() as i64) {
             return Ok(Self::Expired(round));
@@ -91,7 +97,7 @@ impl MemberRequest {
                 && !self.boot.is_nil()
                 && self.slot == member.slot
                 && self.device == member.device
-                && (self.issued - unix_seconds()).abs() <= 30
+                && self.issued.abs_diff(unix_seconds()) <= 30
                 && conwu_core::code::valid_mode(&self.mode)
                 && self.mode != "udp",
             "协同请求无效或过期"
@@ -128,16 +134,49 @@ struct Room {
     start: Option<Instant>,
     attempts: u8,
 }
+#[derive(Clone, Copy)]
 struct MemberRound {
-    peer: String,
     round: uuid::Uuid,
     start: Instant,
-    bindings: String,
+    lead: Duration,
+}
+enum MemberReply {
+    Waiting,
+    Refresh,
+    Scheduled(MemberRound, String),
+}
+impl MemberReply {
+    fn json(self, mode: &str) -> Value {
+        let (round, endpoint, delay, refresh) = match self {
+            Self::Waiting => (uuid::Uuid::nil(), String::new(), 0, false),
+            Self::Refresh => (uuid::Uuid::nil(), String::new(), 0, true),
+            Self::Scheduled(row, endpoint) => {
+                let delay = row.lead.as_millis() as i64 - row.start.elapsed().as_millis() as i64;
+                (row.round, endpoint, delay.max(-30000), false)
+            }
+        };
+        json!({
+            "Version": 1,
+            "PeerEndpoint": endpoint,
+            "Round": round,
+            "StartAfterMilliseconds": delay,
+            "Mode": mode,
+            "Refresh": refresh,
+        })
+    }
+}
+struct MemberReport {
+    latest: MemberRequest,
+    received: Instant,
+    confirmed: bool,
+    waiter: Option<oneshot::Sender<MemberReply>>,
+    // Keep replay history across endpoint changes and the 30s readiness TTL.
+    requests: HashMap<uuid::Uuid, i64>,
 }
 #[derive(Default)]
 pub struct Assist {
     rooms: Mutex<HashMap<String, Room>>,
-    members: Mutex<HashMap<(String, u8), (MemberRequest, Instant)>>,
+    members: Mutex<HashMap<(String, u8), MemberReport>>,
     rounds: Mutex<HashMap<String, MemberRound>>,
     rate: Mutex<HashMap<IpAddr, (Instant, u32)>>,
 }
@@ -348,56 +387,136 @@ impl Assist {
             },
         ))
     }
-    pub fn member(&self, network: &str, request: MemberRequest, peer_slot: u8) -> Result<Value> {
+    pub fn member(&self, network: &str, request: MemberRequest, peer: &Member) -> Result<Value> {
+        let mode = request.mode.clone();
+        Ok(self
+            .report_member(network, request, peer, None)?
+            .json(&mode))
+    }
+    pub async fn wait_member(
+        &self,
+        network: &str,
+        request: MemberRequest,
+        peer: &Member,
+        cancel: &CancellationToken,
+    ) -> Result<Value> {
+        let began = Instant::now();
+        let mode = request.mode.clone();
+        let (send, receive) = oneshot::channel();
+        let reply = match self.report_member(network, request, peer, Some(send))? {
+            MemberReply::Waiting => tokio::select! {
+                _ = cancel.cancelled() => anyhow::bail!("协调服务已停止"),
+                reply = tokio::time::timeout(MEMBER_WAIT, receive) => {
+                    reply.ok().and_then(Result::ok).unwrap_or(MemberReply::Waiting)
+                }
+            },
+            reply => reply,
+        };
+        let mut reply = reply.json(&mode);
+        reply["ServerWaitMilliseconds"] = json!(began.elapsed().as_millis() as u64);
+        Ok(reply)
+    }
+    fn report_member(
+        &self,
+        network: &str,
+        request: MemberRequest,
+        peer: &Member,
+        waiter: Option<oneshot::Sender<MemberReply>>,
+    ) -> Result<MemberReply> {
+        let now = Instant::now();
+        let issued_now = unix_seconds();
+        let ttl = Duration::from_secs(30);
+        let key = (network.to_owned(), request.slot);
+        let peer_key = (network.to_owned(), peer.slot);
         let mut members = self.members.lock().unwrap();
-        members.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(30));
+        members.retain(|_, r| now.duration_since(r.received) <= ttl * 2);
         ensure!(
-            members.len() < 8192 || members.contains_key(&(network.into(), request.slot)),
+            members.len() < 8192 || members.contains_key(&key),
             "协同成员表已满"
         );
-        let peer = members
-            .get(&(network.into(), peer_slot))
-            .map(|(r, _)| r.clone());
-        members.insert(
-            (network.into(), request.slot),
-            (request.clone(), Instant::now()),
-        );
-        let Some(peer) = peer.filter(|p| p.mode == request.mode && p.ready && request.ready) else {
-            return Ok(
-                json!({"Version":1,"PeerEndpoint":"","Round":uuid::Uuid::nil(),"StartAfterMilliseconds":0,"Mode":request.mode}),
-            );
-        };
-        let bindings = if request.slot < peer.slot {
-            format!(
-                "{}/{}/{}/{}",
-                request.boot, request.endpoint, peer.boot, peer.endpoint
-            )
-        } else {
-            format!(
-                "{}/{}/{}/{}",
-                peer.boot, peer.endpoint, request.boot, request.endpoint
-            )
-        };
-        let mut rounds = self.rounds.lock().unwrap();
-        rounds.retain(|_, r| r.start.elapsed() < Duration::from_secs(30));
-        let row = rounds.entry(network.into()).or_insert_with(|| MemberRound {
-            peer: String::new(),
-            round: uuid::Uuid::new_v4(),
-            start: Instant::now(),
-            bindings: bindings.clone(),
+        let changed = members.get(&key).is_some_and(|r| {
+            let old = &r.latest;
+            old.device != request.device
+                || old.boot != request.boot
+                || old.endpoint != request.endpoint
+                || old.ready != request.ready
+                || old.mode != request.mode
+                || now.duration_since(r.received) >= ttl
         });
-        if row.bindings != bindings || row.start.elapsed() > MEMBER_LEAD + LATE_TOLERANCE {
-            *row = MemberRound {
-                peer: String::new(),
-                round: uuid::Uuid::new_v4(),
-                start: Instant::now(),
-                bindings,
-            };
+        let current = members.entry(key.clone()).or_insert_with(|| MemberReport {
+            latest: request.clone(),
+            received: now,
+            confirmed: false,
+            waiter: None,
+            requests: HashMap::new(),
+        });
+        current.requests.retain(|_, expires| *expires >= issued_now);
+        ensure!(
+            !current.requests.contains_key(&request.request_id),
+            "重复的成员协调请求"
+        );
+        ensure!(current.requests.len() < 128, "成员协调请求过于频繁");
+        ensure!(
+            current.latest.device != request.device || request.issued >= current.latest.issued,
+            "成员协调请求早于当前报告"
+        );
+        current
+            .requests
+            .insert(request.request_id, request.issued.saturating_add(30));
+        current.confirmed = request.ready;
+        current.received = now;
+        current.latest = request;
+        current.waiter = waiter;
+        let mut rounds = self.rounds.lock().unwrap();
+        let expired = rounds
+            .get(network)
+            .is_some_and(|r| now.duration_since(r.start) > r.lead + LATE_TOLERANCE);
+        rounds.retain(|_, r| now.duration_since(r.start) < ttl);
+        let caller_ready = current.confirmed;
+        let caller_waiting = current.waiter.is_some();
+        let caller_endpoint = current.latest.endpoint.clone();
+        let mode = current.latest.mode.clone();
+        let remote = members.get_mut(&peer_key);
+        if changed || expired {
+            rounds.remove(network);
+            if let Some(remote) = remote {
+                remote.confirmed = false;
+                if let Some(waiter) = remote.waiter.take() {
+                    let _ = waiter.send(MemberReply::Refresh);
+                }
+            }
+            return Ok(MemberReply::Waiting);
         }
-        row.peer = peer.endpoint;
-        Ok(
-            json!({"Version":1,"PeerEndpoint":row.peer,"Round":row.round,"StartAfterMilliseconds":(MEMBER_LEAD.as_millis() as i64-row.start.elapsed().as_millis() as i64).max(-30000),"Mode":request.mode}),
-        )
+        let Some(remote) = remote.filter(|r| {
+            caller_ready
+                && r.confirmed
+                && r.latest.mode == mode
+                && r.latest.device == peer.device
+                && now.duration_since(r.received) < ttl
+        }) else {
+            return Ok(MemberReply::Waiting);
+        };
+        let prior = rounds.get(network).copied();
+        let mut row = prior.unwrap_or_else(|| MemberRound {
+            round: uuid::Uuid::new_v4(),
+            start: now,
+            lead: MEMBER_LEAD,
+        });
+        if let Some(waiter) = remote.waiter.take() {
+            let mut offered = row;
+            if prior.is_none() && caller_waiting {
+                offered.lead = WAITING_MEMBER_LEAD;
+            }
+            if waiter.send(MemberReply::Scheduled(offered, caller_endpoint)).is_ok() {
+                row = offered;
+            }
+        }
+        let endpoint = remote.latest.endpoint.clone();
+        if prior.is_none() {
+            rounds.insert(network.into(), row);
+        }
+        members.get_mut(&key).unwrap().waiter = None;
+        Ok(MemberReply::Scheduled(row, endpoint))
     }
     pub fn status(&self) -> Value {
         let rooms = self.rooms.lock().unwrap();
@@ -517,13 +636,14 @@ mod tests {
                     .verify(&owner.pair.network, &owner.member, a)
                     .is_err()
             );
-            service.member(&owner.pair.network, request.clone(), peer.member.slot)?;
+            service.member(&owner.pair.network, request.clone(), &peer.member)?;
             let reply = service.member(
                 &owner.pair.network,
                 MemberRequest::create(&peer, uuid::Uuid::new_v4(), "203.0.113.2:44001".parse()?)?,
-                owner.member.slot,
+                &owner.member,
             )?;
-            let matched = service.member(&owner.pair.network, request, peer.member.slot)?;
+            let matched = service.member(&owner.pair.network,
+                MemberRequest::create(&owner, request.boot, request.endpoint.parse()?)?, &peer.member)?;
             assert_eq!(reply["Round"], matched["Round"]);
             assert_eq!(reply["PeerEndpoint"], "203.0.113.1:44000");
             assert_eq!(matched["PeerEndpoint"], "203.0.113.2:44001");
@@ -533,22 +653,207 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_rounds_renew_after_expiry_without_requiring_new_boots_or_endpoints() -> Result<()> {
+    fn reconnect_rounds_renew_after_expiry_without_requiring_new_boots_or_endpoints() -> Result<()>
+    {
         let service = Assist::default();
         let mut owner = Profile::create("tcp")?;
         let peer = Profile::import(&owner.issue(None)?.export()?)?;
         let a = MemberRequest::create(&owner, uuid::Uuid::new_v4(), "203.0.113.1:44000".parse()?)?;
         let b = MemberRequest::create(&peer, uuid::Uuid::new_v4(), "203.0.113.2:44001".parse()?)?;
-        service.member(&owner.pair.network, a.clone(), b.slot)?;
-        let first = service.member(&owner.pair.network, b.clone(), a.slot)?;
-        service.rounds.lock().unwrap().get_mut(&owner.pair.network).unwrap().start =
-            Instant::now() - MEMBER_LEAD - LATE_TOLERANCE - Duration::from_secs(1);
-        let next = service.member(&owner.pair.network, a.clone(), b.slot)?;
-        let matched = service.member(&owner.pair.network, b, a.slot)?;
+        let poll =
+            |p: &Profile, r: &MemberRequest| MemberRequest::create(p, r.boot, r.endpoint.parse()?);
+        service.member(&owner.pair.network, a.clone(), &peer.member)?;
+        let first = service.member(&owner.pair.network, b.clone(), &owner.member)?;
+        service
+            .rounds
+            .lock()
+            .unwrap()
+            .get_mut(&owner.pair.network)
+            .unwrap()
+            .start = Instant::now() - MEMBER_LEAD - LATE_TOLERANCE - Duration::from_secs(1);
+        let waiting = service.member(&owner.pair.network, poll(&owner, &a)?, &peer.member)?;
+        assert_eq!(waiting["Round"], uuid::Uuid::nil().to_string());
+        let matched = service.member(&owner.pair.network, poll(&peer, &b)?, &owner.member)?;
+        let next = service.member(&owner.pair.network, poll(&owner, &a)?, &peer.member)?;
         assert_ne!(next["Round"], first["Round"]);
         assert_eq!(next["Round"], matched["Round"]);
         assert_eq!(next["PeerEndpoint"], "203.0.113.2:44001");
-        assert!(matches!(Schedule::read(&next, Duration::ZERO)?, Schedule::Ready(_, after) if after > Duration::from_secs(7)));
+        assert!(
+            matches!(Schedule::read(&next, Duration::ZERO)?, Schedule::Ready(_, after) if after > Duration::from_secs(7))
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn waiting_members_get_the_same_short_round() -> Result<()> {
+        let service = Assist::default();
+        let mut owner = Profile::create("tcp")?;
+        let peer = Profile::import(&owner.issue(None)?.export()?)?;
+        let network = &owner.pair.network;
+        let a = "203.0.113.1:44000".parse()?;
+        let b = "203.0.113.2:44001".parse()?;
+        let (owner_send, mut owner_receive) = oneshot::channel();
+        let (peer_send, _peer_receive) = oneshot::channel();
+        let first = service.report_member(
+            network,
+            MemberRequest::create(&owner, uuid::Uuid::new_v4(), a)?,
+            &peer.member,
+            Some(owner_send),
+        )?;
+        assert!(matches!(first, MemberReply::Waiting));
+        let second = service.report_member(
+            network,
+            MemberRequest::create(&peer, uuid::Uuid::new_v4(), b)?,
+            &owner.member,
+            Some(peer_send),
+        )?;
+        let MemberReply::Scheduled(first, endpoint_b) = owner_receive.try_recv()? else {
+            anyhow::bail!("first member must receive the scheduled round");
+        };
+        let MemberReply::Scheduled(second, endpoint_a) = second else {
+            anyhow::bail!("second member must receive the scheduled round");
+        };
+        assert_eq!(first.round, second.round);
+        assert_eq!(first.start, second.start);
+        assert_eq!(first.lead, WAITING_MEMBER_LEAD);
+        assert_eq!(second.lead, WAITING_MEMBER_LEAD);
+        assert_eq!(endpoint_a, a.to_string());
+        assert_eq!(endpoint_b, b.to_string());
+        let mut reply = MemberReply::Scheduled(second, endpoint_a).json("tcp");
+        reply["StartAfterMilliseconds"] = json!(2000);
+        reply["ServerWaitMilliseconds"] = json!(3200);
+        assert!(matches!(Schedule::read(&reply, Duration::from_millis(3600))?,
+            Schedule::Ready(round, after) if round == second.round && after == Duration::from_millis(1800)));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn coordinator_releases_the_waiting_member_when_peer_reports_ready() -> Result<()> {
+        let service = Assist::default();
+        let stop = CancellationToken::new();
+        let mut owner = Profile::create("tcp")?;
+        let peer = Profile::import(&owner.issue(None)?.export()?)?;
+        let network = &owner.pair.network;
+        let owner_request = MemberRequest::create(
+            &owner, uuid::Uuid::new_v4(), "203.0.113.1:44000".parse()?,
+        )?;
+        let peer_request = MemberRequest::create(
+            &peer, uuid::Uuid::new_v4(), "203.0.113.2:44001".parse()?,
+        )?;
+        let (a, b) = tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(
+                service.wait_member(network, owner_request, &peer.member, &stop),
+                service.wait_member(network, peer_request, &owner.member, &stop),
+            )
+        }).await.context("both members must be released before a poll times out")?;
+        let (a, b) = (a?, b?);
+        assert_eq!(a["Round"], b["Round"]);
+        assert_ne!(a["Round"], uuid::Uuid::nil().to_string());
+        for reply in [a, b] {
+            let delay = reply["StartAfterMilliseconds"].as_i64().unwrap();
+            assert!((1..=2000).contains(&delay));
+            assert!(reply["ServerWaitMilliseconds"].is_u64());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_waiter_retains_the_legacy_lead() -> Result<()> {
+        for cancelled in [false, true] {
+            let service = Assist::default();
+            let mut owner = Profile::create("tcp")?;
+            let peer = Profile::import(&owner.issue(None)?.export()?)?;
+            let network = &owner.pair.network;
+            let a = MemberRequest::create(
+                &owner, uuid::Uuid::new_v4(), "203.0.113.1:44000".parse()?,
+            )?;
+            let b = MemberRequest::create(
+                &peer, uuid::Uuid::new_v4(), "203.0.113.2:44001".parse()?,
+            )?;
+            let (owner_send, owner_receive) = oneshot::channel();
+            service.report_member(network, a, &peer.member, Some(owner_send))?;
+            let (peer_send, _peer_receive) = oneshot::channel();
+            let waiter = if cancelled {
+                drop(owner_receive);
+                Some(peer_send)
+            } else {
+                None
+            };
+            let reply = service.report_member(network, b, &owner.member, waiter)?;
+            assert!(matches!(reply, MemberReply::Scheduled(row, _) if row.lead == MEMBER_LEAD));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn restart_invalidates_a_waiting_report_and_requests_fresh_readiness() -> Result<()> {
+        let service = Assist::default();
+        let mut owner = Profile::create("tcp")?;
+        let peer = Profile::import(&owner.issue(None)?.export()?)?;
+        let network = &owner.pair.network;
+        let owner_boot = uuid::Uuid::new_v4();
+        let a = "203.0.113.1:44000".parse()?;
+        let b = "203.0.113.2:44001".parse()?;
+        let mut old = MemberRequest::create(&peer, uuid::Uuid::new_v4(), b)?;
+        old.ready = false;
+        service.member(network, old, &owner.member)?;
+        let (send, mut receive) = oneshot::channel();
+        let result = service.report_member(network,
+            MemberRequest::create(&owner, owner_boot, a)?, &peer.member, Some(send))?;
+        assert!(matches!(result, MemberReply::Waiting));
+        let (peer_send, mut peer_receive) = oneshot::channel();
+        let result = service.report_member(network,
+            MemberRequest::create(&peer, uuid::Uuid::new_v4(), b)?, &owner.member, Some(peer_send))?;
+        assert!(matches!(result, MemberReply::Waiting));
+        assert!(matches!(receive.try_recv()?, MemberReply::Refresh));
+        let (send, _receive) = oneshot::channel();
+        let result = service.report_member(network,
+            MemberRequest::create(&owner, owner_boot, a)?, &peer.member, Some(send))?;
+        let reply = peer_receive.try_recv()?;
+        assert!(matches!((result, reply), (MemberReply::Scheduled(a, _), MemberReply::Scheduled(b, _))
+            if a.round == b.round && a.lead == WAITING_MEMBER_LEAD));
+        Ok(())
+    }
+
+    #[test]
+    fn member_change_needs_another_report_from_the_current_peer() -> Result<()> {
+        let service = Assist::default();
+        let mut owner = Profile::create("tcp")?;
+        let peer = Profile::import(&owner.issue(None)?.export()?)?;
+        let network = &owner.pair.network;
+        let a = "203.0.113.1:41000".parse()?;
+        let b = "203.0.113.2:42000".parse()?;
+        let boot = uuid::Uuid::new_v4();
+        let poll_b = || MemberRequest::create(&peer, boot, b);
+        let poll_a = |boot, endpoint| MemberRequest::create(&owner, boot, endpoint);
+        let empty = uuid::Uuid::nil().to_string();
+        service.member(network, poll_a(boot, a)?, &peer.member)?;
+        let old_b = poll_b()?;
+        let mut previous = service.member(network, old_b.clone(), &owner.member)?["Round"].clone();
+        let next_boot = uuid::Uuid::new_v4();
+        for endpoint in [a, "203.0.113.1:41001".parse()?] {
+            let changed = service.member(network, poll_a(next_boot, endpoint)?, &peer.member)?;
+            assert_eq!(changed["Round"], empty);
+            assert_eq!(changed["PeerEndpoint"], "");
+            assert!(
+                service
+                    .member(network, old_b.clone(), &owner.member)
+                    .is_err()
+            );
+            assert_eq!(
+                service.member(network, poll_a(next_boot, endpoint)?, &peer.member)?["Round"],
+                empty
+            );
+            let fresh = service.member(network, poll_b()?, &owner.member)?;
+            assert_ne!(fresh["Round"], empty);
+            assert_ne!(fresh["Round"], previous);
+            assert_eq!(fresh["PeerEndpoint"], endpoint.to_string());
+            assert_eq!(
+                service.member(network, poll_a(next_boot, endpoint)?, &peer.member)?["Round"],
+                fresh["Round"]
+            );
+            previous = fresh["Round"].clone();
+        }
         Ok(())
     }
 }
@@ -641,21 +946,30 @@ impl Client {
         p: &Profile,
         boot: uuid::Uuid,
         endpoint: SocketAddr,
-    ) -> Result<Value> {
-        let request = MemberRequest::create(p, boot, endpoint)?;
-        let result = self.post(
-            &format!("v3/mesh/{}/tcp-assist", p.pair.network),
-            &serde_json::to_value(request)?,
-            Some(&hex::encode_upper(p.pair.key("discovery-auth"))),
-        )
-        .await;
-        match &result {
-            Ok(state) => tracing::debug!(
-                round = ?state["Round"], peer = ?state["PeerEndpoint"],
-                delay_ms = ?state["StartAfterMilliseconds"], "成员协调调度回应"
-            ),
-            Err(error) => tracing::debug!(reason = %crate::logging::redact(&error.to_string()), "成员协调请求失败"),
+        wait: bool,
+    ) -> Result<(Value, Duration)> {
+        let query = if wait { "?wait=1" } else { "" };
+        let path = format!("v3/mesh/{}/tcp-assist{query}", p.pair.network);
+        let auth = hex::encode_upper(p.pair.key("discovery-auth"));
+        let submit = async || {
+            let request = serde_json::to_value(MemberRequest::create(p, boot, endpoint)?)?;
+            let sent = Instant::now();
+            let result = self.post(&path, &request, Some(&auth)).await;
+            let elapsed = sent.elapsed();
+            match &result {
+                Ok(state) => tracing::debug!(
+                    round = ?state["Round"], peer = ?state["PeerEndpoint"],
+                    delay_ms = ?state["StartAfterMilliseconds"],
+                    wait_ms = ?state["ServerWaitMilliseconds"], "成员协调调度回应"
+                ),
+                Err(error) => tracing::debug!(reason = %crate::logging::redact(&error.to_string()), "成员协调请求失败"),
+            }
+            Ok::<_, anyhow::Error>((result?, elapsed))
+        };
+        let response = submit().await?;
+        if response.0["Refresh"] == true {
+            return submit().await;
         }
-        result
+        Ok(response)
     }
 }

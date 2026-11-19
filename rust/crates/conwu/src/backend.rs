@@ -697,7 +697,8 @@ impl App {
                 ),
                 "开机启动设置已改变，请刷新"
             );
-            if auto != next.device_settings["autoStart"].as_bool().unwrap_or(false) {
+            // Re-saving Windows preferences also repairs a stale tray Run entry.
+            if cfg!(windows) || auto != next.device_settings["autoStart"].as_bool().unwrap_or(false) {
                 crate::platform::configure_startup(self, auto).await?;
             }
             next.device_settings["autoStart"] = json!(auto);

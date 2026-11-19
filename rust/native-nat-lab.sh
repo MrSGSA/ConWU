@@ -12,6 +12,11 @@ trap 'rmdir "$runtime/netns" "$runtime" 2>/dev/null || true' EXIT
 if (($# == 0)); then
   set -- tcp https phantun mimic tcpraw faketcp
 fi
+strategy=--assisted
+if [[ ${1:-} == --host-igd ]]; then
+  strategy=--host-igd
+  shift
+fi
 unshare --mount --propagation private /bin/bash -c '
 set -euo pipefail
 mount --bind "$1" /run
@@ -23,5 +28,5 @@ export TMPDIR="$2/out/tmp-linux"
 export PYTHONDONTWRITEBYTECODE=1
 conwu_root="$2"
 shift 2
-exec python3 "$conwu_root/rust/native-lab.py" --assisted --nat "$@"
-' conwu-private-nat "$runtime" "$conwu_root" "$@"
+exec python3 "$conwu_root/rust/native-lab.py" --nat "$@"
+' conwu-private-nat "$runtime" "$conwu_root" "$strategy" "$@"

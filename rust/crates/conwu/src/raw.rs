@@ -5,9 +5,10 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
+    io,
     net::SocketAddr,
     process::Stdio,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{
@@ -18,6 +19,10 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use tokio_util::task::TaskTracker;
+
+const BRIDGE_QUEUE: usize = 128;
+const MAX_DATAGRAM: usize = 2048;
+const BRIDGE_RECEIVE_BUFFER: usize = 256 * 1024;
 
 #[derive(Debug)]
 pub(crate) struct LocalCarrierError {
@@ -34,32 +39,35 @@ impl std::error::Error for LocalCarrierError {
         Some(self.source.as_ref())
     }
 }
-fn stoppers() -> &'static Mutex<HashMap<u32, mpsc::WeakSender<Value>>> {
-    static STOPPERS: OnceLock<Mutex<HashMap<u32, mpsc::WeakSender<Value>>>> = OnceLock::new();
-    STOPPERS.get_or_init(|| Mutex::new(HashMap::new()))
+struct Helper {
+    process: Child,
+    commands: Option<mpsc::Sender<Value>>,
 }
-async fn finish_child(child: &mut Child) {
-    let stop = child
-        .id()
-        .and_then(|pid| stoppers().lock().unwrap().remove(&pid))
-        .and_then(|s| s.upgrade());
-    let graceful = stop.is_some();
-    if let Some(stop) = stop {
-        let _ = tokio::time::timeout(
-            Duration::from_millis(500),
-            stop.send(json!({"command":"stop"})),
-        )
-        .await;
+impl Helper {
+    async fn finish(mut self) {
+        if let Some(commands) = self.commands.take() {
+            let _ = tokio::time::timeout(
+                Duration::from_millis(500),
+                commands.send(json!({"command":"stop"})),
+            )
+            .await;
+            if matches!(
+                tokio::time::timeout(Duration::from_secs(3), self.process.wait()).await,
+                Ok(Ok(_))
+            ) {
+                return;
+            }
+        }
+        let _ = self.process.kill().await;
     }
-    child.stdin.take();
-    if !graceful
-        || tokio::time::timeout(Duration::from_secs(3), child.wait())
-            .await
-            .is_err()
-    {
-        let _ = child.kill().await;
+}
+
+async fn wait_for_helper(child: &mut Option<Helper>) {
+    if let Some(child) = child {
+        let _ = child.process.wait().await;
+    } else {
+        std::future::pending().await
     }
-    let _ = child.wait().await;
 }
 
 #[derive(Clone)]
@@ -155,7 +163,7 @@ async fn spawn(
     source: SocketAddr,
     remote: SocketAddr,
     stun: &[String],
-) -> Result<(Child, SocketAddr)> {
+) -> Result<(Helper, SocketAddr, Option<Control>)> {
     let executable = engine.components.join(format!(
         "{}{}",
         if mode == "phantun" {
@@ -242,7 +250,14 @@ async fn spawn(
         });
         tokio::time::sleep(Duration::from_millis(300)).await;
         ensure!(child.try_wait()?.is_none(), "FakeTCP 组件启动失败");
-        return Ok((child, bridge));
+        return Ok((
+            Helper {
+                process: child,
+                commands: None,
+            },
+            bridge,
+            None,
+        ));
     }
     cmd.args([
         if server { "--server" } else { "--client" },
@@ -286,12 +301,17 @@ async fn spawn(
             if let Some((_, json)) = line.split_once(' ') {
                 if let Ok(v) = serde_json::from_str::<Value>(json) {
                     if v["event"] == "failed" || v["event"] == "peer-failed" {
-                        anyhow::bail!("承载组件启动失败：{}", v["reason"].as_str().unwrap_or("组件未就绪"))
+                        anyhow::bail!(
+                            "承载组件启动失败：{}",
+                            v["reason"].as_str().unwrap_or("组件未就绪")
+                        )
                     }
                     if v["event"] == "backend-fallback" {
-                        let reason = crate::logging::redact(v["reason"].as_str().unwrap_or("XDP 未就绪"));
+                        let reason =
+                            crate::logging::redact(v["reason"].as_str().unwrap_or("XDP 未就绪"));
                         let _ = engine.events.try_send(crate::runtime::Event::Log {
-                            level: "WARN".into(), text: format!("Mimic 已回退至 WinDivert：{reason}"),
+                            level: "WARN".into(),
+                            text: format!("Mimic 已回退至 WinDivert：{reason}"),
                         });
                     }
                     if v["event"] == "ready" {
@@ -322,14 +342,21 @@ async fn spawn(
     };
     if let Some(backend) = ready["backend"].as_str() {
         let _ = engine.events.try_send(crate::runtime::Event::Log {
-            level: "INFO".into(), text: format!("{mode} 承载已就绪（{}）",crate::logging::redact(backend)),
+            level: "INFO".into(),
+            text: format!("{mode} 承载已就绪（{}）", crate::logging::redact(backend)),
         });
     }
+    let udp = if server {
+        remote
+    } else {
+        ready["udp"]
+            .as_str()
+            .context("组件未提供转发入口")?
+            .parse()?
+    };
+    ensure!(udp.ip().is_loopback(), "承载桥接必须只监听本机");
     let mut input = child.stdin.take().context("组件控制输入不可用")?;
     let (commands, mut queue) = mpsc::channel::<Value>(32);
-    if let Some(pid) = child.id() {
-        stoppers().lock().unwrap().insert(pid, commands.downgrade());
-    }
     let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<()>>::new()));
     let replies = pending.clone();
     let diagnostic = engine.events.clone();
@@ -349,9 +376,7 @@ async fn spawn(
             }
         }
     });
-    let keep_commands = commands.clone();
     tokio::spawn(async move {
-        let _keep_commands = keep_commands;
         while let Ok(Some(line)) = lines.next_line().await {
             if line.len() > 4096 {
                 break;
@@ -396,26 +421,19 @@ async fn spawn(
             }
         }
     });
-    if server {
-        engine.raw_controls.lock().unwrap().insert(
-            (mode.into(), source.port()),
-            Control {
-                commands,
-                pending,
-                peers,
-            },
-        );
-    }
-    let udp = if server {
-        remote
-    } else {
-        ready["udp"]
-            .as_str()
-            .context("组件未提供转发入口")?
-            .parse()?
-    };
-    ensure!(udp.ip().is_loopback(), "承载桥接必须只监听本机");
-    Ok((child, udp))
+    let control = server.then(|| Control {
+        commands: commands.clone(),
+        pending,
+        peers,
+    });
+    Ok((
+        Helper {
+            process: child,
+            commands: Some(commands),
+        },
+        udp,
+        control,
+    ))
 }
 pub async fn connect(
     engine: &Arc<Engine>,
@@ -435,7 +453,13 @@ pub async fn connect_ref(
 ) -> Result<Pipe> {
     connect_local(engine, mode, remote, port, parent)
         .await
-        .map_err(|source| LocalCarrierError { mode: mode.into(), source }.into())
+        .map_err(|source| {
+            LocalCarrierError {
+                mode: mode.into(),
+                source,
+            }
+            .into()
+        })
 }
 async fn connect_local(
     engine: &Engine,
@@ -448,10 +472,10 @@ async fn connect_local(
     let ip = crate::discovery::local_route(remote)?;
     let source = SocketAddr::new(ip, if port == 0 { free_tcp()? } else { port });
     let guard = Firewall::open(mode, false, source, remote)?;
-    let (child, bridge) = spawn(engine, mode, false, source, remote, &[]).await?;
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+    let (child, bridge, _) = spawn(engine, mode, false, source, remote, &[]).await?;
+    let socket = bind_bridge().await?;
     socket.connect(bridge).await?;
-    Ok(udp_pipe(
+    Ok(udp_pipe_with_helper(
         socket,
         parent,
         Some(child),
@@ -532,7 +556,7 @@ pub async fn observed_client(
     let observed =
         crate::discovery::observe_tcp(free_tcp()?, &[observer.into()], engine, mode).await?;
     let guard = Firewall::open(mode, false, observed.local, remote)?;
-    let (child, bridge) = spawn(
+    let (child, bridge, _) = spawn(
         engine,
         mode,
         false,
@@ -541,34 +565,90 @@ pub async fn observed_client(
         &[observed.observer.to_string()],
     )
     .await?;
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+    let socket = bind_bridge().await?;
     socket.connect(bridge).await?;
     Ok((
-        udp_pipe(socket, parent, Some(child), Some(guard), &engine.tracker),
+        udp_pipe_with_helper(socket, parent, Some(child), Some(guard), &engine.tracker),
         ClientObservation::tcp(observed),
     ))
 }
+pub(crate) async fn bind_bridge() -> Result<Arc<UdpSocket>> {
+    let socket = UdpSocket::bind("127.0.0.1:0").await?;
+    // Absorb a short frame burst in loopback without increasing the application queue.
+    if let Err(error) = socket2::SockRef::from(&socket).set_recv_buffer_size(BRIDGE_RECEIVE_BUFFER)
+    {
+        tracing::debug!(%error, "无法调整本地承载收包缓冲区");
+    }
+    Ok(Arc::new(socket))
+}
+
 pub(crate) fn udp_pipe(
     socket: Arc<UdpSocket>,
     parent: &CancellationToken,
-    child: Option<Child>,
+    tracker: &TaskTracker,
+) -> Pipe {
+    udp_pipe_with_helper(socket, parent, None, None, tracker)
+}
+
+fn forward_datagram(queue: &mpsc::Sender<Vec<u8>>, bytes: &[u8]) -> bool {
+    use mpsc::error::TrySendError;
+
+    match queue.try_reserve() {
+        Ok(permit) => permit.send(bytes.to_vec()),
+        // A late datagram can be lost without restarting the encrypted path.
+        Err(TrySendError::Full(_)) => {}
+        Err(TrySendError::Closed(_)) => return false,
+    }
+    true
+}
+
+fn oversized_datagram(_error: &io::Error) -> bool {
+    #[cfg(windows)]
+    return _error.raw_os_error() == Some(windows_sys::Win32::Networking::WinSock::WSAEMSGSIZE);
+    #[cfg(not(windows))]
+    false
+}
+
+fn udp_pipe_with_helper(
+    socket: Arc<UdpSocket>,
+    parent: &CancellationToken,
+    mut child: Option<Helper>,
     guard: Option<Firewall>,
     tracker: &TaskTracker,
 ) -> Pipe {
-    let (tx, mut outgoing) = mpsc::channel::<Vec<u8>>(128);
-    let (incoming, rx) = mpsc::channel(128);
+    let (tx, mut outgoing) = mpsc::channel::<Vec<u8>>(BRIDGE_QUEUE);
+    let (incoming, rx) = mpsc::channel(BRIDGE_QUEUE);
     let cancel = parent.child_token();
     let stop = cancel.clone();
     tracker.spawn(async move {
         let _guard = guard;
-        let mut child = child;
-        let _cancel = stop.clone().drop_guard();
-        let mut buffer = [0u8; 2049];
+        let mut buffer = [0u8; MAX_DATAGRAM + 1];
         loop {
-            tokio::select! {_=stop.cancelled()=>break,n=socket.recv(&mut buffer)=>match n{Ok(n)if n<=2048=>{if incoming.try_send(buffer[..n].to_vec()).is_err(){break}},_=>break},frame=outgoing.recv()=>match frame{Some(frame)=>{if socket.send(&frame).await.is_err(){break}},None=>break},_=tokio::time::sleep(Duration::from_secs(1))=>{if child.as_mut().is_some_and(|c|c.try_wait().ok().flatten().is_some()){break}}}
+            tokio::select! {
+                _ = stop.cancelled() => break,
+                _ = wait_for_helper(&mut child) => break,
+                result = socket.recv(&mut buffer) => match result {
+                    Ok(n) if n <= MAX_DATAGRAM => {
+                        if !forward_datagram(&incoming, &buffer[..n]) {
+                            break;
+                        }
+                    }
+                    Ok(_) => continue,
+                    Err(error) if oversized_datagram(&error) => continue,
+                    Err(_) => break,
+                },
+                frame = outgoing.recv() => {
+                    let Some(frame) = frame else { break };
+                    tokio::select! {
+                        _ = stop.cancelled() => break,
+                        result = socket.send(&frame) => if result.is_err() { break; },
+                    }
+                }
+            }
         }
-        if let Some(child) = &mut child {
-            finish_child(child).await;
+        stop.cancel();
+        if let Some(child) = child {
+            child.finish().await;
         }
     });
     Pipe {
@@ -587,7 +667,7 @@ pub async fn listen(
     stop: CancellationToken,
     finished: CancellationToken,
 ) -> Result<()> {
-    let socket = Arc::new(UdpSocket::bind("127.0.0.1:0").await?);
+    let socket = bind_bridge().await?;
     let target = socket.local_addr()?;
     let mapping = if mode == "faketcp" && autonomous {
         match crate::native_map::Mapping::open(engine, port, target, stun, &stop).await {
@@ -620,23 +700,14 @@ pub async fn listen(
         SocketAddr::from(([0, 0, 0, 0], port))
     };
     let guard = Firewall::open(mode, true, source, target)?;
-    engine
-        .raw_tables
-        .lock()
-        .unwrap()
-        .insert((mode.into(), port), guard.name.clone());
-    if let Some(mapping) = &mapping {
-        prepare_observer(engine, mode, port, mapping.observer).await?;
-        engine
-            .fake_mappings
-            .write()
-            .unwrap()
-            .insert(port, mapping.clone());
-    }
-    let child = if mapping.is_some() {
-        None
+    let (mut child, control) = if let Some(mapping) = &mapping {
+        let mut observers = engine.raw_observers.lock().unwrap();
+        ensure!(observers.len() < 256, "本机观察服务保护表超过限制");
+        guard.protect(source, mapping.observer)?;
+        observers.insert(format!("{}/{}", guard.name, mapping.observer));
+        (None, None)
     } else {
-        let (child, _) = spawn(
+        let (child, _, control) = spawn(
             engine,
             mode,
             true,
@@ -645,42 +716,128 @@ pub async fn listen(
             if autonomous { stun } else { &[] },
         )
         .await?;
-        Some(child)
+        (Some(child), control)
     };
-    let peer_addresses = mapping.as_ref().map(|m| m.peers.clone()).or_else(|| {
-        engine
-            .raw_controls
-            .lock()
-            .unwrap()
-            .get(&(mode.into(), port))
-            .map(|c| c.peers.clone())
-    });
+    let key = (mode.to_owned(), port);
+    let peer_addresses = mapping
+        .as_ref()
+        .map(|m| m.peers.clone())
+        .or_else(|| control.as_ref().map(|c| c.peers.clone()));
     let mapping_failed = mapping
         .as_ref()
         .map(|m| m.cancel.clone())
         .unwrap_or_else(CancellationToken::new);
+    engine
+        .raw_tables
+        .lock()
+        .unwrap()
+        .insert(key.clone(), guard.name.clone());
+    if let Some(control) = control {
+        engine
+            .raw_controls
+            .lock()
+            .unwrap()
+            .insert(key.clone(), control);
+    }
+    if let Some(mapping) = &mapping {
+        engine
+            .fake_mappings
+            .write()
+            .unwrap()
+            .insert(port, mapping.clone());
+    }
     let engine = engine.clone();
-    let mode = mode.to_string();
     let tracker = engine.tracker.clone();
-    tracker.spawn(async move{let _finished=finished.drop_guard();let _stop=stop.clone().drop_guard();let _guard=guard;let mut child=child;let mut peers:HashMap<SocketAddr,mpsc::Sender<Vec<u8>>>=HashMap::new();let mut buffer=[0;2049];let(tx,mut sends)=mpsc::channel::<(SocketAddr,Vec<u8>)>(256);
-        loop{tokio::select!{_=stop.cancelled()=>break,_=mapping_failed.cancelled()=>break,n=socket.recv_from(&mut buffer)=>{let Ok((n,from))=n else{break};if n>2048||!from.ip().is_loopback(){continue}if let Some(peer)=peers.get(&from){if peer.try_send(buffer[..n].to_vec()).is_ok(){continue}peers.remove(&from);}
-            if peers.len()>=32{peers.retain(|_,tx|!tx.is_closed());if peers.len()>=32{continue}}
-            let(outgoing,mut to_remote)=mpsc::channel(128);let(incoming,rx)=mpsc::channel(128);let token=stop.child_token();let pipe=Pipe{tx:outgoing,rx,cancel:token.clone(),pin:String::new()};let sender=tx.clone();engine.tracker.spawn(async move{loop{tokio::select!{_=token.cancelled()=>break,r=to_remote.recv()=>match r{Some(r)=>{if sender.send((from,r)).await.is_err(){break}},None=>break}}}});let _=incoming.try_send(buffer[..n].to_vec());peers.insert(from,incoming);let server=engine.clone();let mode=mode.clone();let addresses=peer_addresses.clone();engine.tracker.spawn(async move{
-                let mut endpoint = "0.0.0.0:0".parse().unwrap();
-                if let Some(addresses) = addresses { for _ in 0..10 {
-                    if let Some(peer) = addresses.lock().unwrap().get(&from).copied() { endpoint=peer; break; }
-                    tokio::select! { _=pipe.cancel.cancelled()=>return, _=tokio::time::sleep(Duration::from_millis(10))=>{} }
-                }}
-                server.serve(pipe,mode,endpoint,None).await;
-            });},
-            frame=sends.recv()=>if let Some((to,bytes))=frame{let _=socket.send_to(&bytes,to).await;},_=tokio::time::sleep(Duration::from_secs(1))=>{if child.as_mut().is_some_and(|c|c.try_wait().ok().flatten().is_some()){break}}
-        }}if let Some(mut child)=child{finish_child(&mut child).await;}
-        if let Some(mapping)=mapping {
-            while mapping.close().await.is_err(){tokio::time::sleep(Duration::from_secs(1)).await;}
+    tracker.spawn(async move {
+        let _finished = finished.drop_guard();
+        let guard = guard;
+        let mut peers = HashMap::<SocketAddr, mpsc::Sender<Vec<u8>>>::new();
+        let mut buffer = [0; MAX_DATAGRAM + 1];
+        loop {
+            let result = tokio::select! {
+                _ = stop.cancelled() => break,
+                _ = mapping_failed.cancelled() => break,
+                _ = wait_for_helper(&mut child) => break,
+                result = socket.recv_from(&mut buffer) => result,
+            };
+            let (n, from) = match result {
+                Ok((n, from)) if n <= MAX_DATAGRAM && from.ip().is_loopback() => (n, from),
+                Ok(_) => continue,
+                Err(error) if oversized_datagram(&error)
+                    || matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused) => continue,
+                Err(_) => break,
+            };
+            if let Some(peer) = peers.get(&from) {
+                if forward_datagram(peer, &buffer[..n]) {
+                    continue;
+                }
+                peers.remove(&from);
+            }
+            if peers.len() >= 32 {
+                peers.retain(|_, tx| !tx.is_closed());
+                if peers.len() >= 32 {
+                    continue;
+                }
+            }
+
+            let (outgoing, mut to_remote) = mpsc::channel::<Vec<u8>>(BRIDGE_QUEUE);
+            let (incoming, rx) = mpsc::channel(BRIDGE_QUEUE);
+            let token = stop.child_token();
+            let pipe = Pipe { tx: outgoing, rx, cancel: token.clone(), pin: String::new() };
+            forward_datagram(&incoming, &buffer[..n]);
+            peers.insert(from, incoming);
+
+            let socket = socket.clone();
+            engine.tracker.spawn(async move {
+                loop {
+                    let frame = tokio::select! {
+                        _ = token.cancelled() => break,
+                        result = to_remote.recv() => match result { Some(frame) => frame, None => break },
+                    };
+                    tokio::select! {
+                        _ = token.cancelled() => break,
+                        _ = socket.send_to(&frame, from) => {},
+                    }
+                }
+            });
+            let server = engine.clone();
+            let mode = key.0.clone();
+            let addresses = peer_addresses.clone();
+            engine.tracker.spawn(async move {
+                let mut endpoint = SocketAddr::from(([0, 0, 0, 0], 0));
+                if let Some(addresses) = addresses {
+                    for _ in 0..10 {
+                        if let Some(peer) = addresses.lock().unwrap().get(&from).copied() {
+                            endpoint = peer;
+                            break;
+                        }
+                        tokio::select! {
+                            _ = pipe.cancel.cancelled() => return,
+                            _ = tokio::time::sleep(Duration::from_millis(10)) => {},
+                        }
+                    }
+                }
+                server.serve(pipe, mode, endpoint, None).await;
+            });
+        }
+        stop.cancel();
+        if let Some(child) = child {
+            child.finish().await;
+        }
+        if let Some(mapping) = mapping {
+            while mapping.close().await.is_err() {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
             engine.fake_mappings.write().unwrap().remove(&port);
         }
-        let owned=engine.raw_tables.lock().unwrap().get(&(mode.clone(),port)).is_some_and(|t|t==&_guard.name);
-        if owned {engine.raw_tables.lock().unwrap().remove(&(mode.clone(),port));engine.raw_controls.lock().unwrap().remove(&(mode.clone(),port));engine.raw_observers.lock().unwrap().retain(|s|!s.starts_with(&format!("{}/",_guard.name)));}
+        let mut tables = engine.raw_tables.lock().unwrap();
+        if tables.get(&key) == Some(&guard.name) {
+            tables.remove(&key);
+            engine.raw_controls.lock().unwrap().remove(&key);
+        }
+        drop(tables);
+        let prefix = format!("{}/", guard.name);
+        engine.raw_observers.lock().unwrap().retain(|entry| !entry.starts_with(&prefix));
     });
     Ok(())
 }
@@ -846,4 +1003,65 @@ fn run(executable: &str, args: &[&str]) -> Result<()> {
         "实验防火墙规则配置失败：{executable}"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn full_peer_queue_remains_open() {
+        let (tx, mut rx) = mpsc::channel(1);
+        assert!(forward_datagram(&tx, b"first"));
+        assert!(forward_datagram(&tx, b"overflow"));
+        assert_eq!(rx.try_recv().unwrap(), b"first");
+        assert!(forward_datagram(&tx, b"next"));
+        assert_eq!(rx.try_recv().unwrap(), b"next");
+        drop(rx);
+        assert!(!forward_datagram(&tx, b"closed"));
+    }
+
+    #[tokio::test]
+    async fn udp_bridge_survives_overflow_and_packets_of_invalid_size() -> Result<()> {
+        let socket = UdpSocket::bind("127.0.0.1:0").await?;
+        let bridge = UdpSocket::bind("127.0.0.1:0").await?;
+        socket.connect(bridge.local_addr()?).await?;
+        bridge.connect(socket.local_addr()?).await?;
+        let tracker = TaskTracker::new();
+        let parent = CancellationToken::new();
+        let mut pipe = udp_pipe(Arc::new(socket), &parent, &tracker);
+
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            for sent in 0..BRIDGE_QUEUE {
+                bridge.send(b"queued").await?;
+                while pipe.rx.len() <= sent {
+                    tokio::task::yield_now().await;
+                }
+            }
+            bridge.send(b"overflow").await?;
+            bridge.send(&[0; MAX_DATAGRAM + 64]).await?;
+
+            let mut buffer = [0; 32];
+            pipe.tx.send(b"reverse".to_vec()).await?;
+            let n = bridge.recv(&mut buffer).await?;
+            assert_eq!(&buffer[..n], b"reverse");
+            assert!(!pipe.cancel.is_cancelled());
+
+            for _ in 0..BRIDGE_QUEUE {
+                assert_eq!(pipe.rx.recv().await.as_deref(), Some(b"queued".as_slice()));
+            }
+            bridge.send(b"next").await?;
+            while let Some(frame) = pipe.rx.recv().await {
+                if frame == b"next" {
+                    return Ok(());
+                }
+            }
+            anyhow::bail!("bridge closed before forwarding the next packet")
+        })
+        .await;
+        drop(pipe);
+        tracker.close();
+        tracker.wait().await;
+        result?
+    }
 }
