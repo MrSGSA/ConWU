@@ -658,10 +658,12 @@ impl Engine {
             return Ok(());
         }
         if running.peer.lock().unwrap().as_ref().is_some_and(|peer| {
+            let link_online = peer.link.connected();
             peer.routes.values().any(|route| {
                 route.endpoint == endpoint
                     && !route.cancel.is_cancelled()
                     && route.seen.elapsed() < Duration::from_secs(15)
+                    && (!route.verified || link_online)
             })
         }) {
             return Ok(());
@@ -1629,6 +1631,7 @@ impl Engine {
         let mut last_assist_round = None;
         let mut candidate_attempts = CandidateAttempts::default();
         let mut last_connected_since = 0;
+        let mut mimic_bootstrap_wait = None;
         loop {
             let n = running.config.read().unwrap().clone();
             let Some(profile) = n.profile.as_ref() else {
@@ -1759,6 +1762,7 @@ impl Engine {
             running.metrics.write().unwrap().local_endpoints =
                 own.iter().map(ToString::to_string).collect();
             let mut peer_candidates: Vec<SocketAddr> = Vec::new();
+            let mut coordinator_available = false;
             if n.settings.discovery_mode == "pkarr"
                 && !n.settings.existing_only()
                 && !n.peer_pkarr.is_empty()
@@ -1848,6 +1852,7 @@ impl Engine {
                                 };
                                 if let Ok((state, rtt)) = response {
                                     if state["Version"] == 1 && state["Mode"] == mode {
+                                        coordinator_available = true;
                                         if let Some(peer) = state["PeerEndpoint"]
                                             .as_str()
                                             .and_then(|s| crate::assistance::candidate(s).ok())
@@ -1983,6 +1988,7 @@ impl Engine {
             if connected_since != last_connected_since {
                 candidate_attempts.clear();
                 last_connected_since = connected_since;
+                mimic_bootstrap_wait = None;
             }
             if !connected && remote_member(profile).is_some() {
                 let mut entries = n
@@ -2012,7 +2018,16 @@ impl Engine {
                 let direct = !n.settings.existing_only() && n.settings.discovery_mode == "direct";
                 let mut targets: Vec<SocketAddr> = if entries.is_empty() && (direct || n.peer_pkarr.is_empty())
                 {
-                    n.bootstrap.iter().filter_map(|s| s.parse().ok()).collect()
+                    // Give a responding coordinator time to schedule both Mimic
+                    // peers before trying the remembered address on our own.
+                    // An early SYN can leave this tuple half-open at a NAT.
+                    if mode == "mimic" && coordinator_available
+                        && mimic_bootstrap_wait.get_or_insert_with(Instant::now).elapsed() < Duration::from_secs(15)
+                    {
+                        vec![]
+                    } else {
+                        n.bootstrap.iter().filter_map(|s| s.parse().ok()).collect()
+                    }
                 } else {
                     tokio::select! {_=running.cancel.cancelled()=>break,r=discovery::resolve(&entries,mode,&self.pkarr,&n.settings.pkarr_gateways)=>r}
                 };
