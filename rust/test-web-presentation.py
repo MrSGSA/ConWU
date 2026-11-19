@@ -232,12 +232,13 @@ try:
                     active=action == 'approve', outcome='' if action == 'approve' else 'Rejected',
                     phase='Delivering' if action == 'approve' else 'Rejected')
                 decisions.append(action)
-            elif body.get('method') == 'network' and action == 'leave':
+            elif body.get('method') == 'network' and action in ('leave', 'remove-network'):
                 rows = feed['status']['networks']
                 target = next(n for n in rows if n['id'] == body['networkId'])
                 assert not target['status']['networkId']
+                assert bool(target['status'].get('networkRevoked')) == (action == 'remove-network')
                 feed['status']['networks'] = [n for n in rows if n['id'] != target['id']]
-                decisions.append('remove-request')
+                decisions.append('remove-revoked' if action == 'remove-network' else 'remove-request')
             elif body.get('method') == 'update-dismiss':
                 result = feed['status']['localUpdate']
                 assert body['localUpdate']['receiptId'] == result['receiptId']
@@ -319,6 +320,12 @@ try:
         page.locator('#join-invite').fill(ipv4_code)
         page.locator('#join-submit').click()
         page.wait_for_function("() => document.querySelector('#join-card h2')?.textContent==='正在联系主机'")
+        # The membership may already be committed while the guest retries the
+        # delivery acknowledgement. Show the joined state as soon as it exists.
+        guest['status'].update(networkId=uuid.uuid4().hex, directPeers=1)
+        tick(page, 1)
+        assert page.locator('#join-card h2').inner_text() == '已加入 ' + guest['name']
+        guest['status'].update(networkId='', directPeers=0)
         message = '本机 Mimic XDP 队列检查失败（隔离测试）'
         guest['status']['pairing'].update(active=False, error=message, state=message)
         tick(page, 1)
@@ -331,6 +338,17 @@ try:
         page.locator('#dialog-confirm').click()
         page.wait_for_function("() => !document.getElementById('unapproved-requests')")
         assert decisions.count('remove-request') == 1
+
+        guest['status'].update(networkRevoked=True, state='主机已撤回本机授权', pairing=None)
+        pending['networks'] = [guest]
+        tick(page, 1)
+        assert page.locator('#revoked-networks').get_by_text('主机已撤回本机授权').is_visible()
+        assert page.locator('#unapproved-requests').count() == 0
+        page.locator('#revoked-networks [data-ui-action="remove-network"]').click()
+        assert '移除已撤销的网络' in page.locator('#dialog-title').inner_text()
+        page.locator('#dialog-confirm').click()
+        page.wait_for_function("() => !document.getElementById('revoked-networks')")
+        assert decisions.count('remove-revoked') == 1
         page.unroute(control['origin']+'/api/command', presentation_mutation)
         feed['status'] = None
         page.unroute_all(behavior='wait')
@@ -340,7 +358,8 @@ try:
             mouseDragAcrossRefresh=True, multilineLogSelection=True, pendingLogsCatchUp=True,
             inputSelection=True, dialogSelection=True, ipv4Default16=True, explicitIpv6Code36=True,
             newRequestBadgeWhileSelecting=True, joinSetupPhase=True, joinFailureVisible=True,
-            decisionsRemoveCards=True, pendingRequestRemoval=True, uuStateCompatible=True,
+            decisionsRemoveCards=True, pendingRequestRemoval=True, revokedNetworkRemoval=True,
+            committedJoinVisible=True, uuStateCompatible=True,
             uuExcludesUnapproved=True, uuTrafficConfirmation=True, updateDismissal=True,
             updateSuccessExpires=True, updateNoticeCleanup=True,
             javascriptErrors=errors, isolatedMemoryBackend=True, embeddedAssets=not args.source_assets)

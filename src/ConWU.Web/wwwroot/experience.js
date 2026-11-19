@@ -131,18 +131,25 @@ function openInvitation(id){
 }
 function closeInvitation(){ui.codeId='';$('invitation-dialog').close();$('invitation-error').textContent='';}
 
-function pendingJoin(){return row(ui.joinId)||all().find(n=>n.status.pairing?.active&&!n.status.pairing.owner);}
-function unapprovedRequests(){
- const requests=all().filter(n=>!n.status.networkId&&!n.status.networkCreatedHere);
- if(!requests.length)return '';
- return `<article class="card network-list-card" id="unapproved-requests"><div class="table-title"><h2>未完成的加入申请</h2><span class="small">${requests.length} 条申请</span></div>${requests.map(n=>`<div class="list-row"><div class="grow"><strong>${esc(n.name)}</strong><p class="hint">${esc(n.status.pairing?.error||n.status.pairing?.state||'尚未获得主机批准')}</p></div><button class="text-btn" data-ui-action="remove-network" data-network="${esc(n.id)}">移除申请</button></div>`).join('')}</article>`;
+function pendingJoin(){
+ return row(ui.joinId)||all().find(n=>!n.status.networkId&&!n.status.networkRevoked&&n.status.pairing?.active&&!n.status.pairing.owner);
+}
+function inactiveNetworkList(revoked){
+ const records=all().filter(n=>!n.status.networkId&&!n.status.networkCreatedHere&&!!n.status.networkRevoked===revoked);
+ if(!records.length)return '';
+ const title=revoked?'已撤销的网络':'未完成的加入申请';
+ const action=revoked?'移除记录':'移除申请';
+ return `<article class="card network-list-card" id="${revoked?'revoked-networks':'unapproved-requests'}"><div class="table-title"><h2>${title}</h2></div>${records.map(n=>{
+  const detail=revoked?n.status.state:n.status.pairing?.error||n.status.pairing?.state||'尚未获得主机批准';
+  return `<div class="list-row"><div class="grow"><strong>${esc(n.name)}</strong><p class="hint">${esc(detail)}</p></div><button class="text-btn" data-ui-action="remove-network" data-network="${esc(n.id)}">${action}</button></div>`;
+ }).join('')}</article>`;
 }
 joinPage=function(){
- const n=pendingJoin(),p=n?.status.pairing,waiting=p?.active&&!p.owner,done=ui.joinId&&n?.status.networkId;let form;
+ const n=pendingJoin(),p=n?.status.pairing,done=ui.joinId&&n?.status.networkId,waiting=!n?.status.networkId&&p?.active&&!p.owner;let form;
  if(waiting)form=`<div class="waiting-card"><div class="status-orbit">${icon('clock')}</div><h2>${p.verification?'等待主机同意':'正在联系主机'}</h2><p>${p.verification?esc(p.peerName||'目标主机')+' 将核对并批准本次申请。':'正在建立配对通道，请稍候。'}</p>${kv('双方校验码',p.verification||'正在交换',true)}<p class="hint">${esc(p.state)}</p><div class="form-actions"><button class="btn" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消申请</button></div></div>`;
  else if(done)form=`<div class="waiting-card"><div class="status-orbit success">${icon('check')}</div><h2>已加入 ${esc(n.name)}</h2><p>已获取主机网络设置，${n.status.directPeers?'已建立直连。':'正在建立直连。'}</p>${kv('本机虚拟 IP',n.status.virtualIp,true)}${kv('目标设备',n.status.peers[0]?.name||'目标主机')}<div class="form-actions"><button class="btn primary" data-page="overview">查看概况</button><button class="btn" data-ui-action="another-join">加入其他网络</button></div></div>`;
  else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError||p?.error||'')}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
- return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article><div class="stack">${networkList(false)}${unapprovedRequests()}</div></div>`;
+ return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article><div class="stack">${networkList(false)}${inactiveNetworkList(false)}${inactiveNetworkList(true)}</div></div>`;
 };
 function requestsPage(){return heading('加入申请','核对设备与校验码，决定是否允许加入。')+incomingPage().replaceAll('data-action="approve"','data-ui-action="approve"').replaceAll('data-action="reject"','data-ui-action="reject"').replaceAll('data-request-network=','data-network=');}
 function liveSettingsPage(){
@@ -274,14 +281,14 @@ overviewPage=function(){
  }).join('')}</tbody></table></div><div class="device-table-foot"><span class="dot ${online&&live?'good':''}"></span><span>${networks.length} 个网络</span><span>·</span><span class="direct-total">与其余 ${online?live:0} 台设备直连</span></div></article>`;
 };
 function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU远程','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage};return pages[page]();}
-function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
+function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.networkRevoked,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;
  if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';ui.unavailableMessage='';appendStatusLogs(next);initializeDrafts();if(observed)sampleTraffic(next);}
  if(observed){syncUpdateNotice();updateRequestBadge();if(holdAutomaticPaint())return;}
  ui.pendingPaint=false;
  if(ui.unavailableMessage){notice(ui.unavailableMessage,true,expired?'authorization':'backend');ui.unavailableMessage='';}
- if(workspaceState){if(online&&(noticeSource==='backend'||noticeSource==='pair'&&!workspaceState.networks.some(n=>n.status.pairing?.active))){lastPairError='';notice('');}if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&!row(ui.joinId))ui.joinId='';}
+ if(workspaceState){if(online&&(noticeSource==='backend'||noticeSource==='pair'&&!workspaceState.networks.some(n=>n.status.pairing?.active))){lastPairError='';notice('');}if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&(!row(ui.joinId)||row(ui.joinId).status.networkRevoked))ui.joinId='';}
  if(!workspaceState){$('content').innerHTML=heading('ConWU','正在读取本机后台状态。');controls();return;}
  const chosen=row(selectedNetwork)?.status;state=chosen?{...workspaceState,...chosen,desktop:workspaceState.desktop}:workspaceState;
  networkActive=!!state.networkId;owner=!!state.isOwner;createdAt=(state.networkEstablishedAt||0)*1000;
@@ -554,21 +561,31 @@ bindJoinInput=function(){
  $('join-form').onsubmit=e=>{e.preventDefault();void run(join).catch(()=>{});};
 };
 async function removeNetwork(id,confirmed=false){
- const n=row(id);if(!n)return;const unapproved=!n.status.networkId,host=!unapproved&&n.status.isOwner;
- if(!confirmed&&!await confirmAction(unapproved?'移除加入申请？':host?'删除本机创建的网络？':'退出网络？',unapproved?'取消“'+n.name+'”并移除本机未完成的加入记录。':host?'结束“'+n.name+'”并删除此网络。其他网络和本机设置保留。':'删除本机的“'+n.name+'”网络记录，并通知主机清除本设备的从机信息。主机暂时离线时自动重试通知。',unapproved?'确认移除申请':host?'确认删除网络':'确认退出网络','danger'))return;
+ const n=row(id);if(!n)return;
+ const revoked=n.status.networkRevoked,unapproved=!n.status.networkId&&!revoked,host=n.status.isOwner;
+ const title=revoked?'移除已撤销的网络？':unapproved?'移除加入申请？':host?'删除本机创建的网络？':'退出网络？';
+ const detail=revoked?'删除“'+n.name+'”的本机记录。':unapproved?'取消“'+n.name+'”并移除本机未完成的加入记录。':host?'结束“'+n.name+'”并删除此网络。其他网络和本机设置保留。':'删除本机的“'+n.name+'”网络记录，并通知主机清除本设备的从机信息。主机暂时离线时自动重试通知。';
+ const confirm=revoked?'确认移除记录':unapproved?'确认移除申请':host?'确认删除网络':'确认退出网络';
+ if(!confirmed&&!await confirmAction(title,detail,confirm,'danger'))return;
  let localOnly=false;
- try{await command('network',{networkId:id,network:{action:host?'delete-network':'leave',expectedNetwork:n.status.networkId,confirmReplace:true}});}
+ try{await command('network',{networkId:id,network:{action:revoked?'remove-network':host?'delete-network':'leave',expectedNetwork:n.status.networkId,confirmReplace:true}});}
  catch(error){
   if(!row(id))return;
-  if(unapproved)throw error;
+  if(unapproved||revoked)throw error;
   if(!await confirmAction('远端尚未确认','可以只移除本机记录，不代表远端授权已经撤销。原因：'+error.message,'仅从本机移除','danger'))return;
   await command('network',{networkId:id,network:{action:n.status.networkId?'forget-network':'remove-network',expectedNetwork:n.status.networkId,confirmReplace:true}});localOnly=true;
  }
  if(ui.codeId===id)closeInvitation();if(ui.joinId===id)ui.joinId='';render();
- notify(unapproved?'加入申请已移除':localOnly?'本机网络已移除，远端撤销未确认':host?'网络已删除，其他网络和设置保留':'已退出网络；主机可达时将自动清除本设备的从机记录');
+ notify(revoked?'已移除本机网络记录':unapproved?'加入申请已移除':localOnly?'本机网络已移除，远端撤销未确认':host?'网络已删除，其他网络和设置保留':'已退出网络；主机可达时将自动清除本设备的从机记录');
 }
-function chooseExit(){const networks=all();if(!networks.length)return;$('exit-network-select').innerHTML=networks.map(n=>`<option value="${esc(n.id)}">${esc(n.name)} · ${n.status.networkId?'本机为'+(n.status.isOwner?'主机':'从机'):'未完成的加入申请'}</option>`).join('');updateExit();$('exit-dialog').showModal();}
-function updateExit(){const n=row($('exit-network-select').value);if(!n)return;const unapproved=!n.status.networkId;$('exit-title').textContent=unapproved?'移除加入申请':'退出网络';$('exit-confirm').textContent=unapproved?'确认移除申请':'确认退出网络';$('exit-description').textContent=unapproved?'取消并移除本机未完成的加入记录。':n.status.isOwner?'将删除本机创建的网络，并撤销从机授权。':'将删除本机网络记录，并通知主机清除本设备的从机信息；主机离线时自动重试通知。只需暂时断开时，请使用加入网络页面的“断开连接”。';}
+function chooseExit(){const networks=all();if(!networks.length)return;$('exit-network-select').innerHTML=networks.map(n=>`<option value="${esc(n.id)}">${esc(n.name)} · ${n.status.networkRevoked?'已撤销':n.status.networkId?'本机为'+(n.status.isOwner?'主机':'从机'):'未完成的加入申请'}</option>`).join('');updateExit();$('exit-dialog').showModal();}
+function updateExit(){
+ const n=row($('exit-network-select').value);if(!n)return;
+ const revoked=n.status.networkRevoked,unapproved=!n.status.networkId&&!revoked;
+ $('exit-title').textContent=revoked?'移除已撤销的网络':unapproved?'移除加入申请':'退出网络';
+ $('exit-confirm').textContent=revoked?'确认移除记录':unapproved?'确认移除申请':'确认退出网络';
+ $('exit-description').textContent=revoked?'主机已撤回本机授权。此操作删除本机记录。':unapproved?'取消并移除本机未完成的加入记录。':n.status.isOwner?'将删除本机创建的网络，并撤销从机授权。':'将删除本机网络记录，并通知主机清除本设备的从机信息；主机离线时自动重试通知。只需暂时断开时，请使用加入网络页面的“断开连接”。';
+}
 async function lockedSave(key,action){if(ui[key])return;ui[key]=true;controls();try{return await action();}finally{ui[key]=false;controls();}}
 async function saveDevice(){
  const d=ui.device;if(!d.name.trim())throw Error('请输入设备名称。');

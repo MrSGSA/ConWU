@@ -269,6 +269,16 @@ pub struct Network {
     #[serde(default)]
     pub bootstrap: Vec<String>,
 }
+impl Network {
+    pub fn is_join_request(&self) -> bool {
+        !self.created_here && self.profile.is_none() && self.enabled
+    }
+
+    pub fn is_revoked(&self) -> bool {
+        // Earlier Rust releases also persisted received revocations this way.
+        !self.created_here && self.profile.is_none() && !self.enabled
+    }
+}
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Configuration {
@@ -291,6 +301,22 @@ pub struct Database {
     pub departures: Vec<PendingDeparture>,
     pub rejoin_credentials: Vec<conwu_core::rejoin::Credential>,
     pub rejoin_history: BTreeMap<String, Vec<conwu_core::rejoin::History>>,
+}
+impl Database {
+    pub fn configuration_slots(&self) -> usize {
+        self.configurations.len() + self.networks.iter().filter(|n| n.is_join_request()).count()
+    }
+
+    pub fn remove_network(&mut self, network: &Network) {
+        self.networks.retain(|n| n.id != network.id);
+        if !self.networks.iter().any(|n| n.configuration_id == network.configuration_id) {
+            self.configurations.retain(|c| c.id != network.configuration_id);
+        }
+        if self.selected_network_id == network.id {
+            self.selected_network_id.clear();
+        }
+        self.rejoin_history.remove(&network.id);
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -18,6 +18,81 @@ pub(crate) async fn app() -> Result<Arc<backend::App>> {
     open_app(root).await
 }
 
+#[tokio::test]
+async fn configuration_capacity_is_recoverable_and_reserves_pending_joins() -> Result<()> {
+    let root = project().join("out/lab").join(conwu_core::id());
+    let mut older = model::Database::default();
+    for number in 0..65 {
+        older.configurations.push(model::Configuration {
+            id: conwu_core::id(),
+            name: format!("旧设置 {number}"),
+            revision: 1,
+            settings: model::Settings::default(),
+        });
+    }
+    store::Store::open(&root)?.save(&older)?;
+    let app = open_app(root).await?;
+    assert_eq!(app.status("")["configurations"].as_array().unwrap().len(), 65);
+    let copy = json!({"method":"configuration","configuration":{
+        "action":"copy","id":older.configurations[0].id,"expectedRevision":1,"name":"独立副本"
+    }});
+    let error = cmd(&app, copy.clone()).await.unwrap_err().to_string();
+    assert!(error.contains("设置数量超过限制"), "{error}");
+    for template in &older.configurations[63..] {
+        cmd(&app, json!({"method":"configuration","configuration":{
+            "action":"delete","id":template.id,"expectedRevision":1
+        }})).await?;
+    }
+
+    let code = conwu_core::code::DirectCode {
+        endpoint: SocketAddr::new(local_ip()?, port()),
+        mode: "tcp".into(),
+        room: "012345".into(),
+        punch: false,
+        coordinator: false,
+    };
+    let joined = cmd(&app, json!({"method":"network","network":{
+        "action":"join-compact","code":code.issue()?,"name":"预留设置名额"
+    }})).await?;
+    let id = joined["status"]["selectedNetworkId"].as_str().context("缺少申请编号")?;
+    assert_eq!(app.status("")["aggregate"]["networkCount"], 0);
+    let error = cmd(&app, copy.clone()).await.unwrap_err().to_string();
+    assert!(error.contains("设置数量超过限制"), "{error}");
+    cmd(&app, json!({"method":"network","networkId":id,"network":{"action":"pair-cancel"}})).await?;
+    assert!(app.db.read().unwrap().selected_network_id.is_empty());
+    assert!(app.engine.pairing(id).is_null());
+    assert_eq!(app.status(id)["selectedNetworkId"], "");
+
+    let copied = cmd(&app, copy).await?;
+    let db = app.db.read().unwrap();
+    let saved = db.configurations.iter().find(|c| copied["configurationId"] == c.id).unwrap();
+    assert!(saved.settings == older.configurations[0].settings);
+    assert_eq!(db.configurations.len(), 64);
+    drop(db);
+    app.engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn deleting_a_network_keeps_legacy_shared_settings() -> Result<()> {
+    let app = app().await?;
+    let removed = create(&app, "待删除网络", "tcp", false).await?;
+    let retained = create(&app, "保留网络", "tcp", false).await?;
+    let mut legacy = app.db.read().unwrap().clone();
+    let id = legacy.networks.iter().find(|n| n.id == removed).unwrap().configuration_id.clone();
+    legacy.networks.iter_mut().find(|n| n.id == retained).unwrap().configuration_id = id.clone();
+    app.commit(legacy)?;
+
+    let response = cmd(&app, json!({"method":"network","networkId":removed,"network":{
+        "action":"delete-network","confirmReplace":true
+    }})).await?;
+    let configurations = response["status"]["configurations"].as_array().unwrap();
+    let shared = configurations.iter().find(|c| c["id"] == id).context("旧共享设置被误删")?;
+    assert_eq!(shared["networks"][0]["id"], retained);
+    app.engine.shutdown().await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_carrier_failure_is_reported_without_falling_into_stun() -> Result<()> {
     let guest = app().await?;

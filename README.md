@@ -2,13 +2,13 @@
 
 1.5.0 将主程序和组网核心迁至 Rust，继续使用现有界面及六种协议。运行无需 .NET，原有身份与设置可自动导入；第三方承载和系统驱动继续独立提供。
 
-[1.5.1 候选版本说明](docs/releases/1.5.1.md)记录串流承载、直连恢复和日用问题的修复。
+1.5.1 改善串流承载的短时积压处理与直连恢复，并修复创建网络失败、暂停恢复、配置容量和撤权显示问题。
 
 当你异地串流美美游戏却碰上 UDP 限速时，可以试试ConWU。它在两台设备间建立直连通道，通过TCP打洞以及FakeTCP+HTTP(UDP2RAW）、Phantun、mimic、tcpraw、HTTPS与TCP等协议来规避运营商对UDP的限制！目前支持 Windows 和 Linux 双端。
 
 首次连接只需分享 16 位直连码，由主机批准。从机会自动获取网络设置，之后继续发现和更新入口。
 
-[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.5.0.md) · [使用文档](docs/README.md)
+[下载最新版](https://github.com/MrSGSA/ConWU/releases/latest) · [Gitee 镜像](https://gitee.com/space4sgsa/ConWU/releases) · [版本说明](docs/releases/1.5.1.md) · [使用文档](docs/README.md)
 
 | 系统 | 下载与安装 |
 | --- | --- |

@@ -503,9 +503,11 @@ impl Engine {
         Ok(())
     }
     pub fn cancel_guest(&self, id: &str) {
-        if let Some(c) = self.guests.lock().unwrap().remove(id) {
+        let mut guests = self.guests.lock().unwrap();
+        if let Some(c) = guests.remove(id) {
             c.cancel();
         }
+        self.guest_states.write().unwrap().remove(id);
     }
     pub fn refresh_discovery(&self, id: &str) -> Result<()> {
         self.current(id)
@@ -2073,7 +2075,10 @@ impl Engine {
         });
     }
     async fn guest_state(&self, id: &str, state: Value) {
-        self.guest_states.write().unwrap().insert(id.into(), state);
+        let guests = self.guests.lock().unwrap();
+        if guests.contains_key(id) {
+            self.guest_states.write().unwrap().insert(id.into(), state);
+        }
     }
     async fn join(
         &self,

@@ -50,7 +50,7 @@ sudo conwu network approve <网络操作ID> <双方校验码>
 
 `config show`／`config apply device.json` 只管理本机设置。本机默认提供独立协调能力，可在其中的 `Coordinator` 维护监听与证书；新设备自动生成 HTTPS 证书，默认端口 47822，原有反代设置保留。HTTP 只允许本机地址，公网通过 HTTPS／反向代理公开。协调设备不自动加入其他网络。维护和备份见[协调服务与升级](../../docs/协调服务与升级.md)。
 
-`network leave <网络操作ID>` 从本机退出；`network close <网络操作ID>` 由主机按授权流程解散；`start/stop/retry <网络操作ID>` 控制单条连接。协调不可用时本机退出仍可进行，不把未确认的远端撤销说成成功。
+`network withdraw <网络操作ID>` 从本机退出并通知主机，`network leave <网络操作ID>` 仅移除本机记录。`network close <网络操作ID>` 由主机解散网络。`start/stop/retry <网络操作ID>` 控制单条连接。协调服务不可用时也可退出，待主机可达后投递签名通知。
 
 ## 版本与回退
 

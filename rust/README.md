@@ -1,6 +1,6 @@
 # ConWU Rust 迁移与替换验收
 
-源码版本为 `1.5.1`。隔离验证见 [VALIDATION.md](VALIDATION.md)，候选改动见 [1.5.1 版本说明](../docs/releases/1.5.1.md)。
+源码版本为 `1.5.1`。隔离验证见 [VALIDATION.md](VALIDATION.md)，本版改动见 [1.5.1 版本说明](../docs/releases/1.5.1.md)。
 
 ConWU 自有核心、后台、配置存储、配对、发现、系统管理和更新逻辑已迁至 Rust，继续使用现有 HTML / CSS / JavaScript 界面。日常运行不启动 .NET；`compat/ConWU.DotnetOracle` 只用于开发时的协议对照。
 
