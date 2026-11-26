@@ -2,6 +2,7 @@ pub mod code;
 pub mod crypto;
 pub mod identity;
 pub mod link;
+pub mod nat_tcp_punch;
 pub mod pairing;
 pub mod path;
 

@@ -110,7 +110,7 @@ fn settings(v: &Value) -> Result<Settings> {
         .as_object_mut()
         .context("旧设置无效")?
         .retain(|k, _| allowed.get(k).is_some());
-    for key in ["tcpStun", "udpStun", "pkarrGateways"] {
+    for key in ["tcpStun", "pkarrGateways"] {
         if value[key].is_null() {
             value.as_object_mut().unwrap().remove(key);
         }
@@ -338,6 +338,7 @@ pub fn import(from: &Path, to: &Store) -> Result<Value> {
         #[cfg(not(windows))]
         let legacy_adapter = None;
         db.networks.push(Network {
+            projection: Default::default(),
             legacy_adapter,
             creation_operation: String::new(),
             creation_digest: String::new(),

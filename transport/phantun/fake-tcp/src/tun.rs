@@ -7,6 +7,11 @@ pub trait TunDevice: Send + Sync {
     async fn recv(&self, buf: &mut [u8]) -> io::Result<usize>;
     async fn send(&self, buf: &[u8]) -> io::Result<usize>;
     fn try_send(&self, buf: &[u8]) -> io::Result<()>;
+    /// Return bytes reported by the injection API when it exposes a count.
+    fn try_send_count(&self, buf: &[u8]) -> io::Result<Option<usize>> {
+        self.try_send(buf)?;
+        Ok(None)
+    }
     fn name(&self) -> String;
     /// Install a same-port kernel control-flow exception before acknowledging it.
     fn protect_tcp_peer(&self, _peer: std::net::SocketAddrV4) -> io::Result<()> { Ok(()) }

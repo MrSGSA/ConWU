@@ -1,49 +1,11 @@
 //! Windows desktop lifetime and startup registration, independent of the backend.
 use std::{ffi::c_void, io, ptr};
-use windows_sys::Win32::{
-    Foundation::{CloseHandle, ERROR_ALREADY_EXISTS, GetLastError, HANDLE, SetLastError},
-    System::Threading::{CreateMutexExW, SYNCHRONIZATION_SYNCHRONIZE},
-};
+use windows_sys::Win32::Foundation::HANDLE;
 
-fn wide(value: &str) -> io::Result<Vec<u16>> {
-    if value.contains('\0') {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Windows 名称包含空字符",
-        ));
-    }
-    Ok(value.encode_utf16().chain(Some(0)).collect())
-}
-
-/// A kernel object reserves the tray identity before its window is created.
-/// Local\\ scopes it to the interactive session; the caller adds the data ID.
-pub struct TrayLease(HANDLE);
-impl TrayLease {
-    pub fn acquire(name: &str) -> io::Result<Option<Self>> {
-        let name = wide(name)?;
-        // SAFETY: name is NUL terminated and the handle is owned until Drop.
-        // SYNCHRONIZE also allows a filtered user to see an elevated instance
-        // without requesting the default MUTEX_ALL_ACCESS permissions.
-        let (handle, error) = unsafe {
-            SetLastError(0);
-            let handle = CreateMutexExW(ptr::null(), name.as_ptr(), 0, SYNCHRONIZATION_SYNCHRONIZE);
-            (handle, GetLastError())
-        };
-        if handle.is_null() {
-            return Err(io::Error::from_raw_os_error(error as i32));
-        }
-        if error == ERROR_ALREADY_EXISTS {
-            unsafe { CloseHandle(handle) };
-            return Ok(None);
-        }
-        Ok(Some(Self(handle)))
-    }
-}
-impl Drop for TrayLease {
-    fn drop(&mut self) {
-        unsafe { CloseHandle(self.0) };
-    }
-}
+#[path = "../../../windows_window_lease.rs"]
+mod window_lease;
+pub use window_lease::WindowLease as TrayLease;
+use window_lease::wide;
 
 const MACHINE: HANDLE = -2147483646isize as HANDLE;
 const RUN: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";

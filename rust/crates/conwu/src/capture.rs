@@ -47,6 +47,25 @@ struct State {
     bytes: u64,
     window: Instant,
     wire: [u64; 5],
+    burst_syn: BurstSyn,
+}
+
+#[derive(Default)]
+enum BurstSyn {
+    #[default]
+    Idle,
+    Waiting,
+    Held(Vec<u8>, u8),
+}
+
+impl BurstSyn {
+    fn stage(&mut self, packet: &Packet, peer: SocketAddr, bytes: &[u8], kind: u8) -> bool {
+        if matches!(self, Self::Waiting) && packet.initial_syn_to(peer) {
+            *self = Self::Held(bytes.to_vec(), kind);
+            return true;
+        }
+        false
+    }
 }
 pub struct Session {
     owner: Arc<Owner>,
@@ -55,14 +74,39 @@ pub struct Session {
     state: Mutex<State>,
     input: mpsc::Sender<Vec<u8>>,
     output: tokio::sync::Mutex<mpsc::Receiver<Vec<u8>>>,
+    pub(crate) burst_syn_ready: CancellationToken,
 }
 impl Session {
-    pub fn activate(&self) {
+    pub(crate) fn activate(&self, hold_syn: bool) -> Result<()> {
         let mut s = self.state.lock().unwrap();
+        if hold_syn {
+            ensure!(!self.active.load(Ordering::Acquire) && matches!(s.burst_syn, BurstSyn::Idle),
+                "FakeTCP 捕获会话已启动，无法暂存首个 SYN");
+            s.burst_syn = BurstSyn::Waiting;
+        }
         if s.began.is_none() {
             s.began = Some(Instant::now());
         }
         self.active.store(true, Ordering::Release);
+        Ok(())
+    }
+
+    pub(crate) fn submit_burst_syn(&self) -> Result<u64> {
+        let mut state = self.state.lock().unwrap();
+        ensure!(self.active.load(Ordering::Acquire) && !self.owner.stop.is_cancelled(),
+            "FakeTCP 捕获会话已退出");
+        let BurstSyn::Held(bytes, kind) = &state.burst_syn else {
+            anyhow::bail!("FakeTCP 首个 SYN 尚未准备完成");
+        };
+        // This runs between the two already-bound STUN connects. The worker
+        // keeps its original SYN sequence and never has to wake up here.
+        ensure!(self.owner.io.inject(bytes)?, "WinDivert 未接受 FakeTCP 首个 SYN");
+        let sent = conwu_core::nat_tcp_punch::burst::submission_micros();
+        let kind = *kind as usize;
+        state.burst_syn = BurstSyn::Idle;
+        state.sent += 1;
+        state.wire[kind] += 1;
+        Ok(sent)
     }
     pub fn peer(&self) -> SocketAddr {
         self.state.lock().unwrap().peer
@@ -98,6 +142,14 @@ impl Session {
         );
         let mut s = self.state.lock().unwrap();
         if !self.active.load(Ordering::Acquire) || self.owner.stop.is_cancelled() {
+            return Ok(false);
+        }
+        if !matches!(s.burst_syn, BurstSyn::Idle) {
+            // Until release, suppress retransmissions and any other worker output.
+            if s.burst_syn.stage(&p, self.descriptor.peer, bytes, kind) {
+                s.own_isn = Some(p.seq);
+                self.burst_syn_ready.cancel();
+            }
             return Ok(false);
         }
         if p.target != s.peer {
@@ -152,6 +204,9 @@ impl Session {
             return false;
         }
         let mut s = self.state.lock().unwrap();
+        if !matches!(s.burst_syn, BurstSyn::Idle) {
+            return false;
+        }
         let mut allowed = packet.source == s.peer;
         if !allowed
             && self.descriptor.peer_reflexive
@@ -310,12 +365,14 @@ impl Owner {
                 bytes: 0,
                 window: Instant::now(),
                 wire: [0; 5],
+                burst_syn: BurstSyn::Idle,
             }),
             descriptor,
             owner: self.clone(),
             active: AtomicBool::new(false),
             input,
             output: tokio::sync::Mutex::new(output),
+            burst_syn_ready: CancellationToken::new(),
         });
         sessions.insert(id, Arc::downgrade(&session));
         registry()
@@ -357,6 +414,9 @@ struct Packet {
     payload: usize,
 }
 impl Packet {
+    fn initial_syn_to(&self, peer: SocketAddr) -> bool {
+        self.flags == 2 && self.payload == 0 && self.target == peer
+    }
     fn checksums(bytes: &[u8]) -> bool {
         if Self::parse(bytes, false).is_none() {
             return false;
@@ -518,6 +578,9 @@ impl WinDivert {
             observer.ip(),
             observer.port()
         ))?;
+        Self::filtered(path, filter, 100, 16)
+    }
+    fn filtered(path: &std::path::Path, filter: std::ffi::CString, priority: i16, flags: u64) -> Result<Self> {
         let library: libloading::Library = unsafe {
             libloading::os::windows::Library::load_with_flags(std::path::absolute(path)?, 0x1100)?
         }
@@ -530,7 +593,7 @@ impl WinDivert {
             let stop = *library.get(b"WinDivertShutdown\0")?;
             let set: Set = *library.get(b"WinDivertSetParam\0")?;
             let checksum = *library.get(b"WinDivertHelperCalcChecksums\0")?;
-            let handle = open(filter.as_ptr(), 0, 100, 16);
+            let handle = open(filter.as_ptr(), 0, priority, flags);
             ensure!(
                 handle as isize != -1,
                 "捕获打开失败：{}",
@@ -554,7 +617,7 @@ impl WinDivert {
             })
         }
     }
-    fn receive(&self, bytes: &mut [u8], address: &mut [u8; 80]) -> Result<usize> {
+    fn receive_raw(&self, bytes: &mut [u8], address: &mut [u8; 80]) -> Result<usize> {
         let mut n = 0;
         ensure!(
             unsafe {
@@ -570,6 +633,10 @@ impl WinDivert {
             std::io::Error::last_os_error()
         );
         ensure!(n as usize <= bytes.len(), "捕获长度越界");
+        Ok(n as usize)
+    }
+    fn receive(&self, bytes: &mut [u8], address: &mut [u8; 80]) -> Result<usize> {
+        let n = self.receive_raw(bytes, address)?;
         let flags = u32::from_le_bytes(address[8..12].try_into().unwrap());
         let required = if flags & (1 << 20) != 0 {
             1 << 22
@@ -577,14 +644,14 @@ impl WinDivert {
             (1 << 21) | (1 << 22)
         };
         if flags & required != required
-            && unsafe { (self.checksum)(bytes.as_mut_ptr(), n, address.as_mut_ptr(), 0) } == 0
+            && unsafe { (self.checksum)(bytes.as_mut_ptr(), n as u32, address.as_mut_ptr(), 0) } == 0
         {
             return Ok(0);
         }
-        if !Packet::checksums(&bytes[..n as usize]) {
+        if !Packet::checksums(&bytes[..n]) {
             return Ok(0);
         }
-        Ok(n as usize)
+        Ok(n)
     }
     fn inject(&self, bytes: &[u8]) -> Result<bool> {
         let mut data = bytes.to_vec();
@@ -625,5 +692,78 @@ impl Drop for WinDivert {
     fn drop(&mut self) {
         self.shutdown();
         unsafe { (self.close)(self.handle as Handle) };
+    }
+}
+
+/// A copy-only header observer. NO_INSTALL keeps diagnostics optional.
+pub(crate) struct HandshakeWatch {
+    io: Arc<WinDivert>,
+    reader: Option<std::thread::JoinHandle<()>>,
+}
+impl HandshakeWatch {
+    pub(crate) fn sniff(
+        path: &std::path::Path,
+        filter: String,
+        priority: i16,
+        local: std::net::SocketAddrV4,
+        mut record: impl FnMut(SocketAddr, bool, u8, Option<u32>) + std::marker::Send + 'static,
+    ) -> Result<Self> {
+        // SNIFF | RECV_ONLY | NO_INSTALL. No packet injection or diversion.
+        let filter = std::ffi::CString::new(filter)?;
+        let io = Arc::new(WinDivert::filtered(path, filter, priority, 1 | 4 | 16)?);
+        let source = SocketAddr::V4(local);
+        let rx = io.clone();
+        let reader = std::thread::Builder::new().name("tcp-round-observer".into()).spawn(move || {
+            let mut bytes = vec![0u8; 65535];
+            let mut address = [0; 80];
+            while let Ok(n) = rx.receive_raw(&mut bytes, &mut address) {
+                if let Some(p) = Packet::parse(&bytes[..n], false) {
+                    let outbound = u32::from_le_bytes(address[8..12].try_into().unwrap()) & (1 << 17) != 0;
+                    let interface = u32::from_le_bytes(address[16..20].try_into().unwrap());
+                    let peer = if outbound && p.source == source {
+                        p.target
+                    } else if !outbound && p.target == source {
+                        p.source
+                    } else {
+                        continue;
+                    };
+                    record(peer, outbound, p.flags, (interface != 0).then_some(interface));
+                }
+            }
+        })?;
+        Ok(Self { io, reader: Some(reader) })
+    }
+}
+impl Drop for HandshakeWatch {
+    fn drop(&mut self) {
+        self.io.shutdown();
+        if let Some(reader) = self.reader.take() { let _ = reader.join(); }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn burst_holds_only_the_first_syn_for_the_authorized_peer() {
+        let peer = "192.0.2.1:44000".parse().unwrap();
+        let mut packet = Packet {
+            source: "192.0.2.2:44680".parse().unwrap(),
+            target: "192.0.2.1:44001".parse().unwrap(),
+            seq: 1,
+            ack: 0,
+            flags: 2,
+            payload: 0,
+        };
+        let mut gate = BurstSyn::Waiting;
+        assert!(!gate.stage(&packet, peer, &[1], 0));
+        packet.target = peer;
+        packet.flags = 18;
+        assert!(!gate.stage(&packet, peer, &[2], 0));
+        packet.flags = 2;
+        assert!(gate.stage(&packet, peer, &[3], 0));
+        assert!(!gate.stage(&packet, peer, &[4], 0));
+        assert!(matches!(gate, BurstSyn::Held(ref bytes, 0) if bytes == &[3]));
     }
 }

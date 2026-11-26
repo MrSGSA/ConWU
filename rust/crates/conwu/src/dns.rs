@@ -1,10 +1,88 @@
 //! Resolve fresh, independent recursive caches; the first stale response cannot
-//! suppress a later resolver's current address. No OS/application DNS cache.
+//! suppress a later resolver's current address. Coordinator and STUN clients
+//! can fall back to the last endpoint that answered successfully.
 use anyhow::{Result, ensure};
 use futures_util::{StreamExt, future::BoxFuture, stream::FuturesUnordered};
 use hickory_resolver::{TokioAsyncResolver, config::ResolverOpts, system_conf::read_system_conf};
 use serde_json::Value;
-use std::{collections::HashMap, net::IpAddr, time::Duration};
+use std::{
+    collections::HashMap, future::Future, net::{IpAddr, SocketAddr},
+    sync::{LazyLock, Mutex}, time::{Duration, Instant},
+};
+
+const RECENT_IP_TTL: Duration = Duration::from_secs(24 * 60 * 60);
+const RECENT_IP_LIMIT: usize = 128;
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum EndpointKind {
+    Coordinator,
+    TcpStun,
+}
+
+type RecentKey = (EndpointKind, String, u16);
+static RECENT_IPS: LazyLock<Mutex<HashMap<RecentKey, (IpAddr, Instant)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn endpoint_key(kind: EndpointKind, host: &str, port: u16) -> RecentKey {
+    (kind, host.trim_end_matches('.').to_ascii_lowercase(), port)
+}
+
+pub(crate) fn remember(kind: EndpointKind, host: &str, endpoint: SocketAddr) {
+    if !valid_host(host) || host.parse::<IpAddr>().is_ok() {
+        return;
+    }
+    let mut cache = RECENT_IPS.lock().unwrap();
+    let key = endpoint_key(kind, host, endpoint.port());
+    if cache.len() >= RECENT_IP_LIMIT && !cache.contains_key(&key)
+        && let Some(oldest) = cache.iter().min_by_key(|(_, (_, used))| *used).map(|(key, _)| key.clone())
+    {
+        cache.remove(&oldest);
+    }
+    cache.insert(key, (endpoint.ip(), Instant::now()));
+}
+
+pub(crate) fn remember_coordinator(base: &url::Url, endpoint: Option<SocketAddr>) {
+    if base.scheme() == "https" && let (Some(host), Some(endpoint)) = (base.host_str(), endpoint) {
+        remember(EndpointKind::Coordinator, host, endpoint);
+    }
+}
+
+pub(crate) async fn with_recent_ip(
+    kind: EndpointKind, host: &str, port: u16, fresh: impl Future<Output = Result<Vec<IpAddr>>>,
+) -> Result<Vec<IpAddr>> {
+    let error = match fresh.await {
+        Ok(addresses) if !addresses.is_empty() => return Ok(addresses),
+        Ok(_) => anyhow::anyhow!("DNS 未取得地址"),
+        Err(error) => error,
+    };
+    let cached = RECENT_IPS.lock().unwrap()
+        .get(&endpoint_key(kind, host, port))
+        .filter(|(_, confirmed)| confirmed.elapsed() < RECENT_IP_TTL)
+        .map(|(ip, _)| *ip);
+    if let Some(ip) = cached {
+        tracing::debug!(host, port, %ip, "DNS 查询失败，使用最近可用地址");
+        Ok(vec![ip])
+    } else {
+        Err(error)
+    }
+}
+
+pub(crate) struct CoordinatorResolver(pub u16);
+impl reqwest::dns::Resolve for CoordinatorResolver {
+    fn resolve(&self, name: reqwest::dns::Name) -> reqwest::dns::Resolving {
+        let port = self.0;
+        Box::pin(async move {
+            let host = name.as_str();
+            let lookup = async {
+                let resolved = tokio::time::timeout(Duration::from_secs(2), tokio::net::lookup_host((host, port))).await??;
+                Ok(resolved.map(|endpoint| endpoint.ip()).collect())
+            };
+            let addresses = with_recent_ip(EndpointKind::Coordinator, host, port, lookup)
+                .await.map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
+            Ok(Box::new(addresses.into_iter().map(move |ip| SocketAddr::new(ip, port))) as reqwest::dns::Addrs)
+        })
+    }
+}
 
 pub fn valid_host(name: &str) -> bool {
     !name.is_empty()
@@ -155,6 +233,25 @@ fn unquote(s: &str) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_failed_lookup_uses_only_the_last_confirmed_endpoint_for_that_service() -> Result<()> {
+        let host = "conwu-cache-regression.example";
+        let cached: SocketAddr = "192.0.2.40:3478".parse()?;
+        let failure = || std::future::ready(Err(anyhow::anyhow!("fixture DNS deadline")));
+        remember(EndpointKind::TcpStun, host, cached);
+        assert_eq!(with_recent_ip(EndpointKind::TcpStun, host, cached.port(), failure()).await?,
+            vec![cached.ip()]);
+        assert!(with_recent_ip(EndpointKind::TcpStun, host, 3479, failure()).await.is_err());
+        assert!(with_recent_ip(EndpointKind::Coordinator, host, cached.port(), failure()).await.is_err());
+        assert!(with_recent_ip(EndpointKind::TcpStun, "other.example", cached.port(), failure()).await.is_err());
+        let current = vec!["192.0.2.41".parse()?];
+        assert_eq!(with_recent_ip(EndpointKind::TcpStun, host, cached.port(),
+            std::future::ready(Ok(current.clone()))).await?, current);
+        Ok(())
+    }
+
     #[test]
     fn quoted_chunks_and_decimal_escapes() {
         assert_eq!(

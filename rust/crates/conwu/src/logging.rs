@@ -49,6 +49,17 @@ impl Journal {
             _ => tracing::info!("{text}"),
         }
         let row = json!({"id":conwu_core::id(),"timestamp":conwu_core::unix_seconds()*1000,"text":format!("[{level}] {text}")});
+        self.append(row);
+    }
+    pub fn punch_summary(&self, summary: Value) {
+        let text = format!("[INFO] 打洞 {} {} {} / {}", summary["round"].as_str().unwrap_or(""),
+            summary["flow"].as_str().unwrap_or(""), summary["last_stage"].as_str().unwrap_or(""),
+            summary["close_reason"].as_str().unwrap_or(""));
+        tracing::info!("{text}");
+        self.append(json!({"id":conwu_core::id(), "timestamp":conwu_core::unix_seconds()*1000,
+            "text":text, "punch":summary}));
+    }
+    fn append(&self, row: Value) {
         let mut inner = self.inner.lock().unwrap();
         inner.0.push_back(row.clone());
         if inner.0.len() > 250 {

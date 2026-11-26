@@ -236,7 +236,8 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
             "/login.js" if panel.remote.is_some() => "remote-login.js",
             "/streamlink-tokyo-45.svg" => "icon.svg",
             "/app.js" | "/workspace.js" | "/experience.js" | "/uu-takeover.js" | "/style.css"
-            | "/experience.css" | "/icon.svg" => &path[1..],
+            | "/experience.css" | "/projection.js" | "/projection-files.js" | "/projection.css"
+            | "/icon.svg" => &path[1..],
             _ => return Ok(StatusCode::NOT_FOUND.into_response()),
         };
         let file = ASSETS.get_file(file).context("界面资源缺失")?;
@@ -429,13 +430,43 @@ async fn process(panel: Arc<Panel>, remote: SocketAddr, request: Request) -> Res
             .iter()
             .find(|(k, _)| k == "operation")
             .map(|(_, v)| v.as_ref());
+        let reply = panel.app.reply(network, operation);
+        #[cfg(windows)]
+        let reply = {
+            let mut reply = reply;
+            if panel.remote.is_none() {
+                let transfers = panel.app.projection_file_status();
+                reply["status"]["projectionTransfer"] = json!(transfers.first());
+                reply["status"]["projectionTransfers"] = json!(transfers);
+            }
+            reply
+        };
         return Ok(panel.authenticated(
-            axum::Json(panel.app.reply(network, operation)).into_response(),
+            axum::Json(reply).into_response(),
+            &cookie,
+            age,
+        ));
+    }
+    #[cfg(windows)]
+    if post && matches!(path.as_str(), "/api/projection/files" | "/api/projection/device" | "/api/projection/cover" | "/api/projection/bitrate") {
+        if panel.remote.is_some() {
+            return Ok(StatusCode::FORBIDDEN.into_response());
+        }
+        let value = match path.as_str() {
+            "/api/projection/cover" => panel.app.projection_cached_cover(&body)?,
+            "/api/projection/bitrate" => panel.app.projection_bitrate(&body).await?,
+            _ => panel.app.projection_tool_query(body, path == "/api/projection/files").await?,
+        };
+        return Ok(panel.authenticated(
+            axum::Json(json!({"ok":true,"value":value})).into_response(),
             &cookie,
             age,
         ));
     }
     if post && path == "/api/command" {
+        if panel.remote.is_some() && matches!(body["method"].as_str(), Some("projection-connect" | "projection-open-desktop" | "projection-stop" | "projection-files" | "projection-files-cancel")) {
+            return Ok(StatusCode::FORBIDDEN.into_response());
+        }
         return Ok(panel.authenticated(
             axum::Json(panel.app.submit(body)?).into_response(),
             &cookie,

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use std::{
     collections::BTreeMap,
     sync::{Arc, Mutex, RwLock},
+    time::{Duration, Instant},
 };
 use tokio::sync::mpsc;
 
@@ -32,8 +33,11 @@ pub struct App {
     pub update: RwLock<Value>,
     pub local_update: RwLock<Value>,
     pub desktop: RwLock<Value>,
+    #[cfg(windows)]
+    pub projection: crate::projection::Launcher,
     pub update_busy: std::sync::atomic::AtomicBool,
-    transaction: tokio::sync::Mutex<()>,
+    pub(crate) transaction: tokio::sync::Mutex<()>,
+    recent_listeners: Mutex<BTreeMap<u16, Instant>>,
 }
 impl App {
     pub fn open(
@@ -49,6 +53,7 @@ impl App {
         c::valid_public(&c::public(&db.node_private)?)?;
         for n in &db.networks {
             n.settings.validate()?;
+            n.projection.validate(&n.settings)?;
             if let Some(p) = &n.profile {
                 p.validate()?;
             }
@@ -78,8 +83,11 @@ impl App {
             desktop: RwLock::new(
                 json!({"serviceRegistered":false,"serviceState":if memory{"隔离测试后台"}else{"前台实验后台"},"autoStart":false}),
             ),
+            #[cfg(windows)]
+            projection: Default::default(),
             update_busy: std::sync::atomic::AtomicBool::new(false),
             transaction: tokio::sync::Mutex::new(()),
+            recent_listeners: Mutex::new(BTreeMap::new()),
         });
         let actor = app.clone();
         app.engine.tracker.spawn(async move {
@@ -89,6 +97,9 @@ impl App {
     }
     pub fn log(&self, level: &str, text: &str) {
         let configured = self.db.read().unwrap().log_level.clone();
+        if Self::log_enabled(level, &configured) { self.logs.push(level, text); }
+    }
+    fn log_enabled(level: &str, configured: &str) -> bool {
         let rank = |s: &str| match s.to_ascii_lowercase().as_str() {
             "off" => 5,
             "error" => 4,
@@ -96,9 +107,7 @@ impl App {
             "info" => 2,
             _ => 1,
         };
-        if rank(level) >= rank(&configured) {
-            self.logs.push(level, text);
-        }
+        rank(level) >= rank(configured)
     }
     pub fn commit(&self, next: Database) -> Result<()> {
         // A pending join reserves its configuration slot. Open older stores
@@ -111,6 +120,24 @@ impl App {
         validate_bindings(&next)?;
         self.store.save(&next)?;
         *self.engine.device_name.write().unwrap() = next.device_name.clone();
+        #[cfg(windows)]
+        {
+            let current = self.db.read().unwrap();
+            for network in current.networks.iter().filter(|n| n.projection.allowed) {
+                let previous = network.profile.as_ref().and_then(runtime::remote_member);
+                let retained = next.networks.iter().find(|n| n.id == network.id && n.projection.allowed)
+                    .and_then(|n| n.profile.as_ref()).and_then(runtime::remote_member);
+                if previous.is_some() && previous != retained {
+                    if let Ok(path) = self.store.checked_file(&crate::projection::cover_file_name(&network.id)) {
+                        if let Err(error) = std::fs::remove_file(path) {
+                            if error.kind() != std::io::ErrorKind::NotFound {
+                                tracing::warn!(%error, "无法清理已解除授权的桌面封面");
+                            }
+                        }
+                    }
+                }
+            }
+        }
         *self.db.write().unwrap() = next;
         Ok(())
     }
@@ -236,7 +263,9 @@ impl App {
         out["selectedNetworkId"] = json!(selection.map_or("", |_| selected));
         out["networks"] = json!(rows);
         out["deviceSettings"] = device;
-        out["networkDefaults"] = serde_json::to_value(Settings::default()).unwrap();
+        out["deviceDefaults"] = crate::model::default_device_settings();
+        out["deviceDefaults"]["name"] = json!(crate::model::default_device_name());
+        out["networkDefaults"] = serde_json::to_value(Settings::new_network()).unwrap();
         out["deviceSettingsRevision"] = json!(revision(&db.device_settings));
         out["configurations"]=json!(db.configurations.iter().map(|c|json!({"id":c.id,"name":c.name,"revision":c.revision,"settings":c.settings,"networks":db.networks.iter().filter(|n|n.configuration_id==c.id).map(|n|{
             let applied=!n.enabled||self.engine.current(&n.id).is_some_and(|r|r.config.read().unwrap().settings==n.settings);
@@ -250,6 +279,14 @@ impl App {
         out["update"] = self.update.read().unwrap().clone();
         out["localUpdate"] = crate::updates::status(self);
         out["desktop"] = self.desktop.read().unwrap().clone();
+        #[cfg(windows)]
+        {
+            let bundled = self.projection_engines().is_some();
+            out["projectionAvailable"] = json!(bundled || self.projection_component().is_some());
+            out["projectionBundled"] = json!(bundled);
+            out["projectionEmbedded"] = json!(bundled && self.projection_embedded());
+            out["projectionMoonlight"] = self.projection_moonlight_status();
+        }
         out["coordinator"] = crate::coordinator::status();
         out["uuTakeover"] = crate::uu::status(self);
         out["nativeTransport"] = json!(
@@ -271,6 +308,8 @@ impl App {
         out["networkEstablishedAt"] = json!(n.created_at);
         out["networkEnabled"] = json!(n.enabled && !n.paused);
         out["networkPaused"] = json!(n.paused);
+        #[cfg(windows)]
+        { out["projection"] = self.projection_status(n); }
         out["settings"] = json!(n.settings);
         out["settingsRevision"] = json!(revision(&json!(n.settings)));
         out["pairing"] = if revoked { Value::Null } else { self.engine.pairing(&n.id) };
@@ -388,6 +427,7 @@ impl App {
                 self.log("ERROR", &format!("本机协调服务启动失败：{error}"));
             }
         }
+        let _transaction = self.transaction.lock().await;
         let networks = self.db.read().unwrap().networks.clone();
         for n in networks {
             if n.enabled && n.profile.is_some() {
@@ -415,6 +455,7 @@ impl App {
         });
     }
     pub async fn events(self: Arc<Self>, mut events: mpsc::Receiver<Event>) {
+        let mut carrier_logs = BTreeMap::<String, (std::time::Instant, u32)>::new();
         while let Some(event) =
             tokio::select! {_=self.engine.cancel.cancelled()=>None,e=events.recv()=>e}
         {
@@ -434,6 +475,7 @@ impl App {
                     approved,
                     peer_name,
                     bootstrap,
+                    installed,
                     reply,
                 } => {
                     let result = (|| -> Result<Network> {
@@ -492,8 +534,9 @@ impl App {
                                 let Some(n) = current else {
                                     return;
                                 };
-                                if let Err(e) = app.engine.install(n).await {
-                                    tracing::error!("加入后的虚拟网卡启动失败：{e}");
+                                match app.engine.install(n).await {
+                                    Ok(()) => if let Some(ready) = installed { let _ = ready.send(()); },
+                                    Err(e) => tracing::error!("加入后的虚拟网卡启动失败：{e}"),
                                 }
                             });
                             let _ = reply.send(Ok(()));
@@ -546,13 +589,54 @@ impl App {
                     let result = self.accept_departure(&network, notice).await;
                     let _ = reply.send(result);
                 }
-                Event::Log { level, text } => self.log(&level, &text),
+                Event::PunchSummary(summary) => {
+                    if Self::log_enabled("INFO", &self.db.read().unwrap().log_level) {
+                        self.logs.punch_summary(summary);
+                    }
+                }
+                Event::Log { level, text } => {
+                    if ["监听端", "主动连接端"].iter().any(|role| text.contains(*role)) {
+                        use std::time::{Duration, Instant};
+                        let now = Instant::now();
+                        if let Some((since, repeats)) = carrier_logs.get_mut(&text) {
+                            if since.elapsed() < Duration::from_secs(300) {
+                                *repeats = repeats.saturating_add(1);
+                                continue;
+                            }
+                            if *repeats != 0 {
+                                self.log(&level, &format!("{text}（期间重复 {} 次）", *repeats));
+                            } else {
+                                self.log(&level, &text);
+                            }
+                            *since = now;
+                            *repeats = 0;
+                            continue;
+                        }
+                        carrier_logs.retain(|_, (seen, _)| seen.elapsed() < Duration::from_secs(600));
+                        if carrier_logs.len() < 128 { carrier_logs.insert(text.clone(), (now, 0)); }
+                    }
+                    self.log(&level, &text);
+                }
             }
         }
     }
     async fn execute(self: &Arc<Self>, body: &Value) -> Result<Value> {
         let id = body["networkId"].as_str().unwrap_or("");
         match body["method"].as_str().unwrap_or("") {
+            #[cfg(windows)]
+            "projection-connect" => self.request_projection(
+                id,
+                body["deviceId"].as_str().context("请选择远控设备")?,
+                body["embedded"] == true,
+            ),
+            #[cfg(windows)]
+            "projection-open-desktop" => self.open_projection_desktop(),
+            #[cfg(windows)]
+            "projection-stop" => self.stop_projection_moonlight(id),
+            #[cfg(windows)]
+            "projection-files" => self.request_projection_files(id, body["deviceId"].as_str().context("请选择传输设备")?),
+            #[cfg(windows)]
+            "projection-files-cancel" => self.cancel_projection_files(body["jobId"].as_str().context("请选择文件传输任务")?),
             "cancel" => Ok(json!({"cancelled":false,"message":"后台查询已完成或已由当前请求替代"})),
             #[cfg(feature = "lab-api")]
             "lab-inject" => {
@@ -743,7 +827,16 @@ impl App {
                         None => original.settings.clone(),
                     }
                 } else {
-                    serde_json::from_value(action["settings"].clone())?
+                    let input = &action["settings"];
+                    let mut settings: Settings = serde_json::from_value(input.clone())?;
+                    if index.is_none() && !settings.existing_only() && input.get("discoveryMode").is_none()
+                        && input.get("directMode").is_none() && input.get("pkarrPublish").is_none()
+                    {
+                        settings.discovery_mode = "coordinator".into();
+                        settings.direct_mode = false;
+                        settings.pkarr_publish = false;
+                    }
+                    settings
                 };
                 settings.validate()?;
                 let id = if let Some(i) = index.filter(|_| kind == "save") {
@@ -841,6 +934,61 @@ impl App {
         }
         Ok(json!({"configurationId":out}))
     }
+    fn fresh_listen_port(&self, db: &Database, preferred: u16, source: u16) -> Result<u16> {
+        let now = Instant::now();
+        let mut recent = self.recent_listeners.lock().unwrap();
+        recent.retain(|_, last| now.duration_since(*last) < Duration::from_secs(120));
+        let mut reserved: Vec<_> = db.networks.iter()
+            .flat_map(|n| [n.settings.listen_port, n.settings.source_port])
+            .chain(recent.keys().copied()).chain([source]).collect();
+        let nearby = std::iter::once(0).chain((1..=32).flat_map(|offset| [offset, -offset]))
+            .filter_map(|offset| preferred.checked_add_signed(offset))
+            .find(|&port| port >= 1024 && !reserved.contains(&port) && local_port_available(port));
+        let port = match nearby {
+            Some(port) => port,
+            None => {
+                reserved.push(preferred);
+                free_port(&reserved)?
+            }
+        };
+        recent.insert(port, now);
+        Ok(port)
+    }
+
+    async fn rotate_unpaired_listener(self: &Arc<Self>, old: &Network) -> Result<()> {
+        // Invite commands also run in the background queue. Serialize their
+        // recovery with settings edits, pairing approval and network removal.
+        let _transaction = self.transaction.lock().await;
+        let current = self.find(&old.id)?;
+        ensure!(current.settings == old.settings
+            && current.created_here && !current.settings.existing_only()
+            && current.profile.as_ref().is_some_and(|p| runtime::remote_member(p).is_none())
+            && !self.engine.rooms.lock().unwrap().contains_key(&old.id),
+            "本机 TCP STUN 源端口不可用，当前网络已有配对会话或设置已改变");
+        let mut next = self.db.read().unwrap().clone();
+        let prior_port = current.settings.listen_port;
+        self.recent_listeners.lock().unwrap().insert(prior_port, Instant::now());
+        let port = self.fresh_listen_port(&next, prior_port, current.settings.source_port)?;
+        let updated = next.networks.iter_mut().find(|n| n.id == old.id).unwrap();
+        updated.settings.listen_port = port;
+        let updated = updated.clone();
+        if next.networks.iter().filter(|n| n.configuration_id == current.configuration_id).count() == 1
+            && let Some(configuration) = next.configurations.iter_mut().find(|c| c.id == current.configuration_id)
+        {
+            configuration.settings.listen_port = port;
+            configuration.revision += 1;
+        }
+        validate_bindings(&next)?;
+        if let Err(error) = self.engine.install(updated).await.and_then(|()| self.commit(next)) {
+            if let Err(rollback) = self.engine.install(current).await {
+                self.log("WARN", &format!("恢复原监听端口失败：{rollback}"));
+            }
+            return Err(error);
+        }
+        self.log("INFO", &format!("主机 TCP STUN 源端口不可用，接收端口由 {prior_port} 切换到 {port}"));
+        Ok(())
+    }
+
     async fn network(self: &Arc<Self>, id: &str, action: &Value) -> Result<Value> {
         let kind = action["action"].as_str().context("缺少网络操作")?;
         if matches!(kind, "create-direct" | "create") {
@@ -863,6 +1011,7 @@ impl App {
                 "请为新网络保存独立设置"
             );
             settings.validate()?;
+            ensure!(settings.discovery_mode != "coordinator" || !settings.service.is_empty(), "请填写 HTTPS 协调服务器地址");
             let requested = action["requestedVirtualIp"]
                 .as_str()
                 .filter(|s| !s.is_empty())
@@ -894,6 +1043,9 @@ impl App {
             }
             // New networks get their own listener. Legacy compatible listeners
             // can still be shared, but implicit sharing makes changes ambiguous.
+            if !settings.existing_only() {
+                settings.listen_port = self.fresh_listen_port(&next, settings.listen_port, settings.source_port)?;
+            }
             while next.networks.iter().any(|n| {
                 n.settings.listen_port == settings.listen_port
                     || n.settings.source_port == settings.listen_port
@@ -914,6 +1066,19 @@ impl App {
                     .checked_add(2)
                     .context("没有空闲的本机源端口")?;
             }
+            let require_observation = settings.mode()? == "faketcp"
+                && settings.discovery_mode == "coordinator" && !settings.existing_only()
+                && settings.manual_endpoint.is_empty();
+            if require_observation {
+                // Prepare the same-source receiver before creating Wintun or
+                // making the new network visible. A conflicting TCP tuple can
+                // then be retried without rebuilding the virtual adapter.
+                if let Err(error) = self.engine.prepare_faketcp_receiver(&settings).await {
+                    if !discovery::stun_address_in_use(&error) { return Err(error); }
+                    settings.listen_port = self.fresh_listen_port(&next, settings.listen_port, settings.source_port)?;
+                    self.engine.prepare_faketcp_receiver(&settings).await?;
+                }
+            }
             if let Some(configuration) = next
                 .configurations
                 .iter_mut()
@@ -925,6 +1090,7 @@ impl App {
                 }
             }
             let n = Network {
+                projection: Default::default(),
                 legacy_adapter: None,
                 creation_operation: action["_operationId"].as_str().unwrap_or("").into(),
                 creation_digest: action["_digest"].as_str().unwrap_or("").into(),
@@ -947,8 +1113,16 @@ impl App {
             let new_id = n.id.clone();
             next.selected_network_id = new_id.clone();
             next.networks.push(n.clone());
-            validate_bindings(&next)?;
-            self.engine.install(n).await?;
+            let install = async { validate_bindings(&next)?; self.engine.install(n.clone()).await };
+            if let Err(error) = install.await {
+                if require_observation {
+                    let key = ("faketcp".to_owned(), n.settings.listen_port);
+                    if let Err(cleanup) = self.engine.release_unused_listener(&key).await {
+                        self.log("WARN", &format!("未保存网络的接收器仍在释放：{cleanup}"));
+                    }
+                }
+                return Err(error);
+            }
             if let Err(error) = self.commit(next) {
                 if let Err(cleanup) = self.engine.remove(&new_id).await {
                     self.log("WARN", &format!("未保存的网络资源仍在释放：{cleanup}"));
@@ -959,6 +1133,8 @@ impl App {
             return Ok(Value::Null);
         }
         if matches!(kind, "join-compact" | "join-entry") {
+            let mut coordinator = None;
+            let mut coordinated_only = action["coordinatedOnly"] == true;
             let codes = if kind == "join-entry" {
                 let mode = action["mode"].as_str().unwrap_or("faketcp");
                 ensure!(
@@ -989,11 +1165,27 @@ impl App {
                     })
                     .collect::<Vec<_>>()
             } else {
-                vec![DirectCode::import(
-                    action["code"].as_str().context("请填写直连码")?,
-                )?]
+                let text = action["code"].as_str().context("请填写配对码或直连码")?.trim();
+                let (compact, locator) = text.split_once('@').map_or((text, None), |(c, l)| (c, Some(l)));
+                let locator = locator.or_else(|| action["coordinator"].as_str().filter(|s| !s.is_empty()));
+                if crate::assistance::short_code(compact) {
+                    let locator = crate::assistance::InviteLocator::parse(locator.context("六位配对码需要填写协调服务器地址")?)?;
+                    let client = locator.connect().await?;
+                    let mode = client.describe_pair(compact).await?;
+                    coordinated_only = true;
+                    coordinator = Some(locator);
+                    vec![DirectCode { endpoint: client.endpoint, mode, room: compact.into(), punch: false, coordinator: true }]
+                } else {
+                    let code = DirectCode::import(compact)?;
+                    if let Some(locator) = locator {
+                        ensure!(code.coordinator, "此直连码不需要协调服务器地址");
+                        coordinator = Some(crate::assistance::InviteLocator::parse(locator)?);
+                    }
+                    vec![code]
+                }
             };
             let code = &codes[0];
+            ensure!(!coordinated_only || code.coordinator, "仅协调配对需要协调配对码");
             ensure!(
                 code.mode != "udp",
                 "此版本不再接入直接 UDP 网络，请使用当前六种协议的直连码"
@@ -1017,6 +1209,7 @@ impl App {
                 .unwrap_or("")
                 .to_string();
             let n = Network {
+                projection: Default::default(),
                 legacy_adapter: None,
                 creation_operation: action["_operationId"].as_str().unwrap_or("").into(),
                 creation_digest: action["_digest"].as_str().unwrap_or("").into(),
@@ -1043,7 +1236,7 @@ impl App {
             let retained = next.rejoin_credentials.last().cloned();
             self.commit(next)?;
             self.engine
-                .start_guest(id, codes, name, node, requested, retained);
+                .start_guest(id, codes, coordinator, coordinated_only, name, node, requested, retained);
             return Ok(Value::Null);
         }
         if kind == "resolve-entries" {
@@ -1077,6 +1270,22 @@ impl App {
             );
         }
         match kind {
+            #[cfg(windows)]
+            "projection-settings" => {
+                ensure!(n.profile.as_ref().is_some_and(|profile| profile.pair.direct), "请先建立双端直连网络");
+                let mut expected: crate::model::ProjectionSettings = serde_json::from_value(action["previous"].clone())?;
+                let mut requested: crate::model::ProjectionSettings = serde_json::from_value(action["projection"].clone())?;
+                if action["previous"].get("video").is_none() { expected.video = n.projection.video; }
+                if action["projection"].get("video").is_none() { requested.video = n.projection.video; }
+                ensure!(n.projection == expected, "远控设置已修改，请刷新后重试");
+                requested.validate(&n.settings)?;
+                let mut next = self.db.read().unwrap().clone();
+                next.networks.iter_mut().find(|network| network.id == id).unwrap().projection = requested;
+                self.commit(next)?;
+                if let Some(running) = self.engine.current(id) {
+                    Arc::make_mut(&mut running.config.write().unwrap()).projection = requested;
+                }
+            }
             "rename-network" => {
                 let name = action["name"].as_str().context("缺少网络名称")?;
                 c::check_name(name)?;
@@ -1097,14 +1306,14 @@ impl App {
                     .filter(|e| e.peer_slot == 0)
                     .cloned()
                     .collect::<Vec<_>>();
+                let mut faketcp_stun_endpoint = None;
                 let mut endpoints = if local.is_empty() {
                     self.engine
                         .current(id)
                         .map(|r| {
-                            r.metrics
-                                .read()
-                                .unwrap()
-                                .local_endpoints
+                            let metrics = r.metrics.read().unwrap();
+                            faketcp_stun_endpoint = metrics.faketcp_stun_endpoint;
+                            metrics.local_endpoints
                                 .iter()
                                 .filter_map(|s| s.parse().ok())
                                 .collect()
@@ -1136,20 +1345,30 @@ impl App {
                             })
                 });
                 endpoints.sort_by_key(|e| e.is_ipv6());
-                let candidate = endpoints
-                    .first()
-                    .copied()
-                    .context("尚未取得所选地址族的本机入口，请等待打洞或检查入口订阅")?;
                 let (name, node) = {
                     let db = self.db.read().unwrap();
                     (db.device_name.clone(), db.node_private.clone())
                 };
-                self.engine.create_code(id, candidate, &name, &node)?;
-                if !n.settings.existing_only()
+                let assisted = !n.settings.existing_only()
                     && n.settings.discovery_mode == "coordinator"
                     && !n.settings.service.is_empty()
-                {
-                    self.engine.assist_code(id, candidate).await?;
+                    && family != "ipv6";
+                if assisted {
+                    let candidate = endpoints.into_iter()
+                        .find(|endpoint| endpoint.is_ipv4() && discovery::public(endpoint.ip()));
+                    let follow_stun = local.is_empty() && n.settings.manual_endpoint.is_empty()
+                        && (candidate.is_none() || candidate == faketcp_stun_endpoint);
+                    match self.engine.assist_code(id, candidate, follow_stun, &name, &node).await {
+                        Err(error) if discovery::stun_source_unavailable(&error) => {
+                            self.rotate_unpaired_listener(&n).await?;
+                            self.engine.assist_code(id, None, true, &name, &node).await?;
+                        }
+                        result => result?,
+                    }
+                } else {
+                    let candidate = endpoints.first().copied()
+                        .context("尚未取得所选地址族的本机入口，请等待打洞或检查入口订阅")?;
+                    self.engine.create_code(id, candidate, &name, &node)?;
                 }
             }
             "pair-poll" => {}
@@ -1226,13 +1445,18 @@ impl App {
             }
             "disconnect" | "pause-network" | "reconnect" => {
                 ensure!(n.profile.is_some(), "当前记录没有可用的网络授权");
+                let cold = kind == "pause-network" && action["cold"] == true;
                 let mut next = self.db.read().unwrap().clone();
                 let n = next.networks.iter_mut().find(|n| n.id == id).unwrap();
                 n.paused = kind != "reconnect";
-                n.enabled = true;
+                n.enabled = !cold;
                 let n = n.clone();
                 self.commit(next)?;
-                self.engine.install(n).await?;
+                if cold {
+                    self.engine.remove(id).await?;
+                } else {
+                    self.engine.install(n).await?;
+                }
             }
             "leave" | "delete-network" | "forget-network" | "remove-network" => {
                 ensure!(action["confirmReplace"] == true, "请确认退出并删除网络");
@@ -1311,6 +1535,7 @@ impl App {
                 }
                 next.remove_network(&n);
                 self.commit(next)?;
+                self.recent_listeners.lock().unwrap().insert(n.settings.listen_port, Instant::now());
                 if let Some(retired) = retired {
                     let directory = retired.directory.as_ref().unwrap();
                     if let Err(error) = self.engine.notify_directory(id, directory.clone()).await {
@@ -1490,7 +1715,35 @@ impl App {
     }
     pub fn start_departures(self: &Arc<Self>) {
         let app = self.clone();
-        self.engine.tracker.spawn(async move{loop{let pending=app.db.read().unwrap().departures.clone();for notice in pending{if app.engine.cancel.is_cancelled(){return}let delivered=tokio::select!{_=app.engine.cancel.cancelled()=>return,r=app.send_departure(&notice)=>r};if delivered.is_ok(){let _=app.engine.events.send(Event::DepartureDelivered{id:notice.id}).await;}}tokio::select!{_=app.engine.cancel.cancelled()=>break,_=tokio::time::sleep(std::time::Duration::from_secs(2))=>{}}}});
+        self.engine.tracker.spawn(async move {
+            use std::time::{Duration, Instant};
+            let mut retries = BTreeMap::<String, (Instant, Duration)>::new();
+            loop {
+                let pending = app.db.read().unwrap().departures.clone();
+                retries.retain(|id, _| pending.iter().any(|notice| notice.id == *id));
+                for notice in pending {
+                    if retries.get(&notice.id).is_some_and(|(next, _)| Instant::now() < *next) {
+                        continue;
+                    }
+                    let result = tokio::select! {
+                        _ = app.engine.cancel.cancelled() => return,
+                        result = app.send_departure(&notice) => result,
+                    };
+                    let delay = if result.is_ok() {
+                        let _ = app.engine.events.send(Event::DepartureDelivered { id: notice.id.clone() }).await;
+                        Duration::from_secs(10)
+                    } else {
+                        retries.get(&notice.id).map_or(Duration::from_secs(10), |(_, previous)|
+                            (*previous * 2).min(Duration::from_secs(300)))
+                    };
+                    retries.insert(notice.id, (Instant::now() + delay, delay));
+                }
+                tokio::select! {
+                    _ = app.engine.cancel.cancelled() => break,
+                    _ = tokio::time::sleep(Duration::from_secs(2)) => {}
+                }
+            }
+        });
     }
     async fn send_departure(&self, n: &crate::model::PendingDeparture) -> Result<()> {
         let targets = if n.entries.is_empty() {
@@ -1503,7 +1756,7 @@ impl App {
             let result = if conwu_core::code::stream_mode(&n.mode) {
                 crate::transport::connect(&n.mode, endpoint, &n.pin, false, &token).await
             } else {
-                crate::raw::connect_ref(&self.engine, &n.mode, endpoint, 0, &token).await
+                crate::raw::connect_ref(&self.engine, &n.mode, endpoint, 0, &token, "退出通知").await
             };
             if let Ok(mut pipe) = result {
                 let request = conwu_core::pairing::Request {
@@ -1542,6 +1795,9 @@ pub fn revision(v: &Value) -> String {
     hex::encode(c::hash(serde_json::to_vec(v).unwrap()))
 }
 fn validate_bindings(db: &Database) -> Result<()> {
+    for network in &db.networks {
+        network.projection.validate(&network.settings)?;
+    }
     let active = db
         .networks
         .iter()
@@ -1588,21 +1844,35 @@ fn validate_bindings(db: &Database) -> Result<()> {
     }
     Ok(())
 }
+fn local_port_available(port: u16) -> bool {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).is_ok()
+        && std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, port)).is_ok()
+}
+
 fn free_port(reserved: &[u16]) -> Result<u16> {
     use rand::Rng;
     // A persisted listener must not come from Windows' ephemeral client pool:
     // UI/HTTPS connections can otherwise take that port before boot binds it.
     for _ in 0..256 {
         let port = rand::thread_rng().gen_range(20000..30000);
-        if reserved.contains(&port) {
-            continue;
-        }
-        if let Ok(tcp) = std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, port)) {
-            if let Ok(udp) = std::net::UdpSocket::bind((std::net::Ipv4Addr::UNSPECIFIED, port)) {
-                drop((tcp, udp));
-                return Ok(port);
-            }
+        if !reserved.contains(&port) && local_port_available(port) {
+            return Ok(port);
         }
     }
     anyhow::bail!("未找到可用于网络的独立监听端口")
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn new_listener_avoids_occupied_and_recent_ports() -> Result<()> {
+    let app = crate::tests::app().await?;
+    let occupied = std::net::TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, 0))?;
+    let preferred = occupied.local_addr()?.port();
+    let db = Database::default();
+    let first = app.fresh_listen_port(&db, preferred, 44691)?;
+    let second = app.fresh_listen_port(&db, preferred, 44691)?;
+    assert!(first != preferred && second != preferred && first != second);
+    assert!(first.abs_diff(preferred) <= 32 && second.abs_diff(preferred) <= 32);
+    app.engine.shutdown().await?;
+    Ok(())
 }

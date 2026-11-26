@@ -8,6 +8,7 @@
 #include <memory>
 #ifdef STREAMLINK_LINUX
 #include <chrono>
+#include <cstdio>
 static unsigned long long GetTickCount64(){return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();}
 #endif
 
@@ -31,7 +32,19 @@ void send(const streamlink::ShapePacket &p) {
     auto &s=shape.send_info; s.seq=p.seq; s.ack_seq=p.ack;
     s.syn=(p.flags&2)!=0; s.ack=(p.flags&16)!=0; s.psh=false; s.rst=false;
     s.ts_ack=shape.recv_info.ts;
-    send_raw0(shape,nullptr,0);
+    const int result = send_raw0(shape,nullptr,0);
+#ifdef STREAMLINK_LINUX
+    static bool reported_syn = false;
+    if (!reported_syn && p.flags == 2 && result == 0) {
+        reported_syn = true;
+        const auto submitted = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+        std::fprintf(stdout, "CONWU_NATIVE_SYN_SENT %lld\n", static_cast<long long>(submitted));
+        std::fflush(stdout);
+    }
+#else
+    (void)result;
+#endif
     mylog(log_debug,"SO shape sent flags=%u seq=%u ack=%u\n",unsigned(p.flags),p.seq,p.ack);
 }
 void tick() {

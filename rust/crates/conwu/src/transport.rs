@@ -46,7 +46,20 @@ pub fn pinned_http_bootstrap(
     bootstrap: bool,
     resolve: Option<(&str, &[SocketAddr])>,
 ) -> Result<reqwest::Client> {
-    if pin.is_empty() && !bootstrap && resolve.is_none() {
+    build_coordinator_http(pin, bootstrap, resolve, None)
+}
+
+pub(crate) fn coordinator_http(pin: &str, url: &url::Url) -> Result<reqwest::Client> {
+    build_coordinator_http(pin, false, None, url.port_or_known_default())
+}
+
+fn build_coordinator_http(
+    pin: &str,
+    bootstrap: bool,
+    resolve: Option<(&str, &[SocketAddr])>,
+    coordinator_port: Option<u16>,
+) -> Result<reqwest::Client> {
+    if pin.is_empty() && !bootstrap && resolve.is_none() && coordinator_port.is_none() {
         return crate::discovery::http_client();
     }
     ensure!(
@@ -76,6 +89,9 @@ pub fn pinned_http_bootstrap(
     if let Some((host, addresses)) = resolve {
         builder = builder.resolve_to_addrs(host, addresses);
     }
+    if let Some(port) = coordinator_port {
+        builder = builder.dns_resolver(Arc::new(crate::dns::CoordinatorResolver(port)));
+    }
     Ok(builder.build()?)
 }
 pub struct Pipe {
@@ -96,6 +112,20 @@ pub struct TlsIdentity {
     pub certificate_pin: String,
 }
 impl TlsIdentity {
+    #[cfg(windows)]
+    pub(crate) fn for_projection() -> Result<Self> {
+        let key = rcgen::KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)?;
+        let cert = rcgen::CertificateParams::new(vec!["projection.conwu".into()])?
+            .self_signed(&key)?;
+        let der = cert.der().clone();
+        let pin = certificate_pin(&der)?;
+        let certificate_pin = hex::encode_upper(c::hash(&der));
+        let server = ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![der], PrivatePkcs8KeyDer::from(key.serialize_der()).into())?;
+        Ok(Self { server: Arc::new(server), pin, certificate_pin })
+    }
+
     pub fn load(store: &crate::store::Store) -> Result<Self> {
         let key_path = store.root.join("stream-private.pem");
         let key = if key_path.exists() {
@@ -154,6 +184,56 @@ impl TlsIdentity {
             certificate_pin: whole_pin,
         })
     }
+}
+
+/// The connection is only returned after mutual authentication using the
+/// paired network key and a proof bound to this particular TLS session.
+#[cfg(windows)]
+pub(crate) async fn projection_stream(
+    socket: TcpStream,
+    key: &[u8; 32],
+    server: Option<&TlsIdentity>,
+) -> Result<tokio_rustls::TlsStream<TcpStream>> {
+    use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
+
+    socket.set_nodelay(true)?;
+    let responder = server.is_some();
+    let label = b"EXPORTER-ConWU-Projection-v1";
+    let (mut stream, binding) = if let Some(identity) = server {
+        let stream = TlsAcceptor::from(identity.server.clone()).accept(socket).await?;
+        let binding = stream.get_ref().1.export_keying_material([0; 32], label, None)?;
+        (TlsStream::Server(stream), binding)
+    } else {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let config = ClientConfig::builder_with_provider(provider.clone())
+            .with_safe_default_protocol_versions()?
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(PinVerifier {
+                pin: String::new(), bootstrap: true, whole_certificate: false,
+                provider, first_pin: None,
+            }))
+            .with_no_client_auth();
+        let stream = TlsConnector::from(Arc::new(config))
+            .connect(ServerName::try_from("projection.conwu")?, socket).await?;
+        let binding = stream.get_ref().1.export_keying_material([0; 32], label, None)?;
+        (TlsStream::Client(stream), binding)
+    };
+    let proof = |role: &[u8]| c::mac(&*c::hkdf(key, &binding, role), label);
+    let client_proof = proof(b"ConWU Projection client proof v1");
+    let server_proof = proof(b"ConWU Projection server proof v1");
+    let mut received = [0u8; 32];
+    if responder {
+        stream.write_all(&server_proof).await?;
+        stream.flush().await?;
+        stream.read_exact(&mut received).await?;
+        ensure!(c::eq(&received, &client_proof), "Projection 对端身份核验失败");
+    } else {
+        stream.read_exact(&mut received).await?;
+        ensure!(c::eq(&received, &server_proof), "Projection 对端身份核验失败");
+        stream.write_all(&client_proof).await?;
+        stream.flush().await?;
+    }
+    Ok(stream)
 }
 fn certificate_pin(der: &[u8]) -> Result<String> {
     let (_, cert) =
@@ -286,7 +366,33 @@ pub async fn connect_role_from(
     identity: &TlsIdentity,
     parent: &CancellationToken,
 ) -> Result<Pipe> {
-    let socket = tcp_open_from(endpoint, local).await?;
+    let socket = tcp_open_from(endpoint, local).await.map_err(TcpOpenError)?;
+    socket_role(mode, socket, pin, protocol_client, identity, parent).await
+}
+
+#[derive(Debug)]
+pub(crate) struct TcpOpenError(anyhow::Error);
+
+impl std::fmt::Display for TcpOpenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.0, f)
+    }
+}
+
+impl std::error::Error for TcpOpenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.0.as_ref())
+    }
+}
+
+pub(crate) async fn socket_role(
+    mode: &str,
+    socket: TcpStream,
+    pin: &str,
+    protocol_client: bool,
+    identity: &TlsIdentity,
+    parent: &CancellationToken,
+) -> Result<Pipe> {
     if protocol_client {
         client_socket(mode, socket, pin, false, parent).await
     } else {
@@ -439,25 +545,29 @@ pub async fn accept(
     ))
 }
 pub async fn listener(port: u16, ipv6: bool) -> Result<TcpListener> {
-    let domain = if ipv6 {
+    let ip = if ipv6 {
+        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+    } else {
+        IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+    };
+    listener_on(SocketAddr::new(ip, port))
+}
+
+pub(crate) fn listener_on(address: SocketAddr) -> Result<TcpListener> {
+    let domain = if address.is_ipv6() {
         socket2::Domain::IPV6
     } else {
         socket2::Domain::IPV4
     };
     let socket = socket2::Socket::new(domain, socket2::Type::STREAM, Some(socket2::Protocol::TCP))?;
-    if ipv6 {
+    if address.is_ipv6() {
         socket.set_only_v6(true)?;
     }
     socket.set_nonblocking(true)?;
     socket.set_reuse_address(true)?;
     #[cfg(target_os = "linux")]
     socket.set_reuse_port(true)?;
-    let ip = if ipv6 {
-        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
-    } else {
-        IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
-    };
-    socket.bind(&SocketAddr::new(ip, port).into())?;
+    socket.bind(&address.into())?;
     socket.listen(80)?;
     Ok(TcpListener::from_std(socket.into())?)
 }

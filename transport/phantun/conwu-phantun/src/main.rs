@@ -179,7 +179,7 @@ async fn run(config: Config) -> io::Result<()> {
     if config.server {
         stack.listen(config.source.port());
         event(
-            json!({"event":"ready", "abi":ABI, "role":"server", "pid":std::process::id(), "source":config.source.to_string()}),
+            json!({"event":"ready", "abi":ABI, "role":"server", "pid":std::process::id(), "source":config.source.to_string(), "synConfirmation":true}),
         );
         let connector=stack.connector();
         let mut peers=std::collections::HashMap::<SocketAddrV4,tokio::sync::mpsc::Sender<Vec<u8>>>::new();
@@ -200,14 +200,20 @@ async fn run(config: Config) -> io::Result<()> {
                                     *config.control_peer.write().unwrap()=Some(peer);
                                     event(json!({"event":"protected","abi":ABI,"peer":peer.to_string(),"id":id}));
                                 },
-                                Command::Punch(peer,greeting)=>{
+                                Command::Punch(peer,greeting,probe)=>{
                                     if Some(peer)==*config.control_peer.read().unwrap(){continue;}
                                     if let Some(tx)=peers.get(&peer){let _=tx.try_send(greeting);continue;}
                                     if peers.len()>=64{continue;}
                                     let (tx,rx)=tokio::sync::mpsc::channel(8);let _=tx.try_send(greeting);peers.insert(peer,tx);
                                     let active=connector.clone();let target=config.remote;let port=config.source.port();
                                     tasks.spawn(async move{
-                                        if let Ok(Some(socket))=tokio::time::timeout(Duration::from_secs(8),active.connect_from(peer.into(),port)).await {
+                                        let opened = active.connect_reporting_syn(peer.into(), port, || {
+                                            if let Some(id) = probe {
+                                                let submitted = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_micros() as u64;
+                                                event(json!({"event":"syn-sent","abi":ABI,"peer":peer,"id":id,"submittedUs":submitted}));
+                                            }
+                                        });
+                                        if let Ok(Some(socket))=tokio::time::timeout(Duration::from_secs(8),opened).await {
                                             if let Err(error)=forward_server(socket,target,rx).await{event(json!({"event":"peer-failed","abi":ABI,"reason":error.to_string()}));}
                                         }
                                         peer
@@ -308,7 +314,7 @@ fn main() {
     std::process::exit(0);
 }
 
-enum Command { Punch(SocketAddrV4,Vec<u8>),Protect(SocketAddrV4,String) }
+enum Command { Punch(SocketAddrV4,Vec<u8>,Option<String>),Protect(SocketAddrV4,String) }
 fn input_commands()->io::Result<(tokio::sync::mpsc::Receiver<Command>,tokio::sync::oneshot::Receiver<()>)>{
     let(tx,rx)=tokio::sync::mpsc::channel(8);let(stop,stopped)=tokio::sync::oneshot::channel();
     std::thread::Builder::new().name("phantun-control".into()).spawn(move||{
@@ -325,11 +331,15 @@ fn input_commands()->io::Result<(tokio::sync::mpsc::Receiver<Command>,tokio::syn
                     let Some(id)=v["id"].as_str().filter(|s|s.len()==32&&s.bytes().all(|b|b.is_ascii_hexdigit())) else{break;};
                     Command::Protect(peer,id.into())
                 },
+                Some("probe") if o.len() == 3 => {
+                    let Some(id) = v["id"].as_str().filter(|s| s.len() == 32 && s.bytes().all(|b| b.is_ascii_hexdigit())) else {break;};
+                    Command::Punch(peer, Vec::new(), Some(id.into()))
+                }
                 Some("punch") if (2..=3).contains(&o.len())=>{
                     let hello=if o.len()==3 {
                         let Some(text)=v["hello"].as_str().filter(|s|!s.is_empty()&&s.len()<=256&&s.len()%2==0&&s.bytes().all(|b|b.is_ascii_hexdigit())) else{break;};
                         (0..text.len()).step_by(2).map(|i|u8::from_str_radix(&text[i..i+2],16).unwrap()).collect()
-                    }else{vec![]};Command::Punch(peer,hello)
+                    }else{vec![]};Command::Punch(peer,hello,None)
                 },_=>break
             };
             if tx.blocking_send(command).is_err(){break;}

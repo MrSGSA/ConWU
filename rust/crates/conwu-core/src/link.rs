@@ -86,6 +86,9 @@ impl Link {
     pub fn epoch(&self) -> [u8; 16] {
         self.epoch
     }
+    pub fn remote_epoch(&self) -> Option<[u8; 16]> {
+        self.remote_epoch
+    }
     fn lane(&mut self, lane: u8) {
         if lane != 0 && self.lanes[lane as usize - 1].is_none() {
             self.lanes[lane as usize - 1] = Some(Lane {

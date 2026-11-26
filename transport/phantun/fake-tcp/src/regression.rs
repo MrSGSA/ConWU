@@ -260,7 +260,11 @@ async fn simultaneous_open_keeps_original_sequences_and_delivers_datagrams() {
     let (mut sb,txb)=Socket::new(right.shared.clone(),right.shared.tun[0].clone(),b,a,None,State::Idle);
     left.shared.tuples.write().unwrap().insert(AddrTuple::new(a,b),txa);
     right.shared.tuples.write().unwrap().insert(AddrTuple::new(b,a),txb);
-    let (a,b)=time::timeout(time::Duration::from_secs(5),async{tokio::join!(sa.connect(),sb.connect())}).await.unwrap();
+    let (mut sent_a, mut sent_b) = (false, false);
+    let (a, b) = time::timeout(time::Duration::from_secs(5), async {
+        tokio::join!(sa.connect(|| sent_a = true), sb.connect(|| sent_b = true))
+    }).await.unwrap();
+    assert!(sent_a && sent_b);
     assert!(a.is_some()&&b.is_some());
     assert_eq!(sa.seq.load(Ordering::Relaxed),1);assert_eq!(sb.seq.load(Ordering::Relaxed),1);
     sa.send(b"left").await.unwrap();sb.send(b"right").await.unwrap();

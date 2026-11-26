@@ -8,6 +8,7 @@
 <link rel="icon" href="/icon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/experience.css">
+<link rel="stylesheet" href="/projection.css">
 </head>
 <body>
 <svg class="sprite" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
@@ -40,12 +41,16 @@
 </svg>
 <a class="skip-link" href="#content">跳到主要内容</a>
 <aside class="sidebar">
- <div class="brand"><svg class="logo" aria-label="ConWU"><use href="#i-logo"/></svg><span>ConWU</span></div>
+ <button class="brand mode-switch" id="mode-switch" type="button" aria-label="ConWU" disabled>
+  <span class="brand-mark" aria-hidden="true"><svg class="logo brand-network-mark"><use href="#i-logo"/></svg><span class="projection-mark brand-projection-mark"><span class="projection-lens"></span><span class="projection-beam"></span><span class="projection-screen"></span></span></span>
+  <span class="brand-copy" aria-hidden="true"><span class="brand-network-name">ConWU</span><span class="brand-projection-name">Projection</span></span>
+  <svg class="icon brand-switch-arrow" aria-hidden="true" viewBox="0 0 24 24"><path d="M4 8h15m-4-4 4 4-4 4M20 16H5m4-4-4 4 4 4"/></svg>
+ </button>
  <nav class="nav-list" aria-label="主要导航">
   <button class="nav" data-page="overview" title="概况"><svg class="icon"><use href="#i-overview"/></svg><span class="nav-text">概况</span></button>
   <button class="nav active" data-page="create" title="创建网络"><svg class="icon"><use href="#i-create"/></svg><span class="nav-text">创建网络</span></button>
   <button class="nav" data-page="join" title="加入网络"><svg class="icon"><use href="#i-join"/></svg><span class="nav-text">加入网络</span><span class="count-dot" id="request-dot" hidden></span></button>
-  <button class="nav exit" data-ui-action="choose-exit" title="退出网络"><svg class="icon"><use href="#i-exit"/></svg><span class="nav-text">退出网络</span></button>
+  <button class="nav exit" data-page="exit" title="退出网络"><svg class="icon"><use href="#i-exit"/></svg><span class="nav-text">退出网络</span></button>
   <button class="nav" data-page="requests" title="加入申请"><svg class="icon"><use href="#i-shield"/></svg><span class="nav-text">加入申请</span><span class="nav-count" id="requests-count" hidden></span></button>
   <button class="nav" data-page="coordination" title="对外协调"><svg class="icon"><use href="#i-server"/></svg><span class="nav-text">对外协调</span></button>
   <button class="nav" data-page="uu" title="UU远程"><svg class="icon"><use href="#i-link"/></svg><span class="nav-text">UU远程</span></button>
@@ -53,6 +58,7 @@
   <button class="nav" data-page="logs" title="日志"><svg class="icon"><use href="#i-log"/></svg><span class="nav-text">日志</span></button>
   <button class="nav" data-page="settings" title="设置"><svg class="icon"><use href="#i-settings"/></svg><span class="nav-text">设置</span><span id="settings-dirty-dot" class="count-dot" hidden></span></button>
  </nav>
+ <nav class="projection-rail" id="projection-device-list" aria-label="已配对设备"></nav>
  <div class="sidebar-bottom"><div class="sidebar-tools"><div class="backend"><span class="dot" id="backend-dot"></span><span id="backend-state" class="small muted" role="status">正在读取后台</span></div><button class="btn icon-only" data-action="theme" id="theme-button" aria-label="切换浅色外观" title="切换界面外观"><svg class="icon"><use href="#i-sun"/></svg></button></div><div class="sidebar-device"><div class="avatar" id="sidebar-initials">AK</div><div class="grow"><div class="small" id="sidebar-name">正在读取</div><div class="small dim">本机设备</div></div></div></div>
 </aside>
 <div class="workspace">
@@ -68,15 +74,63 @@
 <script src="/app.js" defer></script>
 <script src="/workspace.js" defer></script>
 <script src="/uu-takeover.js" defer></script>
+<script src="/projection.js" defer></script>
+<script src="/projection-files.js" defer></script>
 <script src="/experience.js" defer></script>
-<dialog class="network-dialog" id="network-dialog" aria-labelledby="network-dialog-title"><div class="modal-header"><div><h2 id="network-dialog-title">网络设置</h2><p id="network-dialog-subtitle"></p></div><button class="btn icon-only" data-ui-action="close-editor" aria-label="关闭网络设置"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="modal-grid"><nav class="modal-nav" id="network-settings-nav" aria-label="网络设置分区"></nav><div class="modal-body" id="network-settings-body"></div></div><div class="modal-footer"><span class="save-state" id="network-save-state" role="status"></span><div class="row" id="network-edit-actions"><button class="btn compact" data-ui-action="restore-editor">恢复刚才设置</button><button class="btn primary compact" data-ui-action="save-editor">保存设置</button></div><button class="btn compact" id="network-readonly-close" data-ui-action="close-editor" hidden>关闭</button></div></dialog>
-<dialog class="small-dialog" id="exit-dialog" aria-labelledby="exit-title"><div class="pad"><h2 id="exit-title">退出网络</h2><p id="exit-description" class="muted"></p><label class="field"><span>选择要退出的网络</span><select id="exit-network-select"></select></label></div><div class="dialog-actions"><button class="btn" data-ui-action="close-exit">取消</button><button class="btn danger" id="exit-confirm" data-ui-action="confirm-exit">确认退出网络</button></div></dialog>
+<dialog class="network-dialog" id="network-dialog" aria-labelledby="network-dialog-title"><div class="modal-header"><div><h2 id="network-dialog-title">网络设置</h2><p id="network-dialog-subtitle"></p></div><button class="btn icon-only" data-ui-action="close-editor" aria-label="关闭网络设置"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="modal-grid"><nav class="modal-nav" id="network-settings-nav" aria-label="网络设置分区"></nav><div class="modal-body" id="network-settings-body"></div></div><div class="modal-footer"><span class="save-state" id="network-save-state" role="status"></span><div class="row" id="network-edit-actions"><button class="btn compact" data-ui-action="restore-editor">恢复默认设置</button><button class="btn primary compact" data-ui-action="save-editor">保存设置</button></div><button class="btn compact" id="network-readonly-close" data-ui-action="close-editor" hidden>关闭</button></div></dialog>
+<dialog class="small-dialog projection-settings-dialog" id="projection-dialog" aria-labelledby="projection-title">
+ <div class="pad projection-settings-body">
+  <header><h2 id="projection-title">Projection 设置</h2><p class="muted" id="projection-network"></p></header>
+  <fieldset>
+   <legend>画面</legend>
+   <label class="field"><span>分辨率</span><select id="projection-resolution"><option value="local">跟随本机</option><option value="peer">跟随对机</option><option value="custom">自定义</option></select></label>
+   <div class="projection-settings-grid" id="projection-custom-size">
+    <label class="field"><span>宽度（像素）</span><input id="projection-width" type="number" min="640" max="7680" step="2"></label>
+    <label class="field"><span>高度（像素）</span><input id="projection-height" type="number" min="360" max="4320" step="2"></label>
+   </div>
+   <div class="projection-settings-grid">
+    <label class="field"><span>帧率（FPS）</span><input id="projection-fps" type="number" min="15" max="240" step="1"></label>
+    <label class="field"><span>码率</span><select id="projection-bitrate" aria-describedby="projection-bandwidth"><option value="low">低 · 保帧优先</option><option value="medium">中 · 自动估算</option><option value="high">高 · 画质优先</option></select><span id="projection-bandwidth" class="hint" role="status"></span></label>
+   </div>
+   <p class="hint">画面设置在下次串流开始时生效。</p>
+  </fieldset>
+  <fieldset>
+   <legend>设备权限</legend>
+   <label class="projection-check"><input id="projection-allowed" type="checkbox"><span>允许对机查看桌面预览并远程控制本机</span></label>
+   <label class="projection-check"><input id="projection-files" type="checkbox"><span>允许对机浏览并互传文件</span></label>
+   <label class="projection-check"><input id="projection-clipboard" type="checkbox"><span>串流时同步文本剪贴板</span></label>
+   <label class="field" id="projection-legacy-port"><span>监听端口（TCP）</span><input id="projection-port" type="number" min="1024" max="65535" step="1"></label>
+  </fieldset>
+  <p id="projection-error" role="alert" class="danger-text"></p>
+ </div>
+ <div class="dialog-actions"><button class="btn" data-ui-action="close-projection-settings">取消</button><button class="btn primary" data-ui-action="save-projection-settings">保存设置</button></div>
+</dialog>
+<dialog id="projection-file-dialog" class="projection-file-dialog" aria-labelledby="projection-file-title">
+ <header class="modal-header">
+  <h2 id="projection-file-title">文件互传</h2>
+  <div class="row">
+   <button class="btn compact" type="button" id="projection-send-files" data-ui-action="projection-files">选文件发送</button>
+   <button class="btn icon-only" type="button" id="projection-file-close" aria-label="关闭文件互传"><svg class="icon"><use href="#i-x"/></svg></button>
+  </div>
+ </header>
+ <div class="projection-file-panes">
+  <section id="projection-local-files" class="projection-file-pane" data-file-side="local" aria-label="本机目录"></section>
+  <section id="projection-remote-files" class="projection-file-pane" data-file-side="remote" aria-label="对机目录"></section>
+ </div>
+ <footer class="projection-file-history">
+  <div class="projection-file-queue-head"><h3>传输队列</h3>
+   <button class="btn compact" type="button" id="projection-file-clear">清除已结束</button>
+  </div>
+  <div id="projection-file-tasks"></div>
+  <p id="projection-file-error" class="danger-text" role="alert"></p>
+ </footer>
+</dialog>
 <dialog class="small-dialog help-dialog" id="help-dialog" aria-labelledby="help-title"><div class="modal-header"><h2 id="help-title"></h2><button class="btn icon-only" data-ui-action="close-help" aria-label="关闭帮助"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="pad" id="help-content"></div><div class="dialog-actions"><button class="btn primary" data-ui-action="close-help">知道了</button></div></dialog>
 <dialog class="small-dialog coordinator-dialog" id="coordination-dialog" aria-labelledby="coordination-title">
  <div class="modal-header"><h2 id="coordination-title">本机协调设置</h2><button class="btn icon-only" data-ui-action="close-coordination-settings" aria-label="关闭本机协调设置"><svg class="icon"><use href="#i-x"/></svg></button></div>
  <div class="pad" id="coordination-settings-fields"></div>
  <div class="error pad" id="coordination-error" role="status"></div>
- <div class="modal-footer"><span class="save-state" id="coordination-save-state" role="status"></span><div class="row"><button class="btn compact" id="restore-coordination" data-ui-action="restore-coordination">恢复刚才设置</button><button class="btn primary compact" id="save-coordination" data-ui-action="save-coordination">保存设置</button></div></div>
+ <div class="modal-footer"><span class="save-state" id="coordination-save-state" role="status"></span><div class="row"><button class="btn compact" id="restore-coordination" data-ui-action="restore-coordination">恢复默认设置</button><button class="btn primary compact" id="save-coordination" data-ui-action="save-coordination">保存设置</button></div></div>
 </dialog>
 <dialog class="small-dialog update-source-dialog" id="update-source-dialog" aria-labelledby="update-source-title"><div class="modal-header"><h2 id="update-source-title">选择下载来源</h2><button class="btn icon-only" data-ui-action="close-update-source" aria-label="关闭下载来源"><svg class="icon"><use href="#i-x"/></svg></button></div><div class="update-source-grid" id="update-source-content"></div><p class="error pad" id="update-source-error" role="status"></p></dialog>
 </body>

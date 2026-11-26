@@ -81,6 +81,7 @@ pub fn product() -> String {
         "{2B716DCB-5CD7-4EEC-91E4-749BC09027A1}".into()
     }
 }
+#[cfg(windows)]
 pub fn product_name() -> String {
     if let Some(id) = validation() {
         format!("ConWU Validation {}", &id[..8])

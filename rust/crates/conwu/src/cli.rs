@@ -177,7 +177,7 @@ pub async fn execute(mut args: Vec<String>) -> Result<()> {
         .is_none_or(|s| matches!(s.as_str(), "help" | "--help"))
     {
         println!(
-            "ConWU Windows / Linux\n  run [--data 目录] [--no-open]   运行后台\n  status | web                  查询状态或获取面板地址\n  config show|apply <JSON>       本机设置\n  profiles                      连接配置列表\n  profile show|export|create|update|copy|assign|apply|delete\n  network list|status|create|join|invite|approve|reject|cancel|leave|withdraw|close|resume|rename|remove\n  start|stop|retry <网络ID>       启动、暂停或重连\n  update check                  检查官方更新\n  coordinator status|backup|inspect|restore <文件.slcoord> [--confirm-rollback]\n  remote-admin set <HTTPS来源> | disable\n所有管理命令支持 --data 目录。密码通过标准输入提供。"
+            "ConWU Windows / Linux\n  run [--data 目录] [--no-open]   运行后台\n  status | web                  查询状态或获取面板地址\n  config show|apply <JSON>       本机设置\n  profiles                      连接配置列表\n  profile show|export|create|update|copy|assign|apply|delete\n  network list|status|create|join|invite|approve|reject|cancel|leave|withdraw|close|resume|rename|remove\n  network join <配对码> [--coordinator <HTTPS地址>] [--coordinated-only] [--name <名称>]\n  network join-file <文件> [--coordinator <HTTPS地址>] [--coordinated-only]\n  start|stop|retry <网络ID>       启动、暂停或重连\n  update check                  检查官方更新\n  coordinator status|backup|inspect|restore <文件.slcoord> [--confirm-rollback]\n所有管理命令支持 --data 目录。密码通过标准输入提供。"
         );
         return Ok(());
     }
@@ -306,7 +306,9 @@ pub async fn execute(mut args: Vec<String>) -> Result<()> {
         };
         return print(
             &client
-                .mutate(json!({"method":"network","networkId":id,"network":{"action":action}}))
+                .mutate(json!({"method":"network","networkId":id,"network":{
+                    "action":action,"cold":first=="stop"&&args.iter().any(|arg| arg=="--cold")
+                }}))
                 .await?,
         );
     }
@@ -321,8 +323,16 @@ pub async fn execute(mut args: Vec<String>) -> Result<()> {
         .and_then(|i| args.get(i + 1))
         .cloned()
         .unwrap_or_default();
-    if matches!(verb.as_str(), "join" | "join-code") {
-        return print(&client.mutate(json!({"method":"network","network":{"action":"join-compact","code":value(2)?,"requestedVirtualIp":ip}})).await?);
+    if matches!(verb.as_str(), "join" | "join-code" | "join-file") {
+        let input = value(2)?;
+        let code = if verb == "join-file" {
+            ensure!(std::fs::metadata(&input)?.len() <= 8192, "配对码文件过大");
+            std::fs::read_to_string(&input)?
+        } else { input };
+        let option = |label: &str| args.iter().position(|s| s == label).and_then(|i| args.get(i + 1));
+        return print(&client.mutate(json!({"method":"network","network":{"action":"join-compact",
+            "code":code.trim(),"coordinator":option("--coordinator"),"coordinatedOnly":args.iter().any(|v|v=="--coordinated-only"),
+            "name":option("--name").map(String::as_str).unwrap_or("申请中的网络"),"requestedVirtualIp":ip}})).await?);
     }
     if verb == "create" {
         return print(&client.mutate(json!({"method":"network","network":{"action":"create-direct","configurationId":value(2)?,"name":args.get(3).filter(|v|!v.starts_with("--")).map(String::as_str).unwrap_or("新网络"),"requestedVirtualIp":ip}})).await?);

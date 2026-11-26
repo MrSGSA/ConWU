@@ -28,6 +28,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 pub fn capabilities(running: &Running) -> Option<Capabilities> {
+    #[cfg(feature = "lab-api")]
+    if std::env::var_os("CONWU_LAB_ONLY_MEMBER_ASSIST").is_some() {
+        return None;
+    }
     let n = running.config.read().unwrap();
     if n.settings.existing_only() || n.settings.mode().ok() != Some("faketcp") {
         return None;
@@ -58,14 +62,8 @@ struct Lease {
 impl Lease {
     async fn gather(engine: &Engine, running: &Running, learning: bool) -> Result<Self> {
         let n = running.config.read().unwrap().clone();
-        let url = url::Url::parse(&n.settings.service)?;
-        let observer = format!(
-            "{}:{}",
-            url.host_str().context("协调地址缺少主机")?,
-            url.port_or_known_default().context("协调地址缺少端口")?
-        );
         let observation =
-            discovery::observe_tcp(n.settings.source_port, &[observer], engine, "faketcp").await?;
+            discovery::observe_tcp(n.settings.source_port, &n.settings.tcp_stun, engine, "faketcp").await?;
         let guard = Firewall::open("faketcp", true, observation.local, "127.0.0.1:9".parse()?)?;
         guard.protect(observation.local, observation.observer)?;
         #[cfg(windows)]
@@ -474,8 +472,7 @@ pub async fn run(engine: Arc<Engine>, running: Arc<Running>) {
                 }
             }
         }
-        if n.settings.mode().ok() != Some("faketcp")
-            || n.settings.existing_only()
+        if n.settings.existing_only()
             || n.settings.discovery_mode != "coordinator"
             || n.settings.service.is_empty()
             || n.paused
@@ -494,6 +491,13 @@ pub async fn run(engine: Arc<Engine>, running: Arc<Running>) {
             let http=&http.as_ref().unwrap().1;
             let state=tokio::select!{_=running.cancel.cancelled()=>anyhow::bail!("受管打洞已取消"),r=snapshot(http,&n.settings,profile,running.boot,&mut watch)=>r?};
             conwu_core::metadata::successor(&state.directory,profile.directory.as_ref().unwrap())?;
+            engine.note_peer_snapshot(&running, profile, &state);
+            if n.settings.mode().ok() != Some("faketcp") {
+                if watch.unsupported {
+                    tokio::select! { _ = running.cancel.cancelled() => {}, _ = tokio::time::sleep(Duration::from_secs(2)) => {} }
+                }
+                return Ok(());
+            }
             let remote=state.nodes.iter().find(|e|e.slot==peer.slot&&e.device==peer.device).and_then(|e:&Envelope|e.open(profile,&peer).ok()).and_then(|a|a.traversal).and_then(|v|serde_json::from_value::<Capabilities>(v).ok()).filter(|c|c.validate().is_ok()&&c.profiles.contains(&2));
             let Some(remote)=remote else{return Ok::<(),anyhow::Error>(())};
             let learning=capabilities(&running).is_some_and(|c|c.tcp_peer_reflexive==1)&&remote.tcp_peer_reflexive==1&&state.capabilities.tcp_peer_reflexive==1;

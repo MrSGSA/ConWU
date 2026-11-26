@@ -1,6 +1,6 @@
 # ConWU Rust 迁移与替换验收
 
-源码版本为 `1.5.1`。隔离验证见 [VALIDATION.md](VALIDATION.md)，本版改动见 [1.5.1 版本说明](../docs/releases/1.5.1.md)。
+源码版本为 `1.6.0`。隔离验证见 [VALIDATION.md](VALIDATION.md)，本版改动见 [1.6.0 版本说明](../docs/releases/1.6.0.md)。
 
 ConWU 自有核心、后台、配置存储、配对、发现、系统管理和更新逻辑已迁至 Rust，继续使用现有 HTML / CSS / JavaScript 界面。日常运行不启动 .NET；`compat/ConWU.DotnetOracle` 只用于开发时的协议对照。
 
@@ -81,6 +81,20 @@ cargo build --locked --release --manifest-path transport/phantun/Cargo.toml --wo
 ```
 
 正式候选增加 `production`，并先确定高于原正式版的稳定版本号。使用 `package.py --stage` 生成运行目录，再由 `Build-Msi.ps1` 构建 Windows MSI；WiX 固定为 6.0.2。Linux 正式交付使用静态 musl，并执行 `verify-linux-static.py`，避免开发机 glibc 版本高于服务器。
+
+Windows 可从 `rust/desktop` 构建可选的 Tauri 桌面窗口。它使用系统 WebView2 显示原有本机面板，关闭窗口后组网后台继续运行。
+
+在桌面窗口中点击左上角标识，可切换 ConWU 组网和 Projection。Projection 左侧显示已配对设备，右侧是同一窗口的原生播放区和画质控件。切回组网会隐藏播放区并释放键鼠，返回 Projection 时沿用当前会话。
+
+```powershell
+.\rust\dev.ps1 build --release --locked --manifest-path rust/desktop/Cargo.toml --target x86_64-pc-windows-msvc --target-dir out/desktop/target
+```
+
+打包时将上述 EXE 路径交给 `package.py --platform windows --desktop <EXE>`，程序会从托盘优先打开桌面窗口。未打入桌面组件或 WebView2 初始化失败时，托盘可继续访问浏览器面板。Projection 包同时指定 `--desktop <EXE>`、`--projection-runtime <上游 ZIP 目录>` 和 `--projection-embedded-runtime <内嵌版运行目录>`。内嵌版运行目录由修改后的 Moonlight 构建并部署对应 Qt 库。 [构建步骤与上游源码](../third-party/projection/README.md)
+
+双方在 Projection 设置中允许已配对设备远控。内嵌版通过 ConWU 认证连接完成 Sunshine 首次配对。播放默认小窗，分辨率、帧率、码率按网络保存，从下一次远控起生效，小窗还可选择 50%、75% 和 100% 播放缩放。按 `Ctrl+Alt+Shift+X` 切换全屏，按 `Ctrl+Alt+Shift+Z` 切换键鼠捕捉，按 `Ctrl+Alt+Shift+Q` 结束远控。
+
+点击小窗画面即可操控，切回 ConWU 的其他区域时释放键鼠。文件与剪贴板分别在两端授权。「发送文件」在 ConWU 窗口上打开选取框，文件保存到对端的「下载」下的 `ConWU Projection`。把文件拖到远控画面中的桌面、资源管理器文件区域或其中的文件夹，可保存到对应位置。发送端会显示对端确认的目录。文件通过独立的认证 TCP 连接传输，默认发送上限约 16 Mb/s。传输中断后可向同一目录重发以续传，完整校验后才写入最终文件名。文本剪贴板随播放会话双向同步，使用独立的控制连接。
 
 `dev.ps1`、`dev-linux.sh`、`build-linux-musl.sh` 是本工作机的工具链包装，其他机器应使用自己的工具链。前两个开发包装默认将 Cargo 缓存写入当前仓库的 `out/cargo-home`，构建和临时目录也位于本仓库 `out/`。Windows 可用 `CONWU_CARGO_HOME`、`CONWU_CARGO_HTTP_PROXY` 为当前进程指定缓存和代理；Linux 使用下述 `CONWU_LINUX_*` 变量。已有工具链可以只读复用，不把本机工具链或缓存路径当作运行依赖，不修改系统全局临时目录。
 

@@ -9,7 +9,7 @@ mod platform;
 
 pub use packet::MAX_DATAGRAM;
 use serde_json::json;
-use std::{io, net::SocketAddrV4};
+use std::{io, net::{Ipv4Addr, SocketAddrV4}};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Carrier {
@@ -36,6 +36,8 @@ pub struct Config {
     pub protected_tcp_peer: Option<SocketAddrV4>,
     pub control_peer: std::sync::Arc<std::sync::RwLock<Option<SocketAddrV4>>>,
     pub peer_reflexive: bool,
+    // Temporary listener for one coordinated peer, including changed source ports.
+    pub peer_ip: Option<Ipv4Addr>,
 }
 fn invalid(message: &str) -> io::Error {
     io::Error::new(io::ErrorKind::InvalidInput, message)
@@ -59,7 +61,7 @@ fn arguments() -> io::Result<Config> {
         }
         if !matches!(
             flag.as_str(),
-            "--source" | "--remote" | "--parent" | "--carrier" | "--protected-tcp-peer"
+            "--source" | "--remote" | "--parent" | "--carrier" | "--protected-tcp-peer" | "--peer-ip"
         ) {
             return Err(invalid("unknown argument"));
         }
@@ -72,6 +74,9 @@ fn arguments() -> io::Result<Config> {
     }
     let protected_tcp_peer = flags.remove("--protected-tcp-peer")
         .map(|value| value.parse().map_err(|_| invalid("invalid protected TCP peer")))
+        .transpose()?;
+    let peer_ip = flags.remove("--peer-ip")
+        .map(|value| value.parse::<Ipv4Addr>().map_err(|_| invalid("invalid coordinated peer IP")))
         .transpose()?;
     let mut take = |name| {
         flags
@@ -97,6 +102,7 @@ fn arguments() -> io::Result<Config> {
         protected_tcp_peer,
         control_peer: std::sync::Arc::new(std::sync::RwLock::new(protected_tcp_peer)),
         peer_reflexive,
+        peer_ip,
     };
     if config.parent == 0
         || config.parent == std::process::id()
@@ -115,6 +121,13 @@ fn arguments() -> io::Result<Config> {
     }
     if config.peer_reflexive && (!cfg!(target_os = "windows") || config.server || config.carrier != Carrier::Mimic) {
         return Err(invalid("peer-reflexive learning requires a Windows Mimic client"));
+    }
+    if config.peer_ip.is_some_and(|ip| {
+        !cfg!(target_os = "windows") || !config.server || config.carrier != Carrier::Mimic
+            || config.source.ip().is_unspecified() || ip.is_unspecified() || ip.is_loopback()
+            || ip.is_multicast() || ip.is_broadcast()
+    }) {
+        return Err(invalid("peer IP scope requires a Windows Mimic listener"));
     }
     if config.protected_tcp_peer.is_some_and(|peer| {
         config.source.ip().is_unspecified() || peer.port() == 0

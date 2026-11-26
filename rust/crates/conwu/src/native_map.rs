@@ -28,14 +28,21 @@ pub struct Mapping {
     target: SocketAddr,
     components: PathBuf,
     lease: Uuid,
-    generation: Uuid,
+    pub(crate) generation: Uuid,
     observation: tokio::sync::Mutex<Option<TcpObservation>>,
-    mapped: Mutex<SocketAddr>,
+    mapped: Mutex<LastObservation>,
     workers: tokio::sync::Mutex<HashMap<SocketAddr, Worker>>,
     pub peers: Arc<Mutex<HashMap<SocketAddr, SocketAddr>>>,
     pub cancel: CancellationToken,
+    _firewall: Option<crate::raw::Firewall>,
     #[cfg(windows)]
     capture: Arc<crate::capture::Owner>,
+}
+#[derive(Clone, Copy)]
+struct LastObservation {
+    endpoint: SocketAddr,
+    confirmed: Instant,
+    available: bool,
 }
 struct Worker {
     attachment: Arc<Attachment>,
@@ -44,9 +51,22 @@ struct Worker {
     app: Option<Arc<UdpSocket>>,
     stop: CancellationToken,
     last: Arc<Mutex<Instant>>,
+    candidate_pipe: Option<CancellationToken>,
     #[cfg(windows)]
     session: Arc<crate::capture::Session>,
 }
+
+impl Worker {
+    fn has_candidate_pipe(&self) -> bool {
+        self.candidate_pipe.as_ref().is_some_and(|pipe| !pipe.is_cancelled())
+    }
+
+    fn live(&self, idle_limit: Duration) -> bool {
+        !self.attachment.cancel.is_cancelled()
+            && (self.has_candidate_pipe() || self.last.lock().unwrap().elapsed() < idle_limit)
+    }
+}
+
 impl Mapping {
     pub async fn open(
         engine: &Engine,
@@ -56,10 +76,31 @@ impl Mapping {
         parent: &CancellationToken,
     ) -> Result<Arc<Self>> {
         let observed = discovery::observe_tcp(port, stun, engine, "faketcp").await?;
+        Self::from_observation(engine, observed, target, Arc::default(), None, parent)
+    }
+
+    pub(crate) async fn fresh_sender(&self, engine: &Engine) -> Result<Arc<Self>> {
+        let source = SocketAddr::new(self.local.ip(), 0);
+        let observed = tokio::time::timeout(discovery::TCP_OBSERVER_ATTEMPT,
+            discovery::observe_tcp_from(source, self.observer)).await??;
+        let firewall = crate::raw::Firewall::open("faketcp", true, observed.local, self.target)?;
+        firewall.protect(observed.local, observed.observer)?;
+        Self::from_observation(engine, observed, self.target, self.peers.clone(), Some(firewall), &self.cancel)
+    }
+
+    fn from_observation(
+        engine: &Engine,
+        observed: TcpObservation,
+        target: SocketAddr,
+        peers: Arc<Mutex<HashMap<SocketAddr, SocketAddr>>>,
+        firewall: Option<crate::raw::Firewall>,
+        parent: &CancellationToken,
+    ) -> Result<Arc<Self>> {
         let local = observed.local;
         let observer = observed.observer;
         let mapped = observed.mapped;
         let cancel = parent.child_token();
+        let accept_unknown = firewall.is_none();
         #[cfg(windows)]
         let capture = crate::capture::Owner::open(&engine.components, local, observer, &cancel)?;
         let mapping = Arc::new(Self {
@@ -71,17 +112,18 @@ impl Mapping {
             lease: Uuid::new_v4(),
             generation: Uuid::new_v4(),
             observation: tokio::sync::Mutex::new(Some(observed)),
-            mapped: Mutex::new(mapped),
+            mapped: Mutex::new(LastObservation { endpoint: mapped, confirmed: Instant::now(), available: true }),
             workers: tokio::sync::Mutex::new(HashMap::new()),
-            peers: Arc::new(Mutex::new(HashMap::new())),
+            peers,
             cancel,
+            _firewall: firewall,
             #[cfg(windows)]
             capture,
         });
         #[cfg(windows)]
-        let unknown = mapping.capture.take_unknown();
+        let unknown = accept_unknown.then(|| mapping.capture.take_unknown()).flatten();
         #[cfg(target_os = "linux")]
-        let unknown = Some(linux_incoming(local, mapping.cancel.clone())?);
+        let unknown = accept_unknown.then(|| linux_incoming(local, mapping.cancel.clone())).transpose()?;
         if let Some(mut unknown) = unknown {
             let weak = Arc::downgrade(&mapping);
             let stop = mapping.cancel.clone();
@@ -107,7 +149,14 @@ impl Mapping {
         Ok(mapping)
     }
     pub fn mapped(&self) -> SocketAddr {
-        *self.mapped.lock().unwrap()
+        self.mapped.lock().unwrap().endpoint
+    }
+    pub fn observed_endpoint(&self) -> Option<SocketAddr> {
+        let last = self.mapped.lock().unwrap();
+        last.available.then_some(last.endpoint)
+    }
+    pub(crate) fn observation(&self) -> &tokio::sync::Mutex<Option<TcpObservation>> {
+        &self.observation
     }
     pub fn status(&self) -> serde_json::Value {
         let workers=self.workers.try_lock().ok().map(|workers|workers.values().map(|w|{
@@ -119,21 +168,23 @@ impl Mapping {
     }
     pub async fn refresh(&self) -> Result<SocketAddr> {
         let mut observed = self.observation.lock().await;
-        let source = observed.as_mut().context("同源映射已释放")?;
-        let result = tokio::time::timeout(
-            Duration::from_secs(3),
-            discovery::stun_tcp(&mut source.stream),
-        )
-        .await;
-        match result {
-            Ok(Ok(mapped)) => {
-                source.mapped = mapped;
-                *self.mapped.lock().unwrap() = mapped;
+        let last = *self.mapped.lock().unwrap();
+        ensure!(!self.cancel.is_cancelled(), "同源接收器已关闭");
+        if last.available && last.confirmed.elapsed() < Duration::from_secs(4) {
+            return Ok(last.endpoint);
+        }
+        match discovery::renew_native_observation(&mut observed, self.local, self.observer).await {
+            Ok(mapped) => {
+                *self.mapped.lock().unwrap() = LastObservation { endpoint: mapped, confirmed: Instant::now(), available: true };
                 Ok(mapped)
             }
-            _ => {
-                self.cancel.cancel();
-                anyhow::bail!("同源观察流已失效，需重新建立捕获代次")
+            Err(error) => {
+                let grace = Duration::from_secs(30);
+                self.mapped.lock().unwrap().available = false;
+                if last.confirmed.elapsed() >= grace && !self.workers.lock().await.values().any(|worker| worker.live(grace)) {
+                    self.cancel.cancel();
+                }
+                Err(error.context("同源 STUN 暂未确认公网候选"))
             }
         }
     }
@@ -143,6 +194,14 @@ impl Mapping {
         client: bool,
         learning: bool,
     ) -> Result<Arc<Attachment>> {
+        self.prepare_worker(peer, client, learning, false).await
+    }
+
+    pub(crate) async fn prepare_burst(&self, peer: SocketAddr, client: bool) -> Result<Arc<Attachment>> {
+        self.prepare_worker(peer, client, false, true).await
+    }
+
+    async fn prepare_worker(&self, peer: SocketAddr, client: bool, learning: bool, fresh: bool) -> Result<Arc<Attachment>> {
         ensure!(
             peer.is_ipv4()
                 && peer != self.observer
@@ -152,12 +211,14 @@ impl Mapping {
         );
         let mut workers = self.workers.lock().await;
         if let Some(old) = workers.get(&peer) {
-            if !old.attachment.cancel.is_cancelled()
+            if old.live(Duration::from_secs(12))
                 && old.client == client
-                && old.last.lock().unwrap().elapsed() < Duration::from_secs(12)
+                && !(fresh && old.attachment.started())
             {
                 return Ok(old.attachment.clone());
             }
+            ensure!(old.attachment.cancel.is_cancelled() || !old.has_candidate_pipe(),
+                "FakeTCP 对端已有正在使用的候选桥");
         }
         if let Some(old) = workers.remove(&peer) {
             old.stop.cancel();
@@ -165,10 +226,7 @@ impl Mapping {
         }
         let stale = workers
             .iter()
-            .filter(|(_, w)| {
-                w.attachment.cancel.is_cancelled()
-                    || w.last.lock().unwrap().elapsed() > Duration::from_secs(30)
-            })
+            .filter(|(_, w)| !w.live(Duration::from_secs(30)))
             .map(|(p, _)| *p)
             .collect::<Vec<_>>();
         for peer in stale {
@@ -211,6 +269,8 @@ impl Mapping {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        #[cfg(target_os = "linux")]
+        command.stdout(Stdio::piped());
         let bind = if client { bridge } else { self.local };
         let remote = if client { peer } else { bridge };
         command.args([
@@ -329,6 +389,7 @@ impl Mapping {
                 app: client.then_some(proxy),
                 stop,
                 last,
+                candidate_pipe: None,
                 #[cfg(windows)]
                 session,
             },
@@ -343,6 +404,10 @@ impl Mapping {
         learning: bool,
     ) -> Result<()> {
         let attachment = self.prepare(peer, client, learning).await?;
+        self.start_punch(peer, greeting, &attachment).await
+    }
+
+    async fn start_punch(&self, peer: SocketAddr, greeting: &[u8], attachment: &Attachment) -> Result<()> {
         attachment.start().await?;
         if !greeting.is_empty() {
             let workers = self.workers.lock().await;
@@ -355,23 +420,75 @@ impl Mapping {
     pub async fn client_pipe(
         &self,
         peer: SocketAddr,
+        learning: bool,
         parent: &CancellationToken,
-        start: bool,
     ) -> Result<Pipe> {
-        let attachment = self.prepare(peer, true, false).await?;
-        if start {
-            attachment.start().await?;
-        }
+        let attachment = self.prepare(peer, true, learning).await?;
+        let socket = self.client_socket(peer, &attachment).await?;
+        Ok(crate::raw::udp_pipe(socket, parent, &self.tracker))
+    }
+    pub(crate) async fn candidate_pipe(
+        &self,
+        peer: SocketAddr,
+        guard: crate::raw::Firewall,
+        learning: bool,
+        parent: &CancellationToken,
+    ) -> Result<Pipe> {
+        let attachment = self.prepare(peer, true, learning).await?;
+        self.leased_candidate_pipe(peer, attachment, Some(guard), parent).await
+    }
+
+    pub(crate) async fn member_candidate_pipe(
+        &self,
+        peer: SocketAddr,
+        parent: &CancellationToken,
+    ) -> Result<Pipe> {
+        let attachment = self.prepare_burst(peer, true).await?;
+        self.leased_candidate_pipe(peer, attachment, None, parent).await
+    }
+
+    async fn leased_candidate_pipe(
+        &self,
+        peer: SocketAddr,
+        attachment: Arc<Attachment>,
+        guard: Option<crate::raw::Firewall>,
+        parent: &CancellationToken,
+    ) -> Result<Pipe> {
+        let socket = self.client_socket(peer, &attachment).await?;
+        let mut workers = self.workers.lock().await;
+        let worker = workers.get_mut(&peer)
+            .filter(|worker| Arc::ptr_eq(&worker.attachment, &attachment))
+            .context("原生准备已取消")?;
+        ensure!(!worker.has_candidate_pipe(), "FakeTCP 对端已有正在使用的候选桥");
+        let lease = attachment.cancel.clone().drop_guard();
+        let pipe = crate::raw::udp_pipe(socket, parent, &self.tracker);
+        let stop = pipe.cancel.clone();
+        worker.candidate_pipe = Some(stop.clone());
+        drop(workers);
+        self.tracker.spawn(async move {
+            let _guard = guard;
+            let _lease = lease;
+            stop.cancelled().await;
+        });
+        Ok(pipe)
+    }
+    async fn client_socket(
+        &self,
+        peer: SocketAddr,
+        attachment: &Arc<Attachment>,
+    ) -> Result<Arc<UdpSocket>> {
+        attachment.start().await?;
         let bridge = self
             .workers
             .lock()
             .await
             .get(&peer)
+            .filter(|worker| Arc::ptr_eq(&worker.attachment, attachment))
             .context("原生准备已取消")?
             .bridge;
         let socket = crate::raw::bind_bridge().await?;
         socket.connect(bridge).await?;
-        Ok(crate::raw::udp_pipe(socket, parent, &self.tracker))
+        Ok(socket)
     }
     pub async fn freeze(&self, peer: SocketAddr) {
         #[cfg(windows)]

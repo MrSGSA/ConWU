@@ -18,6 +18,9 @@ pub fn valid_mode(mode: &str) -> bool {
 pub fn stream_mode(mode: &str) -> bool {
     matches!(mode, "tcp" | "https")
 }
+pub fn raw_tcp_mode(mode: &str) -> bool {
+    matches!(mode, "faketcp" | "phantun" | "mimic" | "tcpraw")
+}
 pub fn valid_endpoint(e: &SocketAddr) -> bool {
     if e.port() == 0 {
         return false;

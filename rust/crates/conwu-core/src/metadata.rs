@@ -16,6 +16,8 @@ pub struct Announcement {
     pub expires: i64,
     pub endpoint: String,
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<uuid::Uuid>,
     #[serde(default)]
     pub traversal: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -128,6 +130,7 @@ impl Envelope {
                 && a.expires <= now + 180,
             "公告身份或有效期无效"
         );
+        ensure!(a.boot_id.is_none_or(|boot| !boot.is_nil()), "公告运行标识无效");
         c::check_name(&a.name)?;
         ensure!(
             a.endpoint.len() <= 64

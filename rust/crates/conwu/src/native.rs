@@ -2,7 +2,7 @@
 //! ownership lasts until confirmed child exit, including ambiguous IPC errors.
 use anyhow::{Context, Result, ensure};
 #[cfg(target_os = "linux")]
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::OnceLock};
 use std::{
     net::SocketAddr,
     sync::{Arc, Mutex},
@@ -94,7 +94,10 @@ impl Descriptor {
     }
 }
 enum Action {
-    Start(oneshot::Sender<Result<()>>),
+    Start {
+        fresh: bool,
+        reply: oneshot::Sender<Result<()>>,
+    },
     Stop,
 }
 pub struct Attachment {
@@ -103,7 +106,53 @@ pub struct Attachment {
     pub finished: CancellationToken,
     pub descriptor: Descriptor,
     began: Mutex<Option<Instant>>,
+    #[cfg(target_os = "linux")]
+    syn_sent: SynSubmission,
 }
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Default)]
+struct SynSubmission {
+    micros: Arc<OnceLock<u64>>,
+    ready: CancellationToken,
+}
+
+#[cfg(target_os = "linux")]
+impl SynSubmission {
+    fn report(&self, micros: u64) {
+        let _ = self.micros.set(micros);
+        self.ready.cancel();
+    }
+}
+
+pub(crate) struct ArmedSyn {
+    attachment: Arc<Attachment>,
+    #[cfg(windows)]
+    session: Arc<crate::capture::Session>,
+    #[cfg(windows)]
+    unused: tokio_util::sync::DropGuard,
+}
+
+impl ArmedSyn {
+    pub(crate) async fn submit(self) -> Result<u64> {
+        ensure!(!self.attachment.cancel.is_cancelled(), "FakeTCP 探测已退出");
+        #[cfg(windows)]
+        let submitted = self.session.submit_burst_syn()?;
+        #[cfg(windows)]
+        self.unused.disarm();
+        #[cfg(target_os = "linux")]
+        let submitted = {
+            self.attachment.start_with(true).await?;
+            let unused = self.attachment.cancel.clone().drop_guard();
+            self.attachment.wait_for_syn(&self.attachment.syn_sent.ready).await?;
+            let submitted = self.attachment.syn_sent.micros.get().copied().context("缺少 FakeTCP SYN 提交时间")?;
+            unused.disarm();
+            submitted
+        };
+        Ok(submitted)
+    }
+}
+
 impl Attachment {
     pub async fn prepare(
         mut command: Command,
@@ -132,6 +181,23 @@ impl Attachment {
         let pid = child.id().context("原生子进程未启动")?;
         let cancel = parent.child_token();
         let finished = CancellationToken::new();
+        #[cfg(target_os = "linux")]
+        let syn_sent = SynSubmission::default();
+        #[cfg(target_os = "linux")]
+        if let Some(stdout) = child.stdout.take() {
+            use tokio::io::{AsyncBufReadExt, BufReader};
+            let sent = syn_sent.clone();
+            tokio::spawn(async move {
+                let mut lines = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    if let Some(value) = line.strip_prefix("CONWU_NATIVE_SYN_SENT ")
+                        && let Ok(submitted) = value.trim().parse()
+                    {
+                        sent.report(submitted);
+                    }
+                }
+            });
+        }
         let setup = async {
             let mut io = server.accept(pid).await?;
             #[cfg(windows)]
@@ -170,6 +236,8 @@ impl Attachment {
             finished: finished.clone(),
             descriptor: descriptor.clone(),
             began: Mutex::new(None),
+            #[cfg(target_os = "linux")]
+            syn_sent,
         });
         let weak = Arc::downgrade(&attachment);
         tokio::spawn(async move {
@@ -185,14 +253,32 @@ impl Attachment {
                     _=cancel.cancelled()=>break,
                     _=child.wait()=>break,
                     action=actions.recv()=>match action {
-                        Some(Action::Start(reply))=>{
+                        Some(Action::Start { fresh, reply })=>{
                             let Some(owned)=weak.upgrade() else {break};
+                            if reply.is_closed() { continue; }
                             let already = owned.began.lock().unwrap().is_some();
-                            #[cfg(windows)] if let Some(s) = crate::capture::find(&descriptor) {s.activate();}
+                            if already && fresh {
+                                let _ = reply.send(Err(anyhow::anyhow!("FakeTCP 本轮已有活动探测")));
+                                continue;
+                            }
+                            #[cfg(windows)]
+                            if !already {
+                                let capture = match crate::capture::find(&descriptor) {
+                                    Some(session) => session.activate(fresh),
+                                    None if descriptor.broker => Err(anyhow::anyhow!("FakeTCP 缺少捕获会话")),
+                                    None => Ok(()),
+                                };
+                                if let Err(error) = capture {
+                                    let _ = reply.send(Err(error));
+                                    break;
+                                }
+                            }
                             let result = if already {Ok(())} else {exchange(&mut io,&descriptor,3,7,sequence).await};
                             sequence = sequence.saturating_add(!already as u32);
                             if result.is_ok() && !already {*owned.began.lock().unwrap()=Some(Instant::now());}
-                            let failed = result.is_err(); let _=reply.send(result); if failed {break;}
+                            let failed = result.is_err();
+                            let reply_lost = reply.send(result).is_err();
+                            if failed || fresh && reply_lost { break; }
                         },
                         Some(Action::Stop)|None=>break,
                     },
@@ -215,10 +301,46 @@ impl Attachment {
         Ok(attachment)
     }
     pub async fn start(&self) -> Result<()> {
+        self.start_with(false).await
+    }
+    async fn start_with(&self, fresh: bool) -> Result<()> {
         ensure!(!self.cancel.is_cancelled(), "原生准备已失效");
-        let (tx, rx) = oneshot::channel();
-        self.queue.send(Action::Start(tx)).await?;
-        tokio::time::timeout(Duration::from_secs(4), rx).await??
+        let (reply, rx) = oneshot::channel();
+        tokio::time::timeout(Duration::from_secs(4), async {
+            self.queue.send(Action::Start { fresh, reply }).await?;
+            rx.await?
+        }).await?
+    }
+    pub(crate) fn started(&self) -> bool {
+        self.began.lock().unwrap().is_some()
+    }
+
+    pub(crate) async fn arm_syn(self: Arc<Self>) -> Result<ArmedSyn> {
+        #[cfg(windows)]
+        let session = crate::capture::find(&self.descriptor).context("FakeTCP 缺少捕获会话")?;
+        #[cfg(windows)]
+        self.start_with(true).await?;
+        #[cfg(windows)]
+        let unused = self.cancel.clone().drop_guard();
+        #[cfg(windows)]
+        self.wait_for_syn(&session.burst_syn_ready).await?;
+        Ok(ArmedSyn {
+            attachment: self,
+            #[cfg(windows)]
+            session,
+            #[cfg(windows)]
+            unused,
+        })
+    }
+
+    async fn wait_for_syn(&self, ready: &CancellationToken) -> Result<()> {
+        tokio::select! {
+            _ = self.cancel.cancelled() => anyhow::bail!("FakeTCP 探测已退出"),
+            result = tokio::time::timeout(Duration::from_millis(750), ready.cancelled()) => {
+                result.context("FakeTCP 首个 SYN 就绪超时")?;
+            }
+        }
+        Ok(())
     }
     pub async fn close(&self) -> Result<()> {
         let _ = self.queue.try_send(Action::Stop);

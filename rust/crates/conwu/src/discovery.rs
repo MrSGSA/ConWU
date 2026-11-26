@@ -1,5 +1,5 @@
 use crate::model::Entry;
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use conwu_core::{
     code::{stream_mode, valid_endpoint},
     crypto as c,
@@ -14,6 +14,9 @@ use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
+
+mod stun_lease;
+pub(crate) use stun_lease::{StunLease, StunLeaseLost, StunLeaseStatus};
 
 pub fn validate_service(text: &str) -> Result<()> {
     if text.is_empty() {
@@ -311,6 +314,10 @@ pub fn public(ip: IpAddr) -> bool {
     }
 }
 pub async fn endpoint(text: &str) -> Result<Vec<SocketAddr>> {
+    resolve_endpoint(text, false).await
+}
+
+async fn resolve_endpoint(text: &str, stun: bool) -> Result<Vec<SocketAddr>> {
     let text = text
         .strip_prefix("tcp://")
         .or_else(|| text.strip_prefix("udp://"))
@@ -328,8 +335,13 @@ pub async fn endpoint(text: &str) -> Result<Vec<SocketAddr>> {
         .ok_or_else(|| anyhow::anyhow!("endpoint port missing"))?;
     let port = port.parse::<u16>()?;
     ensure!(port > 0 && !host.is_empty(), "endpoint host/port invalid");
-    Ok(crate::dns::addresses(host)
-        .await?
+    let fresh = crate::dns::addresses(host);
+    let addresses = if stun {
+        crate::dns::with_recent_ip(crate::dns::EndpointKind::TcpStun, host, port, async {
+            Ok(fresh.await?.into_iter().filter(IpAddr::is_ipv4).collect())
+        }).await?
+    } else { fresh.await? };
+    Ok(addresses
         .into_iter()
         .take(8)
         .map(|ip| SocketAddr::new(ip, port))
@@ -481,6 +493,19 @@ pub struct TcpObservation {
     pub mapped: SocketAddr,
     pub observer: SocketAddr,
 }
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TcpAddresses {
+    pub local: SocketAddr,
+    pub mapped: SocketAddr,
+    pub observer: SocketAddr,
+}
+
+impl TcpObservation {
+    pub(crate) fn addresses(&self) -> TcpAddresses {
+        TcpAddresses { local: self.local, mapped: self.mapped, observer: self.observer }
+    }
+}
 /// Each discovery pass needs one successful observation. A new TCP connection
 /// already performed a Binding request in observe_tcp.
 pub async fn refresh_or_observe_tcp(
@@ -489,16 +514,139 @@ pub async fn refresh_or_observe_tcp(
     servers: &[String],
     engine: &crate::runtime::Engine,
     mode: &str,
+    preferred: Option<SocketAddr>,
 ) -> Result<TcpObservation> {
+    // A healthy fallback can stay open indefinitely. Give the coordinator's
+    // own observer a bounded chance before refreshing that fallback.
+    if let Some(observer) = preferred
+        && previous
+            .as_ref()
+            .is_none_or(|old| old.local.port() != port || old.observer != observer)
+        && let Ok(observed) = observe_tcp_endpoint(
+            port, observer, engine, mode, tokio::time::Instant::now() + TCP_OBSERVER_ATTEMPT,
+        ).await
+        && observed.mapped.is_ipv4()
+        && public(observed.mapped.ip())
+    {
+        return Ok(observed);
+    }
     if let Some(mut old) = previous.filter(|o| o.local.port() == port) {
         if let Ok(Ok(mapped)) =
-            tokio::time::timeout(Duration::from_secs(3), stun_tcp(&mut old.stream)).await
+            tokio::time::timeout(stun_lease::BINDING_TIMEOUT, stun_tcp(&mut old.stream)).await
         {
             old.mapped = mapped;
             return Ok(old);
         }
     }
     observe_tcp(port, servers, engine, mode).await
+}
+
+pub(crate) const TCP_OBSERVER_ATTEMPT: Duration = Duration::from_millis(1800);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ObserverStage {
+    Prepare,
+    Connect,
+    Binding,
+}
+
+#[derive(Debug)]
+struct ObserverTimeout {
+    stage: ObserverStage,
+    local: SocketAddr,
+    remote: SocketAddr,
+}
+
+impl std::fmt::Display for ObserverTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let stage = match self.stage {
+            ObserverStage::Prepare => "准备 TCP STUN 同源接收器",
+            ObserverStage::Connect => "建立 TCP STUN 连接",
+            ObserverStage::Binding => "等待 TCP STUN Binding 回复",
+        };
+        write!(f, "{stage}超时（应用层截止，{} → {}）", self.local, self.remote)
+    }
+}
+
+impl std::error::Error for ObserverTimeout {}
+
+async fn observer_stage<T>(
+    deadline: Option<tokio::time::Instant>,
+    error: ObserverTimeout,
+    work: impl std::future::Future<Output = T>,
+) -> Result<T> {
+    if let Some(deadline) = deadline {
+        Ok(tokio::time::timeout_at(deadline, work).await.map_err(|_| error)?)
+    } else {
+        Ok(work.await)
+    }
+}
+
+async fn observe_tcp_endpoint(
+    port: u16,
+    remote: SocketAddr,
+    engine: &crate::runtime::Engine,
+    mode: &str,
+    deadline: tokio::time::Instant,
+) -> Result<TcpObservation> {
+    let local = SocketAddr::new(local_route(remote)?, port);
+    observer_stage(Some(deadline), ObserverTimeout { stage: ObserverStage::Prepare, local, remote },
+        crate::raw::prepare_observer(engine, mode, port, remote)).await??;
+    observe_tcp_before(local, remote, Some(deadline)).await
+}
+
+pub(crate) async fn observe_tcp_from(local: SocketAddr, remote: SocketAddr) -> Result<TcpObservation> {
+    observe_tcp_before(local, remote, None).await
+}
+
+async fn observe_tcp_before(
+    local: SocketAddr, remote: SocketAddr, deadline: Option<tokio::time::Instant>,
+) -> Result<TcpObservation> {
+    let socket = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::STREAM,
+        Some(socket2::Protocol::TCP),
+    )?;
+    socket.set_reuse_address(true)?;
+    socket.set_linger(Some(Duration::ZERO))?;
+    #[cfg(target_os = "linux")]
+    socket.set_reuse_port(true)?;
+    socket.bind(&local.into()).with_context(|| format!("绑定 TCP STUN 源端口 {local}"))?;
+    socket.set_nonblocking(true)?;
+    let socket: std::net::TcpStream = socket.into();
+    let connect = tokio::net::TcpSocket::from_std_stream(socket).connect(remote);
+    let mut stream = observer_stage(deadline, ObserverTimeout { stage: ObserverStage::Connect, local, remote }, connect)
+        .await?.with_context(|| format!("连接 TCP STUN 观察器（{local} → {remote}）"))?;
+    let local = stream.local_addr()?;
+    let mapped = observer_stage(deadline, ObserverTimeout { stage: ObserverStage::Binding, local, remote }, stun_tcp(&mut stream))
+        .await?.with_context(|| format!("读取 TCP STUN Binding 回复（{local} → {remote}）"))?;
+    Ok(TcpObservation {
+        stream,
+        local,
+        mapped,
+        observer: remote,
+    })
+}
+
+/// Capture and its firewall exception are bound to this exact pair of endpoints.
+pub(crate) async fn renew_native_observation(
+    lease: &mut Option<TcpObservation>,
+    local: SocketAddr,
+    observer: SocketAddr,
+) -> Result<SocketAddr> {
+    if let Some(old) = lease.as_mut()
+        && let Ok(Ok(mapped)) = tokio::time::timeout(stun_lease::BINDING_TIMEOUT, stun_tcp(&mut old.stream)).await
+    {
+        old.mapped = mapped;
+        return Ok(mapped);
+    }
+    // Some STUN servers close after one reply. Release the old four-tuple
+    // before reconnecting, and keep the raw receiver and its peers alive.
+    drop(lease.take());
+    let fresh = tokio::time::timeout(TCP_OBSERVER_ATTEMPT, observe_tcp_from(local, observer)).await??;
+    let mapped = fresh.mapped;
+    *lease = Some(fresh);
+    Ok(mapped)
 }
 
 struct ObserverAddresses {
@@ -541,6 +689,69 @@ mod observer_tests {
     use super::*;
 
     #[tokio::test]
+    async fn transient_pairing_observation_can_retry_the_same_endpoint() -> Result<()> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let observer = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            for attempt in 0..2 {
+                let (mut stream, _) = listener.accept().await?;
+                let mut request = [0; 20];
+                stream.read_exact(&mut request).await?;
+                if attempt == 0 {
+                    continue;
+                }
+                let mut response = request.to_vec();
+                response[..4].copy_from_slice(&[1, 1, 0, 12]);
+                response.extend_from_slice(&[0, 1, 0, 8, 0, 1, 0x9c, 0x40, 127, 0, 0, 1]);
+                stream.write_all(&response).await?;
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+        let local = "127.0.0.1:0".parse()?;
+        let observation = tokio::time::timeout(Duration::from_secs(3), crate::assistance::retry_pair_step(
+            "TCP STUN 观察", transient_observer, |_| observe_tcp_from(local, observer),
+        )).await??;
+        assert_eq!(observation.observer, observer);
+        assert_eq!(observation.mapped.port(), 40000);
+        server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn native_refresh_recovers_a_closed_stun_stream_on_the_same_source() -> Result<()> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let observer = listener.local_addr()?;
+        let server = tokio::spawn(async move {
+            let mut first_source = None;
+            for port in [40000u16, 40001] {
+                let (mut stream, source) = listener.accept().await?;
+                assert_eq!(*first_source.get_or_insert(source), source);
+                let mut request = [0; 20];
+                stream.read_exact(&mut request).await?;
+                let mut reply = request.to_vec();
+                reply[..4].copy_from_slice(&[1, 1, 0, 12]);
+                reply.extend_from_slice(&[0, 1, 0, 8, 0, 1]);
+                reply.extend_from_slice(&port.to_be_bytes());
+                reply.extend_from_slice(&[127, 0, 0, 1]);
+                stream.write_all(&reply).await?;
+                if port == 40000 {
+                    stream.read_exact(&mut request).await?;
+                    socket2::SockRef::from(&stream).set_linger(Some(Duration::ZERO))?;
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        });
+        let first = observe_tcp_from("127.0.0.1:0".parse()?, observer).await?;
+        let local = first.local;
+        assert_eq!(first.mapped.port(), 40000);
+        let mut lease = Some(first);
+        assert_eq!(renew_native_observation(&mut lease, local, observer).await?.port(), 40001);
+        assert_eq!(lease.unwrap().local, local);
+        server.await??;
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn a_newly_resolved_observer_runs_before_retrying_another_server() {
         let first = "127.0.0.1:42001".parse().unwrap();
         let fallback = "127.0.0.1:42002".parse().unwrap();
@@ -561,6 +772,54 @@ mod observer_tests {
         .await
         .expect("a pending DNS lookup must not hold up ready observers");
     }
+
+    #[tokio::test]
+    async fn observation_reports_a_binding_deadline_after_tcp_connect() -> Result<()> {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let remote = listener.local_addr()?;
+        let accepted = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await?;
+            let mut request = [0u8; 20];
+            stream.read_exact(&mut request).await?;
+            std::future::pending::<()>().await;
+            Ok::<_, std::io::Error>(())
+        });
+        let result = observe_tcp_before("127.0.0.1:0".parse()?, remote,
+            Some(tokio::time::Instant::now() + Duration::from_millis(150))).await;
+        let Err(error) = result else { anyhow::bail!("未回复 Binding 的服务器不应观察成功") };
+        assert!(matches!(error.downcast_ref(), Some(ObserverTimeout { stage: ObserverStage::Binding, .. })));
+        assert!(transient_observer(&error));
+        assert!(confirm_stalled_stun_source(&error).await.is_none());
+        accepted.abort();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_stalled_source_requires_success_from_a_different_port() -> Result<()> {
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let remote = server.local_addr()?;
+        let reserved = std::net::TcpListener::bind("127.0.0.1:0")?;
+        let local = reserved.local_addr()?;
+        let error: anyhow::Error = ObserverTimeout { stage: ObserverStage::Connect, local, remote }.into();
+        let server = tokio::spawn(async move {
+            let (mut stream, peer) = server.accept().await?;
+            let mut request = [0u8; 20];
+            stream.read_exact(&mut request).await?;
+            assert_ne!(peer.port(), local.port());
+            let mut response = request.to_vec();
+            response[..4].copy_from_slice(&[1, 1, 0, 12]);
+            response.extend_from_slice(&[0, 1, 0, 8, 0, 1]);
+            response.extend_from_slice(&peer.port().to_be_bytes());
+            response.extend_from_slice(&[127, 0, 0, 1]);
+            stream.write_all(&response).await?;
+            Ok::<_, anyhow::Error>(())
+        });
+        assert!(stun_source_unavailable(&confirm_stalled_stun_source(&error).await
+            .context("备用源端口未被识别")?.into()));
+        server.await??;
+        assert!(confirm_stalled_stun_source(&error).await.is_none());
+        Ok(())
+    }
 }
 
 pub async fn observe_tcp(
@@ -568,6 +827,93 @@ pub async fn observe_tcp(
     servers: &[String],
     engine: &crate::runtime::Engine,
     mode: &str,
+) -> Result<TcpObservation> {
+    observe_tcp_impl(port, servers, engine, mode, false, &Default::default()).await
+}
+
+pub(crate) async fn observe_tcp_with_keepalive(
+    port: u16,
+    servers: &[String],
+    engine: &crate::runtime::Engine,
+    mode: &str,
+) -> Result<TcpObservation> {
+    observe_tcp_impl(port, servers, engine, mode, true, &Default::default()).await
+}
+
+pub(crate) fn transient_observer(error: &anyhow::Error) -> bool {
+    use std::io::ErrorKind;
+    error.is::<ObserverTimeout>() || error.chain().any(|cause| cause.downcast_ref::<std::io::Error>().is_some_and(|io| matches!(
+        io.kind(),
+        ErrorKind::AddrInUse | ErrorKind::ConnectionAborted | ErrorKind::ConnectionRefused
+            | ErrorKind::ConnectionReset | ErrorKind::BrokenPipe | ErrorKind::UnexpectedEof
+            | ErrorKind::TimedOut | ErrorKind::Interrupted | ErrorKind::NetworkUnreachable
+            | ErrorKind::HostUnreachable
+    )))
+}
+
+pub(crate) fn stun_address_in_use(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| cause.downcast_ref::<std::io::Error>()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::AddrInUse))
+}
+
+#[derive(Debug)]
+struct StunSourceStalled {
+    local: SocketAddr,
+    observer: SocketAddr,
+}
+
+impl std::fmt::Display for StunSourceStalled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "绑定的 TCP STUN 源地址 {} 连接超时，临时源端口可访问同一观察器 {}", self.local, self.observer)
+    }
+}
+
+impl std::error::Error for StunSourceStalled {}
+
+pub(crate) fn stun_source_unavailable(error: &anyhow::Error) -> bool {
+    stun_address_in_use(error) || error.is::<StunSourceStalled>()
+}
+
+async fn confirm_stalled_stun_source(error: &anyhow::Error) -> Option<StunSourceStalled> {
+    let &ObserverTimeout { stage: ObserverStage::Connect, local, remote } = error.downcast_ref()? else {
+        return None;
+    };
+    let deadline = tokio::time::Instant::now() + TCP_OBSERVER_ATTEMPT;
+    let alternate = observe_tcp_before(SocketAddr::new(local.ip(), 0), remote, Some(deadline)).await.ok()?;
+    (alternate.local.port() != local.port() && (public(alternate.mapped.ip()) || remote.ip().is_loopback()))
+        .then_some(StunSourceStalled { local, observer: remote })
+}
+
+type ObserverLookup = std::sync::Mutex<std::collections::HashMap<usize, Vec<SocketAddr>>>;
+
+pub(crate) async fn observe_tcp_invite(
+    port: u16, servers: &[String], engine: &crate::runtime::Engine, mode: &str,
+) -> Result<TcpObservation> {
+    let resolved = ObserverLookup::default();
+    let resolved = &resolved;
+    crate::assistance::retry_pair_step("主机 TCP STUN 观察", |error| {
+        !stun_source_unavailable(error) && transient_observer(error)
+    }, |attempt| async move {
+        let result = observe_tcp_impl(port, servers, engine, mode, false, resolved).await;
+        // Confirm that changing source can help before replacing a configured
+        // listener. A Binding timeout or an unreachable server leaves it alone.
+        if attempt == 1 && stream_mode(mode) && servers.len() == 1
+            && let Err(error) = &result
+            && let Some(stalled) = confirm_stalled_stun_source(error).await
+        {
+            return Err(stalled.into());
+        }
+        result
+    }).await
+}
+
+async fn observe_tcp_impl(
+    port: u16,
+    servers: &[String],
+    engine: &crate::runtime::Engine,
+    mode: &str,
+    require_keepalive: bool,
+    resolved: &ObserverLookup,
 ) -> Result<TcpObservation> {
     ensure!(servers.len() <= 256, "STUN 列表超过限制");
     let key = (mode.to_owned(), port);
@@ -587,11 +933,27 @@ pub async fn observe_tcp(
     let mut queries = futures_util::stream::FuturesUnordered::new();
     for index in order {
         let server = &servers[index];
-        queries.push(async move { (index, endpoint(server).await.unwrap_or_default()) });
+        queries.push(async move {
+            let cached = resolved.lock().unwrap().get(&index).cloned();
+            let addresses = match cached {
+                Some(addresses) => addresses,
+                None => {
+                    let addresses = resolve_endpoint(server, true).await.unwrap_or_default();
+                    if !addresses.is_empty() {
+                        resolved.lock().unwrap().insert(index, addresses.clone());
+                    }
+                    addresses
+                }
+            };
+            (index, addresses)
+        });
     }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(12);
     let mut tried = std::collections::HashSet::new();
     let mut ready = Vec::new();
+    let mut rejected = None;
+    let mut occupied = None;
+    let mut failed = None;
     while tokio::time::Instant::now() < deadline
         && let Ok(Some((index, remote))) =
             tokio::time::timeout_at(deadline, next_observer_address(&mut queries, &mut ready)).await
@@ -599,41 +961,34 @@ pub async fn observe_tcp(
         if !tried.insert(remote) {
             continue;
         }
-        let attempt = async {
-            crate::raw::prepare_observer(engine, mode, port, remote).await?;
-            let ip = local_route(remote)?;
-            let socket = socket2::Socket::new(
-                socket2::Domain::IPV4,
-                socket2::Type::STREAM,
-                Some(socket2::Protocol::TCP),
-            )?;
-            socket.set_reuse_address(true)?;
-            socket.set_linger(Some(Duration::ZERO))?;
-            #[cfg(target_os = "linux")]
-            socket.set_reuse_port(true)?;
-            socket.bind(&SocketAddr::new(ip, port).into())?;
-            socket.set_nonblocking(true)?;
-            let socket: std::net::TcpStream = socket.into();
-            let mut socket = tokio::net::TcpSocket::from_std_stream(socket)
-                .connect(remote)
-                .await?;
-            let local = socket.local_addr()?;
-            let mapped = stun_tcp(&mut socket).await?;
-            Ok::<_, anyhow::Error>(TcpObservation {
-                stream: socket,
-                local,
-                mapped,
-                observer: remote,
-            })
+        let budget = std::cmp::min(deadline, tokio::time::Instant::now() + TCP_OBSERVER_ATTEMPT);
+        let mut result = match observe_tcp_endpoint(port, remote, engine, mode, budget).await {
+            Ok(result) => result,
+            Err(error) if stun_address_in_use(&error) => {
+                occupied = Some(error);
+                continue;
+            }
+            Err(error) => { failed = Some(error); continue; }
         };
-        let budget = std::cmp::min(
-            deadline,
-            tokio::time::Instant::now() + Duration::from_millis(1800),
-        );
-        if let Ok(Ok(result)) = tokio::time::timeout_at(budget, attempt).await {
-            engine.stun_cursor.lock().unwrap().insert(key, index);
-            return Ok(result);
+        if require_keepalive {
+            match tokio::time::timeout_at(deadline, stun_lease::verify(&mut result)).await {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => { rejected = Some(error); continue; }
+                Err(_) => break,
+            }
         }
+        let server = servers[index].strip_prefix("tcp://").unwrap_or(&servers[index]);
+        if let Some((host, _)) = server.rsplit_once(':') {
+            crate::dns::remember(crate::dns::EndpointKind::TcpStun, host, remote);
+        }
+        engine.stun_cursor.lock().unwrap().insert(key, index);
+        return Ok(result);
+    }
+    if let Some(error) = rejected {
+        return Err(error.into());
+    }
+    if let Some(error) = occupied.or(failed) {
+        return Err(error.context("TCP STUN 未取得候选"));
     }
     anyhow::bail!("TCP STUN 未取得候选；这不代表已证实公网入口可达")
 }

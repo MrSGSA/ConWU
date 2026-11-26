@@ -3,17 +3,18 @@
 // Live workspace presentation. Pairing, operation tracking and local session
 // renewal continue to use app.js; this layer never simulates connection success.
 (()=>{
-Object.assign(titles,{requests:'加入申请',coordination:'对外协调',uu:'UU远程'});
+Object.assign(titles,{exit:'退出网络',requests:'加入申请',coordination:'对外协调',uu:'UU远程'});
+if(projectionMode.desktop)titles.projection='Projection';
 delete titles.coordinator;
 let terminalTheme='auto';try{terminalTheme=localStorage.getItem('streamlink-terminal-theme')||'auto';}catch{}
 const liveLogView=updateLogView;
 updateLogView=function(){const prior=saved.logging.terminal;saved.logging.terminal=terminalTheme;try{liveLogView();}finally{saved.logging.terminal=prior;}};
-const ui={coordination:null,coordinationBase:null,codeId:'',joinId:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
+const ui={coordination:null,coordinationBase:null,codeId:'',joinId:'',joinCoordinator:'',editor:null,device:null,deviceBase:null,newConfig:'',signature:'',range:60,chart:[],rates:new Map(),sample:null,disclosures:new Map(),test:null};
 // Polling keeps running while text is selected. Delay DOM writes so a refresh
 // cannot destroy the browser's Range or an input's selected text mid-copy.
 function holdAutomaticPaint(){
  const selection=window.getSelection(),input=document.activeElement;
- let held=ui.selecting||selection&&!selection.isCollapsed;
+ let held=ui.selecting||selection&&!selection.isCollapsed&&selection.anchorNode?.parentElement?.getClientRects().length;
  try{held=held||input?.matches('input,textarea')&&input.selectionStart!==input.selectionEnd;}catch{}
  if(held)ui.pendingPaint=true;
  return !!held;
@@ -23,16 +24,22 @@ function resumePaint(){
   ui.pendingPaint=false;render();updateConnectedTimes();
  }
 }
-document.addEventListener('pointerdown',e=>{if(e.button===0&&!e.target.closest('button,a,select,input[type="checkbox"],input[type="radio"]'))ui.selecting=true;},true);
-for(const event of ['pointerup','pointercancel'])document.addEventListener(event,()=>{ui.selecting=false;setTimeout(resumePaint,0);},true);
+function releaseSelection(){clearTimeout(ui.pointerRelease);ui.pointerRelease=0;ui.selecting=false;setTimeout(resumePaint,0);}
+document.addEventListener('pointerdown',e=>{if(e.button===0&&e.isPrimary){clearTimeout(ui.pointerRelease);ui.selecting=true;}},true);
+// Preserve the target until WebView2 dispatches click after pointerup.
+document.addEventListener('pointerup',e=>{if(ui.selecting&&e.isPrimary&&e.button===0)ui.pointerRelease=setTimeout(releaseSelection,80);},true);
+for(const event of ['click','pointercancel'])document.addEventListener(event,releaseSelection,true);
+// A release outside WebView2 may not reach the document. Resume on re-entry.
+window.addEventListener('pointermove',e=>{if(ui.selecting&&!ui.pointerRelease&&e.isPrimary&&!(e.buttons&1))releaseSelection();},true);
 document.addEventListener('selectionchange',()=>{if(ui.pendingPaint)setTimeout(resumePaint,0);});
-window.addEventListener('blur',()=>{ui.selecting=false;});
+window.addEventListener('blur',releaseSelection);
+window.addEventListener('focus',()=>{ui.selecting=false;resumePaint();resumeStatus();controls();});
 const liveConnectedTimes=updateConnectedTimes;
 updateConnectedTimes=function(){if(!holdAutomaticPaint())liveConnectedTimes();};
 const selectedLogView=updateLogView;
 updateLogView=function(){if(!holdAutomaticPaint())selectedLogView();};
 const liveUnavailable=unavailable;
-unavailable=function(message){if(holdAutomaticPaint()){online=false;previousTraffic=null;ui.unavailableMessage=message;return;}liveUnavailable(message);};
+unavailable=function(message){if(holdAutomaticPaint()){online=false;previousTraffic=null;ui.unavailableMessage=message;}else liveUnavailable(message);if(page==='projection')projectionMode.updateCover();};
 const all=()=>workspaceState?.networks||[],row=id=>all().find(n=>n.id===id);
 const protocolOf=p=>({'udp-only':'直接 UDP（旧网络）','tcp-only':'纯 TCP','https-only':'HTTPS','phantun-only':'Phantun','mimic-only':'Mimic（实验）','tcpraw-only':'TCPRAW（实验）'}[p?.pathSelection]||'FakeTCP + HTTP');
 const strategyOf=p=>p?.connectionSource==='existing'?'只使用已有入口':'自主打洞';
@@ -42,15 +49,20 @@ const uiToggle=(scope,key,value,label)=>`<label class="switch"><input type="chec
 const kv=(label,value,mono=false)=>`<div class="kv"><span>${esc(label)}</span><span class="${mono?'mono':''}">${esc(value)}</span></div>`;
 const readRows=items=>`<dl class="readonly-values">${items.map(([label,value])=>`<div><dt>${esc(label)}</dt><dd>${esc(value||'未设置')}</dd></div>`).join('')}</dl>`;
 const deviceValue=()=>({name:workspaceState?.deviceName||'',startup:!!workspaceState?.desktop?.autoStart,level:workspaceState?.logLevel||'info',terminal:terminalTheme});
-const defaultDevice=()=>({name:workspaceState.deviceName,startup:true,level:'info',terminal:'auto'});
-function coordinatorValue(){
+const defaultDevice=()=>({name:workspaceState.deviceDefaults?.name||workspaceState.deviceName,startup:!!workspaceState.deviceDefaults?.autoStart,level:'info',terminal:'auto'});
+function coordinatorValue(useDefaults=false){
  const host=clone({...defaults.host,...deviceSettings().coordinator});
+ if(useDefaults){
+  const initial=workspaceState?.deviceDefaults?.coordinator;
+  return {...host,port:String(new URL(initial?.listenUrl||'https://0.0.0.0:1145').port),certificateFile:'',certificateKeyFile:''};
+ }
  return {...host,port:String(new URL(host.listenUrl).port||47822)};
 }
 const compactCodeValue=value=>String(value||'').toUpperCase().replace(/[\s\u2010-\u2015-]/g,'').replace(/O/g,'0').replace(/[IL]/g,'1');
 const formatCompact=value=>compactCodeValue(value).match(/.{1,4}/g)?.join('-')||'';
 const compactLimit=value=>compactCodeValue(value).startsWith('2')?36:16;
 const validCompactCode=value=>{const code=compactCodeValue(value);return /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]+$/.test(code)&&code.length===compactLimit(code);};
+const coordinatedCode=value=>validCompactCode(value)&&/^[MNPQRSTVWXYZ]/.test(compactCodeValue(value));
 function normalizedJoinCoordinator(value){
  if(!value.trim())return '';
  try{const url=new URL(value.trim());if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw Error();if(!url.pathname.endsWith('/'))url.pathname+='/';return url.href;}
@@ -60,8 +72,7 @@ const inheritedPairConfig=configFromStatus;
 configFromStatus=function(s){
  const c=inheritedPairConfig(s),p=s.settings||{},d=workspaceState?.networkDefaults;
  c.network.pkarrGateways=(p.pkarrGateways||d?.pkarrGateways||['https://pkarr.pubky.app','https://pkarr.pubky.org']).join('\n');
- c.stun.tcp=(p.tcpStun?.length?p.tcpStun:d?.tcpStun||[]).join('\n');
- c.stun.udp=(p.udpStun?.length?p.udpStun:d?.udpStun||[]).join('\n');
+ c.stun.tcp=(p.tcpStun??d?.tcpStun??[]).join('\n');
  return c;
 };
 function directGroups(value,placeholder=false){
@@ -81,13 +92,28 @@ function initializeDrafts(){
  if(!ui.coordination||!ui.savingCoordination&&same(ui.coordination,ui.coordinationBase)){ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);}
  if(ui.newConfig&&!workspaceState.configurations?.some(c=>c.id===ui.newConfig))ui.newConfig='';
 }
-function saveActions(scope){return `<div class="heading-actions"><div class="heading-action-buttons">${scope==='device'?'<button class="btn" data-ui-action="default-device">恢复默认设置</button>':''}<button class="btn" data-ui-action="restore-${scope}" id="revert-${scope}">恢复刚才设置</button><button class="btn primary" data-ui-action="save-${scope}" id="save-${scope}">${icon('save')}保存设置</button></div><span class="save-state" id="${scope}-save-state" role="status"></span></div>`;}
+function deviceSaveActions(){return `<div class="heading-actions"><div class="heading-action-buttons"><button class="btn" data-ui-action="default-device">恢复默认设置</button><button class="btn primary" data-ui-action="save-device" id="save-device">${icon('save')}保存设置</button></div><span class="save-state" id="device-save-state" role="status"></span></div>`;}
 function networkList(host){
  const rows=all().filter(n=>!!n.status.networkId&&n.status.isOwner===host);
  return `<article class="card network-list-card" id="${host?'owned':'joined'}-networks"><div class="table-title"><h2>本机${host?'创建':'加入'}的网络</h2><span class="small">${rows.length} 个网络</span></div>${rows.length?rows.map(n=>{
   const s=n.status,p=s.peers[0],live=online&&s.networkEnabled&&!!p?.connected;
   const status=live?'已直连 '+p.name:!online?'状态待确认':!s.networkEnabled?'已断开连接':p?.connection?.phase==='Paused'?'对机已断开连接':p?'等待 '+p.name+' 上线':'等待另一台设备加入';
-  return `<div class="list-row" data-network-row="${esc(n.id)}"><div class="grow">${host?`<button class="network-name-button" data-ui-action="select-host" data-network="${esc(n.id)}" title="查看此网络的直连码">${esc(n.name)}</button>`:`<strong>${esc(n.name)}</strong>`}<div class="network-local-ip">本机虚拟 IP：<span class="mono">${esc(s.virtualIp||'待分配')}</span></div><div class="network-peer"><span class="dot ${live?'good':''}"></span><span>${esc(status)}</span></div><div class="network-peer-ip">对机虚拟 IP：<span class="mono">${esc(p?.virtualIp||'待分配')}</span></div>${host&&!s.networkEnabled?`<button class="text-btn" data-ui-action="start-network" data-network="${esc(n.id)}">连接网络</button>`:''}</div><div class="network-row-actions">${host?`<button class="btn compact" data-ui-action="select-host" data-network="${esc(n.id)}">${icon('link')}查看直连码</button>`:''}<button class="btn compact" data-ui-action="open-editor" data-network="${esc(n.id)}">${icon(host?'settings':'shield')}${host?'网络设置':'查看设置'}</button><button class="text-btn ${host?'danger-text':''}" data-ui-action="${host?'remove-network':'toggle-connection'}" data-network="${esc(n.id)}">${host?'删除网络':s.networkEnabled?'断开连接':'重新连接'}</button></div></div>`;
+  const action=host?'remove-network':s.networkEnabled?'disconnect-network':'reconnect-network';
+  const label=host?'删除网络':s.networkEnabled?'断开连接':'重新连接';
+  return `<div class="network-entry" data-network-row="${esc(n.id)}">
+   <div class="list-row">
+    <div class="grow">${host?`<button class="network-name-button" data-ui-action="select-host" data-network="${esc(n.id)}" title="查看此网络的直连码">${esc(n.name)}</button>`:`<strong>${esc(n.name)}</strong>`}
+     <div class="network-local-ip">本机虚拟 IP：<span class="mono">${esc(s.virtualIp||'待分配')}</span></div>
+     <div class="network-peer"><span class="dot ${live?'good':''}"></span><span>${esc(status)}</span></div>
+     <div class="network-peer-ip">对机虚拟 IP：<span class="mono">${esc(p?.virtualIp||'待分配')}</span></div>
+     ${host&&!s.networkEnabled?`<button class="text-btn" data-ui-action="start-network" data-network="${esc(n.id)}">连接网络</button>`:''}
+    </div>
+    <div class="network-row-actions">${host?`<button class="btn compact" data-ui-action="select-host" data-network="${esc(n.id)}">${icon('link')}查看直连码</button>`:''}
+     <button class="btn compact" data-ui-action="open-editor" data-network="${esc(n.id)}">${icon(host?'settings':'shield')}${host?'网络设置':'查看设置'}</button>
+     ${networkActionButton(n,action,label)}
+    </div>
+   </div>
+  </div>`;
  }).join(''):`<div class="empty">${icon(host?'create':'join')}<h2>还没有${host?'创建':'加入'}网络</h2><p>${host?'在左侧创建后，会在这里显示。':'通过主机审批后，会在这里显示。'}</p></div>`}</article>`;
 }
 function currentCreateSettings(){return workspaceState?.configurations.find(c=>c.id===ui.newConfig)?.settings||newConfigurationSettings();}
@@ -107,10 +133,13 @@ function updateInvitationDialog(){
  $('invitation-title').textContent=n.name;
  const code=invitationCode(),display=$('invitation-code');
  const dualStack=['tcp-only','https-only'].includes(n.status.settings?.pathSelection);
- $('invitation-code-length').textContent=code?(code.length===36?'IPv6 · 36 位':'IPv4 · 16 位'):'';
- $('invitation-family-field').hidden=!dualStack;
- $('invitation-family').hidden=!dualStack;
- $('invitation-family-hint').textContent=dualStack?'默认优先生成 IPv4 码；使用 IPv6 码时，双方均需具备可用的 IPv6 网络。':'当前协议使用 IPv4 入口，生成 16 位直连码。';
+ const coordinated=n.status.settings?.discoveryMode==='coordinator'&&n.status.settings.connectionSource!=='existing'&&!!n.status.settings.service;
+ $('invitation-code-length').textContent=code?(n.status.pairing?.coordinated?'协调 IPv4 · 16 位':code.length===36?'IPv6 · 36 位':'IPv4 · 16 位'):'';
+ $('invitation-family-field').hidden=!dualStack||coordinated;
+ $('invitation-family').hidden=!dualStack||coordinated;
+ $('invitation-family-hint').textContent=coordinated
+  ? '协调配对使用 16 位直连码。复制时附带协调服务器地址。'
+  : dualStack?'默认优先生成 IPv4 码；使用 IPv6 码时，双方均需具备可用的 IPv6 网络。':'当前协议使用 IPv4 入口，生成 16 位直连码。';
  display.setAttribute('aria-label',code?'本机直连码：'+formatCompact(code):'尚未生成直连码');
  if(display.dataset.code!==code){display.innerHTML=directGroups(code,true);display.dataset.code=code;}
  const entry=n.status.entryPreparation,existing=n.status.settings?.connectionSource==='existing';
@@ -134,29 +163,20 @@ function closeInvitation(){ui.codeId='';$('invitation-dialog').close();$('invita
 function pendingJoin(){
  return row(ui.joinId)||all().find(n=>!n.status.networkId&&!n.status.networkRevoked&&n.status.pairing?.active&&!n.status.pairing.owner);
 }
-function inactiveNetworkList(revoked){
- const records=all().filter(n=>!n.status.networkId&&!n.status.networkCreatedHere&&!!n.status.networkRevoked===revoked);
- if(!records.length)return '';
- const title=revoked?'已撤销的网络':'未完成的加入申请';
- const action=revoked?'移除记录':'移除申请';
- return `<article class="card network-list-card" id="${revoked?'revoked-networks':'unapproved-requests'}"><div class="table-title"><h2>${title}</h2></div>${records.map(n=>{
-  const detail=revoked?n.status.state:n.status.pairing?.error||n.status.pairing?.state||'尚未获得主机批准';
-  return `<div class="list-row"><div class="grow"><strong>${esc(n.name)}</strong><p class="hint">${esc(detail)}</p></div><button class="text-btn" data-ui-action="remove-network" data-network="${esc(n.id)}">${action}</button></div>`;
- }).join('')}</article>`;
-}
 joinPage=function(){
- const n=pendingJoin(),p=n?.status.pairing,done=ui.joinId&&n?.status.networkId,waiting=!n?.status.networkId&&p?.active&&!p.owner;let form;
- if(waiting)form=`<div class="waiting-card"><div class="status-orbit">${icon('clock')}</div><h2>${p.verification?'等待主机同意':'正在联系主机'}</h2><p>${p.verification?esc(p.peerName||'目标主机')+' 将核对并批准本次申请。':'正在建立配对通道，请稍候。'}</p>${kv('双方校验码',p.verification||'正在交换',true)}<p class="hint">${esc(p.state)}</p><div class="form-actions"><button class="btn" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消申请</button></div></div>`;
- else if(done)form=`<div class="waiting-card"><div class="status-orbit success">${icon('check')}</div><h2>已加入 ${esc(n.name)}</h2><p>已获取主机网络设置，${n.status.directPeers?'已建立直连。':'正在建立直连。'}</p>${kv('本机虚拟 IP',n.status.virtualIp,true)}${kv('目标设备',n.status.peers[0]?.name||'目标主机')}<div class="form-actions"><button class="btn primary" data-page="overview">查看概况</button><button class="btn" data-ui-action="another-join">加入其他网络</button></div></div>`;
- else form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><div id="join-error" class="error" role="status">${esc(joinError||p?.error||'')}</div><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div>${helpLink('join')}</form>`;
- return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article><div class="stack">${networkList(false)}${inactiveNetworkList(false)}${inactiveNetworkList(true)}</div></div>`;
+ const n=pendingJoin(),p=n?.status.pairing;
+ const done=!!(ui.joinId&&n?.status.networkId),waiting=!n?.status.networkId&&p?.active&&!p.owner;
+ const progress=waiting?`<section class="join-progress" aria-live="polite"><p><strong>${p.verification?'等待主机同意':'正在联系主机'}</strong></p><p>${esc(p.state)}</p>${p.verification?kv('双方校验码',p.verification,true):''}<button type="button" class="btn compact" data-ui-action="cancel-join" data-network="${esc(n.id)}">取消加入</button></section>`:
+  done?`<section class="join-progress" aria-live="polite"><p><strong>已加入 ${esc(n.name)}</strong></p><p>${n.status.directPeers?'已建立直连':'正在建立直连'}</p><div class="row wrap"><button type="button" class="btn compact" data-page="overview">查看概况</button><button type="button" class="btn compact" data-ui-action="another-join">加入其他网络</button></div></section>`:'';
+ const form=`<form id="join-form"><label class="pair-label" for="join-invite">目标主机的直连码</label><div class="code-control direct-code-control">${directGroups(joinInviteValue,true)}<input id="join-invite" aria-label="目标主机的直连码，IPv4 为16位，IPv6 为36位" type="text" maxlength="44" spellcheck="false" autocomplete="off" autocapitalize="characters" value="${esc(formatCompact(joinInviteValue))}"></div><label class="field" id="join-coordinator-field" ${coordinatedCode(joinInviteValue)?'':'hidden'}><span>协调服务器地址（可选）</span><input id="join-coordinator" type="url" maxlength="2113" spellcheck="false" autocomplete="off" placeholder="https://coord.example.com/" value="${esc(ui.joinCoordinator)}"></label><div class="form-operation"><button class="btn primary" id="join-submit" type="submit">请求加入${icon('join')}</button></div><div id="join-error" class="error" role="status">${esc(joinError||p?.error||'')}</div>${progress}${helpLink('join')}</form>`;
+ return heading('加入网络','向目标主机发送申请，加入网络')+`<div class="network-columns"><article class="card pad" id="join-card">${form}</article>${networkList(false)}</div>`;
 };
 function requestsPage(){return heading('加入申请','核对设备与校验码，决定是否允许加入。')+incomingPage().replaceAll('data-action="approve"','data-ui-action="approve"').replaceAll('data-action="reject"','data-ui-action="reject"').replaceAll('data-request-network=','data-network=');}
 function liveSettingsPage(){
  const d=ui.device||deviceValue(),desktop=workspaceState?.desktop,linux=workspaceState?.platform==='linux';
  const registered=linux||desktop?.serviceRegistered;
  const serviceState=registered?(state?.serviceReady?'正在运行':'未运行'):'尚未注册';
- return heading('设置','',saveActions('device'))+`
+ return heading('设置','',deviceSaveActions())+`
  <article class="card settings-page">
   <section class="settings-section"><div><h2>启动与服务</h2><p class="intro">配置开机启动与服务</p></div><div>
    <div class="switch-row"><div><h3>开机启动</h3><p>${linux?'由系统服务管理。':'启动后台服务，登录后显示托盘。'}</p></div>${linux?'<span class="badge">由 systemd 管理</span>':uiToggle('device','startup',d.startup,'开机启动')}</div>
@@ -262,7 +282,7 @@ async function toggleCoordinator(enabled){
  ui.coordinationBase=current;ui.coordination=draft;render();
 }
 async function saveCoordinator(){
- if(!same(coordinatorValue(),ui.coordinationBase))throw Error('本机协调设置已被其他窗口修改，请恢复刚才设置后重试。');
+ if(!same(coordinatorValue(),ui.coordinationBase))throw Error('本机协调设置已被其他窗口修改，请关闭并重新打开设置后重试。');
  const {port,...settings}=ui.coordination;
  if(!/^\d+$/.test(port)||Number(port)<1024||Number(port)>65535)throw Error('监听端口需为 1024–65535。');
  if(!!settings.certificateFile.trim()!==!!settings.certificateKeyFile.trim())throw Error('证书与私钥需要同时填写，也可以同时留空。');
@@ -273,38 +293,160 @@ async function saveCoordinator(){
 function sampleTraffic(next){const now=performance.now(),old=ui.sample,a=next.aggregate,peers=new Map(all().flatMap(n=>(n.status.peers||[]).map(p=>[n.id+':'+p.slot,p])));if(!a)return;const dt=old?(now-old.time)/1000:0,valid=old&&dt>=.1&&dt<=10;ui.rates.clear();if(valid)for(const [id,p]of peers){const q=old.peers.get(id);if(q&&p.sentBytes>=q.sentBytes&&p.receivedBytes>=q.receivedBytes)ui.rates.set(id,{up:(p.sentBytes-q.sentBytes)/dt,down:(p.receivedBytes-q.receivedBytes)/dt});}if(valid&&a.sentBytes>=old.sent&&a.receivedBytes>=old.received)ui.chart.push({time:now,up:(a.sentBytes-old.sent)/dt,down:(a.receivedBytes-old.received)/dt});ui.chart=ui.chart.filter(p=>now-p.time<3600000);ui.sample={time:now,sent:a.sentBytes,received:a.receivedBytes,peers};}
 function chart(){const now=performance.now(),values=ui.chart.filter(p=>now-p.time<=ui.range*1000),max=Math.max(1,...values.flatMap(p=>[p.up,p.down])),points=key=>values.map(p=>`${32+600*(1-(now-p.time)/(ui.range*1000))},${105-98*p[key]/max}`).join(' ');return `<svg class="traffic-chart" viewBox="0 0 640 128" preserveAspectRatio="none" role="img" aria-label="实际上传与下载速度折线图"><path d="M32 105H632M32 56H632M32 7H632" stroke="var(--line)" stroke-dasharray="3 5" fill="none"/><text x="4" y="12" fill="var(--dim)">${(max/1e6).toFixed(1)}</text><text x="4" y="109" fill="var(--dim)">0</text><polyline points="${points('down')}" fill="none" stroke="var(--accent)" stroke-width="1.8" vector-effect="non-scaling-stroke"/><polyline points="${points('up')}" fill="none" stroke="var(--green)" stroke-width="1.5" vector-effect="non-scaling-stroke"/><text x="32" y="124" fill="var(--dim)">${ui.range===60?'1 分钟前':'1 小时前'}</text><text x="610" y="124" fill="var(--dim)">现在</text></svg>`;}
 overviewPage=function(){
- const networks=all().filter(n=>n.status.networkId),a=workspaceState?.aggregate,live=networks.filter(n=>n.status.directPeers>0).length,rate=online?ui.chart.at(-1):null;
- return heading('概况','本机信息与所有网络的连接状态。')+`<div class="overview-top"><article class="card pad device-card"><div class="row device-heading"><div class="avatar">${icon('laptop')}</div><div class="grow"><h2 class="device-name">${esc(workspaceState?.deviceName||'正在读取')}</h2></div></div></article><article class="card chart-card"><div class="chart-head"><h2>实时流量</h2><div class="range" role="group" aria-label="流量图时间范围"><button data-ui-action="range-60" aria-pressed="${ui.range===60}" class="${ui.range===60?'active':''}">一分钟</button><button data-ui-action="range-3600" aria-pressed="${ui.range===3600}" class="${ui.range===3600?'active':''}">一小时</button></div></div><div class="chart-metrics">${[['up','上传','green',a?.sentBytes],['down','下载','accent',a?.receivedBytes]].map(([key,name,color,value])=>`<div><div class="metric-caption"><span class="dot" style="background:var(--${color})"></span>${name}</div><div class="metric-value">${rate?(rate[key]/1e6).toFixed(2):'—'}<small>MB/s</small></div><div class="metric-total">累计 ${total(value||0)}</div></div>`).join('')}</div><div class="chart-wrap">${chart()}</div></article></div><article class="card overview-devices"><div class="table-title"><h2>设备与网络</h2></div><div class="table-scroll"><table><colgroup><col style="width:18%"><col style="width:13%"><col style="width:10%"><col style="width:19%"><col style="width:22%"><col style="width:8%"><col style="width:10%"></colgroup><thead><tr><th scope="col">设备</th><th scope="col">网络</th><th scope="col">角色</th><th scope="col">虚拟 IP</th><th scope="col">连接状态</th><th scope="col">延迟</th><th scope="col">流量</th></tr></thead><tbody><tr class="local-row"><td><div class="row">${icon('laptop')}<strong>${esc(workspaceState?.deviceName||'本机')}</strong></div></td><td colspan="6" class="self-label">本机</td></tr>${networks.map(n=>{
+ const networks=all().filter(n=>n.status.networkId),a=workspaceState?.aggregate,rate=online?ui.chart.at(-1):null;
+ const members=networks.filter(n=>!n.status.networkRevoked);
+ const created=members.filter(n=>n.status.isOwner).length;
+ const direct=new Set(members.flatMap(n=>n.status.peers.filter(p=>p.connected&&p.deviceId).map(p=>p.deviceId)));
+ return heading('概况','本机信息与所有网络的连接状态。')+`<div class="overview-top"><article class="card pad device-card"><div class="row device-heading"><div class="avatar">${icon('laptop')}</div><div class="grow"><h2 class="device-name">${esc(workspaceState?.deviceName||'正在读取')}</h2></div></div><div class="device-summary"><span>已加入 <b>${members.length-created}</b> 个网络</span><span>已创建 <b>${created}</b> 个网络</span><span>与 <b>${online?direct.size:'—'}</b> 台设备直连</span></div></article><article class="card chart-card"><div class="chart-head"><h2>实时流量</h2><div class="range" role="group" aria-label="流量图时间范围"><button data-ui-action="range-60" aria-pressed="${ui.range===60}" class="${ui.range===60?'active':''}">一分钟</button><button data-ui-action="range-3600" aria-pressed="${ui.range===3600}" class="${ui.range===3600?'active':''}">一小时</button></div></div><div class="chart-metrics">${[['up','上传','green',a?.sentBytes],['down','下载','accent',a?.receivedBytes]].map(([key,name,color,value])=>`<div><div class="metric-caption"><span class="dot" style="background:var(--${color})"></span>${name}</div><div class="metric-value"><span data-overview-rate="${key}">${rate?(rate[key]/1e6).toFixed(2):'—'}</span><small>MB/s</small></div><div class="metric-total" data-overview-total="${key}">累计 ${total(value||0)}</div></div>`).join('')}</div><div class="chart-wrap">${chart()}</div></article></div><article class="card overview-devices"><div class="table-title"><h2>设备与网络</h2></div><div class="table-scroll"><table><colgroup><col style="width:18%"><col style="width:13%"><col style="width:10%"><col style="width:19%"><col style="width:22%"><col style="width:8%"><col style="width:10%"></colgroup><thead><tr><th scope="col">设备</th><th scope="col">网络</th><th scope="col">角色</th><th scope="col">虚拟 IP</th><th scope="col">连接状态</th><th scope="col">延迟</th><th scope="col">流量</th></tr></thead><tbody><tr class="local-row"><td><div class="row">${icon('laptop')}<strong>${esc(workspaceState?.deviceName||'本机')}</strong></div></td><td colspan="6" class="self-label">本机</td></tr>${networks.map(n=>{
   const s=n.status,p=s.peers[0],connected=online&&p?.connected,r=ui.rates.get(n.id+':'+p?.slot),elapsed=p?.connection?.elapsedMs||0;
   const pairs=(name,values,mono=false)=>`<div class="paired-values">${values.map((v,i)=>`<div class="paired-line"><span class="paired-label">${i?'对机':'本机'}</span><span class="${mono?'mono':''}" data-value="${i?'peer':'local'}-${name}">${esc(v||'待分配')}</span></div>`).join('')}</div>`;
-  return `<tr data-peer-row="${esc(n.id)}"><td><strong class="peer-name">${esc(p?.name||'等待另一台设备')}</strong></td><td>${esc(n.name)}</td><td class="role-value">${pairs('role',[s.isOwner?'主机':'从机',s.isOwner?'从机':'主机'])}</td><td>${pairs('ip',[s.virtualIp,p?.virtualIp],true)}</td><td><div class="cell-status"><span class="dot ${connected?'good':''}"></span>${connected?'已直连':!online?'状态待确认':!s.networkEnabled?'已断开连接':esc(phaseNames[p?.connection?.phase]||'等待设备')}</div><div class="cell-sub">${protocolOf(s.settings)}</div>${connected?`<div class="cell-sub">已直连 <span data-network-duration="${elapsed}" data-duration-sample="${performance.now()}">${connectedDuration(elapsed)}</span></div>`:''}<div class="cell-sub entry">${esc(connected?'实际入口：':'上次入口：')}${esc(p?.outerTarget&&p.outerTarget!=='Unknown'?p.outerTarget:p?.entryDirection==='Inbound'?'入站直连 · 本机端口 '+s.settings.listenPort:'待认证连接')}</div></td><td class="mono">${connected&&p.rttMs!=null?p.rttMs.toFixed(1)+' ms':'—'}</td><td><div class="traffic-cell"><div><span class="up">↑</span> ${total(p?.sentBytes||0)}<div class="rate">${speed(online?r?.up:null)}</div></div><div><span class="down">↓</span> ${total(p?.receivedBytes||0)}<div class="rate">${speed(online?r?.down:null)}</div></div></div></td></tr>`;
- }).join('')}</tbody></table></div><div class="device-table-foot"><span class="dot ${online&&live?'good':''}"></span><span>${networks.length} 个网络</span><span>·</span><span class="direct-total">与其余 ${online?live:0} 台设备直连</span></div></article>`;
+  return `<tr data-peer-row="${esc(n.id)}"><td><strong class="peer-name">${esc(p?.name||'等待另一台设备')}</strong></td><td>${esc(n.name)}</td><td class="role-value">${pairs('role',[s.isOwner?'主机':'从机',s.isOwner?'从机':'主机'])}</td><td>${pairs('ip',[s.virtualIp,p?.virtualIp],true)}</td><td><div class="cell-status"><span class="dot ${connected?'good':''}"></span>${connected?'已直连':!online?'状态待确认':!s.networkEnabled?'已断开连接':esc(phaseNames[p?.connection?.phase]||'等待设备')}</div><div class="cell-sub">${protocolOf(s.settings)}</div>${connected?`<div class="cell-sub">已直连 <span data-network-duration="${elapsed}" data-duration-sample="${performance.now()}">${connectedDuration(elapsed)}</span></div>`:''}<div class="cell-sub entry">${esc(connected?'实际入口：':'上次入口：')}${esc(p?.outerTarget&&p.outerTarget!=='Unknown'?p.outerTarget:p?.entryDirection==='Inbound'?'入站直连 · 本机端口 '+s.settings.listenPort:'待认证连接')}</div></td><td class="mono" data-overview-rtt>${connected&&p.rttMs!=null?p.rttMs.toFixed(1)+' ms':'—'}</td><td><div class="traffic-cell"><div><span class="up">↑</span> <span data-peer-total="up">${total(p?.sentBytes||0)}</span><div class="rate" data-peer-rate="up">${speed(online?r?.up:null)}</div></div><div><span class="down">↓</span> <span data-peer-total="down">${total(p?.receivedBytes||0)}</span><div class="rate" data-peer-rate="down">${speed(online?r?.down:null)}</div></div></div></td></tr>`;
+ }).join('')}</tbody></table></div></article>`;
 };
-function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU远程','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage};return pages[page]();}
-function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.networkRevoked,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.peers.map(p=>[p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
+function overviewSignature(){
+ return JSON.stringify([page,online,workspaceState?.deviceName,all().filter(n=>n.status.networkId).map(n=>{
+  const s=n.status,p=s.peers[0];
+  return [n.id,n.name,s.isOwner,s.virtualIp,s.networkRevoked,s.networkEnabled,s.settings?.pathSelection,
+   s.settings?.listenPort,p?.deviceId,p?.name,p?.virtualIp,p?.connected,p?.connection?.phase,p?.outerTarget,p?.entryDirection];
+ })]);
+}
+function updateOverviewTraffic(){
+ const rate=online?ui.chart.at(-1):null,aggregate=workspaceState?.aggregate;
+ for(const [key,value] of [['up',aggregate?.sentBytes],['down',aggregate?.receivedBytes]]){
+  document.querySelector('[data-overview-rate="'+key+'"]').textContent=rate?(rate[key]/1e6).toFixed(2):'—';
+  document.querySelector('[data-overview-total="'+key+'"]').textContent='累计 '+total(value||0);
+ }
+ document.querySelector('.overview-top .chart-wrap').innerHTML=chart();
+ for(const b of document.querySelectorAll('.chart-head [data-ui-action]')){
+  const active=b.dataset.uiAction==='range-'+ui.range;b.classList.toggle('active',active);b.setAttribute('aria-pressed',String(active));
+ }
+ for(const tr of document.querySelectorAll('[data-peer-row]')){
+  const n=row(tr.dataset.peerRow),p=n?.status.peers[0],rate=online&&ui.rates.get(n.id+':'+p?.slot);
+  tr.querySelector('[data-overview-rtt]').textContent=online&&p?.connected&&p.rttMs!=null?p.rttMs.toFixed(1)+' ms':'—';
+  for(const [key,value] of [['up',p?.sentBytes],['down',p?.receivedBytes]]){
+   tr.querySelector('[data-peer-total="'+key+'"]').textContent=total(value||0);
+   tr.querySelector('[data-peer-rate="'+key+'"]').textContent=speed(rate&&rate[key]||null);
+  }
+  const duration=tr.querySelector('[data-network-duration]');
+  if(duration&&p?.connection?.elapsedMs!=null){
+   duration.dataset.networkDuration=p.connection.elapsedMs;duration.dataset.durationSample=performance.now();
+  }
+ }
+}
+function projectionReady(projection,peer){
+ return !!(projection?.authorized&&projection.remoteSunshinePort&&projection.companionReady&&peer?.connected&&peer.deviceId);
+}
+function projectionSettingsFields(){
+ const custom=$('projection-resolution').value==='custom';
+ $('projection-custom-size').hidden=!custom;
+ $('projection-width').disabled=$('projection-height').disabled=!custom;
+ queueProjectionBandwidth();
+}
+$('projection-resolution').addEventListener('change',projectionSettingsFields);
+for(const id of ['projection-width','projection-height','projection-fps','projection-bitrate'])
+ $(id).addEventListener('input',queueProjectionBandwidth);
+function currentProjectionVideo(editor){
+ const resolutionMode=$('projection-resolution').value,custom=resolutionMode==='custom';
+ return {...editor.previous.video,resolutionMode,
+  width:custom?$('projection-width').valueAsNumber:editor.previous.video.width,
+  height:custom?$('projection-height').valueAsNumber:editor.previous.video.height,
+  fps:$('projection-fps').valueAsNumber,bitratePreset:$('projection-bitrate').value,codec:'auto',scalePercent:100};
+}
+let bandwidthTimer=0,bandwidthRequest=0;
+function queueProjectionBandwidth(){
+ clearTimeout(bandwidthTimer);
+ const editor=ui.projectionEditor,number=++bandwidthRequest,label=$('projection-bandwidth');
+ label.textContent='';
+ if(!editor)return;
+ const video=currentProjectionVideo(editor);
+ if(!Number.isFinite(video.width)||!Number.isFinite(video.height)||!Number.isFinite(video.fps))return;
+ const current=()=>ui.projectionEditor===editor&&$('projection-dialog').open&&number===bandwidthRequest;
+ bandwidthTimer=setTimeout(async()=>{
+  if(!current())return;
+  const peer=row(editor.id)?.status.peers[0];
+  label.textContent='正在计算带宽需求…';
+  try{
+   const screenScale=window.devicePixelRatio;
+   const display={width:Math.round(screen.width*screenScale),height:Math.round(screen.height*screenScale),refresh_hz:0};
+   const reply=await api('/api/projection/bitrate',{networkId:editor.id,deviceId:peer?.deviceId,video,display},current);
+   if(!reply.ok)throw Error(reply.error);
+   if(current()){
+    const size=reply.value.width+'×'+reply.value.height;
+    const mbps=(reply.value.kbps/1000).toLocaleString('zh-CN',{maximumFractionDigits:2});
+    label.textContent=size+' · 视频约 '+mbps+' Mb/s（本机下载、对机上传）';
+   }
+  }catch{
+   if(current())label.textContent=video.resolutionMode==='peer'?'连接对机后可计算所需带宽':'请检查分辨率与帧率';
+  }
+ },180);
+}
+function openProjectionSettings(id){
+ const network=row(id),p=network?.status.projection;if(!p)return;
+ const video={width:1920,height:1080,fps:60,bitrateMbps:20,codec:'auto',scalePercent:100,resolutionMode:'custom',...p.video};
+ ui.projectionEditor={id,wire:network.status.networkId,previous:{allowed:p.authorized,port:p.port,files:!!p.files,fileBrowser:!!p.fileBrowser,clipboard:!!p.clipboard,video}};
+ $('projection-network').textContent=network.name;
+ $('projection-legacy-port').hidden=!!workspaceState?.projectionBundled;
+ $('projection-port').value=p.port;$('projection-allowed').checked=p.authorized;
+ $('projection-files').checked=!!p.files&&!!p.fileBrowser;
+ $('projection-files').indeterminate=!!p.files&&!p.fileBrowser;
+ $('projection-clipboard').checked=!!p.clipboard;
+ $('projection-width').value=video.width;$('projection-height').value=video.height;
+ $('projection-resolution').value=video.resolutionMode;
+ $('projection-fps').value=video.fps;$('projection-bitrate').value=video.bitratePreset||'medium';
+ projectionSettingsFields();
+ $('projection-error').textContent='';$('projection-dialog').showModal();controls();
+}
+async function saveProjectionSettings(){
+ const editor=ui.projectionEditor;if(!editor)return;
+ await dialogAction(async()=>{
+  const port=workspaceState?.projectionBundled?editor.previous.port:$('projection-port').valueAsNumber;
+  if(!Number.isInteger(port)||port<1024||port>65535)throw Error('Projection 监听端口应为 1024～65535 的整数。');
+   const video=currentProjectionVideo(editor),{width,height,fps}=video;
+  if(!Number.isInteger(width)||!Number.isInteger(height)||width%2||height%2||width<640||width>7680||height<360||height>4320)throw Error('分辨率宽高须为偶数，支持 640×360 至 7680×4320。');
+  if(!Number.isInteger(fps)||fps<15||fps>240)throw Error('帧率须为 15–240 FPS。');
+  const filePermission=$('projection-files');
+  const projection={port,allowed:$('projection-allowed').checked,files:filePermission.checked||filePermission.indeterminate,
+   fileBrowser:filePermission.checked,clipboard:$('projection-clipboard').checked,video};
+  await command('network',{networkId:editor.id,network:{action:'projection-settings',expectedNetwork:editor.wire,previous:editor.previous,projection}},true);
+  if(ui.projectionEditor===editor){$('projection-dialog').close();ui.projectionEditor=null;notify('Projection 设置已保存');}
+ },'projection-dialog','projection-error',()=>ui.projectionEditor===editor,$('projection-width'));
+}
+function fadeSection(element){
+ if(element&&!matchMedia('(prefers-reduced-motion: reduce)').matches)element.animate([{opacity:.72},{opacity:1}],{duration:140});
+}
+function drawPage(){const pages={overview:overviewPage,create:createPage,join:joinPage,exit:exitPage,requests:requestsPage,settings:liveSettingsPage,coordination:coordinationPage,uu:()=>heading('UU远程','自动使用已直连的 ConWU 网络，无需选择网络。')+uuTakeoverUi.section(workspaceState),logs:logsPage,projection:()=>projectionMode.view(all(),projectionReady)};return pages[page]();}
+function pageSignature(){return JSON.stringify([page,ui.joinId,newNetworkName,newNetworkIp,all().map(n=>[n.id,n.name,n.configurationId,n.status.networkId,n.status.networkRevoked,n.status.settingsRevision,n.status.networkEnabled,n.status.directPeers,n.status.pairing,n.status.pairing?.expires*1000>Date.now(),n.status.entryPreparation,n.status.projection,n.status.peers.map(p=>[p.deviceId,p.name,p.virtualIp,p.connected,p.connection?.phase])]),workspaceState?.deviceName,workspaceState?.projectionAvailable,workspaceState?.projectionMoonlight,page==='projection'?[online,projectionMode.phase()]:null,workspaceState?.coordinator?.state,page==='coordination'?[workspaceState?.coordinator?.clients,workspaceState?.coordinator?.punchAssist]:null,ui.coordinationBase]);}
 render=function(next){
  const observed=!!next;
  if(next?.workspaceVersion){workspaceState=next;state=next;online=true;lastStatusAt=performance.now();lastStatusFailure='';ui.unavailableMessage='';appendStatusLogs(next);initializeDrafts();if(observed)sampleTraffic(next);}
- if(observed){syncUpdateNotice();updateRequestBadge();if(holdAutomaticPaint())return;}
+ if(observed){syncUpdateNotice();updateRequestBadge();if(holdAutomaticPaint()){controls();if(page==='projection')projectionMode.updateCover();return;}}
  ui.pendingPaint=false;
  if(ui.unavailableMessage){notice(ui.unavailableMessage,true,expired?'authorization':'backend');ui.unavailableMessage='';}
  if(workspaceState){if(online&&(noticeSource==='backend'||noticeSource==='pair'&&!workspaceState.networks.some(n=>n.status.pairing?.active))){lastPairError='';notice('');}if(ui.codeId&&!row(ui.codeId))closeInvitation();if(ui.joinId&&(!row(ui.joinId)||row(ui.joinId).status.networkRevoked))ui.joinId='';}
- if(!workspaceState){$('content').innerHTML=heading('ConWU','正在读取本机后台状态。');controls();return;}
+ if(!workspaceState){updateShell();$('content').innerHTML=heading(titles[page],'正在读取本机后台状态。');projectionMode.afterRender();controls();return;}
  const chosen=row(selectedNetwork)?.status;state=chosen?{...workspaceState,...chosen,desktop:workspaceState.desktop}:workspaceState;
  networkActive=!!state.networkId;owner=!!state.isOwner;createdAt=(state.networkEstablishedAt||0)*1000;
- const signature=pageSignature(),replace=!observed||ui.signature!==signature||page==='overview';updateShell();
+ // Preserve the actual scroll container while network status and log rows change.
+ const logsMounted=page==='logs'&&ui.renderedPage==='logs'&&$('terminal-content');
+ const signature=page==='overview'?overviewSignature():pageSignature();
+ const replace=!logsMounted&&(ui.renderedPage!==page||ui.signature!==signature||!observed&&page!=='overview');updateShell();
  if(replace){
   for(const d of $('content').querySelectorAll('details[id]'))ui.disclosures.set((ui.renderedPage||page)+'|'+d.id,d.open);
   const focused=document.activeElement,focusId=$('content').contains(focused)?focused.id:'',start=focused?.selectionStart,end=focused?.selectionEnd;
+  const currentPage=ui.renderedPage===page,scroll=document.scrollingElement;
+  const scrollTop=currentPage?scroll.scrollTop:0;
+  const tableLeft=currentPage?$('content').querySelector('.table-scroll')?.scrollLeft:0;
   $('content').innerHTML=drawPage();ui.signature=signature;ui.renderedPage=page;
+  if(currentPage){scroll.scrollTop=scrollTop;const table=$('content').querySelector('.table-scroll');if(table&&tableLeft)table.scrollLeft=tableLeft;}
   for(const d of $('content').querySelectorAll('details[id]'))if(ui.disclosures.has(page+'|'+d.id))d.open=ui.disclosures.get(page+'|'+d.id);
   if(page==='join')bindJoinInput();if(page==='create'&&$('create-form'))$('create-form').onsubmit=e=>{e.preventDefault();void run(create).catch(()=>{});};if(page==='logs')updateLogView();
   if(focusId&&$(focusId)&&!$(focusId).disabled){$(focusId).focus({preventScroll:true});try{$(focusId).setSelectionRange(start,end);}catch{}}
- }else if(page==='logs')updateLogView();
- updateInvitationDialog();if(ui.editor&&section==='discovery')refreshPkarrStatus();controls();
+ }else if(page==='logs')updateLogView();else if(page==='overview')updateOverviewTraffic();
+ updateInvitationDialog();if(ui.editor&&section==='discovery')refreshPkarrStatus();controls();projectionMode.afterRender();
 };
-navigate=function(next){page=titles[next]?next:'overview';ui.signature='';render();window.scrollTo({top:0,behavior:'instant'});};
+navigate=function(next){const previous=page;page=titles[next]?next:'overview';ui.signature='';render();if(page!==previous)fadeSection($('page-title'));window.scrollTo({top:0,behavior:'instant'});};
 updateShell=function(){
+ projectionMode.updateBrand();
  document.querySelectorAll('.nav[data-page]').forEach(b=>{const active=b.dataset.page===page;b.classList.toggle('active',active);if(active)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
  document.title=titles[page]+' · ConWU';$('sidebar-name').textContent=workspaceState?.deviceName||'正在读取';$('sidebar-initials').textContent=(workspaceState?.deviceName||'CW').slice(0,2).toUpperCase();
  updateRequestBadge();$('request-dot').hidden=true;$('settings-dirty-dot').hidden=!ui.device||same(ui.device,ui.deviceBase);
@@ -319,12 +461,29 @@ function updateRequestBadge(){
 }
 controls=function(){
  const paint=!holdAutomaticPaint(),updateRoot=$('software-update-details');if(paint&&updateRoot&&updateRoot.dataset.updateSignature!==updateSignature())updateRoot.outerHTML=updateDetails();
- const ready=online&&!expired&&state?.serviceReady&&!busy&&!ui.preparingCommand;
+ const panelReady=online&&!expired&&state?.serviceReady;
+ const ready=panelReady&&!busy&&!ui.preparingCommand;
  if(paint)uuTakeoverUi.refresh(workspaceState,ready);
  for(const b of document.querySelectorAll('[data-ui-action]')){
   const action=b.dataset.uiAction;
-  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','close-invitation','open-local-service','open-coordination-settings','close-coordination-settings','close-update-source'].includes(action))b.disabled=!!ui.editor?.saving;
+  if(['close-editor','close-exit','open-editor','select-host','new-create','another-join','help-create','help-join','close-help','close-invitation','close-projection-settings','open-local-service','open-coordination-settings','close-coordination-settings','close-update-source'].includes(action))b.disabled=!!ui.editor?.saving;
   else if(['range-60','range-3600'].includes(action))b.disabled=false;
+  else if(action==='projection-moonlight'){
+   const player=workspaceState?.projectionMoonlight,status=row(b.dataset.network)?.status;
+   b.disabled=!ready||!player?.available||!!projectionMode.sessionId()||!projectionReady(status?.projection,status?.peers?.[0]);
+  }
+  else if(action==='projection-settings')b.disabled=expired;
+  else if(action==='projection-fullscreen')b.disabled=!panelReady||projectionMode.phase()!=='playing';
+  else if(action==='projection-moonlight-stop')b.disabled=!ready||projectionMode.phase()!=='playing';
+  else if(action==='projection-file-browser'){
+   const s=row(b.dataset.network)?.status;
+   b.disabled=!panelReady||!s?.peers?.[0]?.connected||!s.projection?.files||!s.projection?.authorized||!s.projection?.companionReady;
+  }
+  else if(action==='projection-files')b.disabled=!ready||b.dataset.ready!=='true'||!!workspaceState?.projectionTransfer?.active;
+  else if(action==='projection-select-device'){
+   const active=projectionMode.sessionId();
+   b.disabled=!ready||(!!active&&active!==b.dataset.network);
+  }
   else b.disabled=!ready;
  }
  for(const b of document.querySelectorAll('[data-ui-action="close-coordination-settings"]'))b.disabled=!!ui.savingCoordination;
@@ -332,12 +491,12 @@ controls=function(){
  for(const b of document.querySelectorAll('[data-ui-action="download-update"],[data-ui-action="install-update"]'))b.disabled=!ready||workspaceState?.localUpdate?.busy;
  if($('save-device')){
   const changed=!same(ui.device,ui.deviceBase);$('save-device').disabled=!ready||!changed;
-  $('revert-device').disabled=!!ui.savingDevice||!changed;if(paint)$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
+  if(paint)$('device-save-state').textContent=ui.savingDevice?'保存中…':changed?'有未保存的更改':'已保存';$('device-save-state').className='save-state'+(changed?' dirty':'');
  }
  if($('save-coordination')){
   const changed=!same(ui.coordination,ui.coordinationBase);
   $('save-coordination').disabled=!ready||!!ui.savingCoordination||!changed;
-  $('restore-coordination').disabled=!!ui.savingCoordination||!changed;
+  $('restore-coordination').disabled=!!ui.savingCoordination||same(ui.coordination,coordinatorValue(true));
   if(paint)$('coordination-save-state').textContent=ui.savingCoordination?'保存中…':changed?'有未保存的更改':'已保存';
   $('coordination-save-state').className='save-state'+(changed?' dirty':'');
  }
@@ -347,13 +506,17 @@ controls=function(){
  if(copy)copy.disabled=!invitationCode();
  for(const b of document.querySelectorAll('[data-ui-action="refresh-pkarr"]'))b.disabled=!ready||!row(b.dataset.network)?.status.networkEnabled||row(b.dataset.network)?.status.settings?.discoveryMode!=='pkarr';
  for(const b of document.querySelectorAll('[data-ui-action="generate"]'))b.disabled=!ready||!row(b.dataset.network)?.status.networkEnabled;
- document.querySelector('[data-ui-action="choose-exit"]').disabled=!ready||!all().length;
  const restore=document.querySelector('[data-ui-action="default-device"]');if(restore)restore.disabled=!!ui.savingDevice||same(ui.device,defaultDevice());
- if($('join-submit'))$('join-submit').disabled=!ready;if($('join-invite'))$('join-invite').disabled=!ready;if($('create-network'))$('create-network').disabled=!ready||!!ui.creating;
+ if($('join-submit')){
+  const n=pendingJoin(),locked=!!(n?.status.networkId||n?.status.pairing?.active&&!n.status.pairing.owner);
+  $('join-submit').disabled=!ready||locked;
+  $('join-invite').disabled=locked;
+  $('join-coordinator').disabled=locked;
+ }if($('create-network'))$('create-network').disabled=!ready||!!ui.creating;
  for(const el of document.querySelectorAll('[data-ui-scope="device"],[data-ui-scope="deviceHost"]'))el.disabled=!!ui.savingDevice;
  if(ui.editor){
   const ro=ui.editor.readOnly,changed=editorChanged();
-  for(const b of $('network-edit-actions').querySelectorAll('button'))b.disabled=ro||!changed||(b.dataset.uiAction==='restore-editor'?!!ui.editor.saving:!ready);
+  for(const b of $('network-edit-actions').querySelectorAll('button'))b.disabled=ro||!!ui.editor.saving||(b.dataset.uiAction==='restore-editor'?(same(drafts,editorDefaults())&&(ui.editor.id||ui.editor.ipMode==='auto')):!ready||!changed);
   if(paint)$('network-save-state').textContent=ro?'主机设置 · 仅供查看':ui.editor.saving?'保存中…':changed?'有未保存的更改':'没有未保存的修改';$('network-save-state').className='save-state'+(!ro&&changed?' dirty':'');
   if($('settings-fields'))$('settings-fields').inert=!!ui.editor.saving;
  }
@@ -376,7 +539,7 @@ inputChange=function(el){
   if(['mode','route','protocol','virtualMode'].includes(key)){renderEditor();return;}
  }
  if($('settings-error'))$('settings-error').textContent='';
- for(const key of ['tcp','udp'])if($('stun-count-'+key))$('stun-count-'+key).textContent=drafts.stun[key].split(/\n/).filter(v=>v.trim()).length+' 个地址';
+ if($('stun-count-tcp'))$('stun-count-tcp').textContent=drafts.stun.tcp.split(/\n/).filter(v=>v.trim()).length+' 个地址';
  controls();
 };
 refreshSettingsTools=function(){controls();};
@@ -390,26 +553,26 @@ function editorFields(){
   return `<h3>连接协议</h3><div class="radio-cards">${protocols.map(([v,t,h])=>`<label class="radio-card ${ui.editor?.id&&v!==d.protocol&&(['tcp','https','phantun','mimic','tcpraw'].includes(v)||['tcp','https','phantun','mimic','tcpraw'].includes(d.protocol))?'unavailable':''}"><input type="radio" name="protocol" data-key="protocol" value="${v}" ${d.protocol===v?'checked':''} ${ui.editor?.id&&v!==d.protocol&&(['tcp','https','phantun','mimic','tcpraw'].includes(v)||['tcp','https','phantun','mimic','tcpraw'].includes(d.protocol))?'disabled':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div>${['tcp','https'].includes(d.protocol)?`<div class="stream-flow-setting"><div><strong>按流分离连接</strong><p class="hint">将不同数据流分到独立连接，减少大流量阻塞控制与音频。对端不支持时使用单连接。</p></div>${switchControl('streamFlowLanes',d.streamFlowLanes===true,'按流分离连接')}</div>`:''}<h3>连接策略</h3><div class="radio-cards">${[['custom','自主打洞','由 ConWU 准备入口并尝试穿透。'],['existing','只使用已有入口','公网、端口转发或第三方已打通的入口。']].map(([v,t,h])=>`<label class="radio-card"><input type="radio" name="mode" data-key="mode" value="${v}" ${d.mode===v?'checked':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div><div class="note strategy-note">${icon('info')}<span>${d.mode==='existing'?'仅通过已有入口连接。':'首次使用直连码配对；后续入口更新可在左侧“配对与发现方式”中设置。'}</span></div>`;
  }
  if(section==='discovery'){
-  const tips={pkarr:'首次通过直连码配对，之后经由 PKARR 发布和查询最新地址。',server:'使用你指定的协调服务器更新入口与交换连接信息；首次配对仍使用直连码。',direct:'只通过直连码配对连接；入口变化后，需要重新生成并输入直连码。'};
+  const tips={pkarr:'适用于NAT1 NAT2等宽松网络环境。首次通过直连码配对，之后经由 PKARR 发布和查询最新地址。',server:'适用于NAT3、NAT4等封闭网络环境，利用同样安装了ConWU的协调服务器进行配对。',direct:'适用于NAT1 NAT2等宽松网络环境。通过主机公布的入口配对。入口变化后重新生成直连码。'};
   let fields='';
   if(d.route==='pkarr')fields=`<section class="discovery-settings"><h3>PKARR 发现</h3><label class="field"><span>发现网关（每行一个）</span><textarea data-key="pkarrGateways" spellcheck="false" class="pkarr-endpoints">${esc(d.pkarrGateways)}</textarea></label>${ui.editor.id?`<p class="hint" id="pkarr-live-state">${esc(row(ui.editor.id)?.status.pkarr?.state||'等待发现状态')}</p><div id="pkarr-live-details">${pkarrDetails(row(ui.editor.id)?.status.pkarr)}</div><div class="form-actions"><button class="btn compact" data-ui-action="refresh-pkarr" data-network="${esc(ui.editor.id)}">立即刷新发现信息</button></div>`:''}</section>`;
   if(d.route==='server')fields=`<section class="discovery-settings"><h3>HTTPS 协调服务器</h3><label class="field"><span>协调服务器地址</span><input data-key="url" value="${esc(drafts.coordination.url)}" placeholder="https://coord.example.com/" spellcheck="false"></label><label class="field"><span>证书 SHA-256 指纹（可选）</span><input class="mono" data-key="pin" value="${esc(drafts.certificate.pin)}" placeholder="留空使用系统证书信任" spellcheck="false"></label></section>`;
-  return `<h3>配对与发现方式</h3><label class="field"><span>发现方式</span><select data-key="route">${[['pkarr','PKARR 自动发现（默认）'],['server','自建协调服务器（高级）'],['direct','仅直连码 · 手动更新入口']].map(([v,t])=>`<option value="${v}" ${d.route===v?'selected':''}>${t}</option>`).join('')}</select></label><div class="note discovery-note">${icon('info')}<span>${tips[d.route]||tips.pkarr}</span></div>${fields}`;
+  return `<h3>配对与发现方式</h3><label class="field"><span>发现方式</span><select data-key="route">${[['server','协调服务器'],['pkarr','PKARR 自动发现'],['direct','仅直连码 · 手动更新入口']].map(([v,t])=>`<option value="${v}" ${d.route===v?'selected':''}>${t}</option>`).join('')}</select></label><div class="note discovery-note">${icon('info')}<span>${tips[d.route]||tips.pkarr}</span></div>${fields}`;
  }
  if(section==='entry')return `<h3>本机已有入口</h3><div class="entry-copy"><p class="hint">填写本机的公网 IP:端口、已打通的地址或 HTTPS/TXT 等订阅链接。${['tcp','https'].includes(d.protocol)?'支持 IPv4／IPv6；IPv6 地址使用 [地址]:端口。':'当前协议使用 IPv4；纯 TCP／HTTPS 也支持 IPv6 入口。'}</p><p class="hint">若填写的不是可更新的订阅链接，入口变化后需要重新填写新入口地址。</p></div><div class="entry-rows">${d.entries.local.map((v,i)=>entryRow(v,i,d.entries.local.length)).join('')}</div><div class="test-row"><button class="btn compact" data-ui-action="test-entry">${icon('refresh')}测试地址</button><span id="test-status" class="hint"></span></div><div id="test-results"></div><label class="field"><span>订阅更新间隔（秒）</span><input data-key="refresh" type="number" min="1" max="86400" value="${d.refresh*Number(d.unit||1)}"></label>`;
  if(section==='virtual'){
   if(ui.editor.id)return `<h3>本机在此网络中的虚拟 IP</h3>${readRows([['当前虚拟 IP',row(ui.editor.id)?.status.virtualIp],['修改方式','网络创建后地址固定；需要更换地址时重新创建网络。']])}`;
   return `<h3>本机在此网络中的虚拟 IP</h3><div class="radio-cards">${[['auto','自动分配','自动选择可用网段，避免与其他网络冲突。'],['custom','自定义地址','指定本机在此网络使用的私有 IPv4 地址。']].map(([v,t,h])=>`<label class="radio-card"><input type="radio" name="virtual-mode" data-key="virtualMode" value="${v}" ${ui.editor.ipMode===v?'checked':''}><strong>${t}</strong><small>${h}</small></label>`).join('')}</div>${ui.editor.ipMode==='custom'?`<label class="field"><span>自定义虚拟 IP</span><input class="mono" id="new-network-ip" value="${esc(newNetworkIp)}" placeholder="10.171.139.1" spellcheck="false"></label>`:''}`;
  }
- if(section==='port')return `<h3>接收端口</h3><label class="field"><span>ConWU 接收端口</span><input type="number" data-key="listen" min="1024" max="65535" value="${drafts.port.listen}"><span class="hint">已有入口应映射到这个端口。</span></label><div class="note">${icon('info')}<span>修改接收端口后，请同步核对公网转发或外部打洞工具的配置。</span></div>${d.mode==='custom'?`<h3>主机端口适配</h3><p class="hint">自主打洞会优先尝试 UPnP 自动映射；NAT1 等功能请在路由器中设置。实际可达性以对端认证连接为准。</p><div class="stream-flow-setting"><div><strong>UPnP 不可用时尝试 PCP / NAT-PMP</strong><p class="hint">需要网关支持；仅维护 ConWU 自己申请的短期端口规则。</p></div>${switchControl('portControlMapping',drafts.port.portControlMapping===true,'尝试 PCP / NAT-PMP')}</div>`:''}`;
- if(section==='stun')return `<h3>打洞 STUN 服务器</h3><div class="stun-columns">${[['tcp','TCP STUN'],['udp','UDP STUN']].map(([key,title])=>`<label class="field"><span>${title}<small id="stun-count-${key}">${drafts.stun[key].split(/\n/).filter(v=>v.trim()).length} 个地址</small></span><textarea data-key="${key}" spellcheck="false" wrap="off" aria-label="${title} 服务器列表">${esc(drafts.stun[key])}</textarea></label>`).join('')}</div>`;
+ if(section==='port')return `<h3>接收端口</h3><label class="field"><span>ConWU 接收端口</span><input type="number" data-key="listen" min="1024" max="65535" value="${drafts.port.listen}"><span class="hint">已有入口应映射到这个端口。</span></label><div class="note">${icon('info')}<span>修改接收端口后，请同步核对公网转发或外部打洞工具的配置。</span></div>`;
+ if(section==='stun')return `<h3>打洞 STUN 服务器</h3><div class="stun-columns"><label class="field"><span>TCP STUN<small id="stun-count-tcp">${drafts.stun.tcp.split(/\n/).filter(v=>v.trim()).length} 个地址</small></span><textarea data-key="tcp" spellcheck="false" wrap="off" aria-label="TCP STUN 服务器列表">${esc(drafts.stun.tcp)}</textarea><span class="hint">每行一个地址。使用自建 STUN 时，可清空默认地址并填写自建地址。</span></label></div>`;
  return '';
 }
 function readOnlyEditor(){
  const n=row(ui.editor.id);if(!n)return '<div class="note">此网络已被移除，可以关闭窗口。</div>';
  const s=n.status,p=s.settings,remote=s.receivedNetworkSettings,route=p.discoveryMode||(p.pkarrPublish?'pkarr':p.directMode?'direct':'coordinator');
  const flow=s.peers[0]?.streamFlows,flowText=flow?.splitActive?'已启用 · '+flow.connections+' 条连接':flow?.negotiated?'已协商 · 当前使用单连接':p.streamFlowLanes===true?'启用（等待对端协商）':'关闭';
- const groups={network:[['连接协议',protocolOf(p)],...(['tcp-only','https-only'].includes(p.pathSelection)?[['按流分离连接',flowText]]:[]),['连接策略',strategyOf(p)],['配置来源',s.peers[0]?.name||'目标主机']],entry:[['目标主机入口／订阅',(p.existingEntries||[]).filter(e=>e.peerSlot!==0).map(e=>e.source).join('\n')||remote?.entries?.map(e=>e.source).join('\n')],['订阅更新间隔',p.entryRefreshSeconds+' 秒']],virtual:[['本机虚拟 IP',s.virtualIp],['对机虚拟 IP',s.peers[0]?.virtualIp]],port:[['主机接收端口',remote?.hostListenPort?String(remote.hostListenPort):'由入口或协调发现'],['本机接收端口',String(p.listenPort)],['本机源端口',String(p.sourcePort)]],stun:[['TCP STUN',(p.tcpStun||[]).join('\n')],['UDP STUN',(p.udpStun||[]).join('\n')]],discovery:[['发现方式',route==='pkarr'?'PKARR 自动发现':route==='coordinator'?'自建协调服务器':'仅直连码'],...(route==='pkarr'?[['发现网关',(p.pkarrGateways||[]).join('\n')],['主机 PKARR 入口',(remote?.entries||[]).filter(e=>e.source.startsWith('pkarr://')).map(e=>e.source).join('\n')]]:route==='coordinator'?[['HTTPS 协调服务器',p.service],['证书 SHA-256 指纹（可选）',p.certificatePin||'使用系统证书信任']]:[['入口更新','入口变化后重新交换直连码']])]};
+ const groups={network:[['连接协议',protocolOf(p)],...(['tcp-only','https-only'].includes(p.pathSelection)?[['按流分离连接',flowText]]:[]),['连接策略',strategyOf(p)],['配置来源',s.peers[0]?.name||'目标主机']],entry:[['目标主机入口／订阅',(p.existingEntries||[]).filter(e=>e.peerSlot!==0).map(e=>e.source).join('\n')||remote?.entries?.map(e=>e.source).join('\n')],['订阅更新间隔',p.entryRefreshSeconds+' 秒']],virtual:[['本机虚拟 IP',s.virtualIp],['对机虚拟 IP',s.peers[0]?.virtualIp]],port:[['主机接收端口',remote?.hostListenPort?String(remote.hostListenPort):'由入口或协调发现'],['本机接收端口',String(p.listenPort)],['本机源端口',String(p.sourcePort)]],stun:[['TCP STUN',(p.tcpStun||[]).join('\n')]],discovery:[['发现方式',route==='pkarr'?'PKARR 自动发现':route==='coordinator'?'协调服务器':'仅直连码'],...(route==='pkarr'?[['发现网关',(p.pkarrGateways||[]).join('\n')],['主机 PKARR 入口',(remote?.entries||[]).filter(e=>e.source.startsWith('pkarr://')).map(e=>e.source).join('\n')]]:route==='coordinator'?[['HTTPS 协调服务器',p.service],['证书 SHA-256 指纹（可选）',p.certificatePin||'使用系统证书信任']]:[['入口更新','入口变化后重新交换直连码']])]};
  const live=section==='discovery'&&route==='pkarr'?`<p class="hint" id="pkarr-live-state" style="margin-top:16px">${esc(s.pkarr?.state||'等待发现状态')}</p><div id="pkarr-live-details">${pkarrDetails(s.pkarr)}</div>`:'';
  return `<div class="note readonly-intro">以下网络设置仅供查看。</div><h3>${editorSections().find(v=>v[0]===section)?.[1]||'网络设置'}</h3>${readRows(groups[section]||[])}${live}`;
 }
@@ -428,7 +591,7 @@ function renderEditor(){
 settingsDto=function(){
  const n=drafts.network,active=n.mode!=='existing'&&n.route==='server',lines=v=>String(v||'').split(/\r?\n/).map(s=>s.trim()).filter(Boolean);
  let service=drafts.coordination.url.trim();if(active&&service)service=normalizedJoinCoordinator(service.includes('://')?service:'https://'+service);
- return {...(configuration()?.settings||newConfigurationSettings()),service,certificatePin:drafts.certificate.pin.trim(),pairingService:'',pairingCertificatePin:'',manualEndpoint:'',streamFlowLanes:n.streamFlowLanes===true,portControlMapping:drafts.port.portControlMapping===true,pathSelection:({faketcp:'faketcp-only',udp:'udp-only',tcp:'tcp-only',https:'https-only',phantun:'phantun-only',mimic:'mimic-only',tcpraw:'tcpraw-only'})[n.protocol],connectionSource:n.mode,directMode:!active,discoveryMode:n.mode==='existing'?'existing':n.route==='pkarr'?'pkarr':active?'coordinator':'direct',pkarrPublish:n.mode!=='existing'&&n.route==='pkarr',pkarrGateways:lines(n.pkarrGateways),coordinatorBackup:false,existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:key==='local'?0:-1,source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',tcpStun:lines(drafts.stun.tcp),udpStun:lines(drafts.stun.udp),coordinator:{...defaults.host},ddns:null};
+ return {...(configuration()?.settings||newConfigurationSettings()),service,certificatePin:drafts.certificate.pin.trim(),pairingService:'',pairingCertificatePin:'',manualEndpoint:'',streamFlowLanes:n.streamFlowLanes===true,pathSelection:({faketcp:'faketcp-only',udp:'udp-only',tcp:'tcp-only',https:'https-only',phantun:'phantun-only',mimic:'mimic-only',tcpraw:'tcpraw-only'})[n.protocol],connectionSource:n.mode,directMode:!active,discoveryMode:n.mode==='existing'?'existing':n.route==='pkarr'?'pkarr':active?'coordinator':'direct',pkarrPublish:n.mode!=='existing'&&n.route==='pkarr',pkarrGateways:lines(n.pkarrGateways),coordinatorBackup:false,existingEntries:Object.entries(n.entries).flatMap(([key,values])=>values.map(v=>v.trim()).filter(Boolean).map(source=>({peerSlot:key==='local'?0:-1,source}))),entryRefreshSeconds:Number(n.refresh)*Number(n.unit),listenPort:Number(drafts.port.listen),sourcePort:configuration()?.settings.sourcePort||44691,requestedVirtualIp:'',tcpStun:lines(drafts.stun.tcp),coordinator:{...defaults.host},ddns:null};
 };
 validateSection=function(key,configuration=drafts){
  const n=configuration.network;
@@ -438,7 +601,10 @@ validateSection=function(key,configuration=drafts){
   if(Object.values(n.entries).flat().filter(v=>v.trim()).length>12)return '最多保存 12 项地址来源。';
  }
  if(key==='port'&&(!Number.isInteger(configuration.port.listen)||configuration.port.listen<1024||configuration.port.listen>65535))return '接收端口应为 1024～65535 之间的整数。';
- if(key==='stun'&&n.mode!=='existing'&&(!configuration.stun.tcp.trim()||!configuration.stun.udp.trim()))return '请填写 STUN 服务器地址。';
+ if(key==='stun'&&n.mode!=='existing'){
+  const servers=configuration.stun.tcp.split(/\r?\n/).filter(value=>value.trim());
+  if(!servers.length)return '请填写 TCP STUN 服务器地址。';
+ }
  if(key==='discovery'&&n.mode!=='existing'){
   if(n.route==='server'){
    try{normalizedJoinCoordinator(configuration.coordination.url.includes('://')?configuration.coordination.url:'https://'+configuration.coordination.url);}catch{return '请填写有效的 HTTPS 协调服务器地址。';}
@@ -456,14 +622,24 @@ validateSection=function(key,configuration=drafts){
 };
 function openEditor(id=''){
  const n=row(id);if(id&&!n)return;const ro=!!n&&!n.status.isOwner,bound=workspaceState.configurations.find(c=>c.id===(n?n.configurationId:ui.newConfig));
- selectedConfiguration=bound&&!bound.networks.some(v=>v.networkId!==id)?bound.id:'';settingsScope='configuration';configurationRevision=0;settingsHydrated=false;configurationDrafts.delete('new');hydrateEditor();
+ selectedConfiguration=bound&&!bound.networks.some(v=>(v.networkId??v.id)!==id)?bound.id:'';settingsScope='configuration';configurationRevision=0;settingsHydrated=false;configurationDrafts.delete('new');hydrateEditor();
  if(!selectedConfiguration&&bound){saved=configFromStatus({...workspaceState,settings:bound.settings});drafts=clone(saved);}
  drafts.network.owner='local';saved.network.owner='local';for(const c of [drafts,saved]){c.network.refresh*=Number(c.network.unit||1);c.network.unit=1;}
  if(!selectedConfiguration){configurationName=baseConfigurationName=n?.name||newNetworkName||'网络设置';}
  ui.editor={id,configurationId:selectedConfiguration,readOnly:ro,baseIp:newNetworkIp,baseIpMode:newNetworkIp?'custom':'auto',ipMode:newNetworkIp?'custom':'auto',customIp:newNetworkIp,saving:false};section='network';$('network-dialog').classList.toggle('read-only',ro);$('network-dialog-title').textContent=ro?'主机提供的网络设置 · '+n.name:n?'网络设置 · '+n.name:'新网络设置';$('network-dialog-subtitle').textContent=ro?'由目标主机提供，本机仅供查看。':'每个网络使用独立设置；修改仅对本网络生效。';$('network-edit-actions').hidden=ro;$('network-readonly-close').hidden=!ro;renderEditor();$('network-dialog').showModal();
 }
+function editorDefaults(){
+ const settings=newConfigurationSettings();
+ if(ui.editor.id){
+  const current=row(ui.editor.id)?.status.settings;
+  if(current){settings.pathSelection=current.pathSelection;settings.listenPort=current.listenPort;}
+ }
+ const value=configFromStatus({...workspaceState,settings});
+ value.network.owner='local';value.network.refresh*=Number(value.network.unit||1);value.network.unit=1;
+ return value;
+}
 function editorChanged(){return !!ui.editor&&(!same(saved,drafts)||newNetworkIp!==ui.editor.baseIp||!ui.editor.id&&ui.editor.ipMode!==ui.editor.baseIpMode||configurationName.trim()!==baseConfigurationName);}
-async function closeEditor(){if(!ui.editor||ui.editor.saving)return;if(!ui.editor.readOnly&&editorChanged()&&!await confirmAction('放弃未保存的设置？','已保存设置保持不变。','放弃修改'))return;if(!ui.editor.readOnly){configurationDrafts.delete(selectedConfiguration||'new');newNetworkIp=ui.editor.baseIp;drafts=clone(saved);configurationName=baseConfigurationName;}$('network-dialog').close();ui.editor=null;render();}
+async function closeEditor(){if(!ui.editor||ui.editor.saving)return;if(!ui.editor.readOnly){configurationDrafts.delete(selectedConfiguration||'new');newNetworkIp=ui.editor.baseIp;drafts=clone(saved);configurationName=baseConfigurationName;}$('network-dialog').close();ui.editor=null;render();}
 function showDialogError(dialogId,errorId,error,focus){
  const dialog=$(dialogId),target=$(errorId);if(!dialog.open||!target)return;
  target.textContent=error.message||String(error);
@@ -492,8 +668,7 @@ async function saveEditor(){
   const ip=newNetworkIp.trim().split('.').map(Number),valid=ip.length===4&&ip.every(v=>Number.isInteger(v)&&v>=0&&v<=255)&&ip[3]>0&&ip[3]<255&&(ip[0]===10||ip[0]===172&&ip[1]>=16&&ip[1]<=31||ip[0]===192&&ip[1]===168);
   if(!/^(\d{1,3}\.){3}\d{1,3}$/.test(newNetworkIp.trim())||!valid){if(section!=='virtual'){section='virtual';renderEditor();}showEditorError('请填写有效的私有 IPv4，或留空自动分配。');return;}
  }
- const target=row(ui.editor.id),fork=!!configuration()?.networks.some(n=>n.networkId!==ui.editor.id),assign=!!target&&(fork||target.configurationId!==selectedConfiguration),write=fork||!selectedConfiguration||!same(saved,drafts)||configurationName.trim()!==baseConfigurationName;
- if(target&&(write||assign)&&!await confirmAction('保存并应用网络设置？','仅更新：'+target.name+'。需要时会重新连接，其它网络保持不变。','保存并应用'))return;
+ const target=row(ui.editor.id),fork=!!configuration()?.networks.some(n=>(n.networkId??n.id)!==ui.editor.id),write=fork||!selectedConfiguration||!same(saved,drafts)||configurationName.trim()!==baseConfigurationName;
  ui.editor.saving=true;
  try{
   const previous=selectedConfiguration||'new';
@@ -509,6 +684,10 @@ async function create(){
  try{
   let c=workspaceState.configurations.find(c=>c.id===ui.newConfig);
   if(c?.networks.length)throw Error('本次设置已用于其他网络，请重新打开网络设置。');
+  const settings=c?.settings||newConfigurationSettings();
+  if(settings.discoveryMode==='coordinator'&&!settings.service?.trim()){
+   openEditor();section='discovery';renderEditor();showEditorError('请先填写协调服务器的 HTTPS 地址。');return;
+  }
   if(!c){
    const reply=await command('configuration',{networkId:'',configuration:{action:'save',id:'',name:newNetworkName.trim(),expectedRevision:0,settings:newConfigurationSettings(),confirmReconnect:false,independent:true}});
    ui.newConfig=reply.configurationId||'';try{localStorage.setItem('conwu-create-configuration-draft',ui.newConfig);}catch{}c=workspaceState.configurations.find(c=>c.id===ui.newConfig);
@@ -523,24 +702,30 @@ async function create(){
  }finally{ui.creating=false;controls();}
 }
 async function join(){
- const code=compactCodeValue(joinInviteValue);if(!validCompactCode(code))throw Error('请输入完整的直连码：IPv4 为 16 位，IPv6 为 36 位。');
- const reply=await command('network',{networkId:'',network:{action:'join-compact',autoConfigure:true,code,service:'',certificatePin:'',mode:'faketcp',name:'连接 '+(all().length+1),expectedNetwork:''}});
+ const code=compactCodeValue(joinInviteValue);if(!validCompactCode(code))throw Error('请输入完整的 16 位或 36 位直连码。');
+ const coordinator=coordinatedCode(code)?ui.joinCoordinator.trim():'';
+ const reply=await command('network',{networkId:'',network:{action:'join-compact',autoConfigure:true,code:coordinator?code+'@'+coordinator:code,mode:'faketcp',name:'连接 '+(all().length+1),expectedNetwork:''}});
  ui.joinId=reply.status?.selectedNetworkId||selectedNetwork;render();const p=row(ui.joinId)?.status.pairing;if(p?.error)notice(p.error,true,'pair');else notify('正在联系目标主机');
 }
 bindJoinInput=function(){
  const input=$('join-invite');if(!input)return;
+ const coordinator=$('join-coordinator');
+ coordinator.oninput=()=>{ui.joinCoordinator=coordinator.value;joinError='';$('join-error').textContent='';};
  const logicalOffset=offset=>compactCodeValue(input.value.slice(0,offset||0)).length;
- const visibleOffset=offset=>Math.min(input.value.length,offset+Math.floor(offset/4));
+ const visibleOffset=offset=>Math.min(input.value.length,input.value.includes('-')?offset+Math.floor(offset/4):offset);
  const updateSlots=()=>{
   const value=compactCodeValue(input.value),start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd);
-  const groups=document.querySelector('#join-card .direct-groups');if(groups&&groups.classList.contains('extended')!==(compactLimit(value)===36))groups.outerHTML=directGroups(value,true);
+  const groups=document.querySelector('#join-card .direct-groups'),extended=compactLimit(value)===36;
+  if(groups&&groups.classList.contains('extended')!==extended)groups.outerHTML=directGroups(value,true);
   document.querySelectorAll('#join-card .direct-digit').forEach((digit,i)=>{
    digit.textContent=value[i]||'X';digit.classList.toggle('filled',!!value[i]);digit.classList.toggle('placeholder',!value[i]);
    digit.classList.toggle('active',document.activeElement===input&&start===end&&i===Math.min(start,compactLimit(value)-1));digit.classList.toggle('selected',document.activeElement===input&&i>=start&&i<end);
   });
  };
  const apply=(value,start,end=start)=>{
-  joinInviteValue=compactCodeValue(value).slice(0,compactLimit(value));input.value=formatCompact(joinInviteValue);input.setSelectionRange(visibleOffset(start),visibleOffset(end));
+  const code=compactCodeValue(value).slice(0,compactLimit(value));
+  joinInviteValue=code;input.value=formatCompact(code);input.setSelectionRange(visibleOffset(start),visibleOffset(end));
+  $('join-coordinator-field').hidden=!coordinatedCode(code);
   joinError='';$('join-error').textContent='';updateSlots();
  };
  const replaceSelection=text=>{
@@ -553,38 +738,52 @@ bindJoinInput=function(){
   let start=logicalOffset(input.selectionStart),end=logicalOffset(input.selectionEnd);if(start===end){if(e.inputType==='deleteContentBackward')start=Math.max(0,start-1);else end=Math.min(compactLimit(input.value),end+1);}
   const value=compactCodeValue(input.value);apply(value.slice(0,start)+value.slice(end),start);
  };
- input.onpaste=e=>{e.preventDefault();replaceSelection(e.clipboardData.getData('text/plain'));};
+ input.onpaste=e=>{
+  e.preventDefault();const text=e.clipboardData.getData('text/plain').trim(),separator=text.indexOf('@');
+  const code=separator>=0?compactCodeValue(text.slice(0,separator)):'';
+  if(coordinatedCode(code)){
+   apply(code,code.length);coordinator.value=ui.joinCoordinator=text.slice(separator+1).trim();
+  }else replaceSelection(text);
+ };
  input.oncopy=e=>{if(input.selectionStart===input.selectionEnd)return;e.preventDefault();e.clipboardData.setData('text/plain',formatCompact(input.value.slice(input.selectionStart,input.selectionEnd)));};
  input.oncut=e=>{if(input.selectionStart===input.selectionEnd)return;e.preventDefault();e.clipboardData.setData('text/plain',formatCompact(input.value.slice(input.selectionStart,input.selectionEnd)));replaceSelection('');};
  input.onfocus=input.onclick=input.onkeyup=input.onselect=updateSlots;
  input.onblur=()=>document.querySelectorAll('#join-card .direct-digit').forEach(d=>d.classList.remove('active','selected'));
  $('join-form').onsubmit=e=>{e.preventDefault();void run(join).catch(()=>{});};
 };
-async function removeNetwork(id,confirmed=false){
- const n=row(id);if(!n)return;
- const revoked=n.status.networkRevoked,unapproved=!n.status.networkId&&!revoked,host=n.status.isOwner;
- const title=revoked?'移除已撤销的网络？':unapproved?'移除加入申请？':host?'删除本机创建的网络？':'退出网络？';
- const detail=revoked?'删除“'+n.name+'”的本机记录。':unapproved?'取消“'+n.name+'”并移除本机未完成的加入记录。':host?'结束“'+n.name+'”并删除此网络。其他网络和本机设置保留。':'删除本机的“'+n.name+'”网络记录，并通知主机清除本设备的从机信息。主机暂时离线时自动重试通知。';
- const confirm=revoked?'确认移除记录':unapproved?'确认移除申请':host?'确认删除网络':'确认退出网络';
- if(!confirmed&&!await confirmAction(title,detail,confirm,'danger'))return;
- let localOnly=false;
- try{await command('network',{networkId:id,network:{action:revoked?'remove-network':host?'delete-network':'leave',expectedNetwork:n.status.networkId,confirmReplace:true}});}
- catch(error){
-  if(!row(id))return;
-  if(unapproved||revoked)throw error;
-  if(!await confirmAction('远端尚未确认','可以只移除本机记录，不代表远端授权已经撤销。原因：'+error.message,'仅从本机移除','danger'))return;
-  await command('network',{networkId:id,network:{action:n.status.networkId?'forget-network':'remove-network',expectedNetwork:n.status.networkId,confirmReplace:true}});localOnly=true;
- }
- if(ui.codeId===id)closeInvitation();if(ui.joinId===id)ui.joinId='';render();
- notify(revoked?'已移除本机网络记录':unapproved?'加入申请已移除':localOnly?'本机网络已移除，远端撤销未确认':host?'网络已删除，其他网络和设置保留':'已退出网络；主机可达时将自动清除本设备的从机记录');
+const exitDetails={
+ owner:{role:'本机创建',label:'退出',action:'delete-network',done:'网络已删除'},
+ member:{role:'本机加入',label:'退出',action:'leave',done:'已退出网络'},
+ pending:{role:'未完成的加入申请',label:'移除申请',action:'leave',done:'加入申请已移除'},
+ revoked:{role:'授权已撤销',label:'移除记录',action:'remove-network',done:'已移除本机网络记录'},
+};
+function exitKind(n){return n.status.networkRevoked?'revoked':!n.status.networkId?'pending':n.status.isOwner?'owner':'member';}
+function networkActionButton(n,action,label){
+ return `<button type="button" id="network-action-${esc(n.id)}" class="text-btn${action==='remove-network'?' danger-text':''}"
+  data-ui-action="${action}" data-network="${esc(n.id)}">${label}</button>`;
 }
-function chooseExit(){const networks=all();if(!networks.length)return;$('exit-network-select').innerHTML=networks.map(n=>`<option value="${esc(n.id)}">${esc(n.name)} · ${n.status.networkRevoked?'已撤销':n.status.networkId?'本机为'+(n.status.isOwner?'主机':'从机'):'未完成的加入申请'}</option>`).join('');updateExit();$('exit-dialog').showModal();}
-function updateExit(){
- const n=row($('exit-network-select').value);if(!n)return;
- const revoked=n.status.networkRevoked,unapproved=!n.status.networkId&&!revoked;
- $('exit-title').textContent=revoked?'移除已撤销的网络':unapproved?'移除加入申请':'退出网络';
- $('exit-confirm').textContent=revoked?'确认移除记录':unapproved?'确认移除申请':'确认退出网络';
- $('exit-description').textContent=revoked?'主机已撤回本机授权。此操作删除本机记录。':unapproved?'取消并移除本机未完成的加入记录。':n.status.isOwner?'将删除本机创建的网络，并撤销从机授权。':'将删除本机网络记录，并通知主机清除本设备的从机信息；主机离线时自动重试通知。只需暂时断开时，请使用加入网络页面的“断开连接”。';
+function exitPage(){
+ const rows=all();
+ return heading('退出网络','退出网络并删除本机在网络中的信息')+`<article class="card network-list-card network-exit-card">
+  ${rows.length?rows.map(n=>{
+   const {role,label}=exitDetails[exitKind(n)];
+   return `<div class="network-entry" data-network-row="${esc(n.id)}">
+    <div class="list-row"><strong>${esc(n.name)}</strong><span class="muted">${role}</span>${networkActionButton(n,'remove-network',label)}</div>
+   </div>`;
+  }).join(''):'<div class="empty"><h2>暂无可退出的网络</h2></div>'}
+ </article>`;
+}
+async function applyNetworkAction(id,action){
+ const n=row(id);if(!n)return;
+ const kind=exitKind(n),wire=n.status.networkId;
+ if(action==='disconnect-network'){
+  if(kind==='member'&&n.status.networkEnabled)await command('network',{networkId:id,network:{action:'disconnect',expectedNetwork:wire}});
+  return;
+ }
+ const choice=exitDetails[kind];
+ await command('network',{networkId:id,network:{action:choice.action,expectedNetwork:wire,confirmReplace:true}});
+ if(ui.codeId===id)closeInvitation();if(ui.joinId===id)ui.joinId='';
+ render();notify(choice.done);
 }
 async function lockedSave(key,action){if(ui[key])return;ui[key]=true;controls();try{return await action();}finally{ui[key]=false;controls();}}
 async function saveDevice(){
@@ -597,7 +796,6 @@ async function saveDevice(){
 }
 async function generateFor(id){
  const n=row(id);if(!n)throw Error('此网络已被移除。');const s=n.status;
- if(s.pairing?.candidate&&!await confirmAction('重新生成直连码？','当前尚未处理的申请将被取消。','重新生成'))return;
  if(ui.codeId===id)$('invitation-error').textContent='';
  await command('network',{networkId:id,network:{action:'invite-compact',expectedNetwork:s.networkId,entryFamily:$('invitation-family').hidden?'':$('invitation-family').value}},true);render();notify('直连码已生成');
 }
@@ -614,27 +812,42 @@ document.addEventListener('input',e=>{
  if(scope&&key&&ui.device){const target=scope==='coordination'?ui.coordination:ui.device;target[key]=el.type==='checkbox'?el.checked:el.value;if(scope==='coordination')$('coordination-error').textContent='';controls();}
  if(el.id==='new-network-ip'){newNetworkIp=el.value;if(ui.editor)ui.editor.customIp=el.value;if($('settings-error'))$('settings-error').textContent='';controls();}
 });
-document.addEventListener('change',e=>{if(e.target.id==='exit-network-select')updateExit();});
 document.addEventListener('click',e=>{
  const b=e.target.closest('[data-ui-action],[data-ui-section]');if(!b||b.disabled)return;e.preventDefault();
- if(b.dataset.uiSection){section=b.dataset.uiSection;renderEditor();$('network-settings-body').scrollTop=0;return;}
+ if(b.dataset.uiSection){section=b.dataset.uiSection;renderEditor();fadeSection($('network-settings-body').querySelector('h2,h3'));$('network-settings-body').scrollTop=0;return;}
  void run(async()=>{const id=b.dataset.network;switch(b.dataset.uiAction){
   case 'help-create':openHelp('create');break;case 'help-join':openHelp('join');break;case 'close-help':$('help-dialog').close();break;
   case 'open-editor':openEditor(id||'');break;case 'close-editor':await editorAction(closeEditor);break;case 'save-editor':await editorAction(saveEditor);break;
-  case 'restore-editor':drafts=clone(saved);configurationName=baseConfigurationName;newNetworkIp=ui.editor.baseIp;ui.editor.ipMode=ui.editor.baseIpMode;ui.editor.customIp=newNetworkIp;renderEditor();break;
+ case 'projection-settings':openProjectionSettings(id);break;
+ case 'close-projection-settings':$('projection-dialog').close();ui.projectionEditor=null;break;
+ case 'save-projection-settings':await saveProjectionSettings();break;
+ case 'projection-file-browser':projectionFiles.open(id);break;
+ case 'projection-open-desktop':await projectionMode.openDesktop();break;
+ case 'projection-select-device':await projectionMode.selectDevice(id,projectionReady);break;
+ case 'projection-files':{const deviceId=row(id)?.status.peers[0]?.deviceId;if(!deviceId)throw Error('设备已变化，请刷新。');await command('projection-files',{networkId:id,deviceId},true);break;}
+ case 'projection-files-cancel':await command('projection-files-cancel',{jobId:b.dataset.job},true);break;
+ case 'projection-moonlight':{const peer=row(id)?.status.peers[0];if(!peer?.deviceId)throw Error('设备已变化，请刷新。');await projectionMode.connectMoonlight(id,peer);break;}
+ case 'projection-moonlight-stop':await projectionMode.stopMoonlight(id);break;
+ case 'projection-fullscreen':await projectionMode.toggleFullscreen();break;
+  case 'restore-editor':drafts=editorDefaults();if(!ui.editor.id){newNetworkIp='';ui.editor.ipMode='auto';ui.editor.customIp='';}renderEditor();break;
   case 'new-create':{const abandoned=workspaceState.configurations.find(c=>c.id===ui.newConfig);if(abandoned&&!abandoned.networks.length)await command('configuration',{networkId:'',configuration:{action:'delete',id:abandoned.id,expectedRevision:abandoned.revision}});ui.codeId='';ui.newConfig='';configurationDrafts.delete('new');newNetworkName='';newNetworkIp='';try{localStorage.removeItem('conwu-create-ip-draft');localStorage.removeItem('conwu-create-configuration-draft');}catch{}render();break;}
-  case 'select-host':openInvitation(id);break;case 'close-invitation':closeInvitation();break;case 'generate':{const target=id;await dialogAction(()=>generateFor(target),'invitation-dialog','invitation-error',()=>ui.codeId===target,$('invitation-generate'));break;}case 'copy-pair':await copyText(formatCompact(invitationCode()));break;
-  case 'another-join':ui.joinId='';joinInviteValue='';joinError='';render();break;
+  case 'select-host':openInvitation(id);break;case 'close-invitation':closeInvitation();break;case 'generate':{const target=id;await dialogAction(()=>generateFor(target),'invitation-dialog','invitation-error',()=>ui.codeId===target,$('invitation-generate'));break;}
+  case 'copy-pair':{const code=invitationCode();if(code)await copyText(row(ui.codeId)?.status.pairing?.shareCode||formatCompact(code));break;}
+  case 'another-join':ui.joinId='';joinInviteValue='';ui.joinCoordinator='';joinError='';render();break;
   case 'cancel-join':await command('network',{networkId:id,network:{action:'pair-cancel'}});ui.joinId=row(id)?.status.networkId?id:'';render();if(ui.joinId)notify('申请已获批准，可在右侧退出不再需要的网络。');break;
   case 'approve':case 'reject':{const n=row(id),p=n.status.pairing;await command('network',{networkId:id,network:{action:b.dataset.uiAction,verification:p.verification,candidate:p.candidate,proposedIp:p.proposedIp,expectedNetwork:n.status.networkId}});render();break;}
-  case 'remove-network':await removeNetwork(id);break;case 'choose-exit':chooseExit();break;case 'close-exit':$('exit-dialog').close();break;
-  case 'confirm-exit':{const target=$('exit-network-select').value;$('exit-dialog').close();await removeNetwork(target,true);break;}
-  case 'start-network':await command('start',{networkId:id});break;case 'toggle-connection':{const n=row(id);if(n)await command('network',{networkId:id,network:{action:n.status.networkEnabled?'disconnect':'reconnect',expectedNetwork:n.status.networkId}});break;}case 'save-device':await lockedSave('savingDevice',saveDevice);break;
-  case 'open-coordination-settings':ui.coordinationEditor={};renderCoordinatorEditor();$('coordination-dialog').showModal();break;
+  case 'remove-network':case 'disconnect-network':await applyNetworkAction(id,b.dataset.uiAction);break;
+  case 'start-network':await command('start',{networkId:id});break;case 'reconnect-network':{
+   const n=row(id);if(!n)break;
+   if(exitKind(n)==='member'&&!n.status.networkEnabled)
+    await command('network',{networkId:id,network:{action:'reconnect',expectedNetwork:n.status.networkId}});
+   break;
+  }case 'save-device':await lockedSave('savingDevice',saveDevice);break;
+  case 'open-coordination-settings':ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);ui.coordinationEditor={};renderCoordinatorEditor();$('coordination-dialog').showModal();break;
   case 'close-coordination-settings':if(!ui.savingCoordination){$('coordination-dialog').close();ui.coordinationEditor=null;}break;
-  case 'restore-coordination':ui.coordinationBase=coordinatorValue();ui.coordination=clone(ui.coordinationBase);renderCoordinatorEditor();break;
+  case 'restore-coordination':ui.coordination=coordinatorValue(true);renderCoordinatorEditor();break;
   case 'save-coordination':{const editor=ui.coordinationEditor;await dialogAction(()=>lockedSave('savingCoordination',saveCoordinator),'coordination-dialog','coordination-error',()=>ui.coordinationEditor===editor,editor?.focus);break;}
-  case 'restore-device':ui.device=clone(ui.deviceBase);render();break;case 'default-device':ui.device=defaultDevice();render();break;
+  case 'default-device':ui.device=defaultDevice();render();break;
   case 'register-service':await command('register-service',{networkId:''});break;
   case 'check-update':{const reply=await api('/api/command',{method:'update-check',operationId:crypto.randomUUID()});if(!reply.ok)throw Error(reply.error||'暂时无法开始更新检查');if(reply.status)render(reply.status);break;}
    case 'download-update':openUpdateSources();break;case 'download-from-source':await downloadFromSource(b.dataset.source);break;case 'close-update-source':$('update-source-dialog').close();break;case 'install-update':await localUpdate(true);break;case 'dismiss-update':await command('update-dismiss',{localUpdate:{receiptId:b.dataset.receipt}});break;

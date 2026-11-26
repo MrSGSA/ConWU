@@ -15,8 +15,12 @@ pub trait Adapter: Send + Sync {
         Vec::new()
     }
     #[cfg(windows)]
-    fn routes_to_peer(&self, _local: Ipv4Addr, _peer: Ipv4Addr) -> bool {
-        false
+    fn route_interface(&self, _local: Ipv4Addr, _peer: Ipv4Addr) -> Option<u32> {
+        None
+    }
+    #[cfg(windows)]
+    fn routes_to_peer(&self, local: Ipv4Addr, peer: Ipv4Addr) -> bool {
+        self.route_interface(local, peer).is_some()
     }
 }
 pub struct Memory {
@@ -265,7 +269,16 @@ mod windows {
             .chain(Some(0))
             .collect()
     }
-    fn settle(closed_at: i64, cancel: &tokio_util::sync::CancellationToken) -> Result<()> {
+    fn wait_until(until: std::time::Instant, cancel: &tokio_util::sync::CancellationToken) -> Result<()> {
+        while std::time::Instant::now() < until {
+            ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
+            let remaining = until.saturating_duration_since(std::time::Instant::now());
+            std::thread::sleep(remaining.min(std::time::Duration::from_millis(100)));
+        }
+        Ok(())
+    }
+
+    fn settle_legacy(closed_at: i64, cancel: &tokio_util::sync::CancellationToken) -> Result<()> {
         let now = conwu_core::unix_seconds() * 1000;
         let elapsed = if closed_at > 0 && closed_at <= now {
             (now - closed_at).min(30000)
@@ -274,11 +287,13 @@ mod windows {
         };
         let until =
             std::time::Instant::now() + std::time::Duration::from_millis((30000 - elapsed) as u64);
-        while std::time::Instant::now() < until {
-            ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-        Ok(())
+        wait_until(until, cancel)
+    }
+
+    fn creation_retry_delay(error: &std::io::Error, remaining: std::time::Duration,
+        backoff: std::time::Duration,
+    ) -> Option<std::time::Duration> {
+        (error.raw_os_error() == Some(4319) && !remaining.is_zero()).then(|| remaining.min(backoff))
     }
     unsafe extern "system" fn logger(level: i32, _: u64, message: *const u16) {
         if message.is_null() {
@@ -549,52 +564,28 @@ mod windows {
                         );
                         std::thread::sleep(std::time::Duration::from_millis(100));
                     }
-                    let (data1, data2, data3, data4) = id.as_fields();
-                    let previous_guid = AdapterGuid {
-                        data1,
-                        data2,
-                        data3,
-                        data4: *data4,
-                    };
-                    let mut old_luid = 0;
-                    // Windows can retain an Up IP Helper row after official
-                    // close and PnP removal. A fresh GUID alone is insufficient;
-                    // retain the original implementation's conditional settle.
-                    if previous["failedCreate"] == true
-                        || ConvertInterfaceGuidToLuid(&previous_guid, &mut old_luid) == 0
-                    {
-                        tracing::info!("等待 Windows 完成本网络上一代虚拟网卡的类配置清理");
-                        settle(previous["closedAt"].as_i64().unwrap_or(0), cancel)?;
-                        ensure!(
-                            !device_present(id)?,
-                            "旧网卡在等待后重新出现，未创建第二个实例"
-                        );
-                    }
                 }
                 let (ignored, retained, legacy_retained) =
                     verified_orphans(network, &history, legacy.as_ref())?;
                 if let Some(legacy) = legacy.as_ref() {
                     if !ignored.is_empty() || legacy.failed_create() {
-                        settle(legacy.closed_at(), cancel)?;
+                        settle_legacy(legacy.closed_at(), cancel)?;
                     }
                 }
                 let warnings = crate::routes::inspect(ip, &ignored)?;
                 history = retained;
                 // A removed GUID can remain cached as Up in IP Helper. Follow
                 // the original generation journal and never recreate that GUID.
-                let mut generation = serde_json::Value::Null;
-                let mut expected = AdapterGuid {
-                    data1: 0,
-                    data2: 0,
-                    data3: 0,
-                    data4: [0; 8],
-                };
-                let mut adapter = std::ptr::null_mut();
-                for attempt in 0..2 {
+                // The old PnP instances have been checked and any stale IP
+                // Helper rows have been attributed by GUID, LUID and alias.
+                // Retry only when the driver reports a device-class transition.
+                let mut retry_until = None;
+                let mut backoff = std::time::Duration::from_millis(750);
+                let (adapter, expected, generation) = loop {
                     ensure!(!cancel.is_cancelled(), "虚拟网卡准备已取消");
                     let id = uuid::Uuid::new_v4();
                     let (data1, data2, data3, data4) = id.as_fields();
-                    expected = AdapterGuid {
+                    let expected = AdapterGuid {
                         data1,
                         data2,
                         data3,
@@ -604,12 +595,12 @@ mod windows {
                         .as_ref()
                         .map(|l| l.name(id))
                         .unwrap_or_else(|| format!("ConWU-{}-{}", &network[..8], id.simple()));
-                    generation = serde_json::json!({"network":network,"id":id,"name":name,"closed":false,"closedAt":0,"failedCreate":false,"history":history});
+                    let mut generation = serde_json::json!({"network":network,"id":id,"name":name,"closed":false,"closedAt":0,"failedCreate":false,"history":history});
                     owner.write("generation.json", &serde_json::to_vec(&generation)?, true)?;
                     if let Some(legacy) = legacy.as_mut() {
                         legacy.record(id, &legacy_retained)?;
                     }
-                    adapter = create(
+                    let adapter = create(
                         wide(&name).as_ptr(),
                         wide(if legacy.is_some() {
                             "StreamLink"
@@ -620,7 +611,7 @@ mod windows {
                         (&expected as *const AdapterGuid).cast(),
                     );
                     if !adapter.is_null() {
-                        break;
+                        break (adapter, expected, generation);
                     }
                     let error = std::io::Error::last_os_error();
                     generation["closed"] = serde_json::json!(true);
@@ -630,21 +621,18 @@ mod windows {
                     if let Some(legacy) = legacy.as_mut() {
                         legacy.closed(true)?;
                     }
-                    ensure!(
-                        error.raw_os_error() == Some(4319) && attempt == 0,
-                        "WintunCreateAdapter failed: {error}"
-                    );
-                    tracing::warn!("Windows 网卡类配置尚未完成，等待清理后以新GUID重试一次");
-                    settle(generation["closedAt"].as_i64().unwrap(), cancel)?;
+                    let now = std::time::Instant::now();
+                    let deadline = *retry_until.get_or_insert(now + std::time::Duration::from_secs(30));
+                    let delay = creation_retry_delay(&error, deadline.saturating_duration_since(now), backoff)
+                        .with_context(|| format!("WintunCreateAdapter failed: {error}"))?;
+                    tracing::info!(retry_ms = delay.as_millis(), errno = 4319, "Windows 网卡类配置尚未完成");
+                    wait_until(now + delay, cancel)?;
+                    ensure!(!device_present(id)?, "创建失败的旧网卡尚未释放，未创建第二个实例");
+                    backoff = (backoff * 2).min(std::time::Duration::from_secs(8));
                     if !history.contains(&id) {
                         history.push(id);
                     }
-                }
-                ensure!(
-                    !adapter.is_null(),
-                    "WintunCreateAdapter failed: {}",
-                    std::io::Error::last_os_error()
-                );
+                };
                 let mut luid = 0u64;
                 get_luid(adapter, &mut luid);
                 let mut actual = AdapterGuid {
@@ -728,7 +716,7 @@ mod windows {
         fn warnings(&self) -> Vec<serde_json::Value> {
             self.warnings.clone()
         }
-        fn routes_to_peer(&self, local: Ipv4Addr, peer: Ipv4Addr) -> bool {
+        fn route_interface(&self, local: Ipv4Addr, peer: Ipv4Addr) -> Option<u32> {
             use windows_sys::Win32::{
                 NetworkManagement::IpHelper::{GetBestRoute2, MIB_IPFORWARD_ROW2},
                 Networking::WinSock::{AF_INET, SOCKADDR_INET},
@@ -738,7 +726,7 @@ mod windows {
             dst.Ipv4.sin_addr.S_un.S_addr = u32::from_ne_bytes(peer.octets());
             let mut route = MIB_IPFORWARD_ROW2::default();
             let mut src = SOCKADDR_INET::default();
-            unsafe {
+            let matches = unsafe {
                 GetBestRoute2(
                     std::ptr::null(),
                     0,
@@ -750,8 +738,9 @@ mod windows {
                 ) == 0
                     && route.InterfaceLuid.Value == self.luid
                     && src.si_family == AF_INET
-                    && src.Ipv4.sin_addr.S_un.S_addr.to_ne_bytes() == local.octets()
-            }
+                      && src.Ipv4.sin_addr.S_un.S_addr.to_ne_bytes() == local.octets()
+            };
+            (matches && route.InterfaceIndex != 0).then_some(route.InterfaceIndex)
         }
     }
     impl Drop for Wintun {
@@ -771,5 +760,17 @@ mod windows {
                 }
             }
         }
+    }
+
+    #[cfg(test)]
+    #[test]
+    fn creation_retries_class_cleanup_within_the_remaining_budget() {
+        use std::time::Duration;
+        let transition = std::io::Error::from_raw_os_error(4319);
+        let backoff = Duration::from_millis(750);
+        assert_eq!(creation_retry_delay(&transition, Duration::from_secs(30), backoff), Some(backoff));
+        assert_eq!(creation_retry_delay(&transition, Duration::from_millis(100), backoff), Some(Duration::from_millis(100)));
+        assert_eq!(creation_retry_delay(&transition, Duration::ZERO, backoff), None);
+        assert_eq!(creation_retry_delay(&std::io::Error::from_raw_os_error(5), Duration::from_secs(30), backoff), None);
     }
 }

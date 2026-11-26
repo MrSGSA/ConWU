@@ -1,0 +1,22 @@
+[package]
+name = "conwu-desktop"
+version = "1.6.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace]
+
+[dependencies]
+tauri = { version = "2", default-features = false, features = ["wry"] }
+
+[target.'cfg(windows)'.dependencies]
+serde = { version = "1", features = ["derive"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security", "Win32_System_LibraryLoader", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+
+[build-dependencies]
+tauri-build = { version = "2", default-features = false, features = ["config-json"] }
+
+[profile.release]
+opt-level = "s"
+strip = true

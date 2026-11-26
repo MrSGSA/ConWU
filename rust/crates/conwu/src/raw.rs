@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     io,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     process::Stdio,
     sync::{Arc, Mutex},
     time::Duration,
@@ -24,10 +24,10 @@ const BRIDGE_QUEUE: usize = 128;
 const MAX_DATAGRAM: usize = 2048;
 const BRIDGE_RECEIVE_BUFFER: usize = 256 * 1024;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct LocalCarrierError {
     mode: String,
-    source: anyhow::Error,
+    source: Arc<anyhow::Error>,
 }
 impl std::fmt::Display for LocalCarrierError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -36,7 +36,7 @@ impl std::fmt::Display for LocalCarrierError {
 }
 impl std::error::Error for LocalCarrierError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        Some(self.source.as_ref())
+        Some(self.source.as_ref().as_ref())
     }
 }
 struct Helper {
@@ -73,10 +73,55 @@ async fn wait_for_helper(child: &mut Option<Helper>) {
 #[derive(Clone)]
 pub struct Control {
     commands: mpsc::Sender<Value>,
-    pending: Arc<Mutex<HashMap<String, oneshot::Sender<()>>>>,
+    pending: Arc<Mutex<HashMap<String, oneshot::Sender<io::Result<Option<u64>>>>>>,
     peers: Arc<Mutex<HashMap<SocketAddr, SocketAddr>>>,
+    peer_opened: Arc<tokio::sync::Notify>,
+    handshake_stages: Arc<Mutex<HashMap<(SocketAddr, &'static str), (i64, Option<u32>)>>>,
+    pub source: SocketAddr,
+    pub confirms_syn: bool,
 }
+
+struct PendingReply<'a> {
+    pending: &'a Mutex<HashMap<String, oneshot::Sender<io::Result<Option<u64>>>>>,
+    id: String,
+}
+
+impl Drop for PendingReply<'_> {
+    fn drop(&mut self) {
+        self.pending.lock().unwrap().remove(&self.id);
+    }
+}
+
 impl Control {
+    #[cfg(test)]
+    pub(crate) fn test_probe_control(source: SocketAddr, answer: bool) -> Self {
+        let (commands, mut queue) = mpsc::channel::<Value>(4);
+        let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<io::Result<Option<u64>>>>::new()));
+        let replies = pending.clone();
+        tokio::spawn(async move {
+            while let Some(command) = queue.recv().await {
+                if answer && matches!(command["command"].as_str(), Some("probe" | "pair-probe"))
+                    && let Some(reply) = replies.lock().unwrap().remove(command["id"].as_str().unwrap()) {
+                    let _ = reply.send(Ok(Some(conwu_core::nat_tcp_punch::burst::submission_micros())));
+                }
+            }
+        });
+        Self { commands, pending, peers: Default::default(), peer_opened: Default::default(),
+            handshake_stages: Default::default(), source, confirms_syn: true }
+    }
+
+    pub(crate) fn visit_handshakes(&self, ip: IpAddr, since: i64, mut visit: impl FnMut(SocketAddr, &'static str, i64, Option<u32>)) {
+        for (&(peer, stage), &(at, injected)) in self.handshake_stages.lock().unwrap().iter() {
+            if peer.ip() == ip && at >= since { visit(peer, stage, at, injected); }
+        }
+    }
+    pub(crate) fn ticket_queued(&self, peer: SocketAddr) {
+        let mut stages = self.handshake_stages.lock().unwrap();
+        if stages.keys().any(|(p, _)| *p == peer) {
+            let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+            stages.insert((peer, "ticket_queued"), (at, None));
+        }
+    }
     pub async fn punch(&self, peer: SocketAddr, hello: &[u8]) -> Result<()> {
         ensure!(peer.is_ipv4() && hello.len() <= 128, "协同探测参数无效");
         let mut command = json!({"command":"punch","peer":peer.to_string()});
@@ -87,19 +132,41 @@ impl Control {
         Ok(())
     }
     pub async fn protect(&self, peer: SocketAddr) -> Result<()> {
-        let id = conwu_core::id();
+        self.confirmed("protect", peer, Duration::from_secs(2)).await.map(drop)
+    }
+
+    pub async fn probe(&self, peer: SocketAddr, wait: Duration, pairing_round: Option<uuid::Uuid>) -> Result<u64> {
+        ensure!(self.confirms_syn && peer.is_ipv4(), "承载不支持 TCP SYN 发送确认");
+        let command = match pairing_round {
+            Some(round) => json!({"command":"pair-probe", "peer":peer, "round":round.simple().to_string()}),
+            None => json!({"command":"probe", "peer":peer}),
+        };
+        self.request(command, conwu_core::id(), wait)
+            .await.context("未确认承载已提交 TCP SYN")
+            .map(|sent| sent.unwrap_or_else(conwu_core::nat_tcp_punch::burst::submission_micros))
+    }
+    pub(crate) async fn discard_pair_probe(&self, peer: SocketAddr, round: uuid::Uuid) -> Result<()> {
+        self.request(json!({"command":"discard-pair-probe","peer":peer,"round":round.simple().to_string()}),
+            conwu_core::id(), Duration::from_secs(2)).await?;
+        self.handshake_stages.lock().unwrap().retain(|(target, _), _| *target != peer);
+        Ok(())
+    }
+
+    async fn confirmed(&self, command: &str, peer: SocketAddr, wait: Duration) -> Result<Option<u64>> {
+        self.request(json!({"command":command,"peer":peer}), conwu_core::id(), wait).await
+    }
+
+    async fn request(&self, mut command: Value, id: String, wait: Duration) -> Result<Option<u64>> {
+        command["id"] = json!(&id);
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id.clone(), tx);
-        let result = async {
+        let _reply = PendingReply { pending: &self.pending, id: id.clone() };
+        tokio::time::timeout(wait, async {
             self.commands
-                .send(json!({"command":"protect","peer":peer.to_string(),"id":id}))
+                .send(command)
                 .await?;
-            tokio::time::timeout(Duration::from_secs(2), rx).await??;
-            Ok(())
-        }
-        .await;
-        self.pending.lock().unwrap().remove(&id);
-        result
+            Ok(rx.await??)
+        }).await?
     }
 }
 pub async fn prepare_observer(
@@ -156,6 +223,23 @@ pub async fn prepare_observer(
     Ok(())
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Capture {
+    Exact,
+    LearnPort,
+    SharedSource,
+    Peer(Ipv4Addr),
+}
+
+impl Capture {
+    fn for_recovery(mode: &str, peer: SocketAddr) -> Self {
+        match (mode, peer.ip()) {
+            ("mimic", IpAddr::V4(ip)) if cfg!(windows) => Self::Peer(ip),
+            _ => Self::Exact,
+        }
+    }
+}
+
 async fn spawn(
     engine: &Engine,
     mode: &str,
@@ -163,6 +247,8 @@ async fn spawn(
     source: SocketAddr,
     remote: SocketAddr,
     stun: &[String],
+    capture: Capture,
+    purpose: &'static str,
 ) -> Result<(Helper, SocketAddr, Option<Control>)> {
     let executable = engine.components.join(format!(
         "{}{}",
@@ -271,6 +357,17 @@ async fn spawn(
     if mode != "phantun" {
         cmd.args(["--carrier", mode]);
     }
+    if capture == Capture::LearnPort {
+        cmd.arg("--peer-reflexive");
+    }
+    if let Capture::Peer(ip) = capture {
+        cmd.args(["--peer-ip", &ip.to_string()]);
+    }
+    if cfg!(windows) && mode == "mimic" && matches!(capture, Capture::SharedSource | Capture::Peer(_)) {
+        // The candidates own different remote tuples on one local port.
+        // WinDivert can filter each tuple without sharing an XDP queue.
+        cmd.env("CONWU_MIMIC_IO", "windivert");
+    }
     if !source.ip().is_unspecified() {
         for observer in stun.iter().take(8) {
             if let Some(peer) = crate::discovery::endpoint(observer)
@@ -340,10 +437,11 @@ async fn spawn(
             return Err(error);
         }
     };
+    let role = if server { "监听端" } else { "主动连接端" };
     if let Some(backend) = ready["backend"].as_str() {
         let _ = engine.events.try_send(crate::runtime::Event::Log {
             level: "INFO".into(),
-            text: format!("{mode} 承载已就绪（{}）", crate::logging::redact(backend)),
+            text: format!("{mode} {role}已就绪（{purpose} · {}）", crate::logging::redact(backend)),
         });
     }
     let udp = if server {
@@ -357,11 +455,16 @@ async fn spawn(
     ensure!(udp.ip().is_loopback(), "承载桥接必须只监听本机");
     let mut input = child.stdin.take().context("组件控制输入不可用")?;
     let (commands, mut queue) = mpsc::channel::<Value>(32);
-    let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<()>>::new()));
+    let pending = Arc::new(Mutex::new(HashMap::<String, oneshot::Sender<io::Result<Option<u64>>>>::new()));
     let replies = pending.clone();
     let diagnostic = engine.events.clone();
+    let carrier = mode.to_owned();
     let peers = Arc::new(Mutex::new(HashMap::<SocketAddr, SocketAddr>::new()));
     let peer_events = peers.clone();
+    let peer_opened = Arc::new(tokio::sync::Notify::new());
+    let notify_peer = peer_opened.clone();
+    let handshake_stages = Arc::new(Mutex::new(HashMap::new()));
+    let progress = handshake_stages.clone();
     tokio::spawn(async move {
         while let Some(command) = queue.recv().await {
             // EOF is the existing Rust helpers' graceful stop signal. It drops
@@ -383,18 +486,50 @@ async fn spawn(
             }
             if let Some((_, body)) = line.split_once(' ') {
                 if let Ok(v) = serde_json::from_str::<Value>(body) {
+                    if v["event"] == "candidate-handshake" {
+                        let stage = match v["stage"].as_str() {
+                            Some("sent-syn") => "tx_syn",
+                            Some("sent-syn-ack") => "tx_syn_ack",
+                            Some("sent-ack") => "tx_ack",
+                            Some("received-first") => "rx_first",
+                            Some("received-syn") => "rx_syn",
+                            Some("received-syn-ack") => "rx_syn_ack",
+                            Some("received-final-ack") => "rx_final_ack",
+                            Some("received-rst") => "rx_rst",
+                            _ => continue,
+                        };
+                        if let (Some(peer), Some(at)) = (
+                            v["peer"].as_str().and_then(|s| s.parse::<SocketAddr>().ok()), v["at"].as_i64()
+                        ) {
+                            let mut stages = progress.lock().unwrap();
+                            let injected = v["driverInjectedBytes"].as_u64().and_then(|n| u32::try_from(n).ok());
+                            stages.retain(|_, (last, _)| at.saturating_sub(*last) < 60_000);
+                            if stages.len() < 256 || stages.contains_key(&(peer, stage)) {
+                                stages.insert((peer, stage), (at, injected));
+                            }
+                        }
+                    }
                     if v["event"] == "failed" || v["event"] == "peer-failed" {
                         let reason =
                             crate::logging::redact(v["reason"].as_str().unwrap_or("承载组件退出"));
                         let _ = diagnostic.try_send(crate::runtime::Event::Log {
                             level: "WARN".into(),
-                            text: format!("承载组件运行失败：{reason}"),
+                            text: if reason == "raw carrier peer closed" {
+                                format!("{carrier} {role}收到 FIN/RST（{purpose}），此次连接已关闭")
+                            } else {
+                                format!("{carrier} {role}运行失败（{purpose}）：{reason}")
+                            },
                         });
                     }
-                    if v["event"] == "protected" {
+                    if matches!(v["event"].as_str(), Some("protected" | "syn-sent" | "probe-rejected" | "pair-probe-discarded")) {
                         if let Some(id) = v["id"].as_str() {
                             if let Some(reply) = replies.lock().unwrap().remove(id) {
-                                let _ = reply.send(());
+                                let result = if v["event"] == "probe-rejected" {
+                                    Err(v["errno"].as_i64().and_then(|code| i32::try_from(code).ok())
+                                        .map(io::Error::from_raw_os_error)
+                                        .unwrap_or_else(|| io::Error::other(v["reason"].as_str().unwrap_or("helper rejected probe").to_owned())))
+                                } else { Ok(v["submittedUs"].as_u64()) };
+                                let _ = reply.send(result);
                             }
                         }
                     }
@@ -414,6 +549,12 @@ async fn spawn(
                                 .filter(conwu_core::code::valid_endpoint)
                             {
                                 peers.insert(udp, peer);
+                                notify_peer.notify_one();
+                                let mut stages = progress.lock().unwrap();
+                                if stages.keys().any(|(p, _)| *p == peer) {
+                                    let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as i64;
+                                    stages.insert((peer, "bridge_opened"), (at, None));
+                                }
                             }
                         }
                     }
@@ -425,6 +566,10 @@ async fn spawn(
         commands: commands.clone(),
         pending,
         peers,
+        peer_opened,
+        handshake_stages,
+        source,
+        confirms_syn: ready["synConfirmation"] == true,
     });
     Ok((
         Helper {
@@ -442,7 +587,7 @@ pub async fn connect(
     port: u16,
     parent: &CancellationToken,
 ) -> Result<Pipe> {
-    connect_ref(engine, mode, remote, port, parent).await
+    connect_ref(engine, mode, remote, port, parent, "已配对网络重连").await
 }
 pub async fn connect_ref(
     engine: &Engine,
@@ -450,13 +595,14 @@ pub async fn connect_ref(
     remote: SocketAddr,
     port: u16,
     parent: &CancellationToken,
+    purpose: &'static str,
 ) -> Result<Pipe> {
-    connect_local(engine, mode, remote, port, parent)
+    connect_local(engine, mode, remote, port, parent, purpose)
         .await
         .map_err(|source| {
             LocalCarrierError {
                 mode: mode.into(),
-                source,
+                source: Arc::new(source),
             }
             .into()
         })
@@ -467,12 +613,13 @@ async fn connect_local(
     remote: SocketAddr,
     port: u16,
     parent: &CancellationToken,
+    purpose: &'static str,
 ) -> Result<Pipe> {
     ensure!(remote.is_ipv4(), "数据报 TCP 承载当前只支持 IPv4");
     let ip = crate::discovery::local_route(remote)?;
     let source = SocketAddr::new(ip, if port == 0 { free_tcp()? } else { port });
     let guard = Firewall::open(mode, false, source, remote)?;
-    let (child, bridge, _) = spawn(engine, mode, false, source, remote, &[]).await?;
+    let (child, bridge, _) = spawn(engine, mode, false, source, remote, &[], Capture::Exact, purpose).await?;
     let socket = bind_bridge().await?;
     socket.connect(bridge).await?;
     Ok(udp_pipe_with_helper(
@@ -487,26 +634,214 @@ pub struct ClientObservation {
     pub local: SocketAddr,
     pub mapped: SocketAddr,
     pub observer: SocketAddr,
-    _tcp: Option<crate::discovery::TcpObservation>,
+    tcp: tokio::sync::Mutex<Option<crate::discovery::TcpObservation>>,
     native: Option<Arc<crate::native_map::Mapping>>,
     guard: Option<Firewall>,
 }
+
+pub(crate) struct CandidateReceiver {
+    pub socket: Arc<UdpSocket>,
+    pub control: Control,
+    child: Option<Helper>,
+    guard: Option<Firewall>,
+}
+
+pub(crate) struct MemberReceiver {
+    pub(crate) control: Control,
+    stop: CancellationToken,
+    finished: CancellationToken,
+}
+
+impl MemberReceiver {
+    pub(crate) async fn finish(self) {
+        self.stop.cancel();
+        self.finished.cancelled().await;
+    }
+
+    pub(crate) fn owns_peer(&self, peer: SocketAddr) -> bool {
+        self.control.peers.lock().unwrap().values().any(|address| *address == peer)
+    }
+
+    pub(crate) fn retain(self, tracker: &TaskTracker, route: CancellationToken) {
+        tracker.spawn(async move {
+            tokio::select! {
+                _ = route.cancelled() => {},
+                _ = self.finished.cancelled() => {},
+            }
+            self.finish().await;
+        });
+    }
+}
+
+impl Drop for MemberReceiver {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
+
+impl CandidateReceiver {
+    #[cfg(test)]
+    pub(crate) async fn test_member_bridge(local: SocketAddr, peer: SocketAddr) -> Result<(Self, UdpSocket)> {
+        let socket = bind_bridge().await?;
+        let bridge = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+        let control = Control::test_probe_control(local, true);
+        control.peers.lock().unwrap().insert(bridge.local_addr()?, peer);
+        Ok((Self { socket, control, child: None, guard: None }, bridge))
+    }
+
+    pub(crate) async fn finish(mut self) {
+        if let Some(child) = self.child.take() { child.finish().await; }
+    }
+    pub(crate) fn bridges(&self) -> Vec<SocketAddr> {
+        self.control.peers.lock().unwrap().keys().copied().collect()
+    }
+
+    pub(crate) fn peer(&self, bridge: SocketAddr) -> Option<SocketAddr> {
+        self.control.peers.lock().unwrap().get(&bridge).copied()
+    }
+
+    pub(crate) async fn wait_bridge(&self) {
+        self.control.peer_opened.notified().await;
+    }
+
+    pub(crate) async fn select(
+        &mut self,
+        bridge: SocketAddr,
+        engine: &Engine,
+        stop: &CancellationToken,
+    ) -> Result<Pipe> {
+        self.socket.connect(bridge).await?;
+        Ok(udp_pipe_with_helper(self.socket.clone(), stop, self.child.take(), self.guard.take(), &engine.tracker))
+    }
+
+    pub(crate) fn serve_member(
+        mut self, engine: &Arc<Engine>, mode: &str, parent: &CancellationToken, lifetime: &TaskTracker,
+    ) -> MemberReceiver {
+        let stop = parent.child_token();
+        let finished = CancellationToken::new();
+        let worker_stop = stop.clone();
+        let worker_finished = finished.clone();
+        let peers = self.control.peers.clone();
+        let socket = self.socket.clone();
+        let mut child = self.child.take();
+        let firewall = self.guard.take();
+        let server = engine.clone();
+        let mode = mode.to_owned();
+        let lifetime = lifetime.token();
+        engine.tracker.spawn(async move {
+            let _lifetime = lifetime;
+            let _finished = worker_finished.drop_guard();
+            let _firewall = firewall;
+            let bridges = TaskTracker::new();
+            serve_listener(&server, &mode, socket, &mut child, Some(&peers), &worker_stop,
+                &CancellationToken::new(), &bridges).await;
+            worker_stop.cancel();
+            if let Some(child) = child {
+                child.finish().await;
+            }
+            bridges.close();
+            bridges.wait().await;
+        });
+        MemberReceiver { control: self.control.clone(), stop, finished }
+    }
+}
+
+impl Drop for CandidateReceiver {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.take() {
+            tokio::spawn(child.finish());
+        }
+    }
+}
+
 impl ClientObservation {
+    pub(crate) fn tcp_observation(&self) -> &tokio::sync::Mutex<Option<crate::discovery::TcpObservation>> {
+        self.native.as_ref().map_or(&self.tcp, |mapping| mapping.observation())
+    }
+
+    pub(crate) async fn retain_stun(&self) -> Result<crate::discovery::StunLease> {
+        let observed = self.tcp.lock().await.take().context("缺少从机 TCP STUN 连接")?;
+        Ok(crate::discovery::StunLease::start(observed, true).await?)
+    }
+
+    /// One ready capture receives the host's first SYN while port prediction runs.
+    pub(crate) async fn prepare_mimic_candidates(
+        &self,
+        engine: &Engine,
+        peer: SocketAddr,
+    ) -> Result<CandidateReceiver> {
+        let IpAddr::V4(ip) = peer.ip() else { anyhow::bail!("Mimic 同源候选需要 IPv4"); };
+        ensure!(crate::discovery::local_route(peer)? == self.local.ip(), "主机与 TCP STUN 使用不同的本机出口");
+        let socket = bind_bridge().await?;
+        let (child, _, control) = spawn(
+            engine, "mimic", true, self.local, socket.local_addr()?, &[self.observer.to_string()],
+            Capture::Peer(ip), "首次配对多候选",
+        ).await?;
+        let control = control.context("Mimic 多候选控制不可用")?;
+        Ok(CandidateReceiver { socket, control, child: Some(child), guard: None })
+    }
+
+    /// Bind and observe the actual replacement socket on the agreed reflector.
+    pub(crate) async fn rotated(local: SocketAddr, observer: SocketAddr, used: &[u16]) -> Result<Self> {
+        for _ in 0..8 {
+            let port = free_tcp()?;
+            if port == local.port() || used.contains(&port) { continue; }
+            let source = SocketAddr::new(local.ip(), port);
+            match tokio::time::timeout(crate::discovery::TCP_OBSERVER_ATTEMPT,
+                crate::discovery::observe_tcp_from(source, observer)).await? {
+                Ok(observation) => return Ok(Self::tcp(observation)),
+                Err(error) if crate::discovery::stun_address_in_use(&error) => continue,
+                Err(error) => return Err(error),
+            }
+        }
+        anyhow::bail!("未能为新轮次分配不同的本地 TCP 端口")
+    }
+
+    pub(crate) async fn recovery_receiver(&self, engine: &Engine, mode: &str, peer: SocketAddr) -> Result<CandidateReceiver> {
+        let socket = bind_bridge().await?;
+        let guard = Firewall::open(mode, true, self.local, peer)?;
+        if mode != "tcpraw" { guard.protect(self.local, self.observer)?; }
+        let (child, _, control) = spawn(engine, mode, true, self.local, socket.local_addr()?,
+            &[self.observer.to_string()], Capture::for_recovery(mode, peer), "成员重连独立发送端").await?;
+        Ok(CandidateReceiver { socket, control: control.context("恢复发送端缺少控制句柄")?, child: Some(child), guard: Some(guard) })
+    }
+
+    pub(crate) async fn candidate_pipe(
+        &self,
+        engine: &Engine,
+        mode: &str,
+        remote: SocketAddr,
+        only_candidate: bool,
+        parent: &CancellationToken,
+    ) -> Result<Pipe> {
+        ensure!(remote != self.observer && remote != self.local, "原始 TCP 候选与本地观察端点冲突");
+        let guard = Firewall::open(mode, false, self.local, remote)?;
+        if let Some(mapping) = &self.native {
+            return mapping.candidate_pipe(remote, guard, only_candidate, parent).await;
+        }
+        let capture = if only_candidate && cfg!(windows) && mode == "mimic" {
+            Capture::LearnPort
+        } else {
+            Capture::SharedSource
+        };
+        self.helper_pipe(engine, mode, remote, guard, capture, parent).await
+    }
+
     pub fn tcp(observed: crate::discovery::TcpObservation) -> Self {
         Self {
             local: observed.local,
             mapped: observed.mapped,
             observer: observed.observer,
-            _tcp: Some(observed),
+            tcp: tokio::sync::Mutex::new(Some(observed)),
             native: None,
             guard: None,
         }
     }
-    pub async fn start(&self, peer: SocketAddr) -> Result<()> {
+    pub async fn start(&self, peer: SocketAddr, coordinated: bool, parent: &CancellationToken) -> Result<Option<Pipe>> {
         if let Some(mapping) = &self.native {
-            mapping.prepare(peer, true, false).await?.start().await?;
+            return Ok(Some(mapping.client_pipe(peer, coordinated, parent).await?));
         }
-        Ok(())
+        Ok(None)
     }
 }
 impl Drop for ClientObservation {
@@ -522,55 +857,81 @@ impl Drop for ClientObservation {
         }
     }
 }
-pub async fn observed_client(
+pub async fn observe_client(
     engine: &Engine,
     mode: &str,
-    remote: SocketAddr,
-    observer: &str,
+    observers: &[String],
+    require_keepalive: bool,
     parent: &CancellationToken,
-) -> Result<(Pipe, ClientObservation)> {
+) -> Result<ClientObservation> {
     if mode == "faketcp" {
         let target = UdpSocket::bind("127.0.0.1:0").await?.local_addr()?;
         let mapping = crate::native_map::Mapping::open(
             engine,
             free_tcp()?,
             target,
-            &[observer.into()],
+            observers,
             parent,
         )
         .await?;
-        let guard = Firewall::open(mode, false, mapping.local, remote)?;
-        let pipe = mapping.client_pipe(remote, parent, false).await?;
-        return Ok((
-            pipe,
-            ClientObservation {
-                local: mapping.local,
-                mapped: mapping.mapped(),
-                observer: mapping.observer,
-                _tcp: None,
-                native: Some(mapping),
-                guard: Some(guard),
-            },
-        ));
+        return Ok(ClientObservation {
+            local: mapping.local,
+            mapped: mapping.mapped(),
+            observer: mapping.observer,
+            tcp: tokio::sync::Mutex::new(None),
+            native: Some(mapping),
+            guard: None,
+        });
     }
-    let observed =
-        crate::discovery::observe_tcp(free_tcp()?, &[observer.into()], engine, mode).await?;
-    let guard = Firewall::open(mode, false, observed.local, remote)?;
-    let (child, bridge, _) = spawn(
-        engine,
-        mode,
-        false,
-        observed.local,
-        remote,
-        &[observed.observer.to_string()],
-    )
-    .await?;
-    let socket = bind_bridge().await?;
-    socket.connect(bridge).await?;
-    Ok((
-        udp_pipe_with_helper(socket, parent, Some(child), Some(guard), &engine.tracker),
-        ClientObservation::tcp(observed),
-    ))
+    let port = free_tcp()?;
+    let observed = if require_keepalive {
+        crate::discovery::observe_tcp_with_keepalive(port, observers, engine, mode).await?
+    } else {
+        crate::discovery::observe_tcp(port, observers, engine, mode).await?
+    };
+    Ok(ClientObservation::tcp(observed))
+}
+
+impl ClientObservation {
+    pub async fn prepare_raw(
+        &mut self,
+        engine: &Engine,
+        mode: &str,
+        remote: SocketAddr,
+        coordinated: bool,
+        parent: &CancellationToken,
+    ) -> Result<Option<Pipe>> {
+        if let Some(mapping) = &self.native {
+            self.guard = Some(Firewall::open(mode, false, self.local, remote)?);
+            mapping.prepare(remote, true, coordinated).await?;
+            return Ok(None);
+        }
+        let capture = if cfg!(windows) && coordinated && mode == "mimic" {
+            Capture::LearnPort
+        } else {
+            Capture::Exact
+        };
+        let guard = Firewall::open(mode, false, self.local, remote)?;
+        self.helper_pipe(engine, mode, remote, guard, capture, parent).await.map(Some)
+    }
+
+    async fn helper_pipe(
+        &self,
+        engine: &Engine,
+        mode: &str,
+        remote: SocketAddr,
+        guard: Firewall,
+        capture: Capture,
+        parent: &CancellationToken,
+    ) -> Result<Pipe> {
+        let (child, bridge, _) = spawn(
+            engine, mode, false, self.local, remote, &[self.observer.to_string()],
+            capture, "首次配对",
+        ).await?;
+        let socket = bind_bridge().await?;
+        socket.connect(bridge).await?;
+        Ok(udp_pipe_with_helper(socket, parent, Some(child), Some(guard), &engine.tracker))
+    }
 }
 pub(crate) async fn bind_bridge() -> Result<Arc<UdpSocket>> {
     let socket = UdpSocket::bind("127.0.0.1:0").await?;
@@ -666,21 +1027,29 @@ pub async fn listen(
     autonomous: bool,
     stop: CancellationToken,
     finished: CancellationToken,
-) -> Result<()> {
+    require_observation: bool,
+) -> Result<Option<LocalCarrierError>> {
     let socket = bind_bridge().await?;
     let target = socket.local_addr()?;
-    let mapping = if mode == "faketcp" && autonomous {
-        match crate::native_map::Mapping::open(engine, port, target, stun, &stop).await {
-            Ok(mapping) => Some(mapping),
+    let (mapping, observation_error) = if mode == "faketcp" && autonomous {
+        let open = || crate::native_map::Mapping::open(engine, port, target, stun, &stop);
+        let mapping = if require_observation {
+            crate::assistance::retry_pair_step("准备 FakeTCP 同源接收器", |error| {
+                !crate::discovery::stun_address_in_use(error) && crate::discovery::transient_observer(error)
+            }, |_| open()).await
+        } else { open().await };
+        match mapping {
+            Ok(mapping) => (Some(mapping), None),
+            Err(error) if require_observation => return Err(error),
             Err(error) => {
                 // An unavailable STUN server must not disable the ordinary
                 // FakeTCP receiver reachable through UPnP or a public address.
                 tracing::warn!(%error, "FakeTCP 同源观察暂未建立，保留普通入口监听");
-                None
+                (None, Some(LocalCarrierError { mode: mode.into(), source: Arc::new(error) }))
             }
         }
     } else {
-        None
+        (None, None)
     };
     let source = if let Some(mapping) = &mapping {
         mapping.local
@@ -714,6 +1083,8 @@ pub async fn listen(
             source,
             target,
             if autonomous { stun } else { &[] },
+            Capture::Exact,
+            "网络接收",
         )
         .await?;
         (Some(child), control)
@@ -751,75 +1122,8 @@ pub async fn listen(
     tracker.spawn(async move {
         let _finished = finished.drop_guard();
         let guard = guard;
-        let mut peers = HashMap::<SocketAddr, mpsc::Sender<Vec<u8>>>::new();
-        let mut buffer = [0; MAX_DATAGRAM + 1];
-        loop {
-            let result = tokio::select! {
-                _ = stop.cancelled() => break,
-                _ = mapping_failed.cancelled() => break,
-                _ = wait_for_helper(&mut child) => break,
-                result = socket.recv_from(&mut buffer) => result,
-            };
-            let (n, from) = match result {
-                Ok((n, from)) if n <= MAX_DATAGRAM && from.ip().is_loopback() => (n, from),
-                Ok(_) => continue,
-                Err(error) if oversized_datagram(&error)
-                    || matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused) => continue,
-                Err(_) => break,
-            };
-            if let Some(peer) = peers.get(&from) {
-                if forward_datagram(peer, &buffer[..n]) {
-                    continue;
-                }
-                peers.remove(&from);
-            }
-            if peers.len() >= 32 {
-                peers.retain(|_, tx| !tx.is_closed());
-                if peers.len() >= 32 {
-                    continue;
-                }
-            }
-
-            let (outgoing, mut to_remote) = mpsc::channel::<Vec<u8>>(BRIDGE_QUEUE);
-            let (incoming, rx) = mpsc::channel(BRIDGE_QUEUE);
-            let token = stop.child_token();
-            let pipe = Pipe { tx: outgoing, rx, cancel: token.clone(), pin: String::new() };
-            forward_datagram(&incoming, &buffer[..n]);
-            peers.insert(from, incoming);
-
-            let socket = socket.clone();
-            engine.tracker.spawn(async move {
-                loop {
-                    let frame = tokio::select! {
-                        _ = token.cancelled() => break,
-                        result = to_remote.recv() => match result { Some(frame) => frame, None => break },
-                    };
-                    tokio::select! {
-                        _ = token.cancelled() => break,
-                        _ = socket.send_to(&frame, from) => {},
-                    }
-                }
-            });
-            let server = engine.clone();
-            let mode = key.0.clone();
-            let addresses = peer_addresses.clone();
-            engine.tracker.spawn(async move {
-                let mut endpoint = SocketAddr::from(([0, 0, 0, 0], 0));
-                if let Some(addresses) = addresses {
-                    for _ in 0..10 {
-                        if let Some(peer) = addresses.lock().unwrap().get(&from).copied() {
-                            endpoint = peer;
-                            break;
-                        }
-                        tokio::select! {
-                            _ = pipe.cancel.cancelled() => return,
-                            _ = tokio::time::sleep(Duration::from_millis(10)) => {},
-                        }
-                    }
-                }
-                server.serve(pipe, mode, endpoint, None).await;
-            });
-        }
+        serve_listener(&engine, &key.0, socket, &mut child, peer_addresses.as_ref(), &stop,
+            &mapping_failed, &engine.tracker).await;
         stop.cancel();
         if let Some(child) = child {
             child.finish().await;
@@ -839,8 +1143,89 @@ pub async fn listen(
         let prefix = format!("{}/", guard.name);
         engine.raw_observers.lock().unwrap().retain(|entry| !entry.starts_with(&prefix));
     });
-    Ok(())
+    Ok(observation_error)
 }
+async fn serve_listener(
+    engine: &Arc<Engine>,
+    mode: &str,
+    socket: Arc<UdpSocket>,
+    child: &mut Option<Helper>,
+    peer_addresses: Option<&Arc<Mutex<HashMap<SocketAddr, SocketAddr>>>>,
+    stop: &CancellationToken,
+    mapping_failed: &CancellationToken,
+    tracker: &TaskTracker,
+) {
+    let mut peers = HashMap::<SocketAddr, mpsc::Sender<Vec<u8>>>::new();
+    let mut buffer = [0; MAX_DATAGRAM + 1];
+    loop {
+        let result = tokio::select! {
+            _ = stop.cancelled() => break,
+            _ = mapping_failed.cancelled() => break,
+            _ = wait_for_helper(child) => break,
+            result = socket.recv_from(&mut buffer) => result,
+        };
+        let (n, from) = match result {
+            Ok((n, from)) if n <= MAX_DATAGRAM && from.ip().is_loopback() => (n, from),
+            Ok(_) => continue,
+            Err(error) if oversized_datagram(&error)
+                || matches!(error.kind(), io::ErrorKind::ConnectionReset | io::ErrorKind::ConnectionRefused) => continue,
+            Err(_) => break,
+        };
+        if let Some(peer) = peers.get(&from) {
+            if forward_datagram(peer, &buffer[..n]) {
+                continue;
+            }
+            peers.remove(&from);
+        }
+        if peers.len() >= 32 {
+            peers.retain(|_, tx| !tx.is_closed());
+            if peers.len() >= 32 {
+                continue;
+            }
+        }
+
+        let (outgoing, mut to_remote) = mpsc::channel::<Vec<u8>>(BRIDGE_QUEUE);
+        let (incoming, rx) = mpsc::channel(BRIDGE_QUEUE);
+        let token = stop.child_token();
+        let pipe = Pipe { tx: outgoing, rx, cancel: token.clone(), pin: String::new() };
+        forward_datagram(&incoming, &buffer[..n]);
+        peers.insert(from, incoming);
+
+        let socket = socket.clone();
+        tracker.spawn(async move {
+            loop {
+                let frame = tokio::select! {
+                    _ = token.cancelled() => break,
+                    result = to_remote.recv() => match result { Some(frame) => frame, None => break },
+                };
+                tokio::select! {
+                    _ = token.cancelled() => break,
+                    _ = socket.send_to(&frame, from) => {},
+                }
+            }
+        });
+        let server = engine.clone();
+        let mode = mode.to_owned();
+        let addresses = peer_addresses.cloned();
+        tracker.spawn(async move {
+            let mut endpoint = SocketAddr::from(([0, 0, 0, 0], 0));
+            if let Some(addresses) = addresses {
+                for _ in 0..10 {
+                    if let Some(peer) = addresses.lock().unwrap().get(&from).copied() {
+                        endpoint = peer;
+                        break;
+                    }
+                    tokio::select! {
+                        _ = pipe.cancel.cancelled() => return,
+                        _ = tokio::time::sleep(Duration::from_millis(10)) => {},
+                    }
+                }
+            }
+            server.serve(pipe, mode, endpoint, None).await;
+        });
+    }
+}
+
 pub(crate) fn free_tcp() -> Result<u16> {
     Ok(std::net::TcpListener::bind("0.0.0.0:0")?
         .local_addr()?
@@ -853,6 +1238,8 @@ fn free_udp() -> Result<u16> {
 }
 pub(crate) struct Firewall {
     name: String,
+    #[cfg(windows)]
+    installed: bool,
 }
 impl Firewall {
     pub(crate) fn open(
@@ -941,7 +1328,7 @@ impl Firewall {
                     ],
                 )?;
             }
-            Ok(Self { name })
+            Ok(Self { name, installed: server })
         }
     }
 }
@@ -978,16 +1365,18 @@ impl Drop for Firewall {
         #[cfg(target_os = "linux")]
         let _ = run("nft", &["delete", "table", "inet", &self.name]);
         #[cfg(windows)]
-        let _ = run(
-            "netsh.exe",
-            &[
-                "advfirewall",
-                "firewall",
-                "delete",
-                "rule",
-                &format!("name={}", self.name),
-            ],
-        );
+        if self.installed {
+            let _ = run(
+                "netsh.exe",
+                &[
+                    "advfirewall",
+                    "firewall",
+                    "delete",
+                    "rule",
+                    &format!("name={}", self.name),
+                ],
+            );
+        }
     }
 }
 fn run(executable: &str, args: &[&str]) -> Result<()> {
@@ -1007,7 +1396,79 @@ fn run(executable: &str, args: &[&str]) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fallback_receiver_error_preserves_address_in_use() {
+        #[cfg(windows)]
+        let code = 10048;
+        #[cfg(not(windows))]
+        let code = libc::EADDRINUSE;
+        let source = anyhow::Error::new(std::io::Error::from_raw_os_error(code)).context("连接 TCP STUN 观察器");
+        let stored = super::LocalCarrierError { mode: "faketcp".into(), source: std::sync::Arc::new(source) };
+        let error = anyhow::Error::new(stored.clone()).context("FakeTCP 同源接收器尚未准备完成");
+        assert!(crate::discovery::stun_address_in_use(&error));
+        assert!(error.chain().any(|cause| cause.downcast_ref::<std::io::Error>()
+            .is_some_and(|error| error.raw_os_error() == Some(code))));
+    }
     use super::*;
+
+    #[test]
+    fn recovery_receivers_use_only_supported_capture_arguments() {
+        let peer = "198.51.100.4:43200".parse().unwrap();
+        for mode in ["tcpraw", "phantun"] {
+            assert!(Capture::for_recovery(mode, peer) == Capture::Exact);
+        }
+        assert_eq!(matches!(Capture::for_recovery("mimic", peer), Capture::Peer(_)), cfg!(windows));
+    }
+
+    #[tokio::test]
+    async fn mimic_round_summary_excludes_earlier_helper_events() -> Result<()> {
+        let local = "192.0.2.1:50801".parse()?;
+        let peer: SocketAddr = "198.51.100.1:51001".parse()?;
+        let control = Control::test_probe_control(local, false);
+        let old = SocketAddr::new(peer.ip(), 51002);
+        control.handshake_stages.lock().unwrap().extend([
+            ((old, "tx_syn"), (1, Some(48))),
+            ((peer, "tx_syn"), (48136, Some(48))),
+        ]);
+        let mut seen = vec![];
+        control.visit_handshakes(peer.ip(), 48136, |addr, _, at, _| seen.push((addr, at - 48136)));
+        assert_eq!(seen, [(peer, 0)]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn mimic_member_timeout_drains_the_receiver_before_the_next_round() -> Result<()> {
+        let app = crate::tests::app().await?;
+        let local = SocketAddr::from(([127, 0, 0, 1], free_tcp()?));
+        let remote: SocketAddr = "198.51.100.1:51001".parse()?;
+        let retire = CancellationToken::new();
+        let socket = bind_bridge().await?;
+        let weak_socket = Arc::downgrade(&socket);
+        let control = Control::test_probe_control(local, false);
+        control.peers.lock().unwrap().insert(socket.local_addr()?, remote);
+        control.handshake_stages.lock().unwrap().insert((remote, "tx_syn"), (42, Some(48)));
+        let old_events = Arc::downgrade(&control.handshake_stages);
+        let old_targets = Arc::downgrade(&control.peers);
+        let lifetime = TaskTracker::new();
+        let listener = CandidateReceiver { socket, control, child: None, guard: None }
+            .serve_member(&app.engine, "mimic", &retire, &lifetime);
+        assert!(listener.owns_peer(remote));
+        let round = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>()).await;
+        assert!(round.is_err());
+        tokio::time::timeout(Duration::from_secs(1), listener.finish()).await?;
+        assert!(weak_socket.upgrade().is_none());
+        assert!(old_events.upgrade().is_none() && old_targets.upgrade().is_none());
+        assert!(!retire.is_cancelled());
+
+        let replacement = CandidateReceiver {
+            socket: bind_bridge().await?, control: Control::test_probe_control(local, true),
+            child: None, guard: None,
+        }.serve_member(&app.engine, "mimic", &retire, &lifetime);
+        assert!(!replacement.owns_peer(remote));
+        replacement.control.probe(remote, Duration::from_secs(1), Some(uuid::Uuid::new_v4())).await?;
+        replacement.finish().await;
+        Ok(())
+    }
 
     #[test]
     fn full_peer_queue_remains_open() {

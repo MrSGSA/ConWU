@@ -18,6 +18,22 @@ pub(crate) async fn app() -> Result<Arc<backend::App>> {
     open_app(root).await
 }
 
+#[cfg(windows)]
+#[tokio::test]
+async fn projection_requires_a_desktop_playback_surface() -> Result<()> {
+    let app = app().await?;
+    let result = cmd(
+        &app,
+        json!({"method":"projection-connect","networkId":"fixture","deviceId":"fixture","embedded":false}),
+    )
+    .await;
+    app.engine.shutdown().await?;
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("请在 ConWU 桌面窗口内启动 Projection"), "{error}");
+    assert!(app.projection_moonlight_status()["networkId"].is_null());
+    Ok(())
+}
+
 #[tokio::test]
 async fn configuration_capacity_is_recoverable_and_reserves_pending_joins() -> Result<()> {
     let root = project().join("out/lab").join(conwu_core::id());
@@ -512,7 +528,7 @@ fn port() -> u16 {
         .unwrap()
         .port()
 }
-fn packet(from: Ipv4Addr, to: Ipv4Addr, marker: u8) -> Vec<u8> {
+pub(crate) fn packet(from: Ipv4Addr, to: Ipv4Addr, marker: u8) -> Vec<u8> {
     let mut p = vec![marker; 1028];
     p[0] = 0x45;
     p[1] = 0;
@@ -539,6 +555,16 @@ fn packet(from: Ipv4Addr, to: Ipv4Addr, marker: u8) -> Vec<u8> {
     p
 }
 async fn create(app: &Arc<backend::App>, name: &str, mode: &str, flows: bool) -> Result<String> {
+    create_with_entry(app, name, mode, flows, None).await
+}
+
+async fn create_with_entry(
+    app: &Arc<backend::App>,
+    name: &str,
+    mode: &str,
+    flows: bool,
+    entry: Option<SocketAddr>,
+) -> Result<String> {
     let listen = port();
     let source = port();
     let mut settings = model::Settings::default();
@@ -550,13 +576,68 @@ async fn create(app: &Arc<backend::App>, name: &str, mode: &str, flows: bool) ->
     settings.source_port = source;
     settings.existing_entries = vec![model::Entry {
         peer_slot: 0,
-        source: SocketAddr::new(local_ip()?, listen).to_string(),
+        source: entry.unwrap_or(SocketAddr::new(local_ip()?, listen)).to_string(),
     }];
     let result=cmd(app,json!({"method":"configuration","configuration":{"action":"save","id":"","name":name,"expectedRevision":0,"settings":settings}})).await?;
     let cid = result["configurationId"].as_str().unwrap();
     cmd(app,json!({"method":"network","network":{"action":"create-direct","name":name,"configurationId":cid,"mode":mode}})).await?;
     let id = app.db.read().unwrap().selected_network_id.clone();
     Ok(id)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approved_pair_uses_its_stream_when_no_new_connection_can_open() -> Result<()> {
+    rustls::crypto::ring::default_provider().install_default().ok();
+    for mode in ["tcp", "https"] {
+        let host = app().await?;
+        let guest = app().await?;
+        let ip = local_ip()?;
+        let listener = tokio::net::TcpListener::bind(SocketAddr::new(ip, 0)).await?;
+        let id = create_with_entry(&host, "单连接配对", mode, false, Some(listener.local_addr()?)).await?;
+        let port = host.engine.current(&id).context("主机网络未启动")?
+            .config.read().unwrap().settings.listen_port;
+        let forward = tokio::spawn(async move {
+            let (mut client, _) = listener.accept().await?;
+            // The advertised endpoint serves just the original pairing socket.
+            drop(listener);
+            let mut server = tokio::net::TcpStream::connect(SocketAddr::new(ip, port)).await?;
+            tokio::io::copy_bidirectional(&mut client, &mut server).await
+        });
+
+        cmd(&host, json!({"method":"network","networkId":id,"network":{"action":"invite-compact"}})).await?;
+        let code = host.engine.pairing(&id)["code"].clone();
+        let joined = cmd(&guest, json!({"method":"network","network":{"action":"join-compact","code":code}})).await?;
+        let guest_id = joined["status"]["selectedNetworkId"].as_str().context("缺少从机网络编号")?;
+        wait("配对校验码", || host.engine.pairing(&id)["verification"].as_str().is_some_and(|s| s.len() == 6)).await?;
+        let pair = host.engine.pairing(&id);
+        cmd(&host, json!({"method":"network","networkId":id,"network":{
+            "action":"approve","candidate":pair["candidate"],"verification":pair["verification"]
+        }})).await?;
+        wait("已批准网络安装", || guest.engine.current(guest_id).is_some()).await?;
+        let a = host.engine.current(&id).unwrap();
+        let b = guest.engine.current(guest_id).unwrap();
+        wait("原配对连接完成双向路径验证", || {
+            a.metrics.read().unwrap().connected && b.metrics.read().unwrap().connected
+        }).await?;
+        assert!(!forward.is_finished(), "组网必须继续使用唯一的配对连接");
+        guest.engine.cancel_guest(guest_id);
+
+        let ip_a = a.config.read().unwrap().profile.as_ref().unwrap().local_ip()?;
+        let ip_b = b.config.read().unwrap().profile.as_ref().unwrap().local_ip()?;
+        let outbound = packet(ip_a, ip_b, 0x70);
+        let inbound = packet(ip_b, ip_a, 0x71);
+        a.memory.as_ref().unwrap().inject(outbound.clone())?;
+        b.memory.as_ref().unwrap().inject(inbound.clone())?;
+        wait("原配对连接双向收发业务包", || {
+            a.metrics.read().unwrap().received > 0 && b.metrics.read().unwrap().received > 0
+        }).await?;
+        assert_eq!(a.memory.as_ref().unwrap().drain(), [inbound]);
+        assert_eq!(b.memory.as_ref().unwrap().drain(), [outbound]);
+        guest.engine.shutdown().await?;
+        host.engine.shutdown().await?;
+        let _ = tokio::time::timeout(Duration::from_secs(3), forward).await??;
+    }
+    Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -1102,6 +1183,38 @@ fn legacy_import_is_read_only_and_does_not_start_networks() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn cold_stop_releases_receiver_and_starts_a_new_generation() -> Result<()> {
+    let app = app().await?;
+    let id = create(&app, "重连离线实验", "tcp", false).await?;
+    let old = app.engine.current(&id).context("接收器未启动")?;
+    let mut owner = old.config.read().unwrap().profile.clone().unwrap();
+    owner.issue(None)?;
+    cmd(&app, json!({"method":"network","networkId":id,"network":{"action":"pause-network","cold":true}})).await?;
+    assert!(app.engine.current(&id).is_none());
+    assert!(app.db.read().unwrap().networks.iter().any(|n| n.id == id && !n.enabled && n.profile.is_some()));
+    let snapshot = conwu_core::metadata::Snapshot { directory: owner.directory.unwrap(), nodes: vec![],
+        traversal: vec![], capabilities: Default::default() };
+    let revision = snapshot.directory.revision;
+    app.engine.events.send(runtime::Event::Snapshot { id: id.clone(), snapshot }).await.unwrap();
+    // The event actor processes this acknowledgement after the queued snapshot.
+    let (reply, applied) = tokio::sync::oneshot::channel();
+    app.engine.events.send(runtime::Event::Discovery { id: id.clone(), sequence: i64::MAX - 1, reply }).await.unwrap();
+    applied.await??;
+    assert!(app.engine.current(&id).is_none(), "冷停后的签名目录更新不得重建运行实例");
+    assert!(app.db.read().unwrap().networks.iter().any(|n| n.id == id && !n.enabled
+        && n.profile.as_ref().unwrap().directory.as_ref().unwrap().revision == revision));
+    let listen = old.config.read().unwrap().settings.listen_port;
+    drop(std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, listen))?);
+    cmd(&app, json!({"method":"start","networkId":id})).await?;
+    let new = app.engine.current(&id).context("接收器未恢复")?;
+    assert_ne!(new.boot, old.boot);
+    assert!(!Arc::ptr_eq(new.memory.as_ref().unwrap(), old.memory.as_ref().unwrap()));
+    assert!(std::net::TcpListener::bind((Ipv4Addr::UNSPECIFIED, listen)).is_err());
+    app.engine.shutdown().await?;
+    Ok(())
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn changing_and_removing_listener_releases_owned_ports() -> Result<()> {
     let app = app().await?;
@@ -1153,6 +1266,7 @@ async fn removal_cancels_pending_discovery_commit_before_reusing_port() -> Resul
         source: SocketAddr::new(local_ip()?, listen).to_string(),
     });
     let network = model::Network {
+        projection: Default::default(),
         legacy_adapter: None,
         id: conwu_core::id(),
         name: "取消发现提交".into(),
@@ -1219,12 +1333,104 @@ async fn host_refresh_keeps_first_stun_reply_and_reobserves_a_closed_stream() ->
         Ok::<_, anyhow::Error>(())
     });
     let first =
-        discovery::refresh_or_observe_tcp(None, source, &servers, &app.engine, "tcp").await?;
+        discovery::refresh_or_observe_tcp(None, source, &servers, &app.engine, "tcp", None).await?;
     assert_eq!(first.mapped.port(), 49152);
-    let next = discovery::refresh_or_observe_tcp(Some(first), source, &servers, &app.engine, "tcp")
+    let next = discovery::refresh_or_observe_tcp(Some(first), source, &servers, &app.engine, "tcp", None)
         .await?;
     assert_eq!(next.mapped.port(), 49153);
     reflector.await??;
+    app.engine.shutdown().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn coordinated_reconnect_prefers_its_stun_and_keeps_a_healthy_fallback() -> Result<()> {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    async fn reflect(listener: TcpListener, source: u16, ports: [u16; 2]) -> Result<()> {
+        let (mut stream, remote) = listener.accept().await?;
+        ensure!(remote.port() == source, "观察连接必须复用网络接收端口");
+        for external in ports {
+            let mut request = [0u8; 20];
+            stream.read_exact(&mut request).await?;
+            let mut reply = request.to_vec();
+            reply[..4].copy_from_slice(&[1, 1, 0, 12]);
+            reply.extend_from_slice(&[0, 1, 0, 8, 0, 1]);
+            reply.extend_from_slice(&external.to_be_bytes());
+            reply.extend_from_slice(&[203, 0, 113, 7]);
+            stream.write_all(&reply).await?;
+        }
+        // Keep the observation connection open so an unnecessary refresh
+        // would be visible even when the preferred observer is healthy.
+        if let Ok(count) = stream.read(&mut [0; 1]).await {
+            ensure!(count == 0, "观察连接收到非预期刷新");
+        }
+        Ok(())
+    }
+
+    let app = app().await?;
+    let source = port();
+    let fallback = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let coordinator = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let unavailable = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    let unavailable_addr = unavailable.local_addr()?;
+    let coordinator_addr = coordinator.local_addr()?;
+    let fallback_addr = fallback.local_addr()?;
+    let servers = [fallback_addr.to_string()];
+    let fallback = tokio::spawn(reflect(fallback, source, [49152, 49153]));
+    let coordinator = tokio::spawn(reflect(coordinator, source, [49154, 49155]));
+    let failure = tokio::spawn(async move {
+        let (mut stream, _) = unavailable.accept().await?;
+        // This endpoint accepts TCP and then rejects STUN, like an
+        // HTTPS-only front end that lacks the coordinator's TCP observer.
+        let mut request = [0u8; 20];
+        stream.read_exact(&mut request).await
+    });
+    let first =
+        discovery::refresh_or_observe_tcp(None, source, &servers, &app.engine, "tcp", None).await?;
+    assert_eq!(first.observer, fallback_addr);
+    assert_eq!(first.mapped.port(), 49152);
+
+    let still_fallback = discovery::refresh_or_observe_tcp(
+        Some(first),
+        source,
+        &servers,
+        &app.engine,
+        "tcp",
+        Some(unavailable_addr),
+    )
+    .await?;
+    assert_eq!(still_fallback.observer, fallback_addr);
+    assert_eq!(still_fallback.mapped.port(), 49153);
+    failure.await??;
+
+    let selected = discovery::refresh_or_observe_tcp(
+        Some(still_fallback),
+        source,
+        &servers,
+        &app.engine,
+        "tcp",
+        Some(coordinator_addr),
+    )
+    .await?;
+    assert_eq!(selected.observer, coordinator_addr);
+    assert_eq!(selected.mapped.port(), 49154);
+    fallback.await??;
+
+    let refreshed = discovery::refresh_or_observe_tcp(
+        Some(selected),
+        source,
+        &servers,
+        &app.engine,
+        "tcp",
+        Some(coordinator_addr),
+    )
+    .await?;
+    assert_eq!(refreshed.observer, coordinator_addr);
+    assert_eq!(refreshed.mapped.port(), 49155);
+    drop(refreshed);
+    coordinator.await??;
     app.engine.shutdown().await?;
     Ok(())
 }

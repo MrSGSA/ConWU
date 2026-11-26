@@ -92,4 +92,40 @@ mod tests {
         attempts.clear();
         assert_eq!(attempts.order(targets, preferred), [3, 1, 2].map(address));
     }
+
+    #[test]
+    fn mimic_can_choose_a_later_candidate_after_an_invalid_pair_ticket() {
+        use super::super::candidate_ticket;
+        use conwu_core::{
+            id,
+            pairing::{Reply, Ticket, encode},
+            unix_seconds,
+        };
+        use serde_json::json;
+
+        let commitment = "A".repeat(64);
+        let host = json!({"Commitment": commitment});
+        let request = id();
+        let ticket = Ticket {
+            room: id(),
+            code: String::new(),
+            token: id(),
+            host_commitment: commitment,
+            host_name: "测试主机".into(),
+            expires: unix_seconds() + 60,
+            candidate: id(),
+            identity: None,
+        };
+        let wrong_peer = Ticket {
+            host_commitment: "B".repeat(64),
+            ..ticket.clone()
+        };
+        let mut replies = [Some(wrong_peer), None, Some(ticket.clone())].into_iter().map(|ticket| {
+            encode(&Reply { id: request.clone(), ticket, ..Reply::default() }).unwrap()
+        });
+        let first = replies.next().unwrap();
+        assert!(candidate_ticket(&first, &request, &host).is_none());
+        let selected = replies.find_map(|frame| candidate_ticket(&frame, &request, &host)).unwrap();
+        assert_eq!(selected.candidate, ticket.candidate);
+    }
 }

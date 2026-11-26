@@ -72,6 +72,9 @@ parser.add_argument('--ipv6', action='store_true')
 parser.add_argument('--nat', action='store_true', help='Two isolated IPv4 SNAT routers')
 parser.add_argument('--host-igd', action='store_true', help='Host negotiates an IGDv2 alternate port without coordination; use --nat and one TCP/HTTPS mode')
 parser.add_argument('--verify-member-round', action='store_true', help='Require both restarted members to use the same coordinator round')
+parser.add_argument('--verify-faketcp-cold', action='store_true', help='Restart the FakeTCP host and require a verified member candidate bridge')
+parser.add_argument('--verify-raw-retry', action='store_true', help='Drop peer TCP during the first round, then verify pairing and data using the selected raw carrier')
+parser.add_argument('--verify-next-raw-candidate', action='store_true', help='With --verify-raw-retry, reserve the reachable mapping for a later candidate')
 parser.add_argument('--app', type=Path, default=root / 'out/rust-target-linux/debug/conwu')
 parser.add_argument('--components', type=Path, default=root / 'out/rust-components-linux')
 parser.add_argument('modes', nargs='*', choices=['tcp', 'https', 'phantun', 'mimic', 'tcpraw', 'faketcp'])
@@ -86,6 +89,12 @@ if args.nat and (assisted == args.host_igd or managed or args.ipv6):
     raise ValueError('--nat requires IPv4 and one of --assisted or --host-igd')
 if args.verify_member_round and not (args.nat and assisted and all(m in ('tcp','https') for m in modes)):
     raise ValueError('--verify-member-round requires coordinated dual NAT with TCP or HTTPS')
+if args.verify_faketcp_cold and not (args.nat and assisted and not args.verify_raw_retry and modes == ['faketcp']):
+    raise ValueError('--verify-faketcp-cold requires coordinated dual NAT with FakeTCP')
+if args.verify_raw_retry and not (args.nat and assisted and all(m in ('phantun','faketcp','mimic','tcpraw') for m in modes)):
+    raise ValueError('--verify-raw-retry requires coordinated dual NAT and a raw TCP carrier')
+if args.verify_next_raw_candidate and not args.verify_raw_retry:
+    raise ValueError('--verify-next-raw-candidate requires --verify-raw-retry')
 if args.nat:
     names.extend(['cwru-c-' + token, 'cwru-ra-' + token, 'cwru-rb-' + token])
 coordinator_index = 2 if args.nat else 0
@@ -107,7 +116,7 @@ def launch(index):
     environment.setdefault('RUST_LOG', 'conwu=debug')
     if assisted and index == 1:
         environment['CONWU_LAB_FORCE_ASSISTANCE'] = '1'
-    if args.verify_member_round and index < 2:
+    if (args.verify_member_round or args.verify_faketcp_cold) and index < 2:
         environment['CONWU_LAB_ONLY_MEMBER_ASSIST'] = '1'
     if managed:
         environment['CONWU_LAB_FORCE_MANAGED'] = '1'
@@ -154,10 +163,18 @@ try:
                 }}""" if host_gateway else ''
             forward_mapped = f'iifname "{wan}" ct status dnat ip daddr 10.220.1.2 tcp dport 48000 counter accept' if host_gateway else ''
             discover = f'iifname "{lan}" udp dport 1900 accept\n iifname "{lan}" tcp dport 49110 accept' if host_gateway else ''
+            translated_ports = ''
+            if args.verify_faketcp_cold and index == 3:
+                # Allocate a fresh sequential port for each TCP mapping at the
+                # host NAT. The peer NAT still preserves source ports.
+                port_map = ', '.join(f'{index} : {42000 + index}' for index in range(512))
+                translated_ports = (f'ip saddr {subnet} oifname "{wan}" meta l4proto tcp '
+                                    f'snat to {public} : numgen inc mod 512 map {{ {port_map} }}')
             rules = f'''table ip conwu_lab_nat {{
                 {mapping}
                 chain egress {{ type filter hook postrouting priority 110; policy accept; }}
                 chain source {{ type nat hook postrouting priority srcnat; policy accept;
+                    {translated_ports}
                     ip saddr {subnet} oifname "{wan}" counter snat to {public}
                 }}
                 chain filtering {{ type filter hook forward priority filter; policy drop;
@@ -176,7 +193,8 @@ try:
             subprocess.run(['ip', 'netns', 'exec', names[index], 'nft', '-f', '-'], input=rules, text=True, check=True)
         (directory / 'topology.json').write_text(json.dumps({
             'scope': 'isolated Linux namespaces; synthetic documentation addresses',
-            'mapping': 'Linux SNAT with default source-port allocation',
+            'mapping': 'Sequential host TCP SNAT and port-preserving peer SNAT'
+                       if args.verify_faketcp_cold else 'Linux SNAT with default source-port allocation',
             'filtering': 'conntrack replies or a host-negotiated IGD lease' if args.host_igd else 'conntrack replies',
             'gatewayMappingDisabled': not args.host_igd, 'preconfiguredPortForward': False, 'businessRelay': False,
             'coordinatorNamespace': names[2] if assisted else None, 'clientNamespaces': names[:2], 'routerNamespaces': names[3:],
@@ -202,6 +220,7 @@ try:
     for offset, mode in enumerate(modes):
         begin = time.monotonic()
         listen = 48000 + offset * 10
+        raw_wan_port = listen + 2000 if args.verify_next_raw_candidate else listen
         settings = rpc(0, {'method': '_status'})['status']['networkDefaults']
         settings.update(pathSelection=mode + '-only', connectionSource='existing', discoveryMode='existing', listenPort=listen, sourcePort=listen + 1, existingEntries=[{'peerSlot': 0, 'source': '192.0.2.1:' + str(listen)}])
         if args.ipv6:
@@ -210,9 +229,17 @@ try:
             settings.update(connectionSource='custom', discoveryMode='coordinator', service=f'https://{coordinator_address}:1145', certificatePin=pin, existingEntries=[], tcpStun=[f'{coordinator_address}:1145'], disableGatewayMapping=True)
         if args.host_igd:
             settings.update(connectionSource='custom', discoveryMode='direct', service='', pairingService='',
-                            existingEntries=[], tcpStun=[], udpStun=[], pkarrGateways=[], portControlMapping=False)
+                            existingEntries=[], tcpStun=[], pkarrGateways=[], portControlMapping=False)
         if args.nat:
             settings['entryRefreshSeconds'] = 60
+        if args.verify_raw_retry:
+            # Fresh STUN anchors preserve their source ports, so the listener's
+            # local port ranks first. The registered port remains a fallback.
+            rule = (f'insert rule ip conwu_lab_nat source ip saddr 10.220.1.2 ip daddr {coordinator_address} '
+                    f'tcp sport {listen} tcp dport 1145 snat to 192.0.2.1:{listen + 2000}\n'
+                    f'insert rule ip conwu_lab_nat source ip saddr 10.220.1.2 ip daddr 198.51.100.1 '
+                    f'tcp sport {listen} snat to 192.0.2.1:{raw_wan_port}\n')
+            subprocess.run(['ip','netns','exec',names[3],'nft','-f','-'], input=rule, text=True, check=True)
         config = rpc(0, {'method': 'configuration', 'configuration': {'action': 'save', 'id': '', 'name': mode, 'expectedRevision': 0, 'settings': settings}})
         created_network = rpc(0, {'method': 'network', 'network': {'action': 'create-direct', 'name': mode, 'configurationId': config['configurationId'], 'mode': mode}})
         host = created_network['status']['selectedNetworkId']
@@ -225,12 +252,18 @@ try:
         elif args.nat:
             endpoint = next(n['status'] for n in rpc(0, {'method': '_status'})['status']['networks'] if n['id'] == host)['entryPreparation']['endpoint']
             assert endpoint.startswith('192.0.2.1:'), 'host must publish the NAT observation'
+            if args.verify_raw_retry:
+                assert endpoint.endswith(':' + str(listen + 2000)), 'fixture must publish the remapped STUN port'
             # A fresh source tuple at the reflector cannot enter the host's
             # retained STUN mapping; coordinated outbound traffic is required.
             check = 'import socket,sys; s=socket.socket(); s.settimeout(0.5); ip,port=sys.argv[1].rsplit(":",1); sys.exit(1 if s.connect_ex((ip,int(port)))==0 else 0)'
             subprocess.run(['ip', 'netns', 'exec', names[2], 'python3', '-c', check, endpoint], check=True)
         invitation = rpc(0, {'method': 'network', 'networkId': host, 'network': {'action': 'invite-compact', 'expectedNetwork': host}})
         host_pair = next(n for n in invitation['status']['networks'] if n['id'] == host)['status']['pairing']
+        join_code = host_pair['code']
+        if args.verify_faketcp_cold:
+            join_code = host_pair['shareCode']
+            assert re.fullmatch(r'[0-9A-Z]{4}(?:-[0-9A-Z]{4}){3}@https://\S+', join_code), 'expected full coordinator invitation'
         if args.ipv6:
             assert len(host_pair['code'].replace('-', '')) == 36
         measure_syn = args.nat and assisted and mode in ('tcp', 'https')
@@ -238,8 +271,34 @@ try:
             host_port = int(endpoint.rsplit(':', 1)[1])
             watch_peer_syn(3, '198.51.100.1', 'sport', host_port)
             watch_peer_syn(4, '192.0.2.1', 'dport', host_port)
-        joined = rpc(1, {'method': 'network', 'network': {'action': 'join-compact', 'code': host_pair['code'], 'name': mode}})
+        if args.verify_raw_retry:
+            guest_log = directory / ('process-1.log' if launches[1] == 1 else f'process-1-restart-{launches[1]-1}.log')
+            guest_offset = guest_log.stat().st_size
+            host_log = directory / 'process-0.log'
+            host_offset = host_log.stat().st_size
+            # This namespace forwards only between the fixture's two routers.
+            # Its local HTTPS coordinator and TCP STUN remain accessible.
+            rules = '''table ip first_contact_loss {
+                chain lost {
+                    type filter hook forward priority -5; policy accept;
+                    meta l4proto tcp drop
+                }
+            }'''
+            subprocess.run(['ip','netns','exec',names[2],'nft','-f','-'], input=rules, text=True, check=True)
+        joined = rpc(1, {'method': 'network', 'network': {'action': 'join-compact', 'code': join_code,
+                                                          'coordinatedOnly': args.verify_faketcp_cold, 'name': mode}})
         guest = joined['status']['selectedNetworkId']
+        if args.verify_raw_retry:
+            def retry_started():
+                with guest_log.open('rb') as log:
+                    log.seek(guest_offset)
+                    return '首次配对进入原始 TCP 主机端口预测' in log.read().decode(errors='replace')
+            wait('new raw prediction round ' + mode, retry_started)
+            watch_peer_syn(3, '198.51.100.1', 'sport', raw_wan_port)
+            watch_peer_syn(4, '192.0.2.1', 'dport', listen)
+            if args.verify_next_raw_candidate:
+                watch_peer_syn(4, '192.0.2.1', 'dport', raw_wan_port)
+            run('ip','netns','exec',names[2],'nft','delete','table','ip','first_contact_loss')
         def pairing():
             status = rpc(0, {'method': '_status'})['status']
             return next(n for n in status['networks'] if n['id'] == host)['status']['pairing']
@@ -254,6 +313,23 @@ try:
             n['id'] == guest and n['status']['pairing'].get('verification') == pairing()['verification']
             for n in rpc(1, {'method': '_status'})['status']['networks']))
         pending = pairing()
+        if args.verify_raw_retry:
+            with host_log.open('rb') as log:
+                log.seek(host_offset)
+                host_plain = re.sub(r'\x1b\[[0-9;]*m', '', log.read().decode(errors='replace'))
+            assert re.search(r'原始 TCP 预测三连发[^\n]*tail=true', host_plain), 'host must complete both anchors around the carrier SYN'
+            with guest_log.open('rb') as log:
+                log.seek(guest_offset)
+                plain = re.sub(r'\x1b\[[0-9;]*m', '', log.read().decode(errors='replace'))
+            selected = re.search(r'已选择原始 TCP 主机候选[^\n]*candidate=(\d+)[^\n]*total=(\d+)[^\n]*changed=(true|false)', plain)
+            assert selected and int(selected[2]) > 1, 'guest must receive multiple ranked ports'
+            if args.verify_next_raw_candidate:
+                assert int(selected[1]) > 1 and selected[3] == 'false', 'the first candidate must miss'
+                assert peer_syn_count(4, listen), 'the guest must actually try the first candidate'
+            else:
+                assert selected[1] == '1' and selected[3] == 'true', 'guest must use the predicted port'
+            raw_syn = {'host': peer_syn_count(3, raw_wan_port), 'guest': peer_syn_count(4, raw_wan_port)}
+            assert all(raw_syn.values()), 'both peers must send a WAN SYN on the carrier tuple'
         guest_status = rpc(1, {'method': '_status'})['status']
         guest_pairing = next(n['status']['pairing'] for n in guest_status['networks'] if n['id'] == guest)
         assert pending['verification'] == guest_pairing['verification'], 'both participants must verify the same SAS'
@@ -279,16 +355,62 @@ try:
                 received = rpc(index, {'method': 'lab-read', 'networkId': identity})['operation']['result']['packets']
                 expected = packet(g['virtualIp'], h['virtualIp'], 2) if index == 0 else packet(h['virtualIp'], g['virtualIp'], 1)
                 assert len(received) == 1 and base64.b64decode(received[0]) == expected
-        if args.nat:
+        if args.nat and not args.verify_raw_retry:
             restart_began = time.monotonic()
             host_log = directory / 'process-0.log'
             host_offset = host_log.stat().st_size
-            rpc(1, {'method': '_stop'})
-            processes[1].wait(timeout=18)
-            processes[1] = launch(1)
-            wait('guest backend restart ' + mode, lambda: backend_ready(1))
+            restarted = 0 if args.verify_faketcp_cold else 1
+            stop_time_ms = time.time_ns() // 1_000_000
+            rpc(restarted, {'method': '_stop'})
+            processes[restarted].wait(timeout=18)
+            if args.verify_faketcp_cold:
+                wait('FakeTCP cold outage', lambda: row(1, guest)['directPeers'] == 0)
+                # The first host observation fails while its backend is coming up.
+                # Re-enable the same configured observer once the fallback is ready.
+                blocked = f"""table ip conwu_cold_stun {{
+                    chain filter {{ type filter hook forward priority -1; policy accept;
+                        ip daddr {coordinator_address} tcp dport 1145 drop
+                    }}
+                }}"""
+                subprocess.run(['ip', 'netns', 'exec', names[3], 'nft', '-f', '-'],
+                               input=blocked, text=True, check=True)
+            processes[restarted] = launch(restarted)
+            wait('backend restart ' + mode, lambda: backend_ready(restarted))
+            if args.verify_faketcp_cold:
+                restart_log = directory / f'process-0-restart-{launches[0]-1}.log'
+                wait('FakeTCP fallback receiver after STUN failure',
+                     lambda: 'FakeTCP 同源观察暂未建立' in restart_log.read_text(encoding='utf-8', errors='replace'))
+                run('ip', 'netns', 'exec', names[3], 'nft', 'delete', 'table', 'ip', 'conwu_cold_stun')
             wait('saved-member NAT reconnection ' + mode, lambda: row(0, host)['directPeers'] == 1 and row(1, guest)['directPeers'] == 1)
             restart_seconds = round(time.monotonic() - restart_began, 2)
+            if args.verify_faketcp_cold:
+                def successful_rounds(index):
+                    rounds = {}
+                    with (directory / str(index) / 'conwu.log.jsonl').open(encoding='utf-8') as log:
+                        for line in log:
+                            entry = json.loads(line).get('punch')
+                            if not entry:
+                                continue
+                            if (entry['start_unix_ms'] >= stop_time_ms and entry['flow'] == 'reconnect'
+                                    and entry['transport'] == mode and entry['close_reason'] == 'success'):
+                                rounds[entry['round']] = entry
+                    return rounds
+
+                def verified_candidate():
+                    host_rounds, guest_rounds = successful_rounds(0), successful_rounds(1)
+                    for round_id in host_rounds.keys() & guest_rounds.keys():
+                        host_attempts = host_rounds[round_id]['attempts'].values()
+                        guest_attempts = guest_rounds[round_id]['attempts'].values()
+                        fresh_source = any(attempt['role'] == 'burst' and attempt.get('l_mid')
+                                           and attempt['l_mid'] != listen for attempt in host_attempts)
+                        verified = any('mesh_verified' in candidate['times_ms']
+                                       for attempt in guest_attempts for candidate in attempt['sockets'])
+                        if fresh_source and verified:
+                            return round_id
+                    return None
+
+                wait('coordinated FakeTCP candidate MeshLink verification', verified_candidate)
+                verified_round = verified_candidate()
             if args.verify_member_round:
                 def fired(path, offset, local_id):
                     with path.open('rb') as log:
@@ -310,8 +432,8 @@ try:
             else:
                 for index, target in [(0, g['virtualIp']), (1, h['virtualIp'])]:
                     run('ip', 'netns', 'exec', names[index], 'ping', '-n', '-c', '3', '-W', '2', target)
-        results.append({'mode': mode, 'assisted': assisted, 'managed': managed, 'outerIpv6': args.ipv6, 'dualSnatWithConntrackFiltering': args.nat, 'unsolicitedHostEntryBlocked': args.nat, 'guestRestartRecovery': args.nat, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
-        if args.nat:
+        results.append({'mode': mode, 'assisted': assisted, 'managed': managed, 'outerIpv6': args.ipv6, 'dualSnatWithConntrackFiltering': args.nat, 'unsolicitedHostEntryBlocked': args.nat, 'guestRestartRecovery': args.nat and not args.verify_raw_retry, 'pairingAndBidirectionalData': True, 'adapter':'Linux.TUN' if real_tun else 'Memory', 'seconds': round(time.monotonic() - begin, 2)})
+        if args.nat and not args.verify_raw_retry and not args.verify_faketcp_cold:
             results[-1]['guestRestartSeconds'] = restart_seconds
         if args.host_igd:
             results[-1].update(unsolicitedHostEntryBlocked=False, hostAssignedExternalPort=51000, hostListenPort=48000)
@@ -319,9 +441,18 @@ try:
             results[-1]['outboundPeerSynBeforeApproval'] = syn
         if args.verify_member_round:
             results[-1]['bothExecutedSameRoundAfterRestart'] = True
+        if args.verify_faketcp_cold:
+            results[-1].update(guestRestartRecovery=False, hostRestartRecovery=True, initialStunFailureRecovered=True, fullCoordinatorInvitation=True,
+                               hostRestartSeconds=restart_seconds, verifiedFakeTcpMemberRound=verified_round)
+        if args.verify_raw_retry:
+            results[-1]['rawRetryAfterFirstRoundLoss'] = True
+            results[-1]['selectedRawCandidate'] = int(selected[1])
+            results[-1]['rawCandidateCount'] = int(selected[2])
+            results[-1]['outboundPeerSynAfterRetry'] = raw_syn
         print(json.dumps(results[-1]), flush=True)
     result_name = ('nat-' if args.nat else '') + ('host-igd-' if args.host_igd else 'ipv6-' if args.ipv6 else 'managed-' if managed else 'assisted-' if assisted else '') + ('tun-lab-result.json' if real_tun else 'native-lab-result.json')
-    (root / 'out' / result_name).write_text(json.dumps(results, indent=2))
+    result_directory = directory if args.verify_raw_retry or args.verify_faketcp_cold else root / 'out'
+    (result_directory / result_name).write_text(json.dumps(results, indent=2))
 finally:
     for index in range(len(processes)):
         try:

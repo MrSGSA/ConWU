@@ -290,7 +290,7 @@ pub fn status() -> Value {
         } else {
             "运行中"
         };
-        json!({"enabled":true,"running":active,"state":state,"addresses":[r.settings["listenUrl"]],"certificatePin":r.certificate_pin,"certificateExpires":r.certificate_expires.map(crate::coordination_store::timestamp),"external":r.external.read().unwrap().clone(),"clients":clients,"punchAssist":r.registry.upgrade().map(|r|r.assist.status())})
+        json!({"enabled":true,"running":active,"state":state,"addresses":[r.settings["listenUrl"]],"tcpStunListen":r.settings["tcpStunListen"],"certificatePin":r.certificate_pin,"certificateExpires":r.certificate_expires.map(crate::coordination_store::timestamp),"external":r.external.read().unwrap().clone(),"clients":clients,"punchAssist":r.registry.upgrade().map(|r|r.assist.status())})
     } else {
         json!({"enabled":false,"running":false,"state":"未开启","addresses":[],"clients":[]})
     }
@@ -298,6 +298,10 @@ pub fn status() -> Value {
 pub fn validate(settings: &Value) -> Result<()> {
     if settings.is_null() {
         return Ok(());
+    }
+    if let Some(text) = settings["tcpStunListen"].as_str().filter(|text| !text.is_empty()) {
+        let address: std::net::SocketAddrV4 = text.parse().context("TCP STUN 监听地址应为 IPv4:端口")?;
+        ensure!(address.port() >= 1024, "TCP STUN 端口范围为1024–65535");
     }
     if let Some(text) = settings["publicUrl"].as_str().filter(|s| !s.is_empty()) {
         crate::discovery::validate_service(text)?;
@@ -390,7 +394,7 @@ async fn probe(url: &str, pin: &str, instance: &str) -> Value {
         endpoint
             .query_pairs_mut()
             .append_pair("challenge", &challenge);
-        let response = crate::transport::pinned_http_bootstrap(pin, false, None)?
+        let response = crate::transport::coordinator_http(pin, &endpoint)?
             .get(endpoint)
             .send()
             .await?;
@@ -468,6 +472,11 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
     let address: SocketAddr =
         format!("{}:{}", url.host_str().unwrap(), url.port().unwrap()).parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
+    let stun_listener = if let Some(address) = settings["tcpStunListen"].as_str().filter(|s| !s.is_empty()) {
+        Some(tokio::net::TcpListener::bind(address).await.context("TCP STUN 监听失败")?)
+    } else {
+        None
+    };
     ensure!(
         !app.store.checked_file("coordinator-restore.json")?.exists(),
         "协调恢复未完成，请显式重新恢复完整备份"
@@ -585,6 +594,7 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
         }
     });
     app.engine.tracker.spawn(async move {
+        let stun = stun_listener.map(|listener| tokio::spawn(serve_stun(listener, stop.clone())));
         let connections = tokio_util::task::TaskTracker::new();
         let gate=Arc::new(tokio::sync::Semaphore::new(128));
         loop {
@@ -602,8 +612,10 @@ pub async fn configure(app: Arc<App>, settings: Value) -> Result<()> {
             });
         }
         drop(listener);
+        stop.cancel();
         connections.close();
         connections.wait().await;
+        if let Some(stun) = stun { let _ = stun.await; }
         finished.cancel();
     });
     app.log("INFO", "Rust 本机协调服务已启动");
@@ -896,6 +908,13 @@ async fn member_assist(
                     .iter()
                     .find(|m| m.slot != input.slot)
                     .context("尚无对机成员")?;
+                if input.prediction_update().is_some() {
+                    ensure!(
+                        !registration.directory.closed && registration.directory.members.len() == 2,
+                        "端口预测需要有效的双机成员授权"
+                    );
+                    return r.assist.exchange_prediction(&network, input, peer);
+                }
                 let permit = wait.then(|| r.waiters.clone().try_acquire_owned().ok()).flatten();
                 let Some(permit) = permit else {
                     return r.assist.member(&network, input, peer);
@@ -972,6 +991,40 @@ async fn is_stun(socket: &tokio::net::TcpStream) -> bool {
     .await
     .is_ok_and(|r| r.unwrap_or(false))
 }
+async fn serve_stun(listener: tokio::net::TcpListener, stop: CancellationToken) {
+    let connections = tokio_util::task::TaskTracker::new();
+    let gate = Arc::new(tokio::sync::Semaphore::new(128));
+    let mut last_saturation: Option<std::time::Instant> = None;
+    loop {
+        let (mut socket, remote) = tokio::select! {
+            _ = stop.cancelled() => break,
+            accepted = listener.accept() => match accepted {
+                Ok(pair) => pair,
+                Err(error) => {
+                    tracing::error!(errno = error.raw_os_error(), %error, "TCP STUN 监听未能接受新连接");
+                    break;
+                }
+            },
+        };
+        let Ok(permit) = gate.clone().try_acquire_owned() else {
+            let now = std::time::Instant::now();
+            if last_saturation.is_none_or(|last| now.duration_since(last) >= Duration::from_secs(30)) {
+                tracing::warn!("TCP STUN 的 128 个连接槽已满");
+                last_saturation = Some(now);
+            }
+            continue;
+        };
+        let stop = stop.clone();
+        connections.spawn(async move {
+            let _permit = permit;
+            let _ = stun_server(&mut socket, remote, &stop).await;
+        });
+    }
+    drop(listener);
+    connections.close();
+    connections.wait().await;
+}
+
 async fn stun_server(
     socket: &mut tokio::net::TcpStream,
     remote: SocketAddr,
@@ -1009,6 +1062,86 @@ async fn stun_server(
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn prediction_fixture<F>(
+    app: Arc<App>,
+    profile: &conwu_core::identity::Profile,
+    reflect: impl Fn(SocketAddr) -> F + Send + Sync + 'static,
+) -> Result<(SocketAddr, SocketAddr, CancellationToken, tokio::task::JoinHandle<()>, Arc<std::sync::atomic::AtomicUsize>)>
+where
+    F: std::future::Future<Output = Option<SocketAddr>> + Send,
+{
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let token = hex::encode_upper(profile.pair.key("discovery-auth"));
+    let registration = Registration {
+        auth: hex::encode_upper(c::hash(format!("Bearer {token}").as_bytes())),
+        directory: profile.directory.clone().context("夹具需要成员目录")?,
+    };
+    let registry = Arc::new(Registry {
+        trust_cloudflare: false,
+        epoch: uuid::Uuid::new_v4(),
+        feeds: Mutex::new(HashMap::new()),
+        waiters: Arc::new(tokio::sync::Semaphore::new(8)),
+        traversal: Default::default(),
+        names: Default::default(),
+        assist: Default::default(),
+        changes: Default::default(),
+        app,
+        registrations: Mutex::new(BTreeMap::from([(profile.pair.network.clone(), registration)])),
+        nodes: Default::default(),
+        rate: Default::default(),
+    });
+    let requests = Arc::new(AtomicUsize::new(0));
+    let count = requests.clone();
+    let router = Router::new()
+        .route("/v3/mesh/{network}/tcp-assist", post(member_assist))
+        .layer(axum::middleware::from_fn(move |request: Request, next: axum::middleware::Next| {
+            count.fetch_add(1, Ordering::Relaxed);
+            next.run(request)
+        }))
+        .with_state(registry);
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+    let endpoint = listener.local_addr()?;
+    let observer = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await?;
+    let observer_endpoint = observer.local_addr()?;
+    let stop = CancellationToken::new();
+    let task_stop = stop.clone();
+    let reflect = Arc::new(reflect);
+    let task = tokio::spawn(async move {
+        let connections = tokio_util::task::TaskTracker::new();
+        loop {
+            let (accept, is_observer) = tokio::select! {
+                _ = task_stop.cancelled() => break,
+                result = listener.accept() => (result, false),
+                result = observer.accept() => (result, true),
+            };
+            let Ok((mut socket, remote)) = accept else { break };
+            let stop = task_stop.clone();
+            let router = router.clone().layer(Extension(remote));
+            let reflect = reflect.clone();
+            connections.spawn(async move {
+                if is_observer {
+                    // The warmup's middle socket can connect here without
+                    // sending a STUN request. Only count the two anchors.
+                    if !is_stun(&socket).await {
+                        return;
+                    }
+                    let reflected = tokio::select! { _ = stop.cancelled() => return, result = reflect(remote) => result };
+                    if let Some(reflected) = reflected {
+                        let _ = stun_server(&mut socket, reflected, &stop).await;
+                    }
+                } else {
+                    serve_http(socket, router, stop).await;
+                }
+            });
+        }
+        connections.close();
+        connections.wait().await;
+    });
+    Ok((endpoint, observer_endpoint, stop, task, requests))
+}
+
 pub async fn exchange(
     settings: &crate::model::Settings,
     profile: &conwu_core::identity::Profile,
@@ -1031,7 +1164,7 @@ pub async fn exchange(
     if !base.path().ends_with('/') {
         base.set_path(&(base.path().to_owned() + "/"));
     }
-    let client = crate::transport::pinned_http(&settings.certificate_pin)?;
+    let client = crate::transport::coordinator_http(&settings.certificate_pin, &base)?;
     let auth = hex::encode_upper(profile.pair.key("discovery-auth"));
     let network = &profile.pair.network;
     client
@@ -1055,6 +1188,7 @@ pub async fn exchange(
         .send()
         .await?
         .error_for_status()?;
+    let remote = response.remote_addr();
     ensure!(
         response.content_length().is_none_or(|n| n <= 65536),
         "协调快照过大"
@@ -1068,6 +1202,7 @@ pub async fn exchange(
     }
     let snapshot: Snapshot = conwu_core::parse_rest(&bytes)?;
     ensure!(snapshot.nodes.len() <= 8, "协调成员数超过限制");
+    crate::dns::remember_coordinator(&base, remote);
     Ok(snapshot)
 }
 
@@ -1139,9 +1274,10 @@ mod tests {
         });
         let mut stream = tokio::net::TcpStream::connect(address).await?;
         let source = stream.local_addr()?;
-        for _ in 0..3 {
+        for delay in [Duration::ZERO, Duration::from_secs(41), Duration::ZERO] {
+            tokio::time::sleep(delay).await;
             ensure!(
-                crate::discovery::stun_tcp(&mut stream).await? == source,
+                tokio::time::timeout(Duration::from_secs(3), crate::discovery::stun_tcp(&mut stream)).await?? == source,
                 "STUN 应反射实际四元组"
             );
         }
@@ -1172,6 +1308,7 @@ mod tests {
                 expires: conwu_core::unix_seconds() + 120,
                 endpoint: "203.0.113.1:44000".into(),
                 name: "共同设备".into(),
+                boot_id: None,
                 traversal: None,
                 pkarr_source: None,
                 existing_endpoints: None,

@@ -143,6 +143,7 @@ fn legacy_crypto_and_wire_compatibility() {
         expires: conwu_core::unix_seconds() + 120,
         endpoint: "203.0.113.10:44680".into(),
         name: "Rust 互通测试".into(),
+        boot_id: None,
         traversal: None,
         pkarr_source: None,
         existing_endpoints: Some(vec!["203.0.113.10:44680".into()]),

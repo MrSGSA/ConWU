@@ -1,6 +1,6 @@
 #requires -Version 7.0
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$BundleRoot,[Parameter(Mandatory)][string]$OutputPath,[string]$ValidationInstance,[Parameter(Mandatory)][string]$MsiVersion,[ValidateSet('high','mszip')][string]$Compression='high',[string]$ProductCode)
+param([Parameter(Mandatory)][string]$BundleRoot,[Parameter(Mandatory)][string]$OutputPath,[string]$ValidationInstance,[Parameter(Mandatory)][string]$MsiVersion,[ValidateSet('high','mszip')][string]$Compression='high',[string]$ProductCode,[switch]$AllowSameVersionUpgrade)
 $ErrorActionPreference='Stop'
 $repo=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'));$BundleRoot=[IO.Path]::GetFullPath($BundleRoot);$OutputPath=[IO.Path]::GetFullPath($OutputPath)
 $manifest=Get-Content -LiteralPath (Join-Path $BundleRoot '.conwu-rust-package') -Raw|ConvertFrom-Json
@@ -94,6 +94,10 @@ if($ProductCode){
  # A revised, unpublished candidate keeps its ProductCode and is applied as a
  # standard MSI small update with REINSTALL=ALL REINSTALLMODE=vamus.
  $package.SetAttribute('ProductCode','{'+$identity.ToString('D').ToUpperInvariant()+'}')
+}
+if($AllowSameVersionUpgrade){
+ if(-not $ProductCode){throw 'Same-version upgrades require an explicit product code'}
+ $xml.SelectSingleNode('//w:MajorUpgrade',$manager).SetAttribute('AllowSameVersionUpgrades','yes')
 }
 $xml.SelectSingleNode('//w:MediaTemplate',$manager).SetAttribute('CompressionLevel',$Compression)
 $programs=$xml.SelectSingleNode('//w:StandardDirectory[@Id="ProgramFiles64Folder"]',$manager)

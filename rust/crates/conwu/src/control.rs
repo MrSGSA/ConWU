@@ -113,7 +113,19 @@ mod windows {
                         let mut bytes = vec![0; size];
                         io.read_exact(&mut bytes).await?;
                         let input: Value = serde_json::from_slice(&bytes)?;
-                        let result = if input["method"] == "open" {
+                        let result = if input["method"] == "projection-desktop" {
+                            panel.app.projection_local(&input).map(|mut reply| {
+                                reply["panelOrigin"] = json!(panel.origin);
+                                if reply["openDesktop"] == true {
+                                    reply["desktopUrl"] = json!(panel.link());
+                                }
+                                reply
+                            })
+                        } else if matches!(input["method"].as_str(), Some("projection-access" | "projection-listeners")) {
+                            panel.app.projection_local(&input)
+                        } else if input["method"] == "panel-origin" {
+                            Ok(json!({"origin":panel.origin}))
+                        } else if input["method"] == "open" {
                             Ok(json!({"ok":true,"url":panel.link()}))
                         } else if input["method"] == "status" {
                             Ok(panel.app.reply(
@@ -154,13 +166,11 @@ mod windows {
             service::ServiceAccess,
             service_manager::{ServiceManager, ServiceManagerAccess},
         };
-        let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-        let service =
-            manager.open_service(crate::instance::service_name(), ServiceAccess::QUERY_STATUS)?;
-        ensure!(
-            service.query_status()?.process_id == Some(actual),
-            "控制管道不属于已安装的 ConWU 服务"
-        );
+        {
+            let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
+            let service = manager.open_service(crate::instance::service_name(), ServiceAccess::QUERY_STATUS)?;
+            ensure!(service.query_status()?.process_id == Some(actual), "控制管道不属于已安装的 ConWU 服务");
+        }
         let task = async {
             let bytes = serde_json::to_vec(request)?;
             ensure!(bytes.len() <= 262144, "本机命令过大");

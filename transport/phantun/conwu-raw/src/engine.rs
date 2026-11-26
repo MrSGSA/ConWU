@@ -50,6 +50,8 @@ struct Flow {
     writer: Option<tokio::net::tcp::OwnedWriteHalf>,
     pump: Option<JoinHandle<()>>,
     opened: bool,
+    prediction: bool,
+    probe_owner: Option<String>,
 }
 
 #[cfg(test)]
@@ -221,6 +223,7 @@ mod tests {
             protected_tcp_peer: None,
             control_peer: Arc::new(std::sync::RwLock::new(None)),
             peer_reflexive: false,
+            peer_ip: None,
         };
         let (tx, rx) = mpsc::channel(512);
         let wire = Arc::new(Wire(Mutex::new(vec![])));
@@ -236,6 +239,7 @@ mod tests {
             tasks: vec![],
             admission_at: Instant::now(),
             admissions: 0,
+            handshake_stages: HashMap::new(),
             dropped: 0,
             send_warning_at: None,
         };
@@ -249,6 +253,107 @@ mod tests {
             .unwrap();
         bytes[..size].to_vec()
     }
+    #[tokio::test]
+    async fn mimic_scoped_listener_accepts_the_hosts_first_syn_on_a_new_port() {
+        let target = udp_endpoint().unwrap();
+        let (mut guest, wire) = fixture(true, v4(target.local_addr().unwrap()).unwrap());
+        let expected: SocketAddrV4 = "198.18.0.2:41421".parse().unwrap();
+        let actual = SocketAddrV4::new(*expected.ip(), expected.port() + 1);
+        let unrelated: SocketAddrV4 = "198.18.0.3:41422".parse().unwrap();
+        guest.config.peer_ip = Some(*expected.ip());
+        let local = guest.config.source;
+
+        let wrong_syn = build(unrelated, local, 41, 0, SYN, 65535, &[], &[]);
+        guest.incoming(parse(&wrong_syn).unwrap()).await.unwrap();
+        guest.punch(unrelated, Vec::new(), None).unwrap();
+        assert!(guest.flows.is_empty());
+        assert!(wire.packets().is_empty());
+
+        guest.punch(expected, Vec::new(), None).unwrap();
+        let registered_probe = wire.packets();
+        assert_eq!(registered_probe.len(), 1);
+        assert_eq!(parse(&registered_probe[0]).unwrap().local, expected);
+        let first_syn = build(actual, local, 41, 0, SYN, 65535, &[], &[]);
+        guest.incoming(parse(&first_syn).unwrap()).await.unwrap();
+        let responses = wire.packets();
+        // A TCP-aware gateway only accepts the reply after this outbound SYN.
+        let [active_open, response] = responses.as_slice() else { panic!("missing active open on the observed tuple") };
+        let active_open = parse(active_open).unwrap();
+        let syn_ack = parse(response).unwrap();
+        assert_eq!((active_open.flags, active_open.local, active_open.seq), (SYN, actual, syn_ack.seq));
+        assert_eq!(syn_ack.flags & (SYN | ACK), SYN | ACK);
+        assert_eq!(syn_ack.ack, 42);
+        let refused = build(actual, local, 0, syn_ack.seq.wrapping_add(1), RST | ACK, 0, &[], &[]);
+        guest.incoming(parse(&refused).unwrap()).await.unwrap();
+        // The offer can arrive after the ordinary listener's ten-second cutoff.
+        guest.flows.get_mut(&actual).unwrap().created -= Duration::from_secs(12);
+        guest.tick().unwrap();
+        assert_eq!(guest.flows[&actual].phase, Phase::SynReceived);
+        let ack = build(actual, local, 42, syn_ack.seq.wrapping_add(1), ACK, 65535, &[], &[]);
+        guest.incoming(parse(&ack).unwrap()).await.unwrap();
+        assert!(guest.flows[&actual].phase == Phase::Established);
+        assert!(guest.flows[&actual].udp.is_some());
+        let payload = mimic_encode(&[31; 64]);
+        let data = build(actual, local, 42, syn_ack.seq.wrapping_add(1), ACK | PSH, 65535, &[], &payload);
+        guest.incoming(parse(&data).unwrap()).await.unwrap();
+        assert_eq!(receive(&target).await, vec![31; 64]);
+        assert!(guest.flows[&expected].phase == Phase::SynSent);
+    }
+
+    #[tokio::test]
+    async fn retiring_mimic_round_stops_its_retries_and_preserves_other_sessions() {
+        let target = udp_endpoint().unwrap();
+        let (mut host, wire) = fixture(true, v4(target.local_addr().unwrap()).unwrap());
+        let stale = "198.18.0.2:45431".parse().unwrap();
+        let healthy = "198.18.0.2:45432".parse().unwrap();
+        host.message(Message::PairProbe(stale, "old".into(), "receipt-1".into())).await.unwrap();
+        host.punch(healthy, vec![], Some("other".into())).unwrap();
+        wire.packets();
+        host.message(Message::DiscardPairProbe(stale, "other".into(), "1".into())).await.unwrap();
+        assert!(host.flows.contains_key(&stale));
+        host.flows.get_mut(&stale).unwrap().phase = Phase::Established;
+        host.message(Message::DiscardPairProbe(stale, "old".into(), "2".into())).await.unwrap();
+        assert!(!host.flows.contains_key(&stale));
+        assert!(!host.handshake_stages.contains_key(&stale));
+        host.flows.get_mut(&healthy).unwrap().retry_at -= Duration::from_secs(3);
+        host.tick().unwrap();
+        let packets = wire.packets();
+        assert_eq!(packets.len(), 1);
+        // Parsing the outgoing packet reports its destination as local.
+        assert_eq!(parse(&packets[0]).unwrap().local, healthy);
+        let live = host.flows.get_mut(&healthy).unwrap();
+        live.phase = Phase::Established;
+        live.last_payload_received = live.created + Duration::from_millis(1);
+        host.message(Message::DiscardPairProbe(healthy, "other".into(), "3".into())).await.unwrap();
+        assert!(host.flows.contains_key(&healthy));
+    }
+
+    #[tokio::test]
+    async fn confirmed_mimic_probe_keeps_only_its_pending_tuple_alive() {
+        let target = udp_endpoint().unwrap();
+        let (mut host, wire) = fixture(true, v4(target.local_addr().unwrap()).unwrap());
+        let peer = "198.18.0.2:49401".parse().unwrap();
+        let ordinary = "198.18.0.2:49402".parse().unwrap();
+        host.punch(peer, vec![], None).unwrap();
+        host.punch(ordinary, vec![], None).unwrap();
+        let isn = host.flows[&peer].isn;
+        wire.packets();
+        host.punch(peer, vec![], Some("test".into())).unwrap();
+        let retry = wire.packets();
+        assert_eq!(retry.len(), 1);
+        assert_eq!(parse(&retry[0]).unwrap().seq, isn);
+        let reset = build(peer, host.config.source, 0, isn.wrapping_add(1), RST | ACK, 0, &[], &[]);
+        host.incoming(parse(&reset).unwrap()).await.unwrap();
+        for flow in host.flows.values_mut() {
+            flow.created -= Duration::from_secs(30);
+            flow.retry_at -= Duration::from_secs(3);
+            flow.retries = 9;
+        }
+        host.tick().unwrap();
+        assert_eq!(host.flows[&peer].phase, Phase::SynSent);
+        assert!(!host.flows.contains_key(&ordinary));
+    }
+
     #[tokio::test]
     async fn mimic_handshake_loss_reordering_bidirectional() {
         let target = udp_endpoint().unwrap();
@@ -417,6 +522,9 @@ mod tests {
         guest.message(Message::Client(application.local_addr().unwrap(), vec![5; 80])).await.unwrap();
         let syn = wire.packets().pop().unwrap();
         let expected_ack = parse(&syn).unwrap().seq.wrapping_add(1);
+        let refused = build(guest.config.remote,guest.config.source,0,expected_ack,RST|ACK,0,&[],&[]);
+        guest.incoming(parse(&refused).unwrap()).await.unwrap();
+        assert!(guest.flows.contains_key(&guest.config.remote));
         let alternate = SocketAddrV4::new(*guest.config.remote.ip(), 49921);
         let invalid = build(alternate,guest.config.source,77,expected_ack.wrapping_add(1),SYN|ACK,65535,&[],&[]);
         guest.incoming(parse(&invalid).unwrap()).await.unwrap();
@@ -426,9 +534,19 @@ mod tests {
         assert_eq!(guest.flows.len(),1);
         let inbound = build(alternate,guest.config.source,77,0,SYN,65535,&[],&[]);
         guest.incoming(parse(&inbound).unwrap()).await.unwrap();
+        let packets = wire.packets();
+        assert_eq!(packets.len(), 2);
+        let reverse = parse(&packets[0]).unwrap();
+        let syn_ack = parse(&packets[1]).unwrap();
+        assert_eq!((reverse.local, reverse.flags), (alternate, SYN));
+        assert_eq!((syn_ack.local, syn_ack.flags, syn_ack.seq), (alternate, SYN|ACK, reverse.seq));
         assert!(guest.flows[&alternate].phase == Phase::SynReceived);
         assert_ne!(guest.config.remote,alternate,"a SYN alone cannot select the peer");
-        let ack = build(alternate,guest.config.source,78,expected_ack,ACK,65535,&[],&[]);
+        let rejected = guest.config.remote;
+        guest.flows.get_mut(&rejected).unwrap().created -= Duration::from_secs(41);
+        guest.tick().unwrap();
+        assert!(!guest.flows.contains_key(&rejected));
+        let ack = build(alternate,guest.config.source,78,reverse.seq.wrapping_add(1),ACK,65535,&[],&[]);
         guest.incoming(parse(&ack).unwrap()).await.unwrap();
         assert_eq!(guest.config.remote,alternate);
         assert_eq!(guest.flows.len(),1,"obsolete candidates are removed");
@@ -508,6 +626,8 @@ impl Flow {
             writer: None,
             pump: None,
             opened: false,
+            prediction: false,
+            probe_owner: None,
         }
     }
 }
@@ -538,6 +658,9 @@ struct Observation {
 }
 enum Message {
     Punch(SocketAddrV4, Vec<u8>),
+    Probe(SocketAddrV4, String),
+    PairProbe(SocketAddrV4, String, String),
+    DiscardPairProbe(SocketAddrV4, String, String),
     Protect(SocketAddrV4, String),
     Client(SocketAddr, Vec<u8>),
     Output(SocketAddrV4, u64, Vec<u8>),
@@ -557,6 +680,7 @@ struct Engine {
     tasks: Vec<JoinHandle<()>>,
     admission_at: Instant,
     admissions: u8,
+    handshake_stages: HashMap<SocketAddrV4, (Instant, u16)>,
     dropped: u64,
     send_warning_at: Option<Instant>,
 }
@@ -618,6 +742,7 @@ pub async fn run(config: Config) -> io::Result<()> {
         tasks: vec![],
         admission_at: Instant::now(),
         admissions: 0,
+        handshake_stages: HashMap::new(),
         dropped: 0,
         send_warning_at: None,
     };
@@ -643,7 +768,7 @@ pub async fn run(config: Config) -> io::Result<()> {
         }));
     }
     event(
-        json!({"event":"ready","abi":1,"carrier":config.carrier.name(),"backend":device.name(),"role":if config.server{"server"}else{"client"},"pid":std::process::id(),"source":config.source.to_string(),"udp":engine.udp.as_ref().and_then(|s|s.local_addr().ok()).map(|s|s.to_string())}),
+        json!({"event":"ready","abi":1,"carrier":config.carrier.name(),"backend":device.name(),"role":if config.server{"server"}else{"client"},"pid":std::process::id(),"source":config.source.to_string(),"udp":engine.udp.as_ref().and_then(|s|s.local_addr().ok()).map(|s|s.to_string()),"synConfirmation":true}),
     );
     let work = async {
         let mut buffer = [0u8; 65535];
@@ -674,8 +799,12 @@ fn input_commands() -> io::Result<(mpsc::Receiver<Message>, tokio::sync::oneshot
             if !matches!(size, Ok(1..=512)) || !line.ends_with(b"\n") { break; }
             let Ok(command) = serde_json::from_slice::<serde_json::Value>(&line) else { break; };
             let kind = command["command"].as_str();
-            if !matches!(kind, Some("punch" | "protect"))
-                || command.as_object().is_none_or(|object| if kind == Some("protect") {object.len()!=3} else {!(2..=3).contains(&object.len())}) { break; }
+            if !matches!(kind, Some("punch" | "probe" | "protect" | "pair-probe" | "discard-pair-probe"))
+                || command.as_object().is_none_or(|object| match kind {
+                    Some("punch") => !(2..=3).contains(&object.len()),
+                    Some("discard-pair-probe" | "pair-probe") => object.len() != 4,
+                    _ => object.len() != 3,
+                }) { break; }
             let Some(peer) = command["peer"].as_str().and_then(|value| value.parse::<SocketAddrV4>().ok()) else { break; };
             if peer.port() == 0 || peer.ip().is_unspecified()
                 || peer.ip().is_loopback() || peer.ip().is_multicast() || peer.ip().is_broadcast()
@@ -688,7 +817,12 @@ fn input_commands() -> io::Result<(mpsc::Receiver<Message>, tokio::sync::oneshot
                 Message::Punch(peer,hello)
             } else {
                 let Some(id) = command["id"].as_str().filter(|id| id.len() == 32 && id.bytes().all(|b| b.is_ascii_hexdigit())) else {break;};
-                Message::Protect(peer, id.to_owned())
+                if matches!(kind, Some("discard-pair-probe" | "pair-probe")) {
+                    let Some(round) = command["round"].as_str().filter(|s| s.len()==32 && s.bytes().all(|b| b.is_ascii_hexdigit())) else {break;};
+                    if kind == Some("pair-probe") { Message::PairProbe(peer, round.into(), id.into()) }
+                    else { Message::DiscardPairProbe(peer, round.into(), id.into()) }
+                } else if kind == Some("probe") { Message::Probe(peer, id.to_owned()) }
+                else { Message::Protect(peer, id.to_owned()) }
             };
             if tx.blocking_send(message).is_err() { break; }
         }
@@ -723,6 +857,22 @@ fn prepare_system(stream: &TcpStream) -> io::Result<()> {
     stream.set_nodelay(true)
 }
 impl Engine {
+    // Only the short-lived, peer-scoped pairing receiver reports these transitions.
+    // Emit each observation once across candidates, never per received packet.
+    fn report_handshake(&mut self, peer: SocketAddrV4, bit: u16, name: &'static str, injected: Option<usize>) {
+        if self.config.peer_ip.is_some() && self.handshake_stages.len() < 32 {
+            self.handshake_stages.entry(peer).or_insert_with(|| (Instant::now(), 0));
+        }
+        let Some((since, mask)) = self.handshake_stages.get_mut(&peer) else { return };
+        if since.elapsed() < Duration::from_secs(45) && *mask & bit == 0 {
+            *mask |= bit;
+            let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default().as_millis() as u64;
+            event(json!({"event":"candidate-handshake","peer":peer,"stage":name,"at":at,
+                "driverInjectedBytes":injected}));
+        }
+    }
+
     fn stale_mimic_flow(&self, peer: SocketAddrV4) -> bool {
         self.config.carrier == Carrier::Mimic
             && self.flows.get(&peer).is_some_and(|flow| {
@@ -749,7 +899,7 @@ impl Engine {
         seq: u32,
         options: &[u8],
         data: &[u8],
-    ) -> io::Result<()> {
+    ) -> io::Result<(bool, Option<usize>)> {
         let window = if flags & SYN != 0 {
             65535
         } else if self.config.carrier == Carrier::Mimic {
@@ -767,8 +917,13 @@ impl Engine {
             options,
             data,
         );
-        match self.device.try_send(&packet) {
-            Ok(()) => {}
+        let send = if flags & SYN != 0 {
+            self.device.try_send_count(&packet)
+        } else {
+            self.device.try_send(&packet).map(|()| None)
+        };
+        let receipt = match send {
+            Ok(bytes) => (true, bytes),
             Err(ex)
                 if ex.kind() == io::ErrorKind::WouldBlock
                     || matches!(
@@ -788,19 +943,26 @@ impl Engine {
                     );
                     self.send_warning_at = Some(Instant::now());
                 }
+                (false, None)
             }
             Err(ex) => return Err(ex),
-        }
+        };
         flow.last_sent = Instant::now();
-        Ok(())
+        Ok(receipt)
     }
-    fn control(&mut self, flow: &mut Flow, flags: u8, seq: u32) -> io::Result<()> {
+    fn control(&mut self, flow: &mut Flow, flags: u8, seq: u32) -> io::Result<bool> {
         let options = if flags & SYN != 0 {
             syn_options().to_vec()
         } else {
             vec![]
         };
-        self.send(flow, flags, seq, &options, &[])
+        let (sent, injected) = self.send(flow, flags, seq, &options, &[])?;
+        if sent && flow.phase != Phase::Established {
+            if flags == SYN { self.report_handshake(flow.remote, 1, "sent-syn", injected); }
+            else if flags == SYN | ACK { self.report_handshake(flow.remote, 2, "sent-syn-ack", injected); }
+            else if flags == ACK { self.report_handshake(flow.remote, 4, "sent-ack", None); }
+        }
+        Ok(sent)
     }
     fn output(&mut self, flow: &mut Flow, data: &[u8]) -> io::Result<()> {
         if data.is_empty() || data.len() > MAX_DATAGRAM {
@@ -818,7 +980,7 @@ impl Engine {
                 // Window probes are control only; a late frame is discarded,
                 // never queued awaiting reliable TCP retransmission.
                 self.dropped += 1;
-                return self.send(flow, ACK, seq.wrapping_sub(1), &[], &[0]);
+                return self.send(flow, ACK, seq.wrapping_sub(1), &[], &[0]).map(|_| ());
             }
             let payload = mimic_encode(data);
             // The original XDP ingress runs before GRO. Our shared raw-device
@@ -882,7 +1044,8 @@ impl Engine {
     }
     async fn incoming(&mut self, segment: Segment<'_>) -> io::Result<()> {
         if *self.config.control_peer.read().unwrap() == Some(segment.remote) { return Ok(()); }
-        if segment.local.port() != self.config.source.port()
+        if self.config.peer_ip.is_some_and(|ip| segment.remote.ip() != &ip)
+            || segment.local.port() != self.config.source.port()
             || (!self.config.source.ip().is_unspecified()
                 && segment.local.ip() != self.config.source.ip())
             || (!self.config.server && segment.remote != self.config.remote
@@ -892,17 +1055,31 @@ impl Engine {
             return Ok(());
         }
         let key = segment.remote;
+        if self.config.peer_ip.is_some() || self.handshake_stages.contains_key(&key) {
+            self.report_handshake(key, 128, "received-first", None);
+            if segment.flags & RST != 0 { self.report_handshake(key, 8, "received-rst", None); }
+            else if segment.flags & (SYN | ACK) == SYN { self.report_handshake(key, 16, "received-syn", None); }
+            else if segment.flags & (SYN | ACK) == SYN | ACK { self.report_handshake(key, 32, "received-syn-ack", None); }
+        }
         if !self.config.server && self.config.peer_reflexive && !self.flows.contains_key(&key) {
             if self.flows.len() >= 8 || segment.flags & (SYN | RST | FIN) != SYN { return Ok(()); }
             let Some(original) = self.flows.get(&self.config.remote) else { return Ok(()); };
             if original.phase != Phase::SynSent { return Ok(()); }
             if segment.flags & ACK != 0 && segment.ack != original.seq { return Ok(()); }
             let mut candidate = Flow::new(self.config.source, key, Phase::SynSent);
-            candidate.isn = original.isn;
-            candidate.seq = original.seq;
             candidate.udp = original.udp.clone();
             candidate.application = original.application;
             candidate.pending = original.pending.clone();
+            if segment.flags & ACK == 0 {
+                // The original SYN used a different destination port. Open this
+                // observed tuple with its own SYN before sending the SYN-ACK.
+                candidate.seq = candidate.isn.wrapping_add(1);
+                let isn = candidate.isn;
+                self.control(&mut candidate, SYN, isn)?;
+            } else {
+                candidate.isn = original.isn;
+                candidate.seq = original.seq;
+            }
             self.flows.insert(key, candidate);
         }
         if self.config.carrier == Carrier::TcpRaw && !self.flows.contains_key(&key) {
@@ -950,12 +1127,23 @@ impl Engine {
             flow.peer_scale = segment.scale;
             flow.peer_window = segment.window as u32;
             let isn = flow.isn;
+            // A SYN can arrive from the actual mapped port before the offer
+            // lists it. Give this tuple an outbound active open as well.
+            if self.config.peer_ip.is_some() {
+                self.control(&mut flow, SYN, isn)?;
+            }
             self.control(&mut flow, SYN | ACK, isn)?;
             self.flows.insert(key, flow);
             return Ok(());
         }
         let mut flow = self.flows.remove(&key).unwrap();
         if segment.flags & (RST | FIN) != 0 {
+            if (flow.prediction || self.config.peer_reflexive || self.config.peer_ip.is_some()) && flow.phase != Phase::Established {
+                // A closed prediction candidate can reply before the agreed
+                // peer's real SYN arrives. Keep the connection attempt alive.
+                self.flows.insert(key, flow);
+                return Ok(());
+            }
             if !self.config.server {
                 return Err(io::Error::new(
                     io::ErrorKind::ConnectionReset,
@@ -1010,7 +1198,7 @@ impl Engine {
                 let isn = flow.isn;
                 self.control(&mut flow, SYN | ACK, isn)?;
             }
-            Phase::SynReceived if self.config.peer_reflexive && segment.flags & (SYN | ACK) == SYN => {
+            Phase::SynReceived if (flow.prediction || self.config.peer_reflexive || self.config.peer_ip.is_some()) && segment.flags & (SYN | ACK) == SYN => {
                 flow.ack = segment.seq.wrapping_add(1);
                 let isn = flow.isn;
                 self.control(&mut flow, SYN | ACK, isn)?;
@@ -1020,6 +1208,7 @@ impl Engine {
                     && segment.ack == flow.seq
                     && segment.seq == flow.ack =>
             {
+                self.report_handshake(key, 64, "received-final-ack", None);
                 self.establish(&mut flow).await?;
             }
             Phase::Kernel if segment.flags & ACK != 0 => {
@@ -1104,37 +1293,98 @@ impl Engine {
         self.flows.insert(key, flow);
         Ok(())
     }
+    fn punch(&mut self, peer: SocketAddrV4, hello: Vec<u8>, probe: Option<String>) -> io::Result<()> {
+        if !self.config.server
+            || self.config.source.ip().is_unspecified()
+            || self.config.peer_ip.is_some_and(|ip| peer.ip() != &ip)
+            || *self.config.control_peer.read().unwrap() == Some(peer)
+            || hello.len() > 128
+        {
+            reject_probe(peer, probe, "invalid_or_protected_target", None);
+            return Ok(());
+        }
+        // Empty TCP ACKs can outlive the old encrypted path across a restart.
+        if self.stale_mimic_flow(peer) {
+            self.flows.remove(&peer);
+        }
+        if probe.is_some() && self.config.carrier == Carrier::Mimic {
+            self.handshake_stages.retain(|_, (at, _)| at.elapsed() < Duration::from_secs(45));
+            if self.handshake_stages.len() < 32 || self.handshake_stages.contains_key(&peer) {
+                self.handshake_stages.insert(peer, (Instant::now(), 0));
+            }
+        }
+        if let Some(mut flow) = self.flows.remove(&peer) {
+            if self.config.carrier == Carrier::Mimic && flow.phase != Phase::Established
+                && let Some(id) = probe.as_ref() {
+                flow.prediction = true;
+                flow.probe_owner = Some(id.clone());
+                flow.created = Instant::now();
+                flow.retries = 0;
+                let isn = flow.isn;
+                if self.control(&mut flow, SYN, isn)? { report_syn(peer, id.clone()); }
+                else { reject_probe(peer, probe, "submission_failed", None); }
+            } else {
+                reject_probe(peer, probe, "existing_flow", None);
+            }
+            if !hello.is_empty() {
+                self.output(&mut flow, &hello)?;
+            }
+            self.flows.insert(peer, flow);
+            return Ok(());
+        }
+        if !self.admit() {
+            reject_probe(peer, probe, "flow_limit", None);
+            return Ok(());
+        }
+        let mimic = self.config.carrier == Carrier::Mimic;
+        let phase = if mimic { Phase::SynSent } else { Phase::Kernel };
+        let mut flow = Flow::new(self.config.source, peer, phase);
+        flow.pending = (!hello.is_empty()).then_some(hello);
+        if mimic {
+            flow.prediction = probe.is_some();
+            flow.probe_owner = probe.clone();
+            let isn = flow.isn;
+            flow.seq = isn.wrapping_add(1);
+            if self.control(&mut flow, SYN, isn)? {
+                if let Some(id) = probe { report_syn(peer, id); }
+            } else {
+                reject_probe(peer, probe, "submission_failed", None);
+            }
+        } else {
+            self.kernel_connect(peer, flow.generation, probe);
+        }
+        self.flows.insert(peer, flow);
+        Ok(())
+    }
+
     async fn message(&mut self, message: Message) -> io::Result<()> {
         match message {
+            Message::PairProbe(peer, round, id) => {
+                self.punch(peer, Vec::new(), Some(id.clone()))?;
+                if let Some(flow) = self.flows.get_mut(&peer)
+                    && flow.probe_owner.as_deref() == Some(&id) {
+                    flow.probe_owner = Some(round);
+                }
+            }
+            Message::DiscardPairProbe(peer, round, id) => {
+                // An ACK alone can create a bridge. Preserve a flow already delivering
+                // application payload, even if a delayed pairing retry arrives.
+                if self.config.carrier == Carrier::Mimic && self.flows.get(&peer).is_none_or(|flow|
+                    flow.probe_owner.as_deref() == Some(&round) &&
+                        (flow.phase != Phase::Established || flow.last_payload_received <= flow.created)) {
+                    self.flows.remove(&peer);
+                    self.observations.remove(&peer);
+                    self.handshake_stages.remove(&peer);
+                }
+                event(json!({"event":"pair-probe-discarded","abi":1,"peer":peer,"id":id}));
+            }
             Message::Protect(peer, id) => {
                 self.device.protect_tcp_peer(peer)?;
                 *self.config.control_peer.write().unwrap() = Some(peer);
                 event(json!({"event":"protected","abi":1,"peer":peer.to_string(),"id":id}));
             }
-            Message::Punch(peer, hello) => {
-                if !self.config.server
-                    || self.config.source.ip().is_unspecified()
-                    || *self.config.control_peer.read().unwrap() == Some(peer)
-                    || hello.len()>128 { return Ok(()); }
-                // Empty TCP ACKs can outlive the old encrypted path across a
-                // restart. A scheduled reconnect needs a fresh SYN on this tuple.
-                if self.stale_mimic_flow(peer) {
-                    self.flows.remove(&peer);
-                }
-                if let Some(mut flow)=self.flows.remove(&peer) {
-                    if !hello.is_empty(){self.output(&mut flow,&hello)?;}
-                    self.flows.insert(peer,flow);return Ok(());
-                }
-                if !self.admit(){return Ok(());}
-                let phase=if self.config.carrier==Carrier::Mimic{Phase::SynSent}else{Phase::Kernel};
-                let mut flow = Flow::new(self.config.source, peer, phase);
-                if !hello.is_empty(){flow.pending=Some(hello);}
-                if self.config.carrier==Carrier::Mimic {
-                    flow.seq = flow.isn.wrapping_add(1);
-                    let isn = flow.isn; self.control(&mut flow, SYN, isn)?;
-                }else{self.kernel_connect(peer,flow.generation);}
-                self.flows.insert(peer, flow);
-            }
+            Message::Punch(peer, hello) => self.punch(peer, hello, None)?,
+            Message::Probe(peer, id) => self.punch(peer, Vec::new(), Some(id))?,
             Message::Client(source, data) => {
                 if self.application.is_some_and(|app| app != source) {
                     return Ok(());
@@ -1159,7 +1409,7 @@ impl Engine {
                         let isn = flow.isn;
                         self.control(&mut flow, SYN, isn)?;
                     } else {
-                        self.kernel_connect(key,flow.generation);
+                        self.kernel_connect(key,flow.generation,None);
                     }
                     self.flows.insert(key, flow);
                 }
@@ -1241,36 +1491,55 @@ impl Engine {
         }
         Ok(())
     }
-    fn kernel_connect(&mut self,key:SocketAddrV4,generation:u64) {
+    fn kernel_connect(&mut self,key:SocketAddrV4,generation:u64,mut probe:Option<String>) {
         let tx=self.tx.clone();let local=self.config.source;
         let assisted=self.config.protected_tcp_peer.is_some();
         self.tasks.push(tokio::spawn(async move{
             let result=async {
                 let socket=tcp_socket(assisted)?;socket.bind(local.into())?;
-                let stream=tokio::time::timeout(Duration::from_secs(8),socket.connect(key.into())).await
+                // Tokio calls the nonblocking system connect on the first poll.
+                // Report that submission only when the kernel accepted the open.
+                let mut connect = std::pin::pin!(socket.connect(key.into()));
+                let connect = std::future::poll_fn(|cx| {
+                    let result = std::future::Future::poll(connect.as_mut(), cx);
+                    if !matches!(&result, std::task::Poll::Ready(Err(_)))
+                        && let Some(id) = probe.take()
+                    {
+                        report_syn(key, id);
+                    }
+                    result
+                });
+                let stream=tokio::time::timeout(Duration::from_secs(8),connect).await
                     .map_err(|_|io::Error::new(io::ErrorKind::TimedOut,"kernel TCP handshake deadline"))??;
                 prepare_system(&stream)?;Ok::<_,io::Error>(stream)
             }.await;
-            let message=match result{Ok(stream)=>Message::Connected(key,Some(generation),stream),Err(error)=>Message::ConnectFailed(key,generation,error.to_string())};
+            let message=match result{Ok(stream)=>Message::Connected(key,Some(generation),stream),Err(error)=>{
+                reject_probe(key, probe, "kernel_connect", error.raw_os_error());
+                Message::ConnectFailed(key,generation,error.to_string())
+            }};
             let _=tx.send(message).await;
         }));
     }
     fn tick(&mut self) -> io::Result<()> {
         self.tasks.retain(|task|!task.is_finished());
         let now = Instant::now();
+        let coordinated = self.config.peer_reflexive || self.config.peer_ip.is_some();
         self.observations.retain(|_, o| {
             o.at.is_some_and(|at| now.duration_since(at) < Duration::from_secs(10))
         });
         let keys = self.flows.keys().copied().collect::<Vec<_>>();
         for key in keys {
             let mut flow = self.flows.remove(&key).unwrap();
+            let coordinated = coordinated || flow.prediction;
             let expired = if flow.phase == Phase::Established {
                 flow.last_received.elapsed() > Duration::from_secs(180)
             } else {
-                flow.created.elapsed() > Duration::from_secs(if self.config.peer_reflexive {40} else {10})
+                flow.created.elapsed() > Duration::from_secs(if coordinated {40} else {10})
             };
             if expired {
-                if !self.config.server {
+                if !self.config.server
+                    && (!self.config.peer_reflexive || flow.phase == Phase::Established || self.flows.is_empty())
+                {
                     return Err(io::Error::new(
                         io::ErrorKind::TimedOut,
                         "raw carrier peer deadline",
@@ -1281,8 +1550,8 @@ impl Engine {
             if matches!(flow.phase, Phase::SynSent | Phase::SynReceived)
                 && flow.retry_at.elapsed() > Duration::from_secs(2)
             {
-                if flow.retries >= if self.config.peer_reflexive {18} else {3} {
-                    if !self.config.server {
+                if flow.retries >= if coordinated {18} else {3} {
+                    if !self.config.server && (!self.config.peer_reflexive || self.flows.is_empty()) {
                         return Err(io::Error::new(
                             io::ErrorKind::TimedOut,
                             "Mimic handshake deadline",
@@ -1310,4 +1579,15 @@ impl Engine {
         }
         Ok(())
     }
+}
+
+fn reject_probe(peer: SocketAddrV4, id: Option<String>, reason: &str, errno: Option<i32>) {
+    if let Some(id) = id {
+        event(json!({"event":"probe-rejected","abi":1,"peer":peer,"id":id,"reason":reason,"errno":errno}));
+    }
+}
+
+fn report_syn(peer: SocketAddrV4, id: String) {
+    let submitted = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_micros() as u64;
+    event(json!({"event":"syn-sent","abi":1,"peer":peer,"id":id,"submittedUs":submitted}));
 }

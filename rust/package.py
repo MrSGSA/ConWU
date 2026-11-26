@@ -10,6 +10,7 @@ import io
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tarfile
 import tomllib
@@ -24,6 +25,20 @@ SOURCE_INPUTS = ["rust", "transport", "third-party", "tests", "scripts", "src", 
                  ".cargo/config.toml", "CMakeLists.txt", "LICENSE", "README.md", "docs",
                  "Directory.Build.props", "Directory.Build.targets", "global.json", "NuGet.Config",
                  "ConWU.sln", "ConWU.slnx", "StreamLink.sln"]
+PROJECTION_ASSETS = {
+    "sunshine": (
+        "Sunshine-Windows-AMD64-lite.zip",
+        "233008e46f4c0e501a586cbfd6c4fd4a4c0d414a0b5fc7f13c070eb92ec3824b",
+        "Sunshine/",
+        "sunshine.exe",
+    ),
+    "moonlight": (
+        "MoonlightPortable-x64-6.2.0.zip",
+        "6f91d268b41ed5ca8066d9d7578dc403b8db190991ff48f00b1700465f8f7ebf",
+        "",
+        "Moonlight.exe",
+    ),
+}
 
 
 def read(path):
@@ -77,13 +92,18 @@ def sources():
     return files
 
 
-def dependencies(platform, linux_target):
+def dependencies(platform, linux_target, include_desktop, projection, projection_cargo_home):
     target = "x86_64-pc-windows-msvc" if platform == "windows" else linux_target
     packages = {}
-    for manifest in ("rust/Cargo.toml", "transport/phantun/Cargo.toml"):
+    manifests = [(ROOT / path, None) for path in ("rust/Cargo.toml", "transport/phantun/Cargo.toml")]
+    if include_desktop:
+        manifests.append((ROOT / "rust/desktop/Cargo.toml", None))
+    if projection:
+        manifests.append((projection / "Cargo.toml", dict(os.environ, CARGO_HOME=str(projection_cargo_home))))
+    for manifest, env in manifests:
         result = subprocess.run(["cargo", "metadata", "--locked", "--offline", "--format-version", "1",
                                  "--filter-platform", target, "--manifest-path", manifest],
-                                cwd=ROOT, check=True, capture_output=True, text=True, encoding="utf-8")
+                                cwd=ROOT, env=env, check=True, capture_output=True, text=True, encoding="utf-8")
         metadata = json.loads(result.stdout)
         for package in metadata["packages"]:
             if package["source"]:
@@ -105,12 +125,91 @@ def dependencies(platform, linux_target):
     return notices
 
 
+def projection_source(directory):
+    files = {}
+    for name in ("Cargo.toml", "Cargo.lock", "README.md", "build.ps1", ".cargo/config.toml"):
+        files[name] = (read(directory / name), 0o644)
+    for folder in ("src", "assets"):
+        for path in (directory / folder).rglob("*"):
+            if path.is_file():
+                files[path.relative_to(directory).as_posix()] = (read(path), 0o644)
+    return zipped(files)
+
+
+def projection_runtime(directory, embedded):
+    def linked(path):
+        return path.is_symlink() or (
+            os.name == "nt" and path.exists() and path.lstat().st_file_attributes & stat.FILE_ATTRIBUTE_REPARSE_POINT
+        )
+
+    files = {}
+    for engine, (filename, digest, prefix, executable) in PROJECTION_ASSETS.items():
+        data = read(directory / filename)
+        if hashlib.sha256(data).hexdigest() != digest:
+            raise ValueError(f"Projection upstream asset SHA-256 mismatch: {filename}")
+        component = f"app/components/projection/{engine}/"
+        if engine == "moonlight":
+            if linked(embedded) or not embedded.is_dir():
+                raise ValueError("Embedded Moonlight runtime must be a regular directory")
+            for path in sorted(embedded.rglob("*")):
+                if linked(path):
+                    raise ValueError(f"Linked embedded runtime input: {path}")
+                if path.is_file():
+                    relative = path.relative_to(embedded).as_posix()
+                    if path.name == "portable.dat":
+                        continue
+                    if path.name.casefold() == executable.casefold():
+                        raise ValueError("Use the staged ConWU-Moonlight runtime")
+                    files[component + relative] = (read(path), 0o755 if path.name.endswith(".exe") else 0o644)
+            for required in ("ConWU-Moonlight.exe", "platforms/qwindows.dll", "SDL2.dll", "SDL3.dll", "AntiHooking.dll"):
+                if component + required not in files:
+                    raise ValueError(f"Embedded Moonlight runtime missing {required}")
+            if b"CONWU_PROJECTION_CARRIER" not in files[component + "ConWU-Moonlight.exe"][0]:
+                raise ValueError("Rebuild embedded Moonlight with the current Projection statistics patch")
+            # Reuse the compiler runtimes the pinned portable Windows release redistributes.
+            with zipfile.ZipFile(io.BytesIO(data)) as archive:
+                for entry in archive.infolist():
+                    if "/" not in entry.filename and entry.filename.startswith(("msvcp140", "vcruntime140")) and entry.filename.endswith(".dll"):
+                        files.setdefault(component + entry.filename, (archive.read(entry), 0o644))
+            continue
+        paths = set()
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            for entry in archive.infolist():
+                if entry.is_dir():
+                    continue
+                relative = entry.filename.removeprefix(prefix)
+                if (not entry.filename.startswith(prefix) or "\\" in relative or ":" in relative
+                        or any(part in {"", ".", ".."} for part in relative.split("/"))
+                        or stat.S_ISLNK(entry.external_attr >> 16) or relative.casefold() in paths):
+                    raise ValueError(f"Invalid path in {filename}: {entry.filename}")
+                paths.add(relative.casefold())
+                if engine == "sunshine" and relative.startswith(("scripts/", "tools/")):
+                    continue
+                mode = 0o755 if relative == executable else 0o644
+                files[component + relative] = (archive.read(entry), mode)
+        if component + executable not in files:
+            raise ValueError(f"Projection executable missing from {filename}")
+    # Upstream expects a config directory beside sunshine.exe. All writable
+    # configuration paths used by Projection point to the user's own directory.
+    files["app/components/projection/sunshine/config/README.txt"] = (
+        b"Projection runtime. Per-user configuration is stored in LocalAppData.\n", 0o644
+    )
+    licenses = ROOT / "third-party/projection"
+    for name in ("Sunshine-GPL-3.0.txt", "Sunshine-NOTICE.txt", "Moonlight-GPL-3.0.txt", "SDL3-LICENSE.txt"):
+        files[f"licenses/{name}"] = (read(licenses / name), 0o644)
+    files["source/Projection-upstream.md"] = (read(licenses / "README.md"), 0o644)
+    files["source/Projection-Moonlight.patch"] = (read(licenses / "moonlight-conwu.patch"), 0o644)
+    files["source/Projection-SDL3.patch"] = (read(licenses / "sdl3-conwu.patch"), 0o644)
+    return files
+
+
 def main():
     global OUTPUT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--platform", choices=["windows", "linux"], required=True)
     parser.add_argument("--dependency-root", type=Path, default=ROOT / "out/dependency-cache")
     parser.add_argument("--app", type=Path)
+    parser.add_argument("--desktop", type=Path, help="Include the built Windows Tauri desktop shell")
     parser.add_argument("--component-root", type=Path)
     parser.add_argument("--target-directory", type=Path)
     parser.add_argument("--linux-target", default="x86_64-unknown-linux-musl")
@@ -118,7 +217,25 @@ def main():
     parser.add_argument("--stage", action="store_true", help="Also write the exact MSI/runtime input directory")
     parser.add_argument("--production", action="store_true")
     parser.add_argument("--validation-instance")
+    parser.add_argument("--projection-app", type=Path)
+    parser.add_argument("--projection-source", type=Path)
+    parser.add_argument("--projection-cargo-home", type=Path)
+    parser.add_argument("--projection-runtime", type=Path,
+                        help="Read the pinned Sunshine and Moonlight Windows release ZIPs from this directory")
+    parser.add_argument("--projection-embedded-runtime", type=Path,
+                        help="Use the staged ConWU-Moonlight build and its matching DLLs")
     args = parser.parse_args()
+    if args.desktop and args.platform != "windows":
+        parser.error("--desktop requires --platform windows")
+    projection_inputs = (args.projection_app, args.projection_source, args.projection_cargo_home)
+    if args.projection_runtime and (args.platform != "windows" or any(projection_inputs)):
+        parser.error("--projection-runtime is for Windows and replaces the legacy Projection build inputs")
+    if args.projection_runtime and not (args.projection_embedded_runtime and args.desktop):
+        parser.error("--projection-runtime requires --projection-embedded-runtime and --desktop")
+    if args.projection_embedded_runtime and not (args.projection_runtime and args.desktop):
+        parser.error("--projection-embedded-runtime requires --projection-runtime and --desktop")
+    if any(projection_inputs) and (args.platform != "windows" or not all(projection_inputs)):
+        parser.error("Projection requires all three component inputs and a Windows bundle")
     OUTPUT = args.output.resolve()
     if not OUTPUT.is_relative_to((ROOT / 'out').resolve()) or OUTPUT == (ROOT / 'out').resolve():
         raise ValueError('Package output must be a dedicated directory beneath this worktree/out')
@@ -145,7 +262,8 @@ def main():
     source_zip = zipped(source_files)
     save(source_name, source_zip)
     files = {"source/" + source_name: (source_zip, 0o644)}
-    files.update(dependencies(args.platform, args.linux_target))
+    files.update(dependencies(args.platform, args.linux_target, args.desktop is not None,
+                              args.projection_source, args.projection_cargo_home))
     executable = "conwu.exe" if args.platform == "windows" else "conwu"
     target_dir = args.target_directory or ROOT / ("out/rust-target" if args.platform == "windows" else "out/rust-target-linux")
     app = (args.app or target_dir / "release" / executable).resolve()
@@ -164,6 +282,14 @@ def main():
     if args.platform == 'windows':
         for name in ('ConWU.exe', 'app/ConWU.exe', 'app/ConWU.Service.exe'):
             files[name] = (app_bytes, 0o755)
+        if args.desktop:
+            files[component_prefix + 'ConWU-Desktop.exe'] = (read(args.desktop), 0o755)
+        if args.projection_runtime:
+            files.update(projection_runtime(args.projection_runtime, args.projection_embedded_runtime))
+        if args.projection_app:
+            version = tomllib.loads(read(args.projection_source / "Cargo.toml").decode())["package"]["version"]
+            files[component_prefix + 'ConWU-Projection.exe'] = (read(args.projection_app), 0o755)
+            files[f"source/ConWU-Projection-{version}-source.zip"] = (projection_source(args.projection_source), 0o644)
     else:
         files[executable] = (app_bytes, 0o755)
         files['install.sh'] = (read(ROOT / 'rust/install-linux.sh'), 0o755)

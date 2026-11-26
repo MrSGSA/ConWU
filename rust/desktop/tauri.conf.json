@@ -1,0 +1,23 @@
+{
+  "productName": "ConWU",
+  "version": "1.6.0",
+  "identifier": "com.conwu.desktop",
+  "app": {
+    "windows": [],
+    "security": {
+      "capabilities": [
+        {
+          "identifier": "projection-surface",
+          "local": false,
+          "windows": ["conwu"],
+          "remote": {"urls": ["http://127.0.0.1:*/"]},
+          "permissions": ["allow-projection-surface"]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": ["../../src/ConWU.App/Assets/conwu.ico"]
+  }
+}

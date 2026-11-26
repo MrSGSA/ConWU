@@ -22,9 +22,10 @@ pub struct Device {
 impl Device {
     pub fn open(config: &Config) -> io::Result<Self> {
         let mimic = config.carrier == Carrier::Mimic;
+        let peer_scope = config.peer_ip.map(|ip| format!(" and ip.SrcAddr == {ip}")).unwrap_or_default();
         let filter = if config.server {
             format!(
-                "inbound and ip and tcp and tcp.DstPort == {}{}",
+                "inbound and ip and tcp and tcp.DstPort == {}{}{peer_scope}",
                 config.source.port(),
                 if config.source.ip().is_unspecified() {
                     String::new()
@@ -63,9 +64,13 @@ impl Device {
             // Inbound ownership suppresses kernel SYN-ACK/RST. Also catch a
             // kernel RST for this owned local port, preserving protected STUN
             // packets in the worker instead of dropping their control flow.
-            let source_ip = if config.source.ip().is_unspecified() { String::new() }
-                else { format!(" and ip.SrcAddr == {}",config.source.ip()) };
-            format!("({filter}) or (outbound and ip and tcp and tcp.Rst and tcp.SrcPort == {}{source_ip})",config.source.port())
+            let reset_scope = if config.server { format!("tcp.SrcPort == {}{}{}", config.source.port(),
+                if config.source.ip().is_unspecified() { String::new() } else { format!(" and ip.SrcAddr == {}", config.source.ip()) },
+                config.peer_ip.map(|ip| format!(" and ip.DstAddr == {ip}")).unwrap_or_default())
+            } else if config.peer_reflexive { format!("ip.SrcAddr == {} and ip.DstAddr == {} and tcp.SrcPort == {}",
+                config.source.ip(), config.remote.ip(), config.source.port())
+            } else { exact };
+            format!("({filter}) or (outbound and ip and tcp and tcp.Rst and {reset_scope})")
         } else { filter };
         let handle = Arc::new(
             WinDivert::network(&filter, 0, flags)
@@ -136,7 +141,7 @@ impl Device {
         })
     }
 
-    fn inject(&self, bytes: &[u8]) -> io::Result<()> {
+    fn inject(&self, bytes: &[u8]) -> io::Result<usize> {
         if bytes.len() > MAX_PACKET_LEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -145,8 +150,14 @@ impl Device {
         }
         let mut packet = unsafe { WinDivertPacket::<NetworkLayer>::new(bytes.to_vec()) };
         packet.address.set_outbound(true);
-        self.handle.send(&packet).map_err(io::Error::other)?;
-        Ok(())
+        let injected = self.handle.send(&packet).map_err(io::Error::other)? as usize;
+        if injected != bytes.len() {
+            return Err(io::Error::new(
+                io::ErrorKind::WriteZero,
+                format!("WinDivert reported {injected} of {} injected bytes", bytes.len()),
+            ));
+        }
+        Ok(injected)
     }
 }
 
@@ -167,11 +178,13 @@ impl TunDevice for Device {
         }
     }
     async fn send(&self, buffer: &[u8]) -> io::Result<usize> {
-        self.inject(buffer)?;
-        Ok(buffer.len())
+        self.inject(buffer)
     }
     fn try_send(&self, buffer: &[u8]) -> io::Result<()> {
-        self.inject(buffer)
+        self.inject(buffer).map(|_| ())
+    }
+    fn try_send_count(&self, buffer: &[u8]) -> io::Result<Option<usize>> {
+        self.inject(buffer).map(Some)
     }
     fn name(&self) -> String {
         if self.mimic { "windivert-mimic" } else { "windivert-tcpraw" }.into()

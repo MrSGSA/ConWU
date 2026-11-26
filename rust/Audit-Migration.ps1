@@ -54,7 +54,7 @@ foreach($folder in Get-ChildItem -LiteralPath (Join-Path $LegacyRoot 'networks')
     Require ($wasEnabled -eq $network.enabled -and [bool]$old.ConnectionPaused -eq $network.paused) '启动及断开状态'
     Require ($old.PkarrSeed -ceq $network.pkarrSeed -and $old.PkarrSequence -eq $network.pkarrSequence) 'PKARR发布身份及高水位'
     $settings=if($old.SavedNetworkSettings){$old.SavedNetworkSettings}else{$old}
-    foreach($field in @('PathSelection','ConnectionSource','ListenPort','SourcePort','StreamFlowLanes','TcpStun','UdpStun','EntryRefreshSeconds','PortControlMapping','RequestedVirtualIp')) {
+    foreach($field in @('PathSelection','ConnectionSource','ListenPort','SourcePort','StreamFlowLanes','TcpStun','EntryRefreshSeconds','PortControlMapping','RequestedVirtualIp')) {
         Require (Equal-Value $settings.$field $network.settings.$field) ('网络设置 '+$field)
     }
     $count++

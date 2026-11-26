@@ -1,0 +1,16 @@
+diff --git a/src/video/windows/SDL_windowsevents.c b/src/video/windows/SDL_windowsevents.c
+--- a/src/video/windows/SDL_windowsevents.c
++++ b/src/video/windows/SDL_windowsevents.c
+@@ -335,6 +335,12 @@
+     HWND hwnd = data->hwnd;
+     bool had_focus = (SDL_GetKeyboardFocus() == window);
+     bool has_focus = (GetForegroundWindow() == hwnd);
++
++    // The Projection viewer is a native child of the ConWU desktop window.
++    if (GetPropW(hwnd, L"ConWU.Projection.Moonlight")) {
++        has_focus = expect_focus && GetFocus() == hwnd &&
++                    GetForegroundWindow() == GetAncestor(hwnd, GA_ROOT);
++    }
+ 
+     if (had_focus == has_focus || has_focus != expect_focus) {
+         return;

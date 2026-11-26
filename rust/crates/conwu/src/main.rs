@@ -28,6 +28,7 @@ mod model;
 mod native;
 mod native_map;
 mod pkarr;
+mod projection;
 mod platform;
 mod raw;
 mod recovery;
@@ -397,13 +398,17 @@ async fn run(command: Command) -> Result<()> {
             app.start_departures();
             uu::start(app.clone());
             #[cfg(windows)]
+            if service {
+                app.start_projection_firewall();
+            }
+            #[cfg(windows)]
             let tray = if !service && !no_tray {
                 Some(tray::start(panel.clone()))
             } else {
                 None
             };
             if !no_open && !service {
-                platform::open_browser(&url)?;
+                platform::open_panel(&url)?;
             }
             tokio::select! {r=platform::shutdown_signal()=>r?,_=app.engine.cancel.cancelled()=>{},_=platform::service_cancel().cancelled_owned()=>{}}
             app.engine.shutdown().await?;

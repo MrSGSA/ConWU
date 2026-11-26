@@ -82,19 +82,28 @@ pub fn is_service_process() -> bool {
 #[cfg(windows)]
 pub async fn start_client_service() -> Result<()> {
     use windows_service::{
+        Error,
         service::{ServiceAccess, ServiceState},
         service_manager::{ServiceManager, ServiceManagerAccess},
     };
+    use windows_sys::Win32::Foundation::ERROR_SERVICE_ALREADY_RUNNING;
     let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)?;
-    let service = manager.open_service(
-        crate::instance::service_name(),
-        ServiceAccess::QUERY_STATUS | ServiceAccess::START,
-    )?;
+    let name = crate::instance::service_name();
+    let service = manager.open_service(&name, ServiceAccess::QUERY_STATUS)?;
     let status = service.query_status()?.current_state;
-    if status != ServiceState::Running && status != ServiceState::StartPending {
-        service.start::<&str>(&[])?;
+    if matches!(status, ServiceState::Running | ServiceState::StartPending) {
+        return Ok(());
     }
-    Ok(())
+    let service = manager.open_service(&name, ServiceAccess::START)?;
+    match service.start::<&str>(&[]) {
+        Ok(()) => Ok(()),
+        Err(Error::Winapi(error))
+            if error.raw_os_error() == Some(ERROR_SERVICE_ALREADY_RUNNING as i32) =>
+        {
+            Ok(())
+        }
+        Err(error) => Err(error.into()),
+    }
 }
 pub async fn configure_startup(app: &App, enabled: bool) -> Result<()> {
     if app.engine.memory {
@@ -123,16 +132,20 @@ pub async fn configure_startup(app: &App, enabled: bool) -> Result<()> {
     result
 }
 #[cfg(windows)]
+pub(crate) fn windows_launcher(exe: std::path::PathBuf) -> std::path::PathBuf {
+    exe.parent()
+        .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("app")))
+        .and_then(|p| p.parent())
+        .map(|p| p.join("ConWU.exe"))
+        .filter(|p| p.is_file())
+        .unwrap_or(exe)
+}
+
+#[cfg(windows)]
 pub(crate) fn configure_windows_startup(enabled: bool) -> Result<()> {
     use std::os::windows::process::CommandExt;
     let command = if enabled {
-        let exe = std::env::current_exe()?;
-        let launcher = exe.parent()
-            .filter(|p| p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.eq_ignore_ascii_case("app")))
-            .and_then(|p| p.parent())
-            .map(|p| p.join("ConWU.exe"))
-            .filter(|p| p.is_file())
-            .unwrap_or(exe);
+        let launcher = windows_launcher(std::env::current_exe()?);
         let launcher = filesystem_argument(&launcher)?;
         let launcher = launcher.to_str().ok_or_else(|| anyhow::anyhow!("开机程序路径不是有效 Unicode"))?;
         let args = crate::instance::validation()
@@ -317,6 +330,57 @@ pub(crate) fn filesystem_argument(path: &std::path::Path) -> Result<std::ffi::Os
         _ => anyhow::bail!("Windows 文件参数缺少卷或共享名称"),
     }
 }
+pub fn open_panel(url: &str) -> Result<()> {
+    ensure!(url.starts_with("http://127.0.0.1:"), "只允许打开本机面板");
+    #[cfg(windows)]
+    match launch_desktop_panel(url, false) {
+        Ok(true) => return Ok(()),
+        Ok(false) => {},
+        Err(error) => tracing::warn!(%error, "ConWU 桌面窗口启动失败"),
+    }
+    open_browser(url)
+}
+
+#[cfg(windows)]
+pub(crate) fn open_projection_desktop(url: &str) -> Result<()> {
+    ensure!(url.starts_with("http://127.0.0.1:"), "只允许打开本机面板");
+    ensure!(launch_desktop_panel(url, true)?, "缺少 ConWU 桌面组件");
+    Ok(())
+}
+
+#[cfg(windows)]
+fn launch_desktop_panel(url: &str, desktop_only: bool) -> Result<bool> {
+    use anyhow::Context;
+    use std::{io::Write, os::windows::process::CommandExt, process::{Command, Stdio}};
+
+    let executable = std::env::current_exe()?;
+    let parent = executable.parent().context("缺少 ConWU 程序目录")?;
+    let Some(desktop) = ["components/ConWU-Desktop.exe", "app/components/ConWU-Desktop.exe"]
+        .into_iter().map(|child| parent.join(child)).find(|path| path.is_file()) else {
+        return Ok(false);
+    };
+    for part in desktop.ancestors() {
+        crate::store::reject_link(part)?;
+    }
+    let mut child = Command::new(desktop)
+        .arg("--panel")
+        .args(desktop_only.then_some("--desktop-only"))
+        .stdin(Stdio::piped())
+        .creation_flags(0x08000000)
+        .spawn()?;
+    // A launch following a tray click can restore an already open desktop window.
+    unsafe {
+        windows_sys::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(child.id());
+    }
+    let input = child.stdin.take().context("缺少 ConWU 桌面窗口通道");
+    if let Err(error) = input.and_then(|mut pipe| Ok(pipe.write_all(url.as_bytes())?)) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(error);
+    }
+    Ok(true)
+}
+
 pub fn open_browser(url: &str) -> Result<()> {
     ensure!(
         url.starts_with("http://127.0.0.1:"),

@@ -305,14 +305,18 @@ impl Socket {
         }
     }
 
-    async fn connect(&mut self) -> Option<()> {
+    async fn connect(&mut self, on_syn: impl FnOnce()) -> Option<()> {
         // Keep the original ISN across crossed SYNs and retransmissions. Both
         // ends may actively open the tuple while retaining their own wire.
+        let mut on_syn = Some(on_syn);
         for _ in 0..RETRIES {
             let flags = if matches!(self.state, State::SynReceived) {
                 tcp::TcpFlags::SYN | tcp::TcpFlags::ACK
             } else { self.state = State::SynSent; tcp::TcpFlags::SYN };
             self.tun.send(&self.build_tcp_packet(flags, None)).await.ok()?;
+            if let Some(report) = on_syn.take() {
+                report();
+            }
             let Ok(Ok(buf)) = time::timeout(TIMEOUT, self.incoming.recv_async()).await else { continue; };
             let Some((_, packet)) = parse_ip_packet(&buf) else { continue; };
             let flags = packet.get_flags();
@@ -467,7 +471,7 @@ impl Stack {
                 assert!(tuples.insert(tuple, incoming).is_none());
             }
 
-            return sock.connect().await.map(|_| sock);
+            return sock.connect(|| {}).await.map(|_| sock);
         }
 
         error!(
@@ -609,6 +613,12 @@ impl Stack {
 pub struct Connector { shared:Arc<Shared>, local_ip:Ipv4Addr }
 impl Connector {
     pub async fn connect_from(&self, addr: SocketAddr, port: u16) -> Option<Socket> {
+        self.connect_reporting_syn(addr, port, || {}).await
+    }
+
+    pub async fn connect_reporting_syn(
+        &self, addr: SocketAddr, port: u16, on_syn: impl FnOnce(),
+    ) -> Option<Socket> {
         if port == 0 || !addr.is_ipv4() {
             return None;
         }
@@ -630,6 +640,6 @@ impl Connector {
             tuples.insert(tuple, incoming);
             socket
         };
-        socket.connect().await.map(|_| socket)
+        socket.connect(on_syn).await.map(|_| socket)
     }
 }
